@@ -80,6 +80,7 @@ export const errors: Record<string, string> = {
   parser_not_configured: "文件解析服务未配置", ocr_not_configured: "文字识别服务未配置",
   ocr_required: "文件需要启用文字识别", ocr_incomplete: "文字识别未完整完成",
   parse_failed: "文件无法解析，请检查格式或重新导出", encrypted_file: "请移除文件密码后重新上传",
+  damaged_file: "文件已损坏或不完整（可能被截断），没有从中取值；请用生成它的程序重新导出后重新上传",
   parse_timeout: "解析超时，请拆分文件后重试", parse_limit: "解析结果不完整，请拆分文件后重试",
   candidate_limit: "匹配值过多，请缩小规则范围", result_limit: "提取结果过大，请缩小规则范围",
   review_conflict: "结果已被修改，请刷新后重试", draft_conflict: "模板已被修改，请刷新后重试",

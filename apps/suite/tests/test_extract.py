@@ -312,6 +312,17 @@ def test_limits_unverified_ambiguity_and_prompt_injection_are_data():
         Definition.model_validate({"fields": [{"id": "x", "label": "x", "rule": {"kind": "regex", "pattern": "(a+)+$"}}]})
 
 
+def test_damaged_reader_result_is_refused_not_reviewed():
+    """Acceptance defect: a truncated PDF reached review as a partial result. A reader that
+    reports structural damage is refused with its own reason, whatever lines it still read."""
+    partial = [{"text": "Invoice No: INV-1", "source": {"page": 1, "line": 1}}]
+    for raw in ({"status": "error", "error": "damaged", "damaged": ["content_missing"]},
+                {"status": "ready", "lines": partial, "damaged": ["repair_lost_content"]}):
+        with pytest.raises(ServiceError) as exc:
+            normalize(raw, {}, ocr=False)
+        assert exc.value.code == "damaged_file" and exc.value.status == 422
+
+
 def test_queue_bound_pagination_review_validation_and_viewer(ex):
     tid, fid = template(ex), upload(ex)["id"]
     ids = [task(ex, tid=tid, file_id=fid) for _ in range(20)]

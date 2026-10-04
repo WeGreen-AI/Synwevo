@@ -96,6 +96,10 @@ def normalize(raw: dict, description: dict, *, ocr: bool) -> dict:
     Page/line and table/cell locations are supplied by the parser; no boxes are fabricated.
     """
     status = raw.get("status")
+    # The reader found a structurally damaged file (truncated, objects missing). Whatever lines it
+    # still read are not the document; reviewing them would pass a partial file off as whole.
+    if raw.get("damaged"):
+        raise ServiceError(422, "damaged_file", "文件已损坏或不完整，请用生成它的程序重新导出后上传")
     if status == "needs_ocr":
         raise ServiceError(422, "ocr_required", "该文件需要文字识别，请启用已配置的识别服务")
     if status != "ready":

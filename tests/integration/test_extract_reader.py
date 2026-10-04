@@ -70,3 +70,84 @@ def test_real_pdf_reader_evidence_and_review(tmp_path, monkeypatch, role):
         receipt = client.get(f"/api/suite/runs/{created['run_id']}").json()
         assert receipt["status"] == "succeeded"
         assert receipt["output"]["confirmed_revision"] == 2
+
+
+def _invoice_pdf(fitz) -> bytes:
+    """Fixture invoice (fictional): one content stream per line, the way the acceptance file was made."""
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    lines = ["INVOICE", "Invoice No: INV-2026-0417", "Invoice Date: 2026-09-28", "Supplier: Northwind Trading Co.",
+             "Item: Widget A, 2 x 12.50 = 25.00", "Item: Gadget B, 1 x 99.90 = 99.90",
+             "Item: Service fee, 3 x 40.00 = 120.00", "Subtotal: 244.90", "Tax: 24.49", "Total: 269.39"]
+    for n, text in enumerate(lines):
+        page.insert_text((72, 72 + 20 * n), text, fontsize=11, fontname="helv")
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def test_damaged_pdf_is_refused_and_harmless_repair_still_reads(tmp_path, monkeypatch):
+    """Acceptance defect: a truncated PDF (the first 45 % of a valid invoice) became a normal
+    partial result for review, its later lines silently missing. The parser repairs the cross-reference table, then finds the later
+    content streams missing; that is a damaged file, refused with its own reason. A PDF whose only
+    fault is a cross-reference table MuPDF rebuilds without losing anything is still read."""
+    from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, Sessions
+    from synwevo_server.app import create_app
+    import fitz
+
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", "session")
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    monkeypatch.setenv("SYNWEVO_SUITE_APPS", "extract")
+    monkeypatch.setenv("SYNWEVO_APP_URL", "http://workplace.testserver")
+    api = create_app(str(tmp_path / "data"), role="portal", start_jobs=False)
+    ident = api.state.identity
+    user = ident.create_user("extract-damage@example.test", "harbor lights guide the evening ferry home", status="active")
+    ident.store.execute("UPDATE users SET email_verified_at=1 WHERE id=?", (user["id"],))
+    ws = ident.create_workspace("Extract damaged PDF fixture", owner_id=user["id"])["id"]
+    raw, _ = Sessions(ident.store).create(user["id"], workspace_id=ws, amr="password")
+    csrf = {"X-Synwevo-CSRF": "fixture-csrf"}
+    good = _invoice_pdf(fitz)
+    # Cut points where the engine still opens the file and reads its first lines (the 45 % cut
+    # of this smaller fixture lands where it cannot open the file at all).
+    truncated = [good[: int(len(good) * share)] for share in (0.4, 0.55, 0.7)]
+    # Harmless repair: every byte offset shifted by a comment after the header, and no xref table.
+    shifted = good.replace(b"\n", b"\n% fixture: shifts every offset\n", 1)
+    shifted = shifted[: shifted.rfind(b"xref")] + b"%%EOF\n"
+    definition = {"fields": [
+        {"id": "number", "label": "Number", "rule": {"prefix": "Invoice No:"}},
+        {"id": "total", "label": "Total", "type": "decimal", "rule": {"prefix": "Total:"}},
+        {"id": "items", "label": "Items", "many": True, "rule": {"prefix": "Item:"}},
+    ]}
+    with TestClient(api, base_url="http://workplace.testserver") as client:
+        client.cookies.set(COOKIE_NAME, raw)
+        client.cookies.set(CSRF_COOKIE, "fixture-csrf")
+
+        def op(name, body):
+            response = client.post(f"/api/suite/ops/extract.{name}", headers=csrf, json={"workspace_id": ws, "input": body})
+            assert response.status_code == 200, response.text
+            return response.json()["output"]
+
+        template = op("template.create", {"title": "Damage fixture", "definition": definition})["id"]
+        op("template.publish", {"template_id": template, "draft_rev": 1})
+
+        def run(name, data):
+            uploaded = client.post("/api/suite/extract/files", params={"workspace_id": ws},
+                                   headers={**csrf, "Idempotency-Key": name}, files={"file": (name, data, "application/pdf")})
+            assert uploaded.status_code == 200, uploaded.text
+            tid = op("task.create", {"template_id": template, "version": 1, "file_id": uploaded.json()["id"]})["id"]
+            api.state.extract.tick()  # the real bounded parser child
+            return op("task.get", {"task_id": tid})
+
+        for n, data in enumerate(truncated):
+            damaged = run(f"invoice-truncated-{n}.pdf", data)
+            assert damaged["status"] == "failed" and damaged["error_code"] == "damaged_file", (n, damaged)
+            assert damaged["values"] is None and damaged["machine"] is None
+
+        repaired = run("invoice-repaired.pdf", shifted)
+        assert repaired["status"] == "waiting_input", repaired["error_code"]
+        assert repaired["values"]["number"]["value"] == "INV-2026-0417"
+        assert repaired["values"]["total"]["value"] == "269.39"
+        assert len(repaired["values"]["items"]["value"]) == 3
+
+        intact = run("invoice.pdf", good)
+        assert intact["status"] == "waiting_input" and intact["values"]["total"]["value"] == "269.39"

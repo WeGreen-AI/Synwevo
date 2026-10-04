@@ -109,6 +109,7 @@ export const extract = {
   "文字识别未完整完成": {"en": "Text recognition did not finish completely", "zh-Hant": "文字辨識未完整完成"},
   "文件无法解析，请检查格式或重新导出": {"en": "Cannot parse this file. Check its format or export it again.", "zh-Hant": "檔案無法解析，請檢查格式或重新匯出"},
   "请移除文件密码后重新上传": {"en": "Remove the file password and upload again", "zh-Hant": "請移除檔案密碼後重新上傳"},
+  "文件已损坏或不完整（可能被截断），没有从中取值；请用生成它的程序重新导出后重新上传": {"en": "The file is damaged or incomplete (possibly truncated), so no values were taken from it. Export it again from the program that created it and upload the new copy.", "zh-Hant": "檔案已損壞或不完整（可能被截斷），沒有從中取值；請用產生它的程式重新匯出後重新上傳"},
   "解析超时，请拆分文件后重试": {"en": "Parsing timed out. Split the file and retry.", "zh-Hant": "解析逾時，請拆分檔案後重試"},
   "解析结果不完整，请拆分文件后重试": {"en": "Parsing was incomplete. Split the file and retry.", "zh-Hant": "解析結果不完整，請拆分檔案後重試"},
   "匹配值过多，请缩小规则范围": {"en": "Too many matches. Narrow the rule.", "zh-Hant": "符合值過多，請縮小規則範圍"},

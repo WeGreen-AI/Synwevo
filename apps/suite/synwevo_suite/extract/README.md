@@ -57,7 +57,10 @@ causality depth. Consumers must de-duplicate event IDs and bind confirmed revisi
   bounding boxes or model confidence probabilities. Missing, ambiguous, conflicting,
   invalid and unverified values are distinct. All parser/file content stays untrusted data.
 - Text PDF ceiling: 200 pages; OCR ceiling: 20 pages. Known truncated reader results fail
-  explicitly. Further caps: 10,000 segments, 150,000 source characters, 2 MiB child result,
+  explicitly. A structurally damaged PDF fails with `damaged_file` and yields no values: the
+  reader reports a page it cannot load, a page content entry that is not a stream or, after
+  rebuilding a broken cross-reference table, a referenced object that is gone or the engine's
+  own lost-content diagnostics. A rebuild that loses nothing (wrong offsets, no table) is read. Further caps: 10,000 segments, 150,000 source characters, 2 MiB child result,
   200,000 field-result bytes, 2,000 rows and 100 columns per table. Long lines at the legacy
   reader's 500-character truncation ceiling are rejected conservatively.
 - The worker admits 200 pending tasks globally/20 per workspace, with at most two active

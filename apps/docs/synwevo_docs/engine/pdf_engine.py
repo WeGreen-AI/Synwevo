@@ -207,6 +207,72 @@ def inspect(data: bytes) -> dict:
         doc.close()
 
 
+#: What MuPDF says, while reading a file whose cross-reference table it had to rebuild, when the
+#: rebuilt file has lost content: a truncated or overwritten object, a content stream that is not
+#: there, a page tree it could not follow, stream data that ends early.
+_LOST_CONTENT = ("object is not a stream", "cannot load content stream", "missing 'endobj'",
+                 "page may not be correct", "page tree", "cannot load page", "cannot find object",
+                 "premature end", "unexpected eof", "truncated", "read error", "zlib", "flate")
+_REFERENCE = re.compile(r"\b(\d+)\s+\d+\s+R\b")
+
+
+def damage(data: bytes, max_pages: int) -> list[str]:
+    """Evidence that this PDF lost content, as short reasons; empty when there is none.
+
+    A file the engine opens is not therefore whole: MuPDF rebuilds a broken cross-reference table
+    from whatever objects it finds, so a truncated file opens and reads its first lines, and a
+    reader that trusts it hands on a partial result as if it were the document. Three kinds of
+    evidence count. Always: a page that cannot be loaded, a page content entry that is not a
+    stream. When the table had to be rebuilt: an object still referenced that is no longer there,
+    and MuPDF's own diagnostics while reading the pages (``_LOST_CONTENT``). A rebuild with none
+    of these — wrong offsets, no table, junk after the end — loses nothing and is not damage.
+
+    MuPDF's diagnostics are process-wide. Extract reads each file in its own child process; in a
+    shared process another file's diagnostics can only make an already rebuilt file look damaged,
+    never let a damaged one through. Only the full engine reports a rebuild (``pdfium``: none)."""
+    if ENGINE != "pymupdf":
+        return []
+    tools = pymupdf.TOOLS
+    tools.reset_mupdf_warnings()
+    doc = open_pdf(data)
+    try:
+        reasons: set[str] = set()
+        repaired = bool(getattr(doc, "is_repaired", False))
+        for index in range(min(doc.page_count, max_pages)):
+            try:
+                page = doc[index]
+                if any(not doc.xref_is_stream(x) for x in page.get_contents()):
+                    reasons.add("content_missing")
+                if repaired:
+                    page.get_text("text")       # reading is what makes MuPDF meet the missing parts
+            except Exception:  # noqa: BLE001 - a page the engine cannot load is the evidence itself
+                reasons.add("page_unreadable")
+        if repaired:
+            log = tools.mupdf_warnings().lower()
+            if any(sign in log for sign in _LOST_CONTENT):
+                reasons.add("repair_lost_content")
+            if _dangling(doc):
+                reasons.add("objects_missing")
+        return sorted(reasons)
+    finally:
+        doc.close()
+
+
+def _dangling(doc) -> bool:
+    """True when an object refers to one that the rebuilt file no longer has."""
+    count = doc.xref_length()
+    for xref in range(1, count):
+        try:
+            text = doc.xref_object(xref, compressed=False) or ""
+        except Exception:  # noqa: BLE001 - an object the engine cannot print is not there either
+            return True
+        for match in _REFERENCE.finditer(text):
+            target = int(match.group(1))
+            if target <= 0 or target >= count or (doc.xref_object(target) or "null").strip() == "null":
+                return True
+    return False
+
+
 def _inspect(doc) -> dict:
     pages = []
     kinds = set()

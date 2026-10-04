@@ -137,6 +137,13 @@ class DocumentIngest:
         meta = pe.inspect(data)
         pages = meta["pages"]
         out["pages"] = len(pages)
+        # A damaged file still opens and reads its first lines. What it yields is not the
+        # document, so nothing is read from it (`damaged` names the evidence for the caller).
+        damaged = pe.damage(data, MAX_TEXT_PAGES)
+        if damaged:
+            out["status"], out["damaged"] = "error", damaged
+            out["error"] = "PDF 文件已损坏或不完整（可能被截断），部分内容无法读取；请用生成它的程序重新导出后再上传"
+            return
         if len(pages) > MAX_TEXT_PAGES:
             out["notes"].append(f"只读取前 {MAX_TEXT_PAGES} 页")
         scanned = [p["index"] for p in pages[:MAX_TEXT_PAGES] if p["kind"] in ("scanned", "mixed")]
