@@ -66,8 +66,9 @@
 .tables-history del { color: var(--text-2); }
 .tables-history ins { text-decoration: none; color: var(--text); }
 @media (max-width: 720px) {
-  .tables-schema { grid-template-columns: 1fr; }
-  .tables-schema aside { border-right: 0; padding-right: 0; }
+  /* minmax(0, …): a bare 1fr has an automatic minimum, and the horizontal field list below would widen the page to its full length. */
+  .tables-schema { grid-template-columns: minmax(0, 1fr); }
+  .tables-schema aside { border-right: 0; padding-right: 0; min-width: 0; }
   .tables-schema aside ul { display: flex; overflow-x: auto; gap: var(--sp-2); }
   .tables-field-nav { min-width: 140px; }
   .tables-filter { grid-template-columns: 1fr 1fr; }
