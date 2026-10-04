@@ -58,15 +58,16 @@ export function Topbar({ title, children, product = "Account", mobileNavigation 
   const isAdmin = holdsPlatformAccess(me);
   const canApi = isAdmin && !!me?.permissions?.includes("api_platform.manage");
   const current = (path: string) => (pathname === path || pathname.startsWith(path + "/") ? "page" : undefined);
-  const items = (
+  // Icons where the entries stack (the drawer); the bar itself stays text, as it fits one row that way.
+  const items = (icons: boolean) => (
     <>
-      <a className="btn ghost sm" href={link("/account")} aria-current={pathname === "/account" ? "page" : undefined}><AppIcon id="/account" />{t("账户与安全")}</a>
-      <a className="btn ghost sm" href={link("/organizations")} aria-current={current("/organizations")}>{t("组织")}</a>
+      <a className="btn ghost sm" href={link("/account")} aria-current={pathname === "/account" ? "page" : undefined}>{icons && <AppIcon id="/account" />}{t("账户与安全")}</a>
+      <a className="btn ghost sm" href={link("/organizations")} aria-current={current("/organizations")}>{icons && <span className="app-icon-space" aria-hidden="true" />}{t("组织")}</a>
       {/* Conversations are Synwevo Message's (CI-66): the registry address through its sign-in
           start; the account origin's own /messages (a server redirect) only while it is not registered. */}
       <MessagesLink href={messagesHref(state, { lang: locale })} />
-      {isAdmin && product !== "Admin" && <a className="btn ghost sm" href={link("/admin")} aria-current={pathname === "/admin" ? "page" : undefined}><AppIcon id="/admin" />{t("平台管理")}</a>}
-      {canApi && product !== "Admin" && <a className="btn ghost sm" href={link("/admin/api-platform")} aria-current={current("/admin/api-platform")}><AppIcon id="/admin/api-platform" />{t("API 管理")}</a>}
+      {isAdmin && product !== "Admin" && <a className="btn ghost sm" href={link("/admin")} aria-current={pathname === "/admin" ? "page" : undefined}>{icons && <AppIcon id="/admin" />}{t("平台管理")}</a>}
+      {canApi && product !== "Admin" && <a className="btn ghost sm" href={link("/admin/api-platform")} aria-current={current("/admin/api-platform")}>{icons && <AppIcon id="/admin/api-platform" />}{t("API 管理")}</a>}
     </>
   );
   const signOutButton = (
@@ -79,8 +80,8 @@ export function Topbar({ title, children, product = "Account", mobileNavigation 
   return <><header className="topbar wrap acct-topbar">
     <Brand href={product === "Admin" ? link("/admin") : platformHandoffUrl(state?.portal_url, { next: "/workspace", lang: locale }) ?? link("/")} product={product} label={t(product === "Admin" ? "管理员中心" : "返回工作空间")} markBelow={720} />
     <nav className="acct-back row gap4" aria-label={t("返回")}>
-      {workspaceUrl && <a className="btn ghost sm acct-back-link acct-back-workspace" href={workspaceUrl}><AppIcon id="platform" />{t(narrow ? "工作空间" : "返回工作空间")}</a>}
-      {appBack && <a className="btn ghost sm acct-back-link" href={link(appBack.url)} title={appBack.workspace_name ? t("回到「{name}」继续之前的任务", { name: appBack.workspace_name }) : undefined}><AppIcon id={appBack.id} />{backLabel}</a>}
+      {workspaceUrl && <a className="btn ghost sm acct-back-link acct-back-workspace" href={workspaceUrl}>{!narrow && <AppIcon id="platform" />}{t(narrow ? "工作空间" : "返回工作空间")}</a>}
+      {appBack && <a className="btn ghost sm acct-back-link" href={link(appBack.url)} title={appBack.workspace_name ? t("回到「{name}」继续之前的任务", { name: appBack.workspace_name }) : undefined}>{!narrow && <AppIcon id={appBack.id} />}{backLabel}</a>}
       {parent && <a className="btn ghost sm acct-back-link acct-back-parent" href={link(parent.href)}>← {t(parent.label)}</a>}
     </nav>
     <b className="grow acct-title">{title}</b>{children}
@@ -92,7 +93,7 @@ export function Topbar({ title, children, product = "Account", mobileNavigation 
           {workspaceUrl && <a className="btn ghost" href={workspaceUrl}><AppIcon id="platform" />{t("返回工作空间")}</a>}
           {appBack && <a className="btn ghost" href={link(appBack.url)}><AppIcon id={appBack.id} />{backLabel}</a>}
           {mobileNavigation && <>{mobileNavigation}<hr /></>}
-          {items}
+          {items(true)}
           <hr />
           <div className="row gap8 wrap" style={{ padding: "4px 8px" }}><NotificationBell preferencesHref={link("/account#notifications")} /><LanguageMenu /></div>
           {signOutButton}
@@ -100,7 +101,7 @@ export function Topbar({ title, children, product = "Account", mobileNavigation 
       </>
     ) : (
       <nav className="row wrap gap4" aria-label={t("账户导航")}>
-        {items}
+        {items(false)}
         <NotificationBell preferencesHref={link("/account#notifications")} />
         <LanguageMenu />
         {signOutButton}

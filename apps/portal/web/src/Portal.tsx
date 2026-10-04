@@ -169,7 +169,7 @@ export function Portal() {
     ...(canManageApi ? [{ label: <span className="app-identity"><AppIcon id="/admin/api-platform" />{t("API 管理")}</span>, onSelect: () => window.location.assign(accountLink(account, "/admin/api-platform")) }] : []),
     // Leaving from the platform home itself: the shared sign-out ends the platform session (the
     // portal is a relying party) and returns to this origin's /signed-out page.
-    { label: t("退出登录"), onSelect: () => void session.signOut().catch(() => undefined) },
+    { label: <span className="app-identity"><span className="app-icon-space" aria-hidden="true" />{t("退出登录")}</span>, onSelect: () => void session.signOut().catch(() => undefined) },
   ];
   return <Shell right={narrow ? <Menu ariaLabel={t("账户菜单")} buttonClass="btn ghost pt-account-btn" items={accountItems}
       trigger={<><span className="pt-avatar" aria-hidden="true">{(me.display_name || me.email).slice(0, 1).toUpperCase()}</span>{t("账户")}</>} /> : <div className="pt-account">
