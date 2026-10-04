@@ -177,3 +177,72 @@ def test_versions_published_before_the_upgrade_keep_the_description_shown(world)
         schema.migrate(t)
         schema.migrate(t)                                   # idempotent: a second start changes nothing
     assert w.store.one("SELECT description FROM form_versions WHERE form_id=?", (form["id"],))["description"] == NOTE
+
+
+# ---------------------------------------------------------------- second review round (R2)
+
+def anonymous_post(w: World, path: str, body: dict):
+    jar = dict(w.suite.cookies)
+    w.suite.cookies.clear()
+    try:
+        return w.suite.post(path, headers={"X-Synwevo-Filler": "g" * 32, **CSRF}, json=body)
+    finally:
+        for k, v in jar.items():
+            w.suite.cookies.set(k, v)
+
+
+def test_a_pinned_public_link_answers_only_for_the_version_it_serves(world):
+    """R2-F1: publishing behind a pinned link is not an outward send only if nobody holding the link
+    can reach the new version: naming it on submit used to return its rule messages."""
+    w = world
+    form = exposed_form(w, pinned=True)
+    carried = {**DEFINITION,
+               "rules": [{"id": "r_one", "field": "f_amount01", "op": "gt", "other": "f_amount01",
+                          "message": {"$ref": "steps.read.forms.0.title"}}],
+               "confirmation": {"$ref": "steps.read.forms.0.title"}}
+    steps = in_small(w, {"id": "edit", "kind": "call", "operation": "forms.form.update_draft", "workspace_id": None,
+                         "input": {"form_id": form["id"], "draft_rev": form["rev"], "definition": carried}}, publish(form))
+    assert w.run(steps, "pinned-carry") == ("succeeded", None, "end")
+    base = f"/api/suite/public/forms/r/{form['public']}/submit"
+    for n, answers in enumerate((good_answers(), {**good_answers(), "f_amount01": "1"})):
+        r = anonymous_post(w, base, {"version": 2, "answers": answers, "idempotency_key": f"exposure-v2-{n:04d}"})
+        assert r.status_code == 409 and r.json()["error"] == "form_version_changed", r.text
+        assert SECRET not in r.text
+    ok = anonymous_post(w, base, {"version": 1, "answers": good_answers(), "idempotency_key": "exposure-v1-0001"})
+    assert ok.status_code in (200, 201) and SECRET not in ok.text, ok.text
+
+
+def test_a_request_is_named_after_the_version_it_pins(world):
+    """R2-F5: the request page and the recipient's notification used the editors' draft title."""
+    w = world
+    form = exposed_form(w)
+    assert w.run(in_small(w, edit(form)), "draft-title") == ("succeeded", None, "end")
+    req = ws_op(w.suite, "forms.request.create", w.small,
+                {"form_id": form["id"], "version": 1, "recipient": {"user_id": w.p.uid("out")}})["output"]
+    shown = page(w, token_of(req["url"]))
+    assert shown["request"]["title"] == ORIGINAL and shown["form"]["title"] == ORIGINAL
+    told = w.store.all("SELECT params FROM notifications WHERE user_id=? AND kind='forms.request.assigned'", (w.p.uid("out"),))
+    assert len(told) == 1 and ORIGINAL in str(told[0]["params"]) and SECRET not in str(told[0]["params"])
+
+
+def test_links_of_a_frozen_organizations_workspace_close(world):
+    """R2-F8: the organization gate closed every operation of its workspaces, but not their links."""
+    from synwevo_core.organizations import Organizations
+    w = world
+    orgs = Organizations(w.store, w.p.ident)
+    created = orgs.create(w.alice, "Fixture Org", "Fixture Org main", "fixture-exposure-org")
+    oid, main = created["organization"]["id"], created["workspace"]["id"]
+    w.suite.sign_in("alice")
+    form = ws_op(w.suite, "forms.form.create", main, {"title": ORIGINAL, "definition": DEFINITION})["output"]
+    ws_op(w.suite, "forms.form.publish", main, {"form_id": form["id"], "draft_rev": form["draft_rev"]})
+    token = token_of(ws_op(w.suite, "forms.public_link.set", main, {"form_id": form["id"], "enabled": True})["output"]["url"])
+    assert page(w, token)["form"]["title"] == ORIGINAL
+    orgs.transition(oid, w.alice, "freeze", reason="Fixture lifecycle check")
+    jar = dict(w.suite.cookies)
+    w.suite.cookies.clear()
+    try:
+        r = w.suite.get(f"/api/suite/public/forms/r/{token}", headers={"X-Synwevo-Filler": "f" * 32, **CSRF})
+    finally:
+        for k, v in jar.items():
+            w.suite.cookies.set(k, v)
+    assert r.status_code == 410 and r.json()["error"] == "link_unavailable"

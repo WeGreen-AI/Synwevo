@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field as F
 
 from synwevo_core.capabilities import canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
+from synwevo_core.organizations import workspace_access_failure
 from synwevo_core.store import new_id, now
 
 from .definition import ACCEPTABLE, Definition, check_answers
@@ -103,7 +104,8 @@ class Filling:
             form = self.store.one("SELECT * FROM forms WHERE id=?", (req["form_id"],))
         req = self.forms._expire_if_due(req)
         ws = self.forms.identity.get_workspace(req["workspace_id"])
-        if not ws or ws["status"] != "active":
+        if not ws or ws["status"] != "active" or workspace_access_failure(self.store, req["workspace_id"]):
+            # A frozen or deleted organization closes its workspaces' links like their pages.
             raise ServiceError(410, "link_unavailable", "这个表单所在的工作空间当前不可用")
         user = getattr(request.state, "user", None)
         if req["kind"] == "personal":
@@ -123,7 +125,11 @@ class Filling:
     def _version_for(self, ctx: dict, wanted: int | None = None) -> dict:
         req, form = ctx["request"], ctx["form"]
         if req["kind"] == "public":
-            version = wanted or form["public_version"] or form["published_version"]
+            # Only the version the link serves: naming another one would show a version (its rule
+            # messages, its confirmation) that was published behind a pinned link to nobody.
+            version = form["public_version"] or form["published_version"]
+            if wanted is not None and wanted != version:
+                raise ServiceError(409, "form_version_changed", "表单已更新，请刷新页面后填写新版本")
         else:
             version = req["form_version"]
             if wanted is not None and wanted != version:

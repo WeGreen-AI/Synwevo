@@ -344,7 +344,8 @@ class Forms:
             "recipient_name,require_sign_in,token_hash,token_sealed,prefill_json,submission_policy,due_at,status,"
             "correlation_id,source_json,created_by,created_at,updated_at) "
             "VALUES (?,?,?,?,'personal',?,?,?,?,?,?,?,?,?,?,'open',?,?,?,?,?)",
-            (rid, call.workspace_id, form_id, version, title or row["title"], email,
+            # Named after the version it pins, never the editors' draft: the recipient is outside.
+            (rid, call.workspace_id, form_id, version, title or self._version(form_id, version)["title"], email,
              target_user["id"] if target_user else None, name, int(bool(require_sign_in)), digest, seal_,
              canonical(clean), policy, due_at, call.correlation_id, canonical(source), call.user_id, ts, ts))
         call.touches("form_request", rid)
@@ -353,8 +354,9 @@ class Forms:
                         "recipient_user_id": target_user["id"] if target_user else None})
         if target_user and target_user["id"] != call.user_id:
             requester = call.user.get("display_name") or call.user["email"]
+            shown = self._version(form_id, version)["title"]
             self.store.after_commit(lambda: self._notify(
-                target_user["id"], "forms.request.assigned", {"requester": requester, "form": row["title"]},
+                target_user["id"], "forms.request.assigned", {"requester": requester, "form": shown},
                 call.workspace_id, "form_request", rid, f"/forms/fill/{token}", actionable=True,
                 dedupe=f"forms.request.assigned:{rid}"))
         return {"request_id": rid, "form_id": form_id, "version": version, "status": "open",
