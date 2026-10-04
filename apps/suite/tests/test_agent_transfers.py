@@ -353,3 +353,67 @@ def test_a_sibling_branch_does_not_publish_what_another_branch_carried(governed)
     assert [b["source"] for b in json.loads(card["transfer_json"])] == [g.people.a], "the card names where the draft came from"
     assert out["status"] == "failed" and out["error"]["code"] == "transfer_audience_external"
     assert page(w, token_of(link["url"]))["form"]["title"] == "Fixture travel claim"
+
+
+# ---------------------------------------------------------------- third review round (R3)
+
+def test_a_flow_the_conversation_started_keeps_its_sources_for_a_later_write(governed):
+    """R3-DF-3: the Agent started Alice's flow, which copied A's form title into her personal
+    workspace (A's ``audience`` allows that). Later in the same conversation the Agent read the
+    personal workspace and wrote the copy into ``wide``, where Oz is not a member of A: asked only
+    for the personal workspace. Had the Agent copied it itself, the write would be asked for A."""
+    from .test_data_flow_runs import SECRET, TITLE, World, create as flow_create, read as flow_read
+    g = governed
+    w = World(g.client)
+    g.client.sign_in("alice")
+    policy(g, w.personal, "platform")
+    policy(g, w.wide, "platform")
+    copier = w.flow([flow_read(g.people.a), flow_create("hop", w.personal, TITLE)], "copier")
+    start = call("run_operation", {"operation": "agent.flow.start",
+                                   "input": {"flow_id": copier, "version": 1, "idempotency_key": "fixture-r3-df3"}},
+                 tid="start")
+    cid, turn = begin(g, [start, say("started")])
+    assert advance(g, turn)["status"] == "waiting_confirmation"
+    _, out = _confirm_pending(g, turn)
+    assert out["status"] == "succeeded"
+    assert advance(g, turn)["status"] == "succeeded"
+    w.flows.tick()
+    assert w.titles(w.personal) == [SECRET]           # A's title reached the personal workspace, legally
+    _, later = begin(g, [read(w.personal, "read-copy"), create(w.wide, SECRET, "land"), say("stopped")], conversation=cid)
+    advance(g, later)
+    assert calls(g, later)["read-copy"] == ("succeeded", None)
+    assert calls(g, later)["land"] == ("failed", "transfer_audience_denied")
+    assert w.titles(w.wide) == []
+    # Writing back where the copy already is carries nothing new.
+    _, again = begin(g, [read(w.personal, "reread"), create(w.personal, "Fixture note for myself", "keep"), say("ok")],
+                     conversation=cid)
+    advance(g, again)
+    assert calls(g, again)["keep"] == ("awaiting_confirmation", None)
+
+
+def test_a_flow_an_agent_write_started_keeps_its_sources_for_a_later_write(governed):
+    """R3-DF-3, the same through an event: the Agent published a form in the personal workspace
+    (nothing read), and Alice's trigger on that event copied A's title next to it."""
+    from .test_data_flow_runs import SECRET, TITLE, World, create as flow_create, read as flow_read
+    from .test_forms import DEFINITION
+    g = governed
+    w = World(g.client)
+    g.client.sign_in("alice")
+    policy(g, w.personal, "platform")
+    policy(g, w.wide, "platform")
+    w.on_event([flow_read(g.people.a), flow_create("hop", w.personal, TITLE)], "on-publish", w.personal,
+               tools=["forms.form.list", "forms.form.create"], workspaces=[g.people.a, w.personal])
+    form = op(g.client, "forms.form.create", {"title": "Fixture empty", "definition": DEFINITION}, ws=w.personal)["output"]
+    pub = call("run_operation", {"operation": "forms.form.publish", "workspace_id": w.personal,
+                                 "input": {"form_id": form["id"], "draft_rev": 1}}, tid="pub")
+    cid, turn = begin(g, [pub, say("published")])
+    assert advance(g, turn)["status"] == "waiting_confirmation"
+    assert _confirm_pending(g, turn)[1]["status"] == "succeeded"
+    advance(g, turn)
+    for _ in range(3):
+        w.flows.tick()
+    assert SECRET in w.titles(w.personal)
+    _, later = begin(g, [read(w.personal, "read-copy"), create(w.wide, SECRET, "land"), say("stopped")], conversation=cid)
+    advance(g, later)
+    assert calls(g, later)["land"] == ("failed", "transfer_audience_denied")
+    assert w.titles(w.wide) == []

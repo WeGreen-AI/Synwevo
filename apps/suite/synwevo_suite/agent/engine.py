@@ -66,6 +66,11 @@ def _j(v, default=None):
         return default
 
 
+def _marks(items) -> str:
+    """Placeholders for an ``IN (...)`` list; one that matches nothing when ``items`` is empty."""
+    return ",".join("?" for _ in items) or "NULL"
+
+
 
 class _Reissue(Exception):
     """A confirmation whose basis changed: the card is shown again with the new one."""
@@ -983,10 +988,15 @@ class Agent:
         """Other workspaces whose content writes of this conversation carried into ``workspaces``
         (their recorded ``transfer_from``). Every branch: what a write left in a workspace is
         that workspace's state, which a sibling branch reads and writes on just the same. A write
-        whose outcome is not known yet counts: it may have happened."""
+        whose outcome is not known yet counts: it may have happened.
+
+        A flow the conversation started or resumed writes on its behalf after the call returned,
+        and so does a flow that an event of one of its writes started: what the writes of those
+        chains of runs (one correlation each, Flows._sources) carried into ``workspaces`` counts
+        too. Otherwise reading back what such a flow copied would launder its sources."""
         if not workspaces:
             return set()
-        found = set()
+        found, chains, flow_calls, resumed = set(), set(), [], []
         for c in self.store.all(
                 "SELECT c.operation, c.workspace_id, c.input_json, c.run_id FROM agent_tool_calls c "
                 "WHERE c.conversation_id=? AND c.run_id IS NOT NULL AND c.status IN ('succeeded','unknown')",
@@ -994,10 +1004,32 @@ class Agent:
             op = self.caps.registry.get(c["operation"])
             if not op or op.side_effect == "none":
                 continue
-            if self._result_workspace(op, c["workspace_id"], _j(c["input_json"], {})) not in workspaces:
+            run = self.store.one("SELECT delegation, correlation_id, object_kind, object_id FROM op_runs WHERE id=?",
+                                 (c["run_id"],))
+            if not run:
                 continue
-            run = self.store.one("SELECT delegation FROM op_runs WHERE id=?", (c["run_id"],))
-            found.update((_j(run["delegation"], {}) or {}).get("transfer_from") or () if run else ())
+            chains.add(run["correlation_id"])
+            if op.id == "agent.flow.start":
+                flow_calls.append(c["run_id"])
+            elif op.id == "agent.flow.resume" and run["object_kind"] == "flow_run" and run["object_id"]:
+                resumed.append(run["object_id"])
+            if self._result_workspace(op, c["workspace_id"], _j(c["input_json"], {})) in workspaces:
+                found.update((_j(run["delegation"], {}) or {}).get("transfer_from") or ())
+        if flow_calls or resumed:
+            # A run the person starts begins its own chain (agent.flow.start names its operation
+            # run as the parent, not its correlation).
+            chains.update(r["correlation_id"] for r in self.store.all(
+                f"SELECT correlation_id FROM flow_runs WHERE user_id=? AND (parent_run_id IN ({_marks(flow_calls)}) "
+                f"OR id IN ({_marks(resumed)}))", (t["user_id"], *flow_calls, *resumed)))
+        if chains:
+            for r in self.store.all(
+                    f"SELECT op, workspace_id, input, delegation FROM op_runs WHERE user_id=? AND via='flow' "
+                    f"AND correlation_id IN ({_marks(chains)}) AND delegation LIKE '%transfer_from%' "
+                    "AND status!='failed'", (t["user_id"], *chains)):
+                op = self.caps.registry.get(r["op"])
+                if op and op.side_effect != "none" and \
+                        self._result_workspace(op, r["workspace_id"], _j(r["input"], {})) in workspaces:
+                    found.update((_j(r["delegation"], {}) or {}).get("transfer_from") or ())
         return found - workspaces
 
     def _update_call(self, t: dict, call_id: str, status: str, *, result=None, for_model=None, error=None, run_id=None) -> None:
