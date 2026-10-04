@@ -50,6 +50,8 @@ SEALED_COLUMNS = (
     ("totp_secrets", "user_id", "secret_enc", "mfa-seed"),
     ("webhook_subscriptions", "id", "secret_enc", "webhook-secret"),
     ("webhook_subscriptions", "id", "secret_prev_enc", "webhook-secret"),
+    ("suite_webhook_subscriptions", "id", "secret_enc", "webhook-secret"),
+    ("suite_webhook_subscriptions", "id", "secret_prev_enc", "webhook-secret"),
     ("forms", "id", "public_token_sealed", "forms-fill-link"),
     ("form_requests", "id", "token_sealed", "forms-fill-link"),
     ("agent_settings", "user_id", "personal_key_sealed", "agent-provider-key"),

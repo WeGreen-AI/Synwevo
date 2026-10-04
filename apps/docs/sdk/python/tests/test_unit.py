@@ -111,3 +111,20 @@ class UnitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+def test_a_verifier_refuses_empty_or_short_key_material():
+    """CR-049 WH-4: an unset variable or "whsec_" alone used to verify with an empty HMAC key, so a
+    signature anyone can make was accepted."""
+    import time as _time
+    from synwevo_docs_sdk.webhooks import verify_webhook, WebhookVerificationError
+    body, ts = b'{"type":"fixture"}', str(int(_time.time()))
+    forged = "v1," + base64.b64encode(hmac.new(b"", f"msg_1.{ts}.".encode() + body, hashlib.sha256).digest()).decode()
+    headers = {"webhook-id": "msg_1", "webhook-timestamp": ts, "webhook-signature": forged}
+    for weak in ("", "whsec_", b"", ["whsec_"], "short", "whsec_" + base64.b64encode(b"x" * 15).decode()):
+        try:
+            verify_webhook(headers, body, weak)
+        except WebhookVerificationError:
+            continue
+        raise AssertionError(f"accepted weak secret {weak!r}")

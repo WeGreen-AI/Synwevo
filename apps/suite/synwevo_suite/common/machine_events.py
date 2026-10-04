@@ -208,6 +208,37 @@ def _item(row: dict, feed: EventFeed, runs: set[str]) -> dict:
             "correlation_id": row["correlation_id"] if own else None}
 
 
+def _usable(caps, p: dict, held: dict[str, EventFeed]) -> dict[str, EventFeed]:
+    """Of the applications whose read scope the caller holds, the ones its person can still read in
+    the workspace. One they lost is simply absent."""
+    usable = {}
+    for app, declared in sorted(held.items()):
+        try:
+            caps.check_workspace(p["user_id"], app, p["tenant"], "read")
+        except ServiceError:
+            continue
+        usable[app] = declared
+    return usable
+
+
+def visible_items(caps, p: dict, rows: list[dict], *, match=None) -> list[tuple[dict, dict]]:
+    """Of these rows of the event log, the ones this caller may be told about now, each with the
+    item the feed would serve for it — the feed's whole decision, for whoever pushes the same events
+    instead of waiting to be asked (signed webhooks). `p` needs what a credential says of itself:
+    ``tenant``, ``client_id``, ``user_id`` and the ``scopes`` it holds now; `match` narrows by type."""
+    served = feeds(caps.registry)
+    held = {app: f for app, f in served.items() if f"{app}.read" in (p.get("scopes") or ())}
+    usable = _usable(caps, p, held)
+    names = {t.type for f in usable.values() for t in f.types if match is None or match(t.type)}
+    rows = [r for r in rows if r.get("workspace_id") == p["tenant"]]
+    for r in rows:
+        r["data"] = _data(r)
+    shown, _ = _shown(caps, p, usable, names, rows)
+    picked = [r for r in rows if r["id"] in shown]
+    runs = _own(caps.store, p, (r["run_id"] for r in picked))
+    return [(r, _item(r, usable[r["app"]], runs)) for r in picked]
+
+
 # --------------------------------------------------------------------------------- the feed
 def feed(caps, p: dict, *, cursor: str | None = None, types: str | None = None, limit: int | None = None,
          start: str | None = None) -> dict:
@@ -256,14 +287,7 @@ def feed(caps, p: dict, *, cursor: str | None = None, types: str | None = None, 
     else:
         position = _before(store, started - RETENTION_S, top)
 
-    # The applications this person can still read here. One they lost is simply absent.
-    usable = {}
-    for app, declared in sorted(held.items()):
-        try:
-            caps.check_workspace(p["user_id"], app, p["tenant"], "read")
-        except ServiceError:
-            continue
-        usable[app] = declared
+    usable = _usable(caps, p, held)
     names = {t.type for f in usable.values() for t in f.types if wanted is None or t.type in wanted}
 
     picked, floor, drained, scanned, checked = [], started, not names, 0, 0

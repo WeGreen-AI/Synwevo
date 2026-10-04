@@ -173,6 +173,32 @@ def test_a_hanging_resolver_counts_against_the_timeout(hub, monkeypatch):
     assert row["status"] == "pending" and row["attempts"] == 1 and "无法解析" in row["last_error"]
 
 
+def test_no_free_resolver_is_an_unresolved_host_not_the_receivers_timeout(hub, monkeypatch):
+    """Every resolver slot of the process is held by lookups that have not returned. The attempt
+    waits its whole deadline for one, and what it records is that the host was not resolved —
+    the receiver was never reached, so it did not time out."""
+    from synwevo_core import webhook_delivery
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_TIMEOUT_S", "1")
+    rx = hub.receiver()
+    sub = hub.create(rx.url, events=["*"])
+    d = hub.dispatcher()
+    fixture_event(hub.store, "default")
+    # TEST FIXTURE: the real pool, emptied. Every slot — a lookup an earlier test left running
+    # gives its own back when it returns, and is waited for rather than left to free one mid-test.
+    held, patience = 0, time.monotonic() + 10
+    while held < webhook_delivery.DNS_SLOTS and webhook_delivery._DNS_SLOTS.acquire(timeout=max(0.0, patience - time.monotonic())):
+        held += 1
+    try:
+        assert held == webhook_delivery.DNS_SLOTS
+        d.run_once()
+    finally:
+        for _ in range(held):
+            webhook_delivery._DNS_SLOTS.release()
+    assert rx.received == []
+    row = sub_rows(hub.store, sub["id"])[0]
+    assert row["status"] == "pending" and row["attempts"] == 1 and "无法解析" in row["last_error"]
+
+
 def test_a_send_checks_it_still_holds_the_claim(hub):
     rx = hub.receiver()
     sub = hub.create(rx.url, events=["*"])

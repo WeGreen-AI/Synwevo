@@ -204,7 +204,7 @@ export function misuse(client: Client): void {
 
 // ---------------------------------------------------------------- business applications
 import { SuiteClient, UserToken, SUITE_RESOURCE, type RotatedTokens, type SuiteEvent, type SuiteEventPage,
-  type SuiteResult, type SuiteRun } from '@synwevo/docs-sdk';
+  type SuiteResult, type SuiteRun, type SuiteWebhook, type SuiteWebhookDelivery, type SuiteWebhookEvent } from '@synwevo/docs-sdk';
 
 export async function suiteBoundary(stored: { refreshToken: string }, save: (t: RotatedTokens) => Promise<void>): Promise<string[]> {
   const token = new UserToken({ refreshToken: stored.refreshToken, clientId: 'crm-sync', clientSecret: 'secret',
@@ -252,6 +252,31 @@ export async function suiteEvents(suite: SuiteClient, saved: string | undefined,
   await suite.eventsPage({ start: 'yesterday' });
   console.log(more);
   return opened;
+}
+
+export async function suiteWebhooks(suite: SuiteClient, keep: (secret: string) => Promise<void>, raw: string): Promise<string> {
+  const made = await suite.createWebhook({ url: 'https://hooks.example.com/synwevo', events: ['tables.*', 'forms.submission.created'] });
+  await keep(made.secret);
+  const read: SuiteWebhook = await suite.getWebhook(made.id);
+  // @ts-expect-error The secret is only in the answer to create and rotate.
+  void read.secret;
+  const changed = await suite.updateWebhook(made.id, { events: ['*'] }, { version: read.version });
+  const state: 'active' | 'paused' | 'disabled' = changed.status;
+  const rotated = await suite.rotateWebhookSecret(made.id, { overlapS: 3600 });
+  await keep(rotated.secret);
+  const ping: SuiteWebhookDelivery = await suite.pingWebhook(made.id);
+  const log = await suite.webhookDeliveries(made.id, { status: 'failed', limit: 20 });
+  for (const d of log.items) if (d.status === 'failed') await suite.redeliverWebhook(made.id, d.id);
+  // @ts-expect-error A delivery is pending, delivered, failed or dropped.
+  await suite.webhookDeliveries(made.id, { status: 'sent' });
+  // @ts-expect-error events is a list.
+  await suite.createWebhook({ url: 'https://hooks.example.com/x', events: 'tables.*' });
+  const body = JSON.parse(raw) as SuiteWebhookEvent;
+  const where = body.object ? `${body.object.kind}:${body.object.id}` : 'ping';
+  // @ts-expect-error A delivery never carries the record's data.
+  void body.data;
+  await suite.deleteWebhook(made.id);
+  return `${state}:${ping.last_code}:${where}:${body.workspace_id}`;
 }
 
 export async function suiteFiles(suite: SuiteClient, path: string): Promise<number> {

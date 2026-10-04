@@ -17,7 +17,7 @@ from synwevo_core.capabilities import RUN_STATES, TERMINAL_STATES, Operation, ca
 from synwevo_core.http import SUITE_V1
 from synwevo_core.oidc import SUITE_API_SCOPES, suite_resource
 
-from . import machine_events
+from . import machine_events, machine_webhooks
 from .machine import MAX_CALLER_KEY, idempotency_rule, machine_operations
 
 VERSION = "1.0.0"
@@ -43,6 +43,11 @@ SCOPE_SUMMARY = {
 _ERRORS = (("400", "Bad Request"), ("401", "Unauthorized"), ("403", "Forbidden"), ("404", "Not Found"),
            ("409", "Conflict"), ("422", "Unprocessable Content"), ("429", "Too Many Requests"),
            ("500", "Internal Server Error"))
+#: Not one of the refusals any operation may give: only the routes that list it answer it.
+_UNAVAILABLE = ("503", "Service Unavailable")
+_UNAVAILABLE_MEANS = ("Service Unavailable: journal_unavailable. A change that takes something back (a pause, another "
+                      "address, another secret, a removal) is recorded durably before it is made; the record could not "
+                      "be written, so nothing was changed. Repeat the call.")
 
 
 def _ref(name: str) -> dict:
@@ -73,7 +78,8 @@ class _Schemas:
         return schema
 
 
-_ERROR_NAMES = {code: "".join(word.capitalize() for word in description.split()) for code, description in _ERRORS}
+_ERROR_NAMES = {code: "".join(word.capitalize() for word in description.split())
+                for code, description in (*_ERRORS, _UNAVAILABLE)}
 
 
 def _headers(code: str) -> dict:
@@ -88,14 +94,15 @@ def _headers(code: str) -> dict:
 
 def _errors(codes=None) -> dict:
     """Every refusal has the same two bodies; said once, under components."""
-    return {code: {"$ref": f"#/components/responses/{_ERROR_NAMES[code]}"} for code, _ in _ERRORS
-            if codes is None or code in codes}
+    return {code: {"$ref": f"#/components/responses/{_ERROR_NAMES[code]}"}
+            for code, _ in (_ERRORS if codes is None else (*_ERRORS, _UNAVAILABLE)) if codes is None or code in codes}
 
 
 def _error_responses() -> dict:
     return {_ERROR_NAMES[code]: {"description": description, "headers": _headers(code), "content": {
         "application/json": {"schema": _ref("SuiteError")},
-        "application/problem+json": {"schema": _ref("SuiteProblem")}}} for code, description in _ERRORS}
+        "application/problem+json": {"schema": _ref("SuiteProblem")}}}
+        for code, description in (*_ERRORS, (_UNAVAILABLE[0], _UNAVAILABLE_MEANS))}
 
 
 def _common(operation: dict, *, scopes: list[str]) -> dict:
@@ -209,6 +216,178 @@ def _file_route(app: str, path: str, name: str, scope: str, summary: str, kind: 
     return _common(out, scopes=[scope])
 
 
+#: Signed webhooks: (method, path under /webhooks/subscriptions, operationId, summary, request body
+#: schema, response schema, success status, extra parameters).
+_SUB = [{"name": "sid", "in": "path", "required": True, "schema": {"type": "string"}}]
+_DEL = _SUB + [{"name": "did", "in": "path", "required": True, "schema": {"type": "string"}}]
+WEBHOOK_ROUTES = (
+    ("post", "", "webhooks.subscription.create",
+     "Subscribe an https endpoint to the events this credential may read. The signing secret is in this answer "
+     "and never again. The grant must be renewable (offline_access); one subscription per address, so a second "
+     "create for the same address is refused with 409 subscription_exists naming the first",
+     "WebhookCreate", "WebhookSubscriptionWithSecret", "201", []),
+    ("get", "", "webhooks.subscription.list", "This grant's subscriptions", None, "WebhookSubscriptionList", "200", []),
+    ("get", "/{sid}", "webhooks.subscription.get", "One subscription of this grant", None, "WebhookSubscription", "200", _SUB),
+    ("patch", "/{sid}", "webhooks.subscription.update",
+     "Change the address, the events or the description; If-Match (or `version`) guards against a lost update. "
+     "Changing the address or the events makes the calling grant the one that answers for the subscription",
+     "WebhookUpdate", "WebhookSubscription", "200",
+     _SUB + [{"name": "If-Match", "in": "header", "required": False, "schema": {"type": "string"}}]),
+    ("delete", "/{sid}", "webhooks.subscription.delete",
+     "Delete a subscription: its queue is dropped and its secret destroyed", None, "WebhookDeleted", "200", _SUB),
+    ("post", "/{sid}/pause", "webhooks.subscription.pause",
+     "Stop delivering, including what is already queued (those deliveries end as dropped). Nothing changes if "
+     "it is already paused", None, "WebhookSubscription", "200", _SUB),
+    ("post", "/{sid}/resume", "webhooks.subscription.resume",
+     "Make the subscription active under the calling grant. Paused or disabled: delivers again from the present "
+     "(what happened meanwhile is in the event feed, not sent). Already active: its place and queue are kept; "
+     "only the answering grant changes, and nothing at all if that is already the caller's",
+     None, "WebhookSubscription", "200", _SUB),
+    ("post", "/{sid}/rotate-secret", "webhooks.subscription.rotate_secret",
+     "Issue a new signing secret; the one it replaces keeps signing for the overlap. Rotating again inside an "
+     "overlap replaces only the newest secret and keeps the earlier one and its end; overlap_s 0 ends every "
+     "earlier secret at once", "WebhookRotate", "WebhookSubscriptionWithSecret", "200", _SUB),
+    ("post", "/{sid}/ping", "webhooks.subscription.ping",
+     "Send one signed webhook.ping now, through the same checks and connection as a delivery. Not retried, "
+     "apart from the subscription's health; at most one per "
+     f"{machine_webhooks.PING_MIN_INTERVAL_S} s and {machine_webhooks.PING_PER_HOUR} per hour for a subscription, "
+     f"and {machine_webhooks.MAX_PER_GRANT} per {machine_webhooks.PING_MIN_INTERVAL_S} s and "
+     f"{machine_webhooks.MAX_PER_GRANT * machine_webhooks.PING_PER_HOUR} per hour for a grant, the subscriptions it "
+     "has deleted included (429 ping_rate_limited with Retry-After; details.reason is interval, hourly or busy — "
+     "one ping at a time for a workspace)", None, "WebhookDelivery", "200", _SUB),
+    ("get", "/{sid}/deliveries", "webhooks.delivery.list", "The delivery log, newest first", None,
+     "WebhookDeliveryPage", "200",
+     _SUB + [{"name": "status", "in": "query", "required": False,
+              "schema": {"enum": list(machine_webhooks.DELIVERY_STATUSES)}},
+             {"name": "cursor", "in": "query", "required": False, "schema": {"type": "string"}},
+             {"name": "limit", "in": "query", "required": False,
+              "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}]),
+    ("get", "/{sid}/deliveries/{did}", "webhooks.delivery.get", "One delivery", None, "WebhookDelivery", "200", _DEL),
+    ("post", "/{sid}/deliveries/{did}/redeliver", "webhooks.delivery.redeliver",
+     "Queue the event of an earlier delivery once more; it passes the same checks before it is sent. At most "
+     f"{machine_webhooks.MAX_REDELIVERIES} times for one event (409 redelivery_limit_reached), within "
+     f"{int(machine_webhooks.REDELIVERY_WINDOW_S // 86400)} days of the event (409 redelivery_window_expired), and "
+     f"not while {machine_webhooks.MAX_PENDING} deliveries already wait for the subscription (409 "
+     "delivery_queue_full: ask again once some have settled)", None, "WebhookDelivery", "202", _DEL),
+)
+#: The changes that take something back, journalled before they are made (`Webhooks._journal`).
+_JOURNALLED = ("webhooks.subscription.update", "webhooks.subscription.delete", "webhooks.subscription.pause",
+               "webhooks.subscription.rotate_secret")
+
+
+def _webhook_route(method, name, summary, request, response, status, parameters, readers) -> dict:
+    out = {"operationId": name, "summary": summary, "tags": ["credential"],
+           "parameters": [dict(x) for x in parameters],
+           "responses": {status: {"description": "OK", "headers": _headers(status),
+                                  "content": {"application/json": {"schema": _ref(response)}}},
+                         **_errors({"400", "401", "403", "404", "409", "429", "500"}
+                                   | ({_UNAVAILABLE[0]} if name in _JOURNALLED else set()))}}
+    if request:
+        out["requestBody"] = {"required": request != "WebhookRotate",
+                              "content": {"application/json": {"schema": _ref(request)}}}
+    out = _common(out, scopes=[])
+    if name == "webhooks.subscription.create":
+        out["security"] = [{"suiteToken": [scope]} for scope in readers]
+    return out
+
+
+def _webhook_schemas(registry, event: dict) -> dict:
+    subscription = {
+        "id": {"type": "string"}, "workspace_id": {"type": "string"}, "url": {"type": "string"},
+        "description": {"type": "string"},
+        "events": {"type": "array", "items": {"enum": machine_webhooks.subscribable(registry)}},
+        "status": {"enum": ["active", "paused", "disabled"]},
+        "disabled_reason": {"type": ["string", "null"],
+                            "description": "Why delivery stopped: gone (the receiver answered 410), failing (no "
+                                           f"success for {int(machine_webhooks.DISABLE_AFTER_S // 86400)} days and "
+                                           f"{machine_webhooks.MAX_ATTEMPTS} attempts in a row), backlog_expired (it "
+                                           "fell further behind than the feed keeps events), journal_replay (the "
+                                           "database was restored from before a later pause, move, rotation or "
+                                           "disable: check the address, rotate the secret, resume), or "
+                                           "authorization_revoked:<code> — the grant "
+                                           "that answered for it ended; <code> is one of "
+                                           + ", ".join(machine_webhooks.ENDED) + ". `resume` re-enables any of "
+                                           "them under the calling grant."},
+        "status_changed_at": {"type": "number", "description": "When it became active, paused or disabled."},
+        "missed_events_cursor": {
+            "type": ["string", "null"],
+            "description": "Where pushing last stopped (a pause, a disable), as a `cursor` for GET /events of this "
+                           "same grant: read from it to get what was not pushed, de-duplicating on the event id. "
+                           "Kept after a resume; null if it never stopped or the place is older than the feed keeps."},
+        "stalled_since": {
+            "type": ["number", "null"],
+            "description": "Set while an event cannot be decided because of a fault on the platform's side: "
+                           "nothing after it is sent until it can be, and nothing is passed over."},
+        "authorized_at": {"type": "number",
+                          "description": "When the grant that answers for it was bound: on create, resume, a change "
+                                         "of address or events, or a secret rotation."},
+        "authorized_by_caller": {"type": "boolean",
+                                 "description": "Whether the grant making this call is the one deliveries are "
+                                                "decided for. If false, that other grant ending disables the "
+                                                "subscription; `resume` binds it to the caller."},
+        "created_at": {"type": "number"}, "updated_at": {"type": "number"}, "version": {"type": "integer"},
+        "consecutive_failures": {"type": "integer"}, "last_success_at": {"type": ["number", "null"]},
+        "last_failure_at": {"type": ["number", "null"]}, "previous_secret_expires_at": {"type": ["number", "null"]}}
+    writable = {"url": {"type": "string", "maxLength": 2048,
+                        "description": "https, to a publicly routable address, without credentials in it. Where it "
+                                       "leads is checked when it is set and on resume, one address at a time for a "
+                                       "workspace: 429 destination_check_busy (Retry-After) says another is being "
+                                       "checked or no resolver is free — not a verdict on the address; nothing "
+                                       "changed, repeat the call."},
+                "events": {"type": "array", "minItems": 1, "maxItems": machine_webhooks.MAX_EVENTS,
+                           "items": {"enum": machine_webhooks.subscribable(registry)},
+                           "description": "Event types, \"<app>.*\" or \"*\" (everything the credential may read)."},
+                "description": {"type": "string", "maxLength": machine_webhooks.MAX_DESCRIPTION_LEN}}
+    delivery = {
+        "id": {"type": "string"}, "webhook_id": {"type": "string", "description": "The event's id: the dedupe key."},
+        "event_type": {"type": "string"}, "status": {"enum": list(machine_webhooks.DELIVERY_STATUSES)},
+        "attempts": {"type": "integer"}, "last_code": {"type": ["integer", "null"]},
+        "last_error": {"type": ["string", "null"],
+                       "description": "What ended the last attempt: one of "
+                                      + ", ".join(machine_webhooks.ATTEMPT_ERRORS) + "; why a pending delivery waits "
+                                      "through no fault of the receiver (not counted as an attempt): "
+                                      + ", ".join(machine_webhooks.LOCAL_ERRORS) + "; or why it was dropped unsent: "
+                                      "subscription_paused, subscription_deleted, subscription_disabled:<reason>, "
+                                      "no_longer_readable, event_out_of_window, event_missing. Never a receiver's "
+                                      "answer and never the platform's view of the network."},
+        "duration_ms": {"type": ["integer", "null"]},
+        "created_at": {"type": "number"}, "delivered_at": {"type": ["number", "null"]},
+        "next_attempt_at": {"type": ["number", "null"]}, "redelivery": {"type": "boolean"},
+        "redelivery_of": {"type": ["string", "null"]}}
+    closed = lambda props, required: {"type": "object", "additionalProperties": False,  # noqa: E731
+                                      "required": required, "properties": props}
+    pushed = {**event["properties"], "type": {"enum": [*event["properties"]["type"]["enum"], machine_webhooks.PING_EVENT]},
+              "app": {"enum": [*event["properties"]["app"]["enum"], None]},
+              "object": {"anyOf": [event["properties"]["object"], {"type": "null"}]},
+              "workspace_id": {"type": "string"},
+              "subscription_id": {"type": "string",
+                                  "description": "The subscription this copy was decided for — under the signature, "
+                                                 "so it is that person's grant and no other's."}}
+    return {
+        "WebhookSubscription": closed(subscription, list(subscription)),
+        "WebhookSubscriptionWithSecret": closed({**subscription, "secret": {
+            "type": "string", "description": "whsec_<base64>. Shown here once; store it now."}},
+            [*subscription, "secret"]),
+        "WebhookSubscriptionList": closed({
+            "items": {"type": "array", "items": _ref("WebhookSubscription")},
+            "limit": {"type": "integer", "description": "Subscriptions one grant may have, disabled ones included."},
+            "workspace_limit": {"type": "integer",
+                                "description": "Active and paused subscriptions the workspace may have, everyone's "
+                                               f"together; one client may hold {machine_webhooks.MAX_PER_CLIENT}."}},
+            ["items", "limit", "workspace_limit"]),
+        "WebhookCreate": closed(writable, ["url", "events"]),
+        "WebhookUpdate": closed({**writable, "version": {"type": "integer"}}, []),
+        "WebhookRotate": closed({"overlap_s": {"type": "integer", "minimum": 0, "maximum": machine_webhooks.MAX_OVERLAP_S,
+                                               "default": machine_webhooks.DEFAULT_OVERLAP_S}}, []),
+        "WebhookDeleted": closed({"deleted": {"type": "string"}}, ["deleted"]),
+        "WebhookDelivery": closed(delivery, list(delivery)),
+        "WebhookDeliveryPage": closed({"items": {"type": "array", "items": _ref("WebhookDelivery")},
+                                       "next_cursor": {"type": ["string", "null"]}, "has_more": {"type": "boolean"}},
+                                      ["items", "next_cursor", "has_more"]),
+        "WebhookEvent": closed(pushed, [*event["required"], "workspace_id", "subscription_id"]),
+    }
+
+
 def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
     """The document for every machine operation registered in `registry`."""
     schemas = _Schemas()
@@ -278,6 +457,10 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
             "x-synwevo-event-types": served,
             "x-synwevo-retention-seconds": machine_events.RETENTION_S,
             "x-synwevo-cursor-grace-seconds": machine_events.CURSOR_GRACE_S}}
+        readers = sorted({e["scope"] for e in served})
+        for method, sub, name, summary, request, response, status, parameters in WEBHOOK_ROUTES:
+            paths.setdefault(f"{SUITE_V1}/webhooks/subscriptions{sub}", {})[method] = _webhook_route(
+                method, name, summary, request, response, status, parameters, readers)
 
     text = {"type": "object", "required": ["zh-Hans", "zh-Hant", "en"],
             "properties": {k: {"type": "string"} for k in ("zh-Hans", "zh-Hant", "en")}}
@@ -365,6 +548,31 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
                                "created_at": {"type": "number"}, "finished_at": {"type": ["number", "null"]},
                                "snapshot_hidden": {"type": "boolean"}}},
     })
+    pushes = {}
+    if served:
+        components.update(_webhook_schemas(registry, components["Event"]))
+        pushes = {"event": {"post": {
+            "operationId": "webhooks.event", "tags": ["credential"],
+            "summary": "What a subscribed endpoint receives: the feed's item, signed",
+            "description": "Standard Webhooks. `X-Synwevo-Subscription` names the subscription, hence the secret. "
+                           "Verify `webhook-signature` (v1,<base64 HMAC-SHA256(secret, "
+                           "\"<webhook-id>.<webhook-timestamp>.<body>\")>; during a rotation there are two, either may "
+                           "match) over the raw body as received, and reject a `webhook-timestamp` more than a few "
+                           "minutes from now — it is the time of this attempt, not of the event (`occurred_at`). "
+                           "`webhook-id` is the event's id, the same value the feed gives: de-duplicate on it within "
+                           "one grant, and on (subscription, webhook-id) when one endpoint serves several people's "
+                           "grants — each gets its own copy, decided for that person. Answer 2xx within "
+                           f"{int(machine_webhooks.TIMEOUT_S)} s to accept; 410 to be unsubscribed; anything else, a "
+                           "redirect included, is retried, and later events of the subscription wait behind it: a "
+                           "subscription's deliveries are sent one at a time in the order they were queued. At most "
+                           f"{machine_webhooks.MAX_PENDING} wait for one subscription (the rest stay in the log until "
+                           f"there is room) and one host is sent at most {machine_webhooks.HOST_PER_MINUTE} requests a "
+                           "minute by one worker, whoever subscribed.",
+            "parameters": [{"name": name, "in": "header", "required": True, "schema": {"type": "string"}}
+                           for name in ("webhook-id", "webhook-timestamp", "webhook-signature", "X-Synwevo-Subscription",
+                                        "X-Synwevo-Delivery", "X-Synwevo-Event")],
+            "requestBody": {"required": True, "content": {"application/json": {"schema": _ref("WebhookEvent")}}},
+            "responses": {"2XX": {"description": "Accepted. The response body is never read."}}}}}
     return {
         "openapi": "3.1.0",
         "info": {"title": "Synwevo Suite API", "version": VERSION,
@@ -373,6 +581,7 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
                                 "chose, with their current role; the scope is necessary, not sufficient."},
         "servers": [{"url": server.rstrip("/")}],
         "paths": dict(sorted(paths.items())),
+        **({"webhooks": pushes} if pushes else {}),
         "components": {"schemas": components, "responses": {**_error_responses(), "Gone": {
             "description": "Gone", "headers": _headers("410"), "content": {
                 "application/json": {"schema": _ref("SuiteError")},

@@ -84,8 +84,11 @@ export type WebhookEventType = EventType | 'webhook.ping';
 export type WebhookEventFilter = '*' | 'job.*' | 'file.*' | 'copy.*' | EventType;
 export type SubscriptionStatus = 'active' | 'paused' | 'disabled';
 export type DeliveryStatus = 'pending' | 'delivered' | 'failed' | 'dropped';
+/** Shortest decoded webhook key a verifier accepts; shorter is a configuration mistake. */
+export declare const WEBHOOK_MIN_KEY_BYTES: 16;
 export type WebhookVerificationErrorCode =
-  | 'missing_headers' | 'invalid_timestamp' | 'timestamp_out_of_tolerance' | 'invalid_signature' | 'no_secret';
+  | 'missing_headers' | 'invalid_timestamp' | 'timestamp_out_of_tolerance' | 'invalid_signature' | 'no_secret'
+  | 'weak_secret';
 
 // ============================================================================ errors
 export interface SynwevoErrorOptions {
@@ -1539,7 +1542,7 @@ export declare function signWebhook(id: string, timestamp: string | number, body
  * Verify a Standard Webhooks delivery over the *raw* body bytes. `secret` may be a list (old
  * and new while rotating).
  * @throws WebhookVerificationError (missing_headers, invalid_timestamp, timestamp_out_of_tolerance,
- *   invalid_signature, no_secret)
+ *   invalid_signature, no_secret, weak_secret)
  * @throws TypeError when `body` is not raw bytes or a string.
  */
 export declare function verifyWebhook<E = WebhookEvent>(
@@ -1831,6 +1834,78 @@ export interface SuiteEventFollowOptions {
   signal?: AbortSignal;
 }
 
+export interface SuiteWebhook {
+  id: string;
+  workspace_id: string;
+  url: string;
+  description: string;
+  /** Event types, "<app>.*" or "*". */
+  events: string[];
+  status: 'active' | 'paused' | 'disabled';
+  /**
+   * gone (the receiver answered 410) | failing | backlog_expired | journal_replay (a restore) |
+   * authorization_revoked:<code> (the grant that answered for it ended) | null.
+   * `resumeWebhook` re-enables any of them under the calling grant.
+   */
+  disabled_reason: string | null;
+  status_changed_at: number;
+  /**
+   * Where pushing last stopped, as a `cursor` for `events()` of this same grant: read from it to get
+   * what was not pushed, de-duplicating on the event id. Kept after a resume. null if it never
+   * stopped, or the place is older than the feed keeps.
+   */
+  missed_events_cursor: string | null;
+  /** Set while an event cannot be decided because of a fault on the platform's side; nothing is passed over. */
+  stalled_since: number | null;
+  /** When the grant that answers for it was bound: create, resume, a new address or filter, a new secret. */
+  authorized_at: number;
+  /** false: deliveries are decided for another grant of this client and person; `resumeWebhook` binds it to this one. */
+  authorized_by_caller: boolean;
+  created_at: number;
+  updated_at: number;
+  version: number;
+  consecutive_failures: number;
+  last_success_at: number | null;
+  last_failure_at: number | null;
+  previous_secret_expires_at: number | null;
+}
+
+/** Only from createWebhook and rotateWebhookSecret, once. */
+export interface SuiteWebhookWithSecret extends SuiteWebhook { secret: string }
+
+export interface SuiteWebhookDelivery {
+  id: string;
+  /** The event's id: what `webhook-id` carries and what the feed calls `id`. */
+  webhook_id: string;
+  event_type: string;
+  status: 'pending' | 'delivered' | 'failed' | 'dropped';
+  attempts: number;
+  last_code: number | null;
+  /**
+   * A word from a closed list — http_status, redirect_not_followed, timeout, tls_failed,
+   * connect_failed, destination_unavailable, … — never a receiver's answer.
+   */
+  last_error: string | null;
+  duration_ms: number | null;
+  created_at: number;
+  delivered_at: number | null;
+  next_attempt_at: number | null;
+  redelivery: boolean;
+  redelivery_of: string | null;
+}
+
+/**
+ * The body a subscribed endpoint receives: the feed's item, the workspace, and the subscription the
+ * copy was decided for. A `webhook.ping` has no application and no object. When one endpoint serves
+ * several people's grants, de-duplicate on (subscription_id, id): each grant gets its own copy.
+ */
+export interface SuiteWebhookEvent extends Omit<SuiteEvent, 'app' | 'object'> {
+  app: string | null;
+  object: { kind: string; id: string } | null;
+  workspace_id: string;
+  subscription_id: string;
+}
+
 export interface SuiteRun {
   id: string;
   operation: string;
@@ -1885,6 +1960,39 @@ export declare class SuiteClient {
   eventPages(options?: SuiteEventFollowOptions): AsyncGenerator<WithMeta<SuiteEventPage>, void, void>;
   /** Events in order. One may be seen again after a crash before the cursor was stored. */
   events(options?: SuiteEventFollowOptions): AsyncGenerator<SuiteEvent, void, void>;
+
+  // Webhooks: the event feed, pushed and signed. A subscription is this client's, for this person,
+  // in this workspace; deliveries are decided for the grant that created it, resumed it or last
+  // changed its address, filter or secret, and stop when that grant ends (keep it refreshed).
+  // Verify deliveries with verifyWebhook.
+  /**
+   * Not retried: the `secret` is in this answer only. The grant must be renewable (offline_access).
+   * One subscription per address: a second create throws ConflictError `subscription_exists` with
+   * the first one's id in `details.id` — `rotateWebhookSecret(id, { overlapS: 0 })` gives a secret for it.
+   * @throws ValidationError unless `events` is a non-empty array.
+   */
+  createWebhook(body: { url: string; events: string[]; description?: string }, options?: RequestOptions): Promise<WithMeta<SuiteWebhookWithSecret>>;
+  listWebhooks(options?: RequestOptions): Promise<WithMeta<{ items: SuiteWebhook[]; limit: number; workspace_limit: number }>>;
+  getWebhook(subscriptionId: string, options?: RequestOptions): Promise<WithMeta<SuiteWebhook>>;
+  /** `version` (from the subscription you read) is sent as If-Match, alongside any `headers` of yours, and refuses a lost update. */
+  updateWebhook(subscriptionId: string, changes: { url?: string; events?: string[]; description?: string },
+    options?: RequestOptions & { version?: number }): Promise<WithMeta<SuiteWebhook>>;
+  deleteWebhook(subscriptionId: string, options?: RequestOptions): Promise<WithMeta<{ deleted: string }>>;
+  pauseWebhook(subscriptionId: string, options?: RequestOptions): Promise<WithMeta<SuiteWebhook>>;
+  /**
+   * Active under this grant. Paused or disabled: delivers again from now; read what was missed from
+   * `events({ cursor: missed_events_cursor })`. Already active: nothing is skipped, only the answering grant changes.
+   */
+  resumeWebhook(subscriptionId: string, options?: RequestOptions): Promise<WithMeta<SuiteWebhook>>;
+  /** Rotating again inside an overlap replaces only the newest secret; `overlapS: 0` ends every earlier one at once. */
+  rotateWebhookSecret(subscriptionId: string, options?: RequestOptions & { overlapS?: number }): Promise<WithMeta<SuiteWebhookWithSecret>>;
+  /** Rationed per subscription and per grant: RateLimitError `ping_rate_limited` says when to come back. */
+  pingWebhook(subscriptionId: string, options?: RequestOptions): Promise<WithMeta<SuiteWebhookDelivery>>;
+  webhookDeliveries(subscriptionId: string, query?: { status?: SuiteWebhookDelivery['status']; cursor?: string | null; limit?: number },
+    options?: RequestOptions): Promise<WithMeta<{ items: SuiteWebhookDelivery[]; next_cursor: string | null; has_more: boolean }>>;
+  webhookDelivery(subscriptionId: string, deliveryId: string, options?: RequestOptions): Promise<WithMeta<SuiteWebhookDelivery>>;
+  /** ConflictError `delivery_queue_full` while the subscription already has as many deliveries waiting as it may. */
+  redeliverWebhook(subscriptionId: string, deliveryId: string, options?: RequestOptions): Promise<WithMeta<SuiteWebhookDelivery>>;
 
   // Files. Uploads take a path, bytes or a Blob (bytes and Blobs need `filename`). The service's
   // own limits are 8–12 MB, so results are returned whole.

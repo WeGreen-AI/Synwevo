@@ -187,6 +187,47 @@ def test_retry_after_is_honoured_as_a_minimum(hub):
     assert row["attempts"] == 2 and row["next_attempt_at"] >= hub.clock() + 290
 
 
+@pytest.mark.parametrize("header", ["²", "1³"], ids=["a superscript digit", "digits and a superscript"])
+def test_an_unreadable_retry_after_is_no_retry_after(hub, header):
+    """Whatever a receiver writes in Retry-After, its 429 is a 429: recorded with its status,
+    retried on the schedule, and counted against the subscription like any other refusal."""
+    rx = hub.receiver(lambda n: (429, {"Retry-After": header}))
+    sub = hub.create(rx.url, events=["*"])
+    d = hub.dispatcher()
+    fixture_event(hub.store, "default")
+    d.run_once()
+    row = sub_rows(hub.store, sub["id"])[0]
+    assert (row["status"], row["attempts"], row["last_code"], row["last_error"]) == ("pending", 1, 429, "HTTP 429")
+    assert 0.8 * W.BACKOFF_S[0] - 2 <= row["next_attempt_at"] - hub.clock() <= 1.2 * W.BACKOFF_S[0]
+    health = hub.store.one("SELECT consecutive_failures, last_failure_at FROM webhook_subscriptions WHERE id=?", (sub["id"],))
+    assert health["consecutive_failures"] == 1 and health["last_failure_at"] is not None
+
+
+def test_a_retry_after_date_without_its_zone_is_utc_wherever_the_server_is(hub, monkeypatch):
+    """An HTTP-date is UTC whether or not it says so. Read in the server's local time it would be
+    another moment on every machine, and the last day of the calendar could not be read at all."""
+    import email.utils
+    try:
+        with monkeypatch.context() as zone:
+            zone.setenv("TZ", "Asia/Hong_Kong")          # TEST FIXTURE: a server that is not in UTC
+            time.tzset()
+            soon = email.utils.formatdate(hub.clock() + 900, usegmt=True).replace(" GMT", "")
+            rx = hub.receiver(lambda n: (503, {"Retry-After": soon if n == 1 else "Fri, 31 Dec 9999 23:59:59"}))
+            sub = hub.create(rx.url, events=["*"])
+            d = hub.dispatcher()
+            fixture_event(hub.store, "default")
+            d.run_once()
+            row = sub_rows(hub.store, sub["id"])[0]
+            assert (row["attempts"], row["last_code"]) == (1, 503) and 890 <= row["next_attempt_at"] - hub.clock() <= 901
+            hub.clock.advance(901)
+            d.run_once()
+            row = sub_rows(hub.store, sub["id"])[0]
+            assert (row["status"], row["attempts"], row["last_code"]) == ("pending", 2, 503)
+            assert row["next_attempt_at"] - hub.clock() == pytest.approx(W.RETRY_AFTER_CAP_S, abs=5), "a minimum, capped at a day"
+    finally:
+        time.tzset()
+
+
 def test_410_disables_the_subscription_and_stops_its_queue(hub):
     rx = hub.receiver(lambda n: 410)
     sub = hub.create(rx.url, events=["*"])

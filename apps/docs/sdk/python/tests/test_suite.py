@@ -168,6 +168,84 @@ class SuiteTests(unittest.TestCase):
             {"types": wanted, "limit": "2", "cursor": "s1.B"},
             {"cursor": "s1.C"}, {"cursor": "s1.D"}])
 
+    def test_webhook_calls_that_carry_a_secret_or_start_a_send_are_sent_once_without_a_key(self):
+        calls, seen = [], {}
+
+        def respond(h):
+            path, _, query = h.path.partition("?")
+            calls.append((h.command, path, h.headers.get("Idempotency-Key"), h.headers.get("If-Match"),
+                          json.loads(h.body or b"null"), {k: v[0] for k, v in parse_qs(query).items()}))
+            seen[(h.command, path)] = seen.get((h.command, path), 0) + 1
+            if h.command != "GET" and seen[(h.command, path)] == 1:      # every first attempt of a write fails
+                h.answer(503, {"error": {"code": "unavailable", "message": "synthetic fixture"}}, {"Retry-After": "0"})
+            else:
+                h.answer(200, {"id": "whsub_1", "version": 2, "secret": "whsec_synthetic", "items": [],
+                               "next_cursor": None, "has_more": False})
+        base = "/api/suite/v1/webhooks/subscriptions"
+        with fixture(respond) as url, SuiteClient(url, UserToken("synthetic-access"), sleep=lambda _: None) as c:
+            for wrong in (lambda: c.create_webhook("https://hooks.invalid/x", "tables.*"), lambda: c.get_webhook("")):
+                with self.assertRaises(ValidationError):
+                    wrong()
+            for once in (lambda: c.create_webhook("https://hooks.invalid/x", ["tables.*"], description="sync"),
+                         lambda: c.rotate_webhook_secret("whsub 1", overlap_s=600), lambda: c.ping_webhook("whsub 1"),
+                         lambda: c.redeliver_webhook("whsub 1", "whdel/1"),
+                         lambda: c.update_webhook("whsub 1", events=["*"], version=3), lambda: c.delete_webhook("whsub 1")):
+                with self.assertRaises(SynwevoError):                    # not tried again
+                    once()
+            c.pause_webhook("whsub 1")                                   # these two say the same thing twice safely
+            c.resume_webhook("whsub 1")
+            page = c.webhook_deliveries("whsub 1", status="failed", limit=10)
+            c.webhook_delivery("whsub 1", "whdel/1")
+            c.list_webhooks()
+        self.assertEqual(page["items"], [])
+        self.assertEqual([f"{m} {p}" for m, p, *_ in calls], [
+            f"POST {base}", f"POST {base}/whsub%201/rotate-secret", f"POST {base}/whsub%201/ping",
+            f"POST {base}/whsub%201/deliveries/whdel%2F1/redeliver", f"PATCH {base}/whsub%201", f"DELETE {base}/whsub%201",
+            f"POST {base}/whsub%201/pause", f"POST {base}/whsub%201/pause", f"POST {base}/whsub%201/resume",
+            f"POST {base}/whsub%201/resume", f"GET {base}/whsub%201/deliveries", f"GET {base}/whsub%201/deliveries/whdel%2F1",
+            f"GET {base}"])
+        self.assertTrue(all(key is None for _, _, key, *_ in calls), "no idempotency key on any webhook call")
+        self.assertEqual(calls[0][4], {"url": "https://hooks.invalid/x", "events": ["tables.*"], "description": "sync"})
+        self.assertEqual(calls[1][4], {"overlap_s": 600})
+        self.assertEqual((calls[4][3], calls[4][4]), ('"3"', {"events": ["*"]}))
+        self.assertEqual(calls[10][5], {"status": "failed", "limit": "10"})
+
+    def test_a_missing_id_is_refused_before_sending_and_never_names_the_collection(self):
+        """An id read from a store that does not have it arrives as None. Left out of the path it
+        would turn "this subscription" into "the list" (and a write into a call on the collection)."""
+        calls = []
+
+        def respond(h):
+            calls.append(f"{h.command} {h.path}")
+            h.answer(200, {"items": [], "limit": 4, "workspace_limit": 64})
+        with fixture(respond) as url, SuiteClient(url, UserToken("synthetic-access"), sleep=lambda _: None) as c:
+            for missing in (None, "", 7):
+                for call in (c.get_webhook, c.delete_webhook, c.pause_webhook, c.resume_webhook, c.rotate_webhook_secret,
+                             c.ping_webhook, c.webhook_deliveries, lambda sid: c.update_webhook(sid, description="x"),
+                             lambda sid: c.webhook_delivery(sid, "whdel_1"), lambda sid: c.redeliver_webhook(sid, "whdel_1"),
+                             lambda did: c.webhook_delivery("whsub_1", did), lambda did: c.redeliver_webhook("whsub_1", did)):
+                    with self.assertRaises(ValidationError):
+                        call(missing)
+            self.assertEqual(calls, [], "nothing was sent")
+            c.list_webhooks()                                            # the collection is asked for by name only
+        self.assertEqual(calls, ["GET /api/suite/v1/webhooks/subscriptions"])
+
+    def test_the_lost_update_guard_goes_out_with_the_clients_own_headers(self):
+        sent = []
+
+        def respond(h):
+            sent.append({k: h.headers.get(k) for k in ("If-Match", "Authorization", "User-Agent", "Accept")})
+            h.answer(200, {"id": "whsub_1", "version": 4})
+        with fixture(respond) as url, SuiteClient(url, UserToken("synthetic-access"), sleep=lambda _: None) as c:
+            c.update_webhook("whsub_1", description="x", version=3)
+            c.update_webhook("whsub_1", description="x")
+        guarded, plain = sent
+        self.assertEqual(guarded["If-Match"], '"3"')
+        self.assertIsNone(plain["If-Match"], "no version asked for: no guard invented")
+        for request in sent:                                             # the guard is added to the request, not put in its place
+            self.assertEqual(request["Authorization"], "Bearer synthetic-access")
+            self.assertTrue(request["User-Agent"] and request["Accept"])
+
     def test_waiting_for_a_run_stops_at_a_terminal_state_or_the_deadline(self):
         states = iter(["queued", "running", "succeeded"])
         now = [0.0]

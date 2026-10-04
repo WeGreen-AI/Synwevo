@@ -301,6 +301,92 @@ class SuiteClient:
                                           page_size=page_size):
             yield from page.get("items") or []
 
+    # ------------------------------------------------------------------ webhooks
+    # The event feed, pushed to an https endpoint of yours and signed (Standard Webhooks — verify
+    # with `synwevo_docs_sdk.verify_webhook`). A subscription belongs to this client, for this
+    # person, in this workspace; deliveries are decided for the grant that created it, resumed it
+    # or last changed its address, filter or secret, and stop when that grant ends (keep it
+    # refreshed). Calls that answer with a secret or start a send carry no idempotency key and
+    # are not retried: a lost answer must not leave a secret nobody saw.
+    _HOOKS = f"{SUITE_API}/webhooks/subscriptions"
+
+    def _hook(self, sid: str, rest: str = "") -> str:
+        """One subscription's path. A missing id is refused here, whatever its spelling (None,
+        ""): left out of the path it would name the collection, and answer with a list."""
+        if not isinstance(sid, str) or not sid:
+            raise ValidationError("a subscription id is required", "subscription_id")
+        return f"{self._HOOKS}/{_q(sid)}{rest}"
+
+    def create_webhook(self, url: str, events: list[str], *, description: str | None = None) -> dict:
+        """Subscribe ``url``. ``events`` lists event types, ``"<app>.*"`` or ``"*"`` (everything this
+        credential may read). The answer's ``secret`` is shown this once: store it before anything else.
+
+        The grant must be renewable (``offline_access``). A grant has one subscription per address:
+        creating it again — after a lost answer, say — raises `ConflictError` ``subscription_exists``
+        with the first one's id in ``details["id"]``; ``rotate_webhook_secret(id, overlap_s=0)``
+        then gives a secret for it."""
+        if isinstance(events, str) or not events:
+            raise ValidationError("events must be a non-empty list", "events")
+        body: dict[str, Any] = {"url": url, "events": list(events)}
+        if description is not None:
+            body["description"] = description
+        return self._client._json("POST", self._HOOKS, json=body, retry_safe=False)
+
+    def list_webhooks(self) -> dict:
+        return self._client._get(self._HOOKS)
+
+    def get_webhook(self, subscription_id: str) -> dict:
+        return self._client._get(self._hook(subscription_id))
+
+    def update_webhook(self, subscription_id: str, *, url: str | None = None, events: list[str] | None = None,
+                       description: str | None = None, version: int | None = None) -> dict:
+        """Change what is given. ``version`` (from the subscription you read) refuses a lost update.
+        A new address or filter makes this grant the one that answers for the subscription."""
+        body = {k: v for k, v in (("url", url), ("events", events), ("description", description)) if v is not None}
+        headers = {"If-Match": f'"{int(version)}"'} if version is not None else None
+        return self._client._json("PATCH", self._hook(subscription_id), json=body, headers=headers, retry_safe=False)
+
+    def delete_webhook(self, subscription_id: str) -> dict:
+        return self._client._json("DELETE", self._hook(subscription_id), retry_safe=False)
+
+    def pause_webhook(self, subscription_id: str) -> dict:
+        return self._client._json("POST", self._hook(subscription_id, "/pause"), retry_safe=True)
+
+    def resume_webhook(self, subscription_id: str) -> dict:
+        """Make it active under this grant. Paused or disabled: delivers again from now — what
+        happened meanwhile is not sent; read it from `events` with the subscription's
+        ``missed_events_cursor``. Already active: nothing is skipped; only the answering grant
+        changes (see ``authorized_by_caller``)."""
+        return self._client._json("POST", self._hook(subscription_id, "/resume"), retry_safe=True)
+
+    def rotate_webhook_secret(self, subscription_id: str, *, overlap_s: int | None = None) -> dict:
+        """A new ``secret`` (shown once). The one it replaces keeps signing for ``overlap_s`` seconds
+        (default and maximum one day), so receivers can switch without dropping deliveries.
+        Rotating again inside that time replaces only the newest secret — the earlier one and its
+        end stay; ``overlap_s=0`` ends every earlier secret at once."""
+        body = {"overlap_s": overlap_s} if overlap_s is not None else {}
+        return self._client._json("POST", self._hook(subscription_id, "/rotate-secret"), json=body, retry_safe=False)
+
+    def ping_webhook(self, subscription_id: str) -> dict:
+        """One signed ``webhook.ping`` now; returns how the receiver answered. Rationed per
+        subscription and per grant (`RateLimitError` ``ping_rate_limited`` says when to come back)."""
+        return self._client._json("POST", self._hook(subscription_id, "/ping"), retry_safe=False)
+
+    def webhook_deliveries(self, subscription_id: str, *, status: str | None = None, cursor: str | None = None,
+                           limit: int | None = None) -> dict:
+        """One page of the delivery log, newest first: ``items``, ``next_cursor``, ``has_more``."""
+        return self._client._get(self._hook(subscription_id, "/deliveries"), {"status": status, "cursor": cursor, "limit": limit})
+
+    def webhook_delivery(self, subscription_id: str, delivery_id: str) -> dict:
+        return self._client._get(self._hook(subscription_id, f"/deliveries/{_q(delivery_id)}"))
+
+    def redeliver_webhook(self, subscription_id: str, delivery_id: str) -> dict:
+        """Queue the event of an earlier delivery once more (same ``webhook-id``). It is sent only
+        if the grant bound to the subscription may still read the event. `ConflictError` ``delivery_queue_full`` while
+        the subscription already has as many deliveries waiting as it may."""
+        return self._client._json("POST", self._hook(subscription_id, f"/deliveries/{_q(delivery_id)}/redeliver"),
+                                  retry_safe=False)
+
     # ------------------------------------------------------------------ files
     # The routes that move bytes. They name the credential's workspace in the query (the service
     # refuses any other), which is read once from `whoami`.

@@ -107,6 +107,10 @@ def install(api: FastAPI, plat, *, docs: Any = None, start_jobs: bool = True,
     # After every application (and the injected adapters) registered: the machine API gets one
     # route per operation that exists in this process, and none for one that does not.
     api.include_router(build_machine_router(ctx))
+    from .common import machine_events, machine_webhooks
+    if machine_events.feeds(registry):
+        # Signed webhooks push what the event feed serves; without a feed there is nothing to push.
+        machine_webhooks.install(ctx)
     api.include_router(build_router(ctx))
     return ctx
 

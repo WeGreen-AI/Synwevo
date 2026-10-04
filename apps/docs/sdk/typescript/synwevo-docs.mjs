@@ -46,6 +46,7 @@ export const SUITE_RESOURCE = 'urn:synwevo:platform:suite';
 export const SUITE_API_PREFIX = '/api/suite/v1';
 export const SUITE_TERMINAL_STATUSES = Object.freeze(['succeeded', 'partial', 'failed', 'cancelled']);
 export const SUITE_EVENT_STARTS = Object.freeze(['oldest', 'now']);
+const SUITE_WEBHOOKS = '/webhooks/subscriptions';
 export const TERMINAL_STATUSES = Object.freeze(['completed', 'completed_with_errors', 'failed', 'cancelled']);
 export const SUCCESS_STATUSES = Object.freeze(['completed', 'completed_with_errors']);
 export const ERROR_POLICIES = Object.freeze(['block', 'skip']);
@@ -1380,6 +1381,63 @@ export class SuiteClient {
     for await (const page of this.eventPages(options)) yield* page.items ?? [];
   }
 
+  // ----- webhooks: the event feed, pushed to an https endpoint of yours and signed (Standard
+  // Webhooks — verify with verifyWebhook). A subscription belongs to this client, for this person,
+  // in this workspace. Calls that answer with a secret or start a send carry no idempotency key and
+  // are not retried: a lost answer must not leave a secret nobody saw.
+  // One subscription's path. A missing id is refused here, whatever its spelling (undefined, null,
+  // ''): left out of the path it would name the collection, and answer with a list.
+  #hook(sid, rest = '') {
+    if (typeof sid !== 'string' || !sid) {
+      throw new ValidationError('A subscription ID is required', { field: 'subscription_id' });
+    }
+    return `${SUITE_WEBHOOKS}/${encodeURIComponent(sid)}${rest}`;
+  }
+  #delivery(sid, did, rest = '') {
+    if (typeof did !== 'string' || !did) throw new ValidationError('A delivery ID is required', { field: 'delivery_id' });
+    return this.#hook(sid, `/deliveries/${encodeURIComponent(did)}${rest}`);
+  }
+
+  /** `events`: event types, "<app>.*" or "*". The answer's `secret` is shown this once. */
+  createWebhook({ url, events, description } = {}, opts = {}) {
+    if (!Array.isArray(events) || !events.length) throw new ValidationError('events must be a non-empty array', { field: 'events' });
+    const json = { url, events };
+    if (description != null) json.description = description;
+    return this.#transport.requestJson('POST', SUITE_WEBHOOKS, { json, retry: false, ...opts });
+  }
+  listWebhooks(opts = {}) { return this.#transport.get(SUITE_WEBHOOKS, undefined, opts); }
+  getWebhook(sid, opts = {}) { return this.#transport.get(this.#hook(sid), undefined, opts); }
+  /** `version` (from the subscription you read) refuses a lost update. */
+  updateWebhook(sid, changes = {}, { version, headers, ...opts } = {}) {
+    // The caller's own headers go with the request; they never take the place of the guard it asked for.
+    const guard = version != null ? { 'If-Match': `"${Number(version)}"` } : {};
+    const own = Object.entries(headers ?? {}).filter(([name]) => version == null || name.toLowerCase() !== 'if-match');
+    return this.#transport.requestJson('PATCH', this.#hook(sid),
+      { json: changes, retry: false, ...opts, headers: { ...Object.fromEntries(own), ...guard } });
+  }
+  deleteWebhook(sid, opts = {}) { return this.#transport.requestJson('DELETE', this.#hook(sid), { retry: false, ...opts }); }
+  pauseWebhook(sid, opts = {}) { return this.#transport.requestJson('POST', this.#hook(sid, '/pause'), { retry: true, ...opts }); }
+  /** Delivers again from now: what happened while it was stopped is not sent afterwards. */
+  resumeWebhook(sid, opts = {}) { return this.#transport.requestJson('POST', this.#hook(sid, '/resume'), { retry: true, ...opts }); }
+  /** A new `secret` (shown once); the previous one keeps signing for `overlapS` seconds (default and maximum one day). */
+  rotateWebhookSecret(sid, { overlapS, ...opts } = {}) {
+    return this.#transport.requestJson('POST', this.#hook(sid, '/rotate-secret'),
+      { json: overlapS != null ? { overlap_s: overlapS } : {}, retry: false, ...opts });
+  }
+  /** One signed `webhook.ping` now; resolves with how the receiver answered. */
+  pingWebhook(sid, opts = {}) { return this.#transport.requestJson('POST', this.#hook(sid, '/ping'), { retry: false, ...opts }); }
+  /** One page of the delivery log, newest first. */
+  webhookDeliveries(sid, { status, cursor, limit } = {}, opts = {}) {
+    return this.#transport.get(this.#hook(sid, '/deliveries'), { status, cursor: cursor ?? undefined, limit }, opts);
+  }
+  webhookDelivery(sid, did, opts = {}) {
+    return this.#transport.get(this.#delivery(sid, did), undefined, opts);
+  }
+  /** Queues the event of an earlier delivery once more (same `webhook-id`); sent only if still readable. */
+  redeliverWebhook(sid, did, opts = {}) {
+    return this.#transport.requestJson('POST', this.#delivery(sid, did, '/redeliver'), { retry: false, ...opts });
+  }
+
   // ----- files: the routes that move bytes. They name the credential's workspace in the query
   // (the service refuses any other), which is read once from whoami.
   async #where() {
@@ -1460,6 +1518,7 @@ function toBytes(body) {
 }
 
 /** Standard Webhooks key material: `whsec_<base64>` is decoded; anything else is used as UTF-8. */
+export const WEBHOOK_MIN_KEY_BYTES = 16;
 export function webhookKeyBytes(secret) {
   if (Buffer.isBuffer(secret) || secret instanceof Uint8Array) return Buffer.from(secret);
   const s = String(secret);
@@ -1493,9 +1552,13 @@ export function verifyWebhook(headers, body, secret, { toleranceS = WEBHOOK_TOLE
     throw new WebhookVerificationError('timestamp_out_of_tolerance', `webhook-timestamp 与当前时间相差超过 ${toleranceS} 秒（可能是重放）`);
   }
   const raw = toBytes(body);
-  const expected = (Array.isArray(secret) ? secret : [secret]).filter(Boolean)
-    .map((s) => createHmac('sha256', webhookKeyBytes(s)).update(`${id}.${ts}.`).update(raw).digest());
-  if (!expected.length) throw new WebhookVerificationError('no_secret', '没有提供签名密钥');
+  const keys = (Array.isArray(secret) ? secret : [secret]).filter(Boolean).map(webhookKeyBytes);
+  if (!keys.length) throw new WebhookVerificationError('no_secret', '没有提供签名密钥');
+  // An empty or truncated key (an unset variable, 'whsec_' alone) would let anyone sign: refused.
+  if (keys.some((k) => k.length < WEBHOOK_MIN_KEY_BYTES)) {
+    throw new WebhookVerificationError('weak_secret', `签名密钥为空或过短（至少 ${WEBHOOK_MIN_KEY_BYTES} 字节）：请检查配置`);
+  }
+  const expected = keys.map((k) => createHmac('sha256', k).update(`${id}.${ts}.`).update(raw).digest());
   for (const part of sig.split(' ')) {
     const comma = part.indexOf(',');
     if (comma < 0 || part.slice(0, comma) !== 'v1') continue;
