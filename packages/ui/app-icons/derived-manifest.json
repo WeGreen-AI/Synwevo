@@ -1,0 +1,362 @@
+[
+  {
+    "id": "docweave",
+    "source": "icons/apps/synwevo-docs.png",
+    "source_sha256": "aa12e4284652e99f234ae324462369bfbf65b08139ed8f5c1e0f5fc16dda62fd",
+    "file": "synwevo-docs-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1445,
+    "sha256": "a4291ca45521640d865f8d88540e7bc5ef8367860fd8ff3d32fb025211284fe6"
+  },
+  {
+    "id": "docweave",
+    "source": "icons/apps/synwevo-docs.png",
+    "source_sha256": "aa12e4284652e99f234ae324462369bfbf65b08139ed8f5c1e0f5fc16dda62fd",
+    "file": "synwevo-docs-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 3398,
+    "sha256": "245c38299416b4d5e08afcd0d0278568a213afc6348e3f996a24d43dac134dd3"
+  },
+  {
+    "id": "docweave",
+    "source": "icons/apps/synwevo-docs.png",
+    "source_sha256": "aa12e4284652e99f234ae324462369bfbf65b08139ed8f5c1e0f5fc16dda62fd",
+    "file": "synwevo-docs-168.png",
+    "width": 168,
+    "height": 168,
+    "bytes": 12962,
+    "sha256": "de1fb366d2ab61ad96e783facfac12b28cb4a2206ff8f796aad8a4f804445594"
+  },
+  {
+    "id": "messages",
+    "source": "icons/apps/synwevo-message.png",
+    "source_sha256": "7fc1e2eee5a7852190bbb31c1b99dfe598dd819c83e85b85084767d83d7d0e34",
+    "file": "synwevo-message-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1236,
+    "sha256": "45f71c0d8927f30c78a36d90e0c4480bd9e58fd8ac0af060366960840d8726c1"
+  },
+  {
+    "id": "messages",
+    "source": "icons/apps/synwevo-message.png",
+    "source_sha256": "7fc1e2eee5a7852190bbb31c1b99dfe598dd819c83e85b85084767d83d7d0e34",
+    "file": "synwevo-message-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 2915,
+    "sha256": "1b661457837ee5f1ba825bab6dc93c7f2d3a48c99f5305fb1f927347096c22a8"
+  },
+  {
+    "id": "messages",
+    "source": "icons/apps/synwevo-message.png",
+    "source_sha256": "7fc1e2eee5a7852190bbb31c1b99dfe598dd819c83e85b85084767d83d7d0e34",
+    "file": "synwevo-message-168.png",
+    "width": 168,
+    "height": 168,
+    "bytes": 10894,
+    "sha256": "2da653a9935e6fe353eaa9031b5e7ea32147b7cc85bef28d1047b3f1cf9a746d"
+  },
+  {
+    "id": "platform",
+    "source": "icons/platform/synwevo-workspace.png",
+    "source_sha256": "9d73d124cb7034ee8aacd889c6a5c081636822bffeca249cd55e50a725819acc",
+    "file": "synwevo-workspace-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1685,
+    "sha256": "610d295ba6db9575e89958fad5aeb58db6f72586b03b96f2221e82f348d6a4d3"
+  },
+  {
+    "id": "platform",
+    "source": "icons/platform/synwevo-workspace.png",
+    "source_sha256": "9d73d124cb7034ee8aacd889c6a5c081636822bffeca249cd55e50a725819acc",
+    "file": "synwevo-workspace-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 4196,
+    "sha256": "1badb0c0f692083a764b1271d27c73a24fdad56de2daf9cbe01779718e35b8d2"
+  },
+  {
+    "id": "platform",
+    "source": "icons/platform/synwevo-workspace.png",
+    "source_sha256": "9d73d124cb7034ee8aacd889c6a5c081636822bffeca249cd55e50a725819acc",
+    "file": "synwevo-workspace-96.png",
+    "width": 96,
+    "height": 96,
+    "bytes": 7267,
+    "sha256": "30fbaa2a0b78928e3513923bbeacf873cb1bc1a5170137c65ed06ce99694e88d"
+  },
+  {
+    "id": "/account",
+    "source": "icons/platform/synwevo-accounts.png",
+    "source_sha256": "bf1ad0c2c0d2a3d69d4f3c9d3886f49fba0574c8d69e1d8064f7b930561b4af3",
+    "file": "synwevo-accounts-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1821,
+    "sha256": "ae397dabb2ab32be89f8d2d1307d81ad89ed881d85fc8efb538fc59b428c437b"
+  },
+  {
+    "id": "/account",
+    "source": "icons/platform/synwevo-accounts.png",
+    "source_sha256": "bf1ad0c2c0d2a3d69d4f3c9d3886f49fba0574c8d69e1d8064f7b930561b4af3",
+    "file": "synwevo-accounts-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 4531,
+    "sha256": "800d3ba71519dbe1315feb71cb58527c8fa2ba11d5016d34355117862bded716"
+  },
+  {
+    "id": "/account",
+    "source": "icons/platform/synwevo-accounts.png",
+    "source_sha256": "bf1ad0c2c0d2a3d69d4f3c9d3886f49fba0574c8d69e1d8064f7b930561b4af3",
+    "file": "synwevo-accounts-96.png",
+    "width": 96,
+    "height": 96,
+    "bytes": 7606,
+    "sha256": "bf580f7220c2fc1c8fd2716d071e16a70b6921ac645a89773c7a1e408738953c"
+  },
+  {
+    "id": "/admin",
+    "source": "icons/platform/synwevo-admin.png",
+    "source_sha256": "bd4b65c79688bcec3fd9099ed505bee3ce1e9c7d864ec8771c0af9d52c7694f7",
+    "file": "synwevo-admin-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1767,
+    "sha256": "35996d6643a00a212d6807fecc330dd2707447c08771ea13589b34884da63848"
+  },
+  {
+    "id": "/admin",
+    "source": "icons/platform/synwevo-admin.png",
+    "source_sha256": "bd4b65c79688bcec3fd9099ed505bee3ce1e9c7d864ec8771c0af9d52c7694f7",
+    "file": "synwevo-admin-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 4388,
+    "sha256": "8f7a67c4f8974cb9ecc475a0cea5be51766637fadfa7a1628d10000bb7f17565"
+  },
+  {
+    "id": "/admin",
+    "source": "icons/platform/synwevo-admin.png",
+    "source_sha256": "bd4b65c79688bcec3fd9099ed505bee3ce1e9c7d864ec8771c0af9d52c7694f7",
+    "file": "synwevo-admin-96.png",
+    "width": 96,
+    "height": 96,
+    "bytes": 7323,
+    "sha256": "670aa387bbdea380e2b5ef0e4cff6843685805853597bb2c151e73ee8bf0f95a"
+  },
+  {
+    "id": "/admin/api-platform",
+    "source": "icons/platform/synwevo-api.png",
+    "source_sha256": "9393a0142535910d65eafac108dbd2b2728fa5eab1abcf90fa3add8ac3205bfd",
+    "file": "synwevo-api-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1594,
+    "sha256": "9a3f809e4dfeb25db8dda21c4cb65a76eefbca32377d0fdcd4e0f3bf284fc26c"
+  },
+  {
+    "id": "/admin/api-platform",
+    "source": "icons/platform/synwevo-api.png",
+    "source_sha256": "9393a0142535910d65eafac108dbd2b2728fa5eab1abcf90fa3add8ac3205bfd",
+    "file": "synwevo-api-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 3853,
+    "sha256": "a9e0e932b0d24d6f57a15a5d2324d41a0f112a79bf43678da7af032a5d21625c"
+  },
+  {
+    "id": "/admin/api-platform",
+    "source": "icons/platform/synwevo-api.png",
+    "source_sha256": "9393a0142535910d65eafac108dbd2b2728fa5eab1abcf90fa3add8ac3205bfd",
+    "file": "synwevo-api-96.png",
+    "width": 96,
+    "height": 96,
+    "bytes": 6519,
+    "sha256": "e52cc9705083635404263c404739baa9e40e3552ed99b7ab341481f7b8f6474f"
+  },
+  {
+    "id": "forms",
+    "source": "icons/apps/synwevo-forms.png",
+    "source_sha256": "81e71f1e208774d50d722d9df4a6c9e3671e1ad1bba909628220a570a09e6988",
+    "file": "synwevo-forms-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1705,
+    "sha256": "96100a6b075522ef44408efa6eb4aa78fae7ca4ec492ba2bef269e57c2ce14fc"
+  },
+  {
+    "id": "forms",
+    "source": "icons/apps/synwevo-forms.png",
+    "source_sha256": "81e71f1e208774d50d722d9df4a6c9e3671e1ad1bba909628220a570a09e6988",
+    "file": "synwevo-forms-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 4247,
+    "sha256": "2c94c65a93b25e77b2bc82d538ec8555bd7f4ac9885e3ec9e9c231c3b6222933"
+  },
+  {
+    "id": "forms",
+    "source": "icons/apps/synwevo-forms.png",
+    "source_sha256": "81e71f1e208774d50d722d9df4a6c9e3671e1ad1bba909628220a570a09e6988",
+    "file": "synwevo-forms-168.png",
+    "width": 168,
+    "height": 168,
+    "bytes": 15934,
+    "sha256": "006988155f0d40df823d11c055aab7c13ebbc4c336481c19661f4aa2619c433a"
+  },
+  {
+    "id": "tables",
+    "source": "icons/apps/synwevo-tables.png",
+    "source_sha256": "f11d1f5a3ba5353d2c82b1263f18ce22c1b2304bdb50250536ef7647f7d99109",
+    "file": "synwevo-tables-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1225,
+    "sha256": "82a7f716649460a165fb4de5092f5a4217c41d4fbc2fb1b517da019e1fe4b414"
+  },
+  {
+    "id": "tables",
+    "source": "icons/apps/synwevo-tables.png",
+    "source_sha256": "f11d1f5a3ba5353d2c82b1263f18ce22c1b2304bdb50250536ef7647f7d99109",
+    "file": "synwevo-tables-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 2739,
+    "sha256": "f25efd7f99a0a83331b0321815dbfe0c96a39cb8332fca40787e07a31af41b3f"
+  },
+  {
+    "id": "tables",
+    "source": "icons/apps/synwevo-tables.png",
+    "source_sha256": "f11d1f5a3ba5353d2c82b1263f18ce22c1b2304bdb50250536ef7647f7d99109",
+    "file": "synwevo-tables-168.png",
+    "width": 168,
+    "height": 168,
+    "bytes": 11758,
+    "sha256": "228c7d3f7ba06047909038c68a70adee5355917cd31f40ddf32c7d742eeef513"
+  },
+  {
+    "id": "dataprep",
+    "source": "icons/apps/synwevo-dataprep.png",
+    "source_sha256": "14a9af43ad7f4fcd7b2f51b505992a17f150b81311493c22f8baab3614539369",
+    "file": "synwevo-dataprep-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1326,
+    "sha256": "4964b96eb5c75f62c5e1ca572040faac488a7e0f7273a050ba8afe5fd8f9789c"
+  },
+  {
+    "id": "dataprep",
+    "source": "icons/apps/synwevo-dataprep.png",
+    "source_sha256": "14a9af43ad7f4fcd7b2f51b505992a17f150b81311493c22f8baab3614539369",
+    "file": "synwevo-dataprep-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 3187,
+    "sha256": "17e8e61ea4355357b23a58629761ea3797ae619ed8052107d49d943f7ab2939b"
+  },
+  {
+    "id": "dataprep",
+    "source": "icons/apps/synwevo-dataprep.png",
+    "source_sha256": "14a9af43ad7f4fcd7b2f51b505992a17f150b81311493c22f8baab3614539369",
+    "file": "synwevo-dataprep-168.png",
+    "width": 168,
+    "height": 168,
+    "bytes": 12429,
+    "sha256": "5d2ade948d0187fd09f1ae8f7e1da105219a9418e577741fe169607059b93d66"
+  },
+  {
+    "id": "approvals",
+    "source": "icons/apps/synwevo-approvals.png",
+    "source_sha256": "12e02d177bd7481b5e5365bf1f4312d4cc8a8c2caffa8b915c530aae39e6e648",
+    "file": "synwevo-approvals-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1778,
+    "sha256": "c308fa7000c55ca52441cb9475ce3432168ba076581b81cc8e8455e488d22eb6"
+  },
+  {
+    "id": "approvals",
+    "source": "icons/apps/synwevo-approvals.png",
+    "source_sha256": "12e02d177bd7481b5e5365bf1f4312d4cc8a8c2caffa8b915c530aae39e6e648",
+    "file": "synwevo-approvals-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 4396,
+    "sha256": "2d361ccfee57000072823ca05681d01126517f8e03f55ac655076c9a0555a4ba"
+  },
+  {
+    "id": "approvals",
+    "source": "icons/apps/synwevo-approvals.png",
+    "source_sha256": "12e02d177bd7481b5e5365bf1f4312d4cc8a8c2caffa8b915c530aae39e6e648",
+    "file": "synwevo-approvals-168.png",
+    "width": 168,
+    "height": 168,
+    "bytes": 15680,
+    "sha256": "44c84eee8d0a0a4eedd02fc9bebc36ebbd05b1ef0de0b215a07ed59b5ded7cfd"
+  },
+  {
+    "id": "extract",
+    "source": "icons/apps/synwevo-extract.png",
+    "source_sha256": "5d59908e9bdcd913867f27a9d6c804c824ec52c6bd2762445907e3f04746141a",
+    "file": "synwevo-extract-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1270,
+    "sha256": "a7475f5699326a793145a4ea9da5a22ba356dabe2744f7ea28963880d30aeef0"
+  },
+  {
+    "id": "extract",
+    "source": "icons/apps/synwevo-extract.png",
+    "source_sha256": "5d59908e9bdcd913867f27a9d6c804c824ec52c6bd2762445907e3f04746141a",
+    "file": "synwevo-extract-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 2688,
+    "sha256": "35c8dff435fd912bdf541e46f55017213bb37b412776378be3cd7eb970b5b567"
+  },
+  {
+    "id": "extract",
+    "source": "icons/apps/synwevo-extract.png",
+    "source_sha256": "5d59908e9bdcd913867f27a9d6c804c824ec52c6bd2762445907e3f04746141a",
+    "file": "synwevo-extract-168.png",
+    "width": 168,
+    "height": 168,
+    "bytes": 9571,
+    "sha256": "a27266b11e83d3e6eeb23cb441a0aba9c2a153ed8e880435b595c4b9e2b5b95a"
+  },
+  {
+    "id": "agent",
+    "source": "icons/apps/synwevo-agent.png",
+    "source_sha256": "fca7ddde9dfd905837cea08abf9ba283e4b553e269e41a9afb1291f5ea17b284",
+    "file": "synwevo-agent-32.png",
+    "width": 32,
+    "height": 32,
+    "bytes": 1659,
+    "sha256": "a02acdcc184b6821db4fdc5a1af348a1c665c66bef5ca3b6a9bd72824fad0b5d"
+  },
+  {
+    "id": "agent",
+    "source": "icons/apps/synwevo-agent.png",
+    "source_sha256": "fca7ddde9dfd905837cea08abf9ba283e4b553e269e41a9afb1291f5ea17b284",
+    "file": "synwevo-agent-64.png",
+    "width": 64,
+    "height": 64,
+    "bytes": 4001,
+    "sha256": "bcf484dd6b2a9c012ee912aed07bc3b2352129ee98419c8ec66884b507f10be5"
+  },
+  {
+    "id": "agent",
+    "source": "icons/apps/synwevo-agent.png",
+    "source_sha256": "fca7ddde9dfd905837cea08abf9ba283e4b553e269e41a9afb1291f5ea17b284",
+    "file": "synwevo-agent-168.png",
+    "width": 168,
+    "height": 168,
+    "bytes": 14819,
+    "sha256": "ef81994b72f4cb5523ea9c3768afcd4869f70ea2cd43cbd1bb04a1746f7579c7"
+  }
+]

@@ -118,12 +118,21 @@ E2E `apps/docs/scripts/ui_e2e_keyboard.py` 的 G 流程验证：新旧键写入 
   外壳只有浅色主题，界面里不使用。
 * **邮件**：系统邮件是纯文本（§6），不放图片 Logo。
 
+### 2.6 应用与治理入口图标
+
+指定的 Synwevo App Icons v1 原始 PNG 保存在 `packages/ui/app-icons/originals/`，与母品牌资源分开。
+`AppIcon` 按真实应用 ID 或现有治理模块路径选图；映射、光学校正与尺寸变体规格只在
+`packages/ui/app-icons/registry.json` 定义。运行 `python scripts/app_icon_assets.py --check` 校验原图哈希及衍生资源。
+应用身份位使用 `AppIcon`；母品牌位继续使用 `Brand` / `Logo`；动作、组织和个人头像沿用各自语义。
+不把素材清单视为已实现的应用目录。覆盖范围、素材溯源与实测结果见 [应用图标接入记录](platform/app-icons.md)。
+
 ## 3. 基础组件（`@synwevo/ui`）
 
 | 组件 / 类 | 规则 |
 |---|---|
 | `Brand` / `BrandMark` | 唯一的品牌位：完整版 Logo（24px；`size="lg"` 32px）+ 灰色产品名（Workspace / Account / Docs）。三个外壳的顶栏、登录框架、门户首页都用它；`markBelow` / `productBelow` 控制窄屏（§2.5） |
 | `Logo` | 三种确认版本之一（`full` / `mark` / `wordmark`），按高度等比显示；页脚与流程示意卡的字标用它 |
+| `AppIcon` | 应用/治理入口身份，16 / 20 / 24 / 32 / 48px，透明 PNG 与 `object-fit: contain`；默认装饰，未知 ID 或加载失败显示中性网格；交互状态由所属控件负责 |
 | `PageState` | 整页只有一条消息的状态（载入中、正在前往登录、会话或路由错误）：图形版在上，消息在下 |
 | `.btn` | 30px 高、6px 圆角、`--line-strong` 边界；`primary`（蓝底白字，hover strong，active pressed）、`danger`（红字红边）、`ghost`、`sm`/`xs`/`lg`/`icon`。`<a class="btn">` 与 `<button>` 外观一致 |
 | `.input` `select.input` `textarea.input` | 30px、`--line-strong` 边界，聚焦蓝边 + 淡蓝环；占位符用 `--muted`；复选框/单选 `accent-color: var(--accent)` |

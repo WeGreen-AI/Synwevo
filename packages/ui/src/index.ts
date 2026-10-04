@@ -5,6 +5,7 @@
  */
 export * from "./ui";
 export * from "./brand";
+export * from "./AppIcon";
 export * from "./a11y";
 export * from "./theme";
 export * from "./useFit";
