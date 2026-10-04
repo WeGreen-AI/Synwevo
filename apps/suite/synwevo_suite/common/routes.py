@@ -54,7 +54,7 @@ def build_router(ctx) -> APIRouter:
         if body.idempotency_key and idempotency_key and body.idempotency_key != idempotency_key:
             raise ServiceError(400, "bad_idempotency_key", "请求头与请求体里的幂等键不一致")
         return caps.invoke(operation, body.input, user_id=user["id"], workspace_id=body.workspace_id,
-                           via="ui", idempotency_key=key, correlation_id=caller_correlation(body.correlation_id),
+                           via="ui", idempotency_key=key, correlation_id=caller_correlation(caps.store, body.correlation_id, user["id"]),
                            request=request)
 
     @r.get("/runs")

@@ -406,8 +406,10 @@ def test_a_caller_cannot_name_a_correlation_in_the_form_of_the_platforms_run_ids
     # Alice's chain is hers alone
     assert {r["user_id"] for r in p.store.all("SELECT user_id FROM op_runs WHERE correlation_id=?", (hers,))} \
         == {p.uid("alice")}
-    # his own labels are his: kept as he wrote them
-    for label in ("sync-7", "run_2026-10-04", "RUN_00000000C0DE", hers + "-retry"):
+    # his own labels are his: kept as he wrote them — and so is his own run id, the chain the
+    # platform handed him back for a call he made without naming one (review R4)
+    mine = m(api, bob, "tables.record.create", {"table_id": table["id"], "cells": {}})["run_id"]
+    for label in ("sync-7", "run_2026-10-04", "RUN_00000000C0DE", hers + "-retry", mine):
         own = m(api, bob, "tables.record.create", {"table_id": table["id"], "cells": {}}, correlation_id=label)
         assert p.store.one("SELECT correlation_id FROM op_runs WHERE id=?", (own["run_id"],))["correlation_id"] == label
 

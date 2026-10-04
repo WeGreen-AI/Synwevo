@@ -428,14 +428,19 @@ def machine_credential(scopes, app: str):
         _CREDENTIAL.reset(entered)
 
 
-def caller_correlation(value: str | None) -> str | None:
+def caller_correlation(store, value: str | None, user_id: str) -> str | None:
     """A correlation id as a caller names it at an HTTP entry (the page's operations route, the
-    machine API): kept as written, unless it has the form of the platform's own run ids. A run id
-    of someone else's that the caller learnt, or a constant of that form two integrations happen
-    to share, would otherwise put the caller's runs into a chain that is not theirs in platform
-    administration's view (R3-AR-3). The platform's own callers — the flow engine, triggers, a
-    handler passing its call's chain on — name such ids to :meth:`Capabilities.invoke` directly."""
-    if value is not None and PLATFORM_CORRELATION.fullmatch(value):
+    machine API): kept as written. One in the form of the platform's own run ids is kept only when
+    it names a run or flow run of this same person — the chain the platform handed them back
+    (a run they made without naming one is correlated under its own id) and that they pass on to
+    keep the next calls in it. Someone else's run id that the caller learnt, or a constant of that
+    form two integrations happen to share, would otherwise put the caller's runs into a chain that
+    is not theirs in platform administration's view (R3-AR-3). The platform's own callers — the
+    flow engine, triggers, a handler passing its call's chain on — name such ids to
+    :meth:`Capabilities.invoke` directly."""
+    if value is not None and PLATFORM_CORRELATION.fullmatch(value) and not store.one(
+            "SELECT 1 AS n FROM op_runs WHERE id=? AND user_id=? UNION ALL "
+            "SELECT 1 FROM flow_runs WHERE id=? AND user_id=? LIMIT 1", (value, user_id, value, user_id)):
         raise ServiceError(400, "bad_correlation_id",
                            "run_ 或 flowrun_ 加 12 位十六进制数字形式的关联编号保留给平台自己的运行，请换一个")
     return value

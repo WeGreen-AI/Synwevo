@@ -83,7 +83,7 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 |---|---|
 | `GET /whoami` | 客户端、本人、工作空间、当前角色、仍然有效的 scope、可用应用 |
 | `GET /operations[?app=]` | 本人在该工作空间可用的全部操作契约（输入/输出 JSON Schema、所需 scope、幂等规则、是否已授予） |
-| `POST /ops/{operation}` | 执行一个操作。请求体 `{input, idempotency_key?, correlation_id?, workspace_id?}`，不接受其他成员。`correlation_id` 是调用方自选的追踪文本（≤100 字符）；`run_` 或 `flowrun_` 加 12 位小写十六进制数字的形式是平台自己的运行编号，不能自选（400 `bad_correlation_id`） |
+| `POST /ops/{operation}` | 执行一个操作。请求体 `{input, idempotency_key?, correlation_id?, workspace_id?}`，不接受其他成员。`correlation_id` 是调用方自选的追踪文本（≤100 字符）；`run_` 或 `flowrun_` 加 12 位小写十六进制数字的形式是平台自己的运行编号：只能沿用本人自己的运行或流程运行编号（平台为未指定关联编号的调用回传的就是它），其他人的或随意构造的一律拒绝（400 `bad_correlation_id`） |
 | `GET /runs/{run_id}` | 本客户端为本人发起的一次运行的回执；读取时重新鉴权，来源已不可读时 `snapshot_hidden: true`、`output: null` |
 
 响应 `{run_id, operation, status, output, replayed, workspace_id}`。`200` 表示已完成；异步操作尚未结束时为 `202`
@@ -138,7 +138,7 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 
 | 状态 | `code`（常见） |
 |---|---|
-| 400 | `invalid`（请求体不合法、含未知成员）、`bad_idempotency_key`、`idempotency_key_required` |
+| 400 | `invalid`（请求体不合法、含未知成员）、`bad_idempotency_key`、`idempotency_key_required`、`bad_correlation_id` |
 | 401 | `unauthorized`、`invalid_audience`、`client_unavailable` |
 | 403 | `insufficient_scope`、`person_required`、`workspace_mismatch`、`read_only_role`、`manage_required`、`app_access_denied`、`wrong_credential`、`forbidden` |
 | 404 | `unknown_operation`、`run_not_found`、`app_unavailable`、`not_found` |
