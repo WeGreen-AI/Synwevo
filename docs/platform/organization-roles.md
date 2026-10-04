@@ -21,7 +21,7 @@
 | 成熟参考 | Slack 自定义角色（读取 2026-09-26）：组织级、按权限勾选、可编辑/删除、只有 Primary Owner 与 Roles Admin 可创建；Notion 企业管理（读取 2026-09-26）：「Admin roles don't change what someone can see or edit in pages or databases」——管理权不等于内容权；Membership Admin 只能加成员、不能加管理员——委派不得越过委派者。 |
 | 对比与选择 | (a) 把工作空间角色扩成权限位：会改变 Docs 的对象授权契约，风险大；(b) 只加一个「roles admin」标志：仍是固定档；(c) 组织级权限目录 + 自定义角色表：不碰工作空间与文档授权，现有三档角色保留其含义并映射到目录。选 (c)。 |
 | 预期变化 | 组织页新增「自定义角色」节（创建/编辑/删除，权限按组勾选，自己没有的权限不可勾）；成员行显示自定义角色，可分配、可查看有效权限及来源；组织级检查（设置、成员、空间、邀请）改按权限判定；接口 `/api/auth/organizations/{oid}/roles*`、`/members/{uid}/roles`、`/members/{uid}/permissions`、`/permissions`。 |
-| 边界与风险 | 委派不越权：创建/修改/分配角色都要求操作者已持有其中每一项权限并持有 `org.roles.manage`；所有者专属权限（交接、生命周期）不可放进角色；删除已分配的角色必须明确「同时解除分配」；成员被移除时角色一并清除；工作空间与 Docs 权限完全不受影响；目录新增权限不会自动进入已有角色。 |
+| 边界与风险 | 委派不越权：创建/修改角色、给成员加上或收回角色，都要求操作者已持有该角色的每一项权限并持有 `org.roles.manage`（成员保留不动的角色不要求；D12，2026-10-04）；所有者专属权限（交接、生命周期）不可放进角色；删除已分配的角色必须明确「同时解除分配」；成员被移除时角色一并清除；工作空间与 Docs 权限完全不受影响；目录新增权限不会自动进入已有角色。 |
 | 验收 | §6：成员被分配「建空间」角色后能建空间、仍不能改设置/管角色；受委派的角色管理员不能铸造自己没有的权限、不能编辑/分配含更高权限的角色；所有者也不能把所有者专属权限放进角色；「仅所有者」邀请策略压过任何自定义角色；删除已分配角色 409 → 明确 unassign；移除成员清角色；admin 基础角色行为不变（仍不管角色）。 |
 | 发布与恢复 | schema v9→v10 新增两张表；现有成员与角色不迁移（三档角色映射到目录即刻生效）；回滚只需回退代码，表保留无害。 |
 
@@ -48,7 +48,7 @@
 * `organization_roles(id, organization_id, name UNIQUE per org, description, permissions JSON, version …)`、
   `organization_role_assignments(organization_id, user_id, role_id)`；每组织最多 50 个角色。
 * `GET /{oid}/permissions`：读者语言的目录 + 调用者持有的权限；`GET /{oid}/roles`（需 `org.members.view`）；
-  `POST/PATCH/DELETE /{oid}/roles[/{rid}]`（敏感操作：重认证 + 理由）；`PUT /{oid}/members/{uid}/roles {role_ids}`（整体替换）；
+  `POST/PATCH/DELETE /{oid}/roles[/{rid}]`、`POST /{oid}/roles/{rid}/copy`（敏感操作：重认证 + 理由 `reason`，8–500 字，写入审计）；`PUT /{oid}/members/{uid}/roles {role_ids, reason}`（整体替换；加上与收回的角色都须在操作者权限之内）；
   `GET /{oid}/members/{uid}/permissions` → `{base_role, roles, permissions, sources}`。
 * 审计：`organization.role.create/update/delete/assign`；分配变化时当事成员收到通知 `organization.roles_assigned`。
 

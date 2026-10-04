@@ -15,6 +15,8 @@ from synwevo_core.store import new_id, now
 
 from .test_org_roles import PW, base, login, org  # noqa: F401  (the same organization fixture)
 
+WHY = "fixture: reason recorded with a role change"   # role writes need 8+ characters (D12)
+
 
 def audit(c, h, **params):
     r = c.get(f"{base(c, c.oid)}/audit", params=params, headers=h)
@@ -25,8 +27,8 @@ def audit(c, h, **params):
 def test_the_log_lists_governance_with_names_and_nothing_else(org):
     c = org
     h = login(c, "owner")
-    role = c.post(f"{base(c, c.oid)}/roles", headers=h, json={"name": "审计员", "permissions": ["org.audit.read"]}).json()["role"]
-    assert c.put(f"{base(c, c.oid)}/members/{c.users['member']['id']}/roles", headers=h, json={"role_ids": [role["id"]]}).status_code == 200
+    role = c.post(f"{base(c, c.oid)}/roles", headers=h, json={"name": "审计员", "permissions": ["org.audit.read"], "reason": WHY}).json()["role"]
+    assert c.put(f"{base(c, c.oid)}/members/{c.users['member']['id']}/roles", headers=h, json={"role_ids": [role["id"]], "reason": WHY}).status_code == 200
     assert c.patch(f"{base(c, c.oid)}/members/{c.users['delegate']['id']}", headers=h,
                    json={"role": "admin", "reason": "负责日常的组织管理工作"}).status_code == 200
     store = c.ident.store
@@ -60,13 +62,13 @@ def test_the_log_lists_governance_with_names_and_nothing_else(org):
 def test_who_may_read_it(org):
     c = org
     h = login(c, "owner")
-    role = c.post(f"{base(c, c.oid)}/roles", headers=h, json={"name": "审计员", "permissions": ["org.audit.read"]}).json()["role"]
+    role = c.post(f"{base(c, c.oid)}/roles", headers=h, json={"name": "审计员", "permissions": ["org.audit.read"], "reason": WHY}).json()["role"]
     # a plain member may not; with a custom role holding the permission, they may
     hm = login(c, "member")
     r = c.get(f"{base(c, c.oid)}/audit", headers=hm)
     assert r.status_code == 403
     h = login(c, "owner")
-    assert c.put(f"{base(c, c.oid)}/members/{c.users['member']['id']}/roles", headers=h, json={"role_ids": [role["id"]]}).status_code == 200
+    assert c.put(f"{base(c, c.oid)}/members/{c.users['member']['id']}/roles", headers=h, json={"role_ids": [role["id"]], "reason": WHY}).status_code == 200
     hm = login(c, "member")
     assert c.get(f"{base(c, c.oid)}/audit", headers=hm).status_code == 200
     # someone outside the organization learns nothing
@@ -83,7 +85,7 @@ def test_paging_and_categories(org):
     c = org
     h = login(c, "owner")
     for i in range(5):
-        assert c.post(f"{base(c, c.oid)}/roles", headers=h, json={"name": f"角色{i}", "permissions": ["org.audit.read"]}).status_code in (200, 201)
+        assert c.post(f"{base(c, c.oid)}/roles", headers=h, json={"name": f"角色{i}", "permissions": ["org.audit.read"], "reason": WHY}).status_code in (200, 201)
     first = audit(c, h, limit=3)
     assert len(first["items"]) == 3 and first["next_before"] == first["items"][-1]["seq"]
     rest = audit(c, h, limit=100, before=first["next_before"])

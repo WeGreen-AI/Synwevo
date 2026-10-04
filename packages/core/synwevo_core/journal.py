@@ -75,6 +75,7 @@ KINDS = {
     "webhook_disabled",         # {subscription_id}
     "passkey_removed",          # {credential_id}
     "workspace_app_disabled",   # {workspace_id, app_id}
+    "app_disabled",             # {app_id} — the application switched off platform-wide
     "invitation_revoked",       # {invitation_id}
     "api_key_superseded",       # {key_id} — a rotated-out key; the successor is not recreated
     PLATFORM_GRANT_KIND,       # {event_id, user_id, grant_id, role, granted_at, granted_by}
@@ -93,6 +94,7 @@ _REQUIRED = {
     "entitlement_revoked": ("workspace_id", "app_id", "user_id"),
     "workspace_frozen": ("workspace_id",), "webhook_disabled": ("subscription_id",),
     "passkey_removed": ("credential_id",), "workspace_app_disabled": ("workspace_id", "app_id"),
+    "app_disabled": ("app_id",),
     "invitation_revoked": ("invitation_id",), "tokens_revoked": (),
     PLATFORM_GRANT_KIND: ("event_id", "user_id", "grant_id", "role", "granted_by"),
     UNCLAIM_KIND: ("workspace_id",),
@@ -593,6 +595,9 @@ def apply(store: Store, entries: list[dict]) -> dict:
             elif k == "workspace_app_disabled":
                 n = c.execute("DELETE FROM workspace_apps WHERE workspace_id=? AND app_id=?",
                               (e.get("workspace_id"), e.get("app_id"))).rowcount
+            elif k == "app_disabled":
+                n = c.execute("UPDATE apps SET status='disabled', updated_at=? WHERE id=? AND status<>'disabled'",
+                              (t, e.get("app_id"))).rowcount
             elif k == "invitation_revoked":
                 n = c.execute("UPDATE invitations SET revoked_at=COALESCE(revoked_at, ?) WHERE id=? AND accepted_at IS NULL",
                               (t, e.get("invitation_id"))).rowcount

@@ -1,5 +1,41 @@
 # Vultr Tokyo deployment — current record
 
+## 2026-10-04 — admin governance fixes deployed (7ae3527)
+
+**Running source:** `7ae35276bfb285c1462718631d31f21cc35394db` (fast-forward `9bf71b9..7ae3527`, 13 commits from
+`claude/admin-d9`). The verified Admin defects of CR-050 that need no owner decision, each with a regression test that
+fails on the old code:
+
+* D6 `5d49d48` + `f7f3c7f` + `730a2c2` — CLI `app disable --workspace` / `app grant` go through the service rules; every
+  app switch-off (per workspace and, new, platform-wide: journal kind `app_disabled`) is journalled inside its
+  transaction, so a journal failure rolls it back and a restore keeps it off.
+* D7 step 1 `1d5c03b` — disabling Synwevo Message never reopens the account origin's conversation routes (rollback note
+  `c9896b6`). Ending existing Message sessions on disable stays an owner decision.
+* D5 (the parts needing no owner decision) `7695c54` + `5d59857` — a service account can only be renamed or narrowed; a
+  user client cannot become one (its secret would follow); the workspace directory needs a live owner approval.
+  Read-only production count before the push: 0 platform service accounts, 0 directory calls in the call window.
+* D9 `3255ad8` — `keys retire` refuses the active key, an unknown kid, and a retiring key until 360 s after rotation
+  (`--force --yes` for a compromised key, audited as forced).
+* D12 `49701fe` + `7ae3527` — the five organization role writes require and record a reason; adding or taking away a role
+  needs every permission it carries; an accepted import invitation adds roles beside the ones held.
+* D13 `e730e0f` + `74aecd9` — a report is claimed in the transaction that removes the message (the losing decision is 409);
+  the decision tells every reporter it settled and closes every manager's to-do.
+
+Local gates on `7ae3527`: pytest 2996 passed, 2 skipped (testpaths); infra unittest 8 OK; npm tests, typecheck, build and
+the five guards on `c9896b6` (no front-end change since); refusal catalogue 7/7. SDK unchanged from `main`, not rerun.
+Two adversarial reviews (wf_08d6102e-b4a, wf_38b4ee2e-238) found nothing high or medium introduced by these commits; the
+pre-existing mediums they confirmed in the touched paths were fixed in the same range. Open lows are listed in CR-050.
+Rollback note: an older image reading a security journal that contains `app_disabled` refuses the restore (unknown
+kind) rather than dropping the entry.
+
+[Actions 37185330301](https://github.com/WeGreen-AI/Synwevo/actions/runs/37185330301) (07:17 → 07:56 UTC) passed verify
+(full suite in the 3 GB image) and the restricted SSH deployment; pre-upgrade backup `/opt/synwevo/backups/20261004T075543Z`.
+Checks at ~07:58 UTC: `/readyz` 200 on synwevo.com, accounts, docwave, workplace and message (database, storage, worker,
+malware scanner `ok` where the role has them; docwave's first probe two minutes after the restart took over 30 s, the
+following ones answered in under a second); read-only `docker ps`: `synwevo-accounts-1`, `-docs-1`, `-portal-1`,
+`-messages-1` all `synwevo:7ae35276…` and healthy, gateway recreated, ClamAV unchanged. Still not deployed:
+`feat/business-apps` (PR #1), whose third review confirmed 1 high and 9 medium findings now being fixed on that branch.
+
 ## 2026-10-04 — production leaves aadcb9e (GitHub Actions billing block cleared)
 
 **Running source:** `b8cb31a8d3add65a855fa3cea04dd71af325bb0d`. Production had stayed on `aadcb9e` since 2026-09-28, when

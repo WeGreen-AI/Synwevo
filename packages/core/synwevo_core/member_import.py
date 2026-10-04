@@ -754,7 +754,11 @@ class MemberImports:
             return {"assigned": [], "import_id": row["import_id"]}
         result = dict(row.get("result") or {})
         try:
-            out = self.roles.assign(imp["organization_id"], imp["created_by"], user_id, ids)
+            # Added to the roles the person already holds, never in place of them: assign replaces
+            # the whole set, and an existing member accepting an import invitation silently lost
+            # every other custom role (review of D12). Untouched roles need nothing from the importer.
+            have = [r["id"] for r in self.roles.assigned(imp["organization_id"], user_id)]
+            out = self.roles.assign(imp["organization_id"], imp["created_by"], user_id, sorted(set(have) | set(ids)))
             result["roles"] = {"assigned": out.get("added", ids), "at": now()}
         except ServiceError as e:
             result["roles"] = {"refused": e.code, "at": now()}

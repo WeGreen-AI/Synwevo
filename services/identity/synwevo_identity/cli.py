@@ -7,7 +7,7 @@
         --name 平台门户 --redirect http://portal.localhost:8769/auth/callback
     python -m synwevo_identity.cli client list|show|disable|enable|revoke-tokens <client_id>
     python -m synwevo_identity.cli client rotate-secret <client_id> [--grace-minutes N]
-    python -m synwevo_identity.cli keys list|rotate|retire            # OIDC 签名密钥
+    python -m synwevo_identity.cli keys list|rotate|retire --kid <kid> [--force --yes]  # OIDC 签名密钥
     python -m synwevo_identity.cli secret status|rekey [--to env|db]  # 服务端根密钥与已加密数据
     python -m synwevo_identity.cli info                               # 账户侧配置
 
@@ -47,6 +47,10 @@ def data_dir(args) -> str:
 
 def _ts(v) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(v)) if v else "-"
+
+
+def _clock(v) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(v))
 
 
 def _audit(store: Store, action: str, *, object_kind: str | None = None, object_id: str | None = None,
@@ -209,8 +213,19 @@ def cmd_app(args) -> int:
         if not apps.get(args.app):
             print(f"没有名为 {args.app} 的应用", file=sys.stderr)
             return 2
-        store.execute("UPDATE apps SET status=?, updated_at=? WHERE id=?",
-                      ("active" if args.action == "enable" else "disabled", now(), args.app))
+        # Through the service, which journals a platform-wide switch-off: a database restored
+        # from a backup taken while the application was on keeps it off.
+        try:
+            changed = apps.set_status(args.app, "active" if args.action == "enable" else "disabled")
+        except OSError as e:
+            _audit(store, f"cli.app.{args.action}", object_kind="app", object_id=args.app, result="error",
+                   meta={"journal": "failed"})
+            print(f"没有停用 {args.app}：写入安全日志失败（{e}），停用已回滚。请修复数据目录的写权限后再执行一次本命令。",
+                  file=sys.stderr)
+            return 3
+        if not changed:
+            print(f"应用 {args.app} 本来就是{'启用' if args.action == 'enable' else '停用'}状态，没有需要修改的。")
+            return 0
         _audit(store, f"cli.app.{args.action}", object_kind="app", object_id=args.app)
         print(f"应用 {args.app} 已{'启用' if args.action == 'enable' else '停用'}")
         return 0
@@ -226,14 +241,33 @@ def cmd_app(args) -> int:
         print("workspace default 是待认领的历史数据空间，不能在这里直接授权；请使用认领流程。",
               file=sys.stderr)
         return 2
+    if not apps.get(args.app):
+        # No foreign key holds workspace_apps or app_entitlements to the registry: a mistyped id
+        # would be written, audited and reported as done.
+        print(f"没有名为 {args.app} 的应用", file=sys.stderr)
+        return 2
     if args.action == "enable":
+        if ws["status"] != "active":
+            print(f"工作空间 {args.workspace} 当前不可用（{ws['status']}），不能启用应用", file=sys.stderr)
+            return 2
         apps.enable_for_workspace(args.workspace, args.app)
         _audit(store, "cli.app.workspace_enable", object_kind="app", object_id=args.app,
                workspace_id=args.workspace)
         print(f"工作空间 {args.workspace} 已启用 {args.app}")
     elif args.action == "disable":
-        store.execute("DELETE FROM workspace_apps WHERE workspace_id=? AND app_id=?",
-                      (args.workspace, args.app))
+        # Through the service, which journals the withdrawal: restored from a backup taken while
+        # the application was on, it — and the keys and service accounts it gates — stays off.
+        try:
+            changed = apps.disable_for_workspace(args.workspace, args.app)
+        except OSError as e:
+            _audit(store, "cli.app.workspace_disable", object_kind="app", object_id=args.app,
+                   workspace_id=args.workspace, result="error", meta={"journal": "failed"})
+            print(f"没有停用：写入安全日志失败（{e}），工作空间 {args.workspace} 的 {args.app} 仍是启用状态。"
+                  "请修复数据目录的写权限后再执行一次本命令。", file=sys.stderr)
+            return 3
+        if not changed:
+            print(f"工作空间 {args.workspace} 没有启用 {args.app}，没有需要停用的。")
+            return 0
         _audit(store, "cli.app.workspace_disable", object_kind="app", object_id=args.app,
                workspace_id=args.workspace)
         print(f"工作空间 {args.workspace} 已停用 {args.app}")
@@ -246,7 +280,13 @@ def cmd_app(args) -> int:
             print(f"找不到用户 {args.user}", file=sys.stderr)
             return 2
         if args.action == "grant":
-            apps.grant(args.workspace, args.app, u["id"])
+            # The rules the members page applies: a member, the application on in that
+            # workspace, the workspace active — one transaction, in the service.
+            try:
+                ident.set_entitlement(args.workspace, u["id"], args.app, grant=True)
+            except ServiceError as e:
+                print(f"未授予：{e.message}", file=sys.stderr)
+                return 2
         else:
             # The same explicit-revocation semantics as the workspace governance API: a revoked
             # row even when none existed, and the person's tokens for this app in this workspace
@@ -425,7 +465,8 @@ def cmd_keys(args) -> int:
         print(f"新的签名密钥：{kid}")
         if retiring:
             print(f"{retiring} 个旧密钥转为 retiring，仍在 JWKS 中发布，因此此前签发的令牌继续可验证。")
-            print("等待最长的令牌有效期过去之后，再执行 keys retire <kid>。")
+            print(f"用旧密钥签发的令牌最迟 {_clock(now() + oidc.SIGNED_TOKEN_MAX_S)} 全部过期；"
+                  "此后再执行 keys retire --kid <旧 kid>。")
         else:
             print("此前没有活动密钥，这是第一把；没有需要保留验证的旧令牌。")
         return 0
@@ -433,8 +474,28 @@ def cmd_keys(args) -> int:
         if not args.kid:
             print("需要 --kid", file=sys.stderr)
             return 2
-        keys.retire(args.kid)
-        _audit(store, "cli.keys.retire", object_kind="signing_key", object_id=args.kid)
+        force = bool(args.force)
+        if force and not args.yes:
+            if not sys.stdin.isatty():
+                print("--force 会立即停止发布这把密钥，用它签发、仍在有效期内的令牌会验证失败。确认请加 --yes。",
+                      file=sys.stderr)
+                return 2
+            if input(f"立即退役 {args.kid}，不等它签发的令牌过期？输入 yes 确认：").strip() != "yes":
+                print("已取消。")
+                return 1
+        try:
+            changed = keys.retire(args.kid, force=force)
+        except ServiceError as e:
+            _audit(store, "cli.keys.retire", object_kind="signing_key", object_id=args.kid, result="denied",
+                   meta={"reason": e.code, "forced": force})
+            at = e.detail.get("retirable_at")
+            print(f"未退役：{e.message}" + (f"（最早 {_clock(at)} 可退役；密钥被泄露时用 --force）" if at else ""),
+                  file=sys.stderr)
+            return 2
+        if not changed:
+            print(f"{args.kid} 早已退役，没有需要修改的。")
+            return 0
+        _audit(store, "cli.keys.retire", object_kind="signing_key", object_id=args.kid, meta={"forced": force})
         print(f"{args.kid} 已退役，不再发布；用它签发的令牌从此验证失败。")
         return 0
     return 0
@@ -645,7 +706,9 @@ def main() -> int:
 
     ky = sub.add_parser("keys", help="OIDC 签名密钥")
     ky.add_argument("action", choices=["list", "rotate", "retire"])
-    ky.add_argument("--kid", help="retire 时指定")
+    ky.add_argument("--kid", help="retire 时指定；只能退役 retiring 的密钥，且要等它签发的令牌过期")
+    ky.add_argument("--force", action="store_true", help="retire：密钥被泄露时不等令牌过期，立即退役")
+    ky.add_argument("--yes", action="store_true", help="retire --force：不再交互确认")
     ky.set_defaults(func=cmd_keys)
 
     se = sub.add_parser("secret", help="服务端根密钥：查看状态，或把已加密数据迁移到另一把根密钥")

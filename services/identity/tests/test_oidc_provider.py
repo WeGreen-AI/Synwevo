@@ -77,8 +77,52 @@ def test_rotation_keeps_the_previous_key_verifiable(env):
     assert new != old and retiring == 1
     kids = {k["kid"] for k in env["keys"].jwks()["keys"]}
     assert old in kids and new in kids, "轮换期间旧密钥必须仍可验签，否则轮换看起来像故障"
-    env["keys"].retire(old)
+    assert env["keys"].retire(old, force=True) is True
     assert old not in {k["kid"] for k in env["keys"].jwks()["keys"]}
+
+
+def _signed(env) -> str:
+    return env["grants"].id_token(client=env["client"], user=env["user"], sid="s_fixture",
+                                  code_row={"auth_time": now(), "amr": "password", "nonce": None, "scope": "openid"})
+
+
+def test_the_active_key_cannot_be_retired(env):
+    """Admin defect D9: retiring the active key succeeded, the next JWKS read silently minted a
+    replacement, and an id_token issued seconds earlier stopped verifying."""
+    token = _signed(env)
+    active = env["keys"].active()["kid"]
+    for force in (False, True):
+        with pytest.raises(ServiceError) as e:
+            env["keys"].retire(active, force=force)
+        assert (e.value.status, e.value.code) == (409, "key_in_use")
+    jwks = env["keys"].jwks()
+    assert [k["kid"] for k in jwks["keys"]] == [active], "no silent replacement key"
+    assert oidc.decode_signed(token, jwks)["sub"] == env["user"]["id"]
+
+
+def test_a_retiring_key_is_withdrawn_only_after_its_tokens_expired(env, monkeypatch):
+    token = _signed(env)
+    old = env["keys"].active()["kid"]
+    env["keys"].rotate()
+    exp = oidc.decode_signed(token, env["keys"].jwks())["exp"]     # the boundary, read from the token itself
+    for at in (None, exp - 1):
+        if at is not None:
+            monkeypatch.setattr(oidc, "now", lambda at=at: at)
+        with pytest.raises(ServiceError) as e:
+            env["keys"].retire(old)
+        assert (e.value.status, e.value.code) == (409, "key_still_verifying") and e.value.detail["retirable_at"] > exp
+        assert oidc.decode_signed(token, env["keys"].jwks())["exp"] == exp, "the token must still verify"
+    monkeypatch.setattr(oidc, "now", lambda: exp + 90)                # past expiry and the verifier's skew
+    assert env["keys"].retire(old) is True
+    assert old not in {k["kid"] for k in env["keys"].jwks()["keys"]}
+    assert oidc.decode_signed(_signed(env), env["keys"].jwks())["sub"] == env["user"]["id"]
+    assert env["keys"].retire(old) is False, "retiring twice changes nothing"
+
+
+def test_retiring_an_unknown_key_is_an_error(env):
+    with pytest.raises(ServiceError) as e:
+        env["keys"].retire("k_missing")
+    assert (e.value.status, e.value.code) == (404, "no_key")
 
 
 def test_the_first_rotation_on_a_fresh_service_retires_nothing(tmp_path):

@@ -136,7 +136,8 @@ def _name(value, field: str = "name") -> str:
     return value
 
 
-def _reason(value) -> str:
+def audit_reason(value) -> str:
+    """The reason an organization change is made, written to its audit record: 8 to 500 characters."""
     if not isinstance(value, str) or not 8 <= len(value.strip()) <= 500:
         raise ServiceError(400, "missing_reason", "请写明理由（8 至 500 个字），它会写入审计记录",
                            {"field": "reason"})
@@ -248,7 +249,7 @@ class Organizations:
         (synwevo_core.data_flow): "organization" keeps it inside, "any" leaves it to each
         workspace's own policy. Like the invitation policy, only an owner changes it."""
         from .data_flow import ORGANIZATION_OUTBOUND, organization_outbound, set_organization_outbound
-        reason = _reason(reason)
+        reason = audit_reason(reason)
         if name is None and invitation_policy is None and transfer_policy is None:
             raise ServiceError(400, "invalid_field", "请提供要修改的组织设置")
         if name is not None:
@@ -312,7 +313,7 @@ class Organizations:
                                {"retry_after": max(1, int(row["oldest"] + 86400 - now()) + 1)})
 
     def adopt_workspace(self, oid, actor_id, wid, *, reason):
-        reason = _reason(reason)
+        reason = audit_reason(reason)
         with self.store.tx():
             self.require(oid, actor_id, permission="org.workspaces.adopt", active=True)
             ws = self.ident.get_workspace(wid)
@@ -388,7 +389,7 @@ class Organizations:
             raise ServiceError(409, "last_owner", "不能移除或降级最后一名可用的组织所有者")
 
     def change_role(self, oid, actor_id, uid, role, *, reason):
-        reason = _reason(reason)
+        reason = audit_reason(reason)
         if role not in ROLES:
             raise ServiceError(400, "bad_role", "请选择有效的组织角色", {"field": "role"})
         with self.store.tx():
@@ -418,7 +419,7 @@ class Organizations:
                                   "(SELECT id FROM workspaces WHERE organization_id=?)", (now(), uid, oid))
 
     def remove_member(self, oid, actor_id, uid, *, reason, leave=False):
-        reason = _reason(reason)
+        reason = audit_reason(reason)
         with self.store.tx():
             _, actor = self.require(oid, actor_id, permission=None if leave else "org.members.manage")
             target = self._target(oid, uid)
@@ -456,7 +457,7 @@ class Organizations:
             return {"removed": True, **revoked}
 
     def transfer(self, oid, actor_id, uid, *, reason):
-        reason = _reason(reason)
+        reason = audit_reason(reason)
         with self.store.tx():
             self.require(oid, actor_id, owner=True, active=True)
             self._target(oid, uid)
@@ -499,7 +500,7 @@ class Organizations:
         return out
 
     def transition(self, oid, actor_id, action, *, reason):
-        reason = _reason(reason)
+        reason = audit_reason(reason)
         with self.store.tx():
             org, _ = self.require(oid, actor_id, owner=True)
             ts, revoked = now(), {}

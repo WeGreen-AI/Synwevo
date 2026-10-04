@@ -777,6 +777,7 @@ export const messages = {
   "这条举报已经处理过了": { en: "This report has already been handled.", "zh-Hant": "這則檢舉已經處理過了" },
   "只有持有「管理自定义角色」权限的成员可以执行此操作": { en: "Only a member with the “Manage custom roles” permission can do this.", "zh-Hant": "只有持有「管理自訂角色」權限的成員可以執行此操作" },
   "不能授予自己没有的权限": { en: "You cannot grant a permission you do not hold.", "zh-Hant": "不能授予自己沒有的權限" },
+  "不能收回包含自己没有的权限的角色": { en: "You cannot take away a role that carries permissions you do not hold.", "zh-Hant": "不能收回包含自己沒有的權限的角色" },
   "角色名称须为 1 至 60 个字符": { en: "A role name needs 1 to 60 characters.", "zh-Hant": "角色名稱須為 1 至 60 個字元" },
   "说明最多 500 个字符": { en: "The description can have at most 500 characters.", "zh-Hant": "說明最多 500 個字元" },
   "请至少选择一项权限": { en: "Choose at least one permission.", "zh-Hant": "請至少選擇一項權限" },
@@ -794,6 +795,7 @@ export const messages = {
   "复制角色": { en: "Copy role", "zh-Hant": "複製角色" },
   "{name}（副本）": { en: "{name} (copy)", "zh-Hant": "{name}（副本）" },
   "这个角色包含你没有的权限，不能复制": { en: "This role includes permissions you do not hold, so you cannot copy it", "zh-Hant": "這個角色包含你沒有的權限，不能複製" },
+  "这个角色包含你没有的权限，不能分配或收回": { en: "This role includes permissions you do not hold, so you cannot assign or take it away", "zh-Hant": "這個角色包含你沒有的權限，不能分配或收回" },
   "已达到 50 个自定义角色的上限": { en: "The limit of 50 custom roles has been reached", "zh-Hant": "已達到 50 個自訂角色的上限" },
   "副本与「{name}」有相同的说明和权限，不分配给任何成员；之后可以单独编辑。": { en: "The copy has the same description and permissions as “{name}” and is not assigned to anyone; you can edit it on its own afterwards.", "zh-Hant": "副本與「{name}」有相同的說明和權限，不分配給任何成員；之後可以單獨編輯。" },
   "更新组织名称、邀请策略或内容外发上限。更严格的邀请策略可能撤销不再符合条件的待处理邀请；外发上限只约束之后的转移。": {

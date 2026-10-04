@@ -306,3 +306,28 @@ def test_the_registered_application_is_open_to_every_live_account_and_listed_for
     world["store"].execute("UPDATE apps SET status='disabled' WHERE id=?", (MESSAGES_APP_ID,))
     assert apps.check_access(loner["id"], MESSAGES_APP_ID)[0] is False
     assert messages_launch_url(world["store"]) is None and world["accounts"].get("/api/auth/state").json()["messages_url"] is None
+
+
+def test_disabling_the_messages_app_does_not_hand_conversations_back_to_the_account_origin(world):
+    """Admin defect D7: the account origin's legacy fallback was closed only while the registry
+    said Synwevo Message was *active*. `app disable messages` reopened it — a second writer with
+    its own fan-out, serving conversations the disable was meant to stop."""
+    _register(world)
+    b = world["b"]
+    _sign_in_centrally(world)
+    b.go(MESSAGES + "/auth/start?next=/")
+    mck, ack = b.jar.apply(MESSAGES), b.jar.apply(ACCOUNTS)
+    dm = world["messages"].post("/api/messaging/dm", cookies=mck, headers={CSRF: mck["dw_csrf"]},
+                                json={"organization_id": world["org"], "user_id": world["bob"]["id"]})
+    assert dm.status_code == 201, dm.text[:200]
+    cid = dm.json()["id"]
+    world["store"].execute("UPDATE apps SET status='disabled' WHERE id='messages'")   # what `app disable messages` writes
+    send = world["accounts"].post(f"/api/auth/messaging/conversations/{cid}/messages", cookies=ack,
+                                  headers={CSRF: ack["dw_csrf"]}, json={"body": "after disable", "client_id": "a1"})
+    assert send.status_code == 410 and send.json()["error"] == "moved"
+    assert world["accounts"].get("/api/auth/messaging/conversations", cookies=ack).status_code == 410
+    page = world["accounts"].get(f"/messages/{cid}", cookies=ack, follow_redirects=False)
+    assert page.status_code == 303 and page.headers["location"].startswith(MESSAGES + "/auth/start")
+    assert world["store"].one("SELECT COUNT(*) AS n FROM messages WHERE conversation_id=?", (cid,))["n"] == 0
+    # pointing people at the application still follows its status
+    assert world["accounts"].get("/api/auth/state").json()["messages_url"] is None

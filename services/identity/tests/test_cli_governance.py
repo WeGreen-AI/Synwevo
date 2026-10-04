@@ -144,6 +144,98 @@ def test_revoking_an_app_entitlement_is_explicit_and_journalled(world, capsys):
     assert _audit(world, "cli.app.revoke")
 
 
+def test_disabling_an_app_for_a_workspace_is_journalled_and_survives_a_restore(world, capsys):
+    """CR D6: the CLI deleted the row directly, so a restore from a backup taken while the
+    application was on quietly turned it — and the keys and service accounts it gates — back on."""
+    store, ws = world["store"], world["ws"]
+    assert store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id='docweave'", (ws,))
+    code, out, _ = cli(world, capsys, "app", "disable", "docweave", "--workspace", ws)
+    assert code == 0 and "已停用" in out
+    entries = [e for e in journal.read(world["d"]) if e["kind"] == "workspace_app_disabled"]
+    assert entries and entries[-1]["workspace_id"] == ws and entries[-1]["app_id"] == "docweave"
+    assert _audit(world, "cli.app.workspace_disable")
+    # the backup: the row as it was, then the journal replayed over it
+    store.execute("INSERT INTO workspace_apps (workspace_id, app_id, enabled_at) VALUES (?, 'docweave', 0)", (ws,))
+    journal.apply(store, journal.read(world["d"]))
+    assert not store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id='docweave'", (ws,))
+    # turning off what is already off is reported as such, and audited as nothing
+    code, out, _ = cli(world, capsys, "app", "disable", "docweave", "--workspace", ws)
+    assert code == 0 and "没有需要停用的" in out and len(_audit(world, "cli.app.workspace_disable")) == 1
+    code, _, err = cli(world, capsys, "app", "disable", "no-such-app", "--workspace", ws)
+    assert code == 2 and "no-such-app" in err and len(_audit(world, "cli.app.workspace_disable")) == 1
+
+
+def _journal_fails_once(world):
+    real, calls = journal.record, []
+
+    def flaky(*a, **kw):
+        calls.append(a[1])
+        if len(calls) == 1:
+            raise PermissionError("fixture: journal not writable")
+        return real(*a, **kw)
+    world["mp"].setattr(journal, "record", flaky)
+
+
+def test_a_journal_failure_leaves_the_app_on_so_running_again_journals_it(world, capsys):
+    """Review of D6: the row was deleted before the journal write, so after a journal failure the
+    advised re-run found nothing to disable, journalled nothing and reported success."""
+    store, ws = world["store"], world["ws"]
+    _journal_fails_once(world)
+    code, _, err = cli(world, capsys, "app", "disable", "docweave", "--workspace", ws)
+    assert code == 3 and "仍是启用状态" in err
+    assert store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id='docweave'", (ws,)), "rolled back"
+    code, out, _ = cli(world, capsys, "app", "disable", "docweave", "--workspace", ws)
+    assert code == 0 and "已停用" in out
+    assert [e["app_id"] for e in journal.read(world["d"]) if e["kind"] == "workspace_app_disabled"] == ["docweave"]
+
+
+def test_switching_an_app_off_platform_wide_is_journalled_and_survives_a_restore(world, capsys):
+    """Review of D6: `app disable <id>` without --workspace was a bare UPDATE, so a restore from a
+    backup taken while the application was on turned it back on for everyone."""
+    store = world["store"]
+    _journal_fails_once(world)
+    code, _, err = cli(world, capsys, "app", "disable", "docweave")
+    assert code == 3 and "已回滚" in err and store.one("SELECT status FROM apps WHERE id='docweave'")["status"] == "active"
+    code, out, _ = cli(world, capsys, "app", "disable", "docweave")
+    assert code == 0 and "已停用" in out
+    assert [e["app_id"] for e in journal.read(world["d"]) if e["kind"] == "app_disabled"] == ["docweave"]
+    store.execute("UPDATE apps SET status='active' WHERE id='docweave'")       # the backup, taken while it was on
+    journal.apply(store, journal.read(world["d"]))
+    assert store.one("SELECT status FROM apps WHERE id='docweave'")["status"] == "disabled"
+    code, out, _ = cli(world, capsys, "app", "disable", "docweave")
+    assert code == 0 and "没有需要修改的" in out and len(_audit(world, "cli.app.disable")) == 2   # the error and the change
+    code, out, _ = cli(world, capsys, "app", "enable", "docweave")
+    assert code == 0 and "已启用" in out and store.one("SELECT status FROM apps WHERE id='docweave'")["status"] == "active"
+
+
+def test_granting_an_app_from_the_cli_follows_the_members_page_rules(world, capsys):
+    """CR D6: `app grant` was a bare upsert — a non-member, a workspace without the application, a
+    frozen workspace and an unknown application id were all written and reported as granted."""
+    ident, ws, store = world["ident"], world["ws"], world["store"]
+    bob = ident.create_user("bob@example.com", PW, status="active")
+    outsider = ident.create_user("out@example.com", PW, status="active")
+    ident.add_member(ws, bob["id"], "editor")
+
+    def rows(uid):
+        return store.all("SELECT * FROM app_entitlements WHERE workspace_id=? AND user_id=?", (ws, uid))
+
+    code, _, err = cli(world, capsys, "app", "grant", "docweave", "--workspace", ws, "--user", "out@example.com")
+    assert code == 2 and "未授予" in err and not rows(outsider["id"])
+    code, _, err = cli(world, capsys, "app", "grant", "no-such-app", "--workspace", ws, "--user", "bob@example.com")
+    assert code == 2 and not rows(bob["id"])
+    other = ident.create_workspace("Fixture other", owner_id=world["alice"]["id"])["id"]
+    store.execute("DELETE FROM workspace_apps WHERE workspace_id=?", (other,))
+    ident.add_member(other, bob["id"], "editor")
+    code, _, err = cli(world, capsys, "app", "grant", "docweave", "--workspace", other, "--user", "bob@example.com")
+    assert code == 2 and "未授予" in err
+    ident.set_workspace_frozen(ws, True)
+    code, _, err = cli(world, capsys, "app", "grant", "docweave", "--workspace", ws, "--user", "bob@example.com")
+    assert code == 2 and "冻结" in err and not rows(bob["id"])
+    ident.set_workspace_frozen(ws, False)
+    code, out, _ = cli(world, capsys, "app", "grant", "docweave", "--workspace", ws, "--user", "bob@example.com")
+    assert code == 0 and "已授予" in out and rows(bob["id"])[0]["revoked_at"] is None
+
+
 # ---------------------------------------------------------------- F055: the root secret
 def _enrol_totp(world) -> str:
     from synwevo_identity.mfa import Mfa
@@ -206,3 +298,30 @@ def test_secret_status_reports_a_mismatch(world, capsys):
     world["mp"].setenv("SYNWEVO_SECRET", "an-external-root-secret-0123456789")
     code, out, _ = cli(world, capsys, "secret", "status")
     assert code == 0 and "服务会拒绝启动" in out and "totp_secrets.secret_enc=1" in out
+
+
+# ---------------------------------------------------------------- D9: signing-key retirement
+def test_keys_retire_refuses_the_active_key_an_unknown_kid_and_an_unconfirmed_force(world, capsys):
+    """Admin defect D9: `keys retire` retired whatever it was given — the active key, a key whose
+    tokens were still valid, a kid that never existed — and reported success each time."""
+    keys = oidc.Keys(world["store"])
+    first = keys.active()["kid"]
+    code, out, _ = cli(world, capsys, "keys", "rotate")
+    assert code == 0 and "--kid" in out
+    active = keys.active()["kid"]
+    code, _, err = cli(world, capsys, "keys", "retire", "--kid", active)
+    assert code == 2 and "keys rotate" in err
+    code, _, err = cli(world, capsys, "keys", "retire", "--kid", "k_missing")
+    assert code == 2 and "k_missing" in err
+    code, _, err = cli(world, capsys, "keys", "retire", "--kid", first)
+    assert code == 2 and "--force" in err
+    code, _, err = cli(world, capsys, "keys", "retire", "--kid", first, "--force")
+    assert code == 2 and "--yes" in err
+    assert [a["result"] for a in _audit(world, "cli.keys.retire")] == ["denied"] * 3
+    assert world["store"].one("SELECT status FROM oidc_keys WHERE kid=?", (first,))["status"] == "retiring"
+    code, out, _ = cli(world, capsys, "keys", "retire", "--kid", first, "--force", "--yes")
+    assert code == 0 and "已退役" in out
+    done = _audit(world, "cli.keys.retire")[-1]
+    assert done["result"] == "ok" and json.loads(done["meta"])["forced"] is True
+    code, out, _ = cli(world, capsys, "keys", "retire", "--kid", first, "--force", "--yes")
+    assert code == 0 and "早已退役" in out and len(_audit(world, "cli.keys.retire")) == 4

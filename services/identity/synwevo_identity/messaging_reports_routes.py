@@ -68,12 +68,18 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
         out = svc.review_report(rid, uid, str(body.get("decision") or ""), body.get("note"))
         audit(request, "messaging.report.review", actor_id=uid, object_kind="message_report", object_id=rid, result="ok",
               meta={"decision": out["status"], "message_id": out["message_id"], "organization_id": out["organization_id"]})
-        try:
-            notifier.emit(out["reporter"]["user_id"], f"conversation.report_{out['status']}", params={"note": out["decision_note"] or ""},
-                          organization_id=out["organization_id"], object_kind="message_report", object_id=rid, dedupe_key=f"report:{rid}:reviewed",
-                          target=conversation_target(store, out["conversation_id"]))
-        except Exception as e:  # noqa: BLE001
-            log.warning("report outcome inbox item skipped: %s", type(e).__name__)
+        # Every report the decision settled — this one and the other open reports of the same
+        # message — tells its reporter the outcome and closes the to-do each manager was given.
+        # The note was written for the reviewed report; the others get the outcome alone.
+        for settled in [out, *(svc.report_get(other) for other in out["settled_with"])]:
+            try:
+                notifier.set_action_state("message_report", settled["id"], "done")
+                notifier.emit(settled["reporter"]["user_id"], f"conversation.report_{out['status']}",
+                              params={"note": (out["decision_note"] or "") if settled["id"] == rid else ""},
+                              organization_id=out["organization_id"], object_kind="message_report", object_id=settled["id"],
+                              dedupe_key=f"report:{settled['id']}:reviewed", target=conversation_target(store, out["conversation_id"]))
+            except Exception as e:  # noqa: BLE001
+                log.warning("report outcome inbox item skipped: %s", type(e).__name__)
         return out
 
     return r
