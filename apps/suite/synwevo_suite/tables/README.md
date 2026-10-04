@@ -100,6 +100,11 @@ the uploader and expires after one hour (up to 10 active tickets/person/workspac
 preview/apply use `tables.import.apply`; preview executes the real validators/writers inside a
 rolled-back savepoint. Partial mode reports failed rows without retrying successful rows. Upload
 a corrected file for failed rows. No import overwrites existing records.
+A related-records column holds what export writes for it: each related record's display name (the
+linked table's primary field as the importer can read it, else the record number), several joined
+by commas, or a record id. Names match exactly, else ignoring case and width; only live records
+the importer can read are candidates. A name or id that matches none, or a name that matches
+several, fails its row with `link_not_found` / `link_ambiguous` and the column and value.
 
 `tables.export.create` returns a private download URL, valid for ten minutes (up to 50 tickets).
 The saved query is frozen, but its records and permissions are evaluated **at download time**.
