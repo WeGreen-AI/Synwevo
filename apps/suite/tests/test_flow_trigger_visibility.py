@@ -303,3 +303,36 @@ def test_the_decision_is_made_for_a_bounded_number_of_events_per_tick(watch, mon
     w.engine.trigger_tick()
     assert w.fired(bob) == visible, "each one exactly once, in order, none passed over"
     assert all(records[i] not in w.flow_rows("bob") for i in (1, 4))
+
+
+def test_a_co_members_trigger_is_given_neither_their_correlation_nor_their_run(watch):
+    """R3-AR-1: Alice writes a record in A under a correlation id of her own choosing; Bob's
+    trigger on A starts a run for it. A correlation id is free text, and the run that caused the
+    event is hers: the machine event feed shows neither to another caller, and her run is not
+    found for Bob. Nothing Bob can read back — his flow rows (what the flow routes and the Agent's
+    run tools return), his step's operation runs, the events his run records — holds either one.
+    His own write still makes his own chain: its correlation id and run reach his run."""
+    w, p = watch, watch.p
+    bob = w.on("tables.record.changed", "bob")
+    table = w.table("Fixture contacts")
+    text = "Fixture private trace of Alice"
+    hers = w.caps.invoke("tables.record.create", {"table_id": table, "cells": {}}, user_id=p.uid("alice"),
+                         workspace_id=p.a, correlation_id=text)
+    w.tick()
+    w.tick()
+    run = w.store.one("SELECT id, status FROM flow_runs WHERE trigger_id=?", (bob,))
+    assert run["status"] == "succeeded" and w.fired(bob) == [hers["output"]["id"]]
+    shown = w.caps.invoke("agent.flow.run", {"run_id": run["id"]}, user_id=p.uid("bob"))["output"]
+    steps = w.store.all("SELECT * FROM op_runs WHERE user_id=?", (p.uid("bob"),))
+    events = w.store.all("SELECT * FROM app_events WHERE user_id=?", (p.uid("bob"),))
+    assert steps and events
+    readable = w.flow_rows("bob") + json.dumps([shown, steps, events], ensure_ascii=False, default=str)
+    for secret in (text, hers["run_id"]):
+        assert secret not in readable, secret
+
+    # Bob's own write: his correlation id and his run are his chain
+    mine = w.caps.invoke("tables.record.create", {"table_id": table, "cells": {}}, user_id=p.uid("bob"),
+                         workspace_id=p.a, correlation_id="Fixture trace of Bob")
+    w.tick()
+    own = w.store.one("SELECT correlation_id, parent_run_id FROM flow_runs WHERE trigger_id=? ORDER BY rowid DESC LIMIT 1", (bob,))
+    assert (own["correlation_id"], own["parent_run_id"]) == ("Fixture trace of Bob", mine["run_id"])

@@ -143,7 +143,10 @@ receipt, run creation and budget increment commit in one transaction. Correlatio
 and depth propagate; excessive depth records a refusal. Duplicate wait events only cause reads.
 The correlation is the owner's chain only when the owner's own operation caused the event, or
 (for an event an application records with no operation run) when the owner already has runs
-under it; any other event begins a chain named after it, shared by the runs it starts.
+under it; any other event begins a chain named after it, shared by the runs it starts. The
+causing run is the run's `parent_run_id` only when it is the owner's own operation run: another
+person's run id, like their correlation text, is not handed to the owner (the event's id, kept
+with the run, still leads to the event).
 
 Schedules use IANA `timezone`, local `at: HH:MM`, and `weekdays` (Monday=0). A spring-forward
 gap skips that local time; a fall-back fold runs only the first occurrence. `misfire=skip`

@@ -160,10 +160,10 @@ class Triggers:
                 payload = self._trigger_input(spec.input, event)
                 # Only identity/routing metadata survives. Business data must come from operations.
                 routing = {k: event[k] for k in ("id", "type", "object_id", "workspace_id")} if event else None
+                chain, parent = self._chain(event, row["user_id"]) if event else (None, None)
                 result = self._start(row["flow_id"], user_id=row["user_id"], version=row["version"], parameters=payload,
                                      idempotency_key=f"trigger:{row['id']}:{occurrence}", trigger_id=row["id"], event=routing,
-                                     correlation_id=self._chain(event, row["user_id"]) if event else None,
-                                     parent_run_id=event.get("run_id") if event else None,
+                                     correlation_id=chain, parent_run_id=parent,
                                      depth=int(event.get("depth", 0)) + 1 if event else 0)
                 rid = result["id"]
                 t.execute("UPDATE flow_triggers SET runs_used=runs_used+1 WHERE id=?", (row["id"],))
@@ -180,10 +180,10 @@ class Triggers:
         t.execute("UPDATE flow_triggers SET error_code=?,updated_at=? WHERE id=?", (code, ts, row["id"]))
 
     def _chain(self, event, owner):
-        """The chain of events this one belongs to, for the runs it starts for ``owner``: what the
-        chain has read (`_sources`) must follow into them. An application that records an event
-        later, from its own worker, may name only the operation run it settles; that run still
-        knows its correlation.
+        """The chain of events this one belongs to, and the run that caused it, for the runs it
+        starts for ``owner``: what the chain has read (`_sources`) must follow into them. An
+        application that records an event later, from its own worker, may name only the operation
+        run it settles; that run still knows its correlation.
 
         A chain is one person's, and a correlation is something any caller may name. So the
         event's chain is the owner's only when the owner's own operation caused it, or — for an
@@ -191,19 +191,25 @@ class Triggers:
         owner already has runs under its correlation. Otherwise, another member naming one
         correlation on all their writes would gather every run the owner's triggers start into
         one chain (R3-FE-07): the event begins a chain of its own, named after it and shared by
-        the runs it starts side by side."""
+        the runs it starts side by side.
+
+        The causing run is named as the parent only when it is the owner's own operation run. The
+        owner reads their run back (its summary, its steps' operation runs, the events it
+        records), and another person's run id is theirs, as their correlation text is: the event
+        feed does not show either to another caller (R3-AR-1). The event's id, kept with the run,
+        still leads from the run to the event that started it."""
         origin = (self.store.one("SELECT user_id, correlation_id FROM op_runs WHERE id=?", (event["run_id"],))
                   if event.get("run_id") else None)
         if origin is not None:
             if origin["user_id"] == owner:
-                return event.get("correlation_id") or origin["correlation_id"]
+                return event.get("correlation_id") or origin["correlation_id"], event["run_id"]
         elif event.get("correlation_id") and (
                 self.store.one("SELECT 1 FROM op_runs WHERE correlation_id=? AND user_id=? LIMIT 1",
                                (event["correlation_id"], owner))
                 or self.store.one("SELECT 1 FROM flow_runs WHERE correlation_id=? AND user_id=? LIMIT 1",
                                   (event["correlation_id"], owner))):
-            return event["correlation_id"]
-        return event["id"]
+            return event["correlation_id"], None
+        return event["id"], None
 
     def _readable(self, row, workspace_id, events):
         """The events of this batch the trigger's owner may know about now.
