@@ -349,6 +349,30 @@ def test_a_correlation_id_a_caller_chose_is_returned_as_a_digest_that_still_grou
         assert marker not in texts(*answers), marker
 
 
+def test_every_person_who_chose_one_text_is_found_by_their_own_digest(world, monkeypatch):
+    """R3-AR-2: a common text ("sync") chosen by more people than one batch of the digest search
+    reads. Each of them is found by the digest the page shows for their runs, in both lists —
+    whichever batch their (text, person) pair falls in — and only they are."""
+    store, ws = world["store"], world["alice_ws"]["id"]
+    people = [world["alice"], world["bob"], world["person"]("carol@example.test")]
+    run(store, "run_alice_earlier", user=people[0], workspace=ws, via="api", correlation="AAA fixture earlier text")
+    for person in people:
+        name = person["email"].split("@")[0]
+        run(store, f"run_{name}_sync", user=person, workspace=ws, via="api", correlation="sync")
+        flow(store, f"fr_{name}_sync", user=person, correlation="sync", flow_id=f"flow_{name}")
+    monkeypatch.setattr(admin_runs, "_TOKEN_BATCH", 2)      # the first batch ends inside "sync"
+    c = world["holder"]("auditor")
+    shown = {row["id"]: row["correlation_id"] for row in c.get("/api/admin/app-runs").json()["items"]}
+    found = {}
+    for person in people:
+        name = person["email"].split("@")[0]
+        token = caller_token(store, person["id"], "sync")
+        assert shown[f"run_{name}_sync"] == token
+        found[name] = ([row["id"] for row in c.get("/api/admin/app-runs", params={"q": token}).json()["items"]],
+                       [row["id"] for row in c.get("/api/admin/flow-runs", params={"q": token}).json()["items"]])
+    assert found == {name: ([f"run_{name}_sync"], [f"fr_{name}_sync"]) for name in ("alice", "bob", "carol")}
+
+
 def test_an_error_code_a_flows_author_chose_is_replaced_on_the_run_the_step_and_the_history(world):
     store, alice, ws = world["store"], world["alice"], world["alice_ws"]["id"]
     # The definition as the engine stores it: validated by its own model, in its canonical form.

@@ -234,16 +234,20 @@ def build_router(store: Store, audit) -> APIRouter:
         # person's text: (text, person), so two people who chose the same text stay apart.
         found = [(q, None)] if _GENERATED.fullmatch(q) and store.one(
             f"SELECT 1 AS n FROM {table} WHERE correlation_id=? LIMIT 1", (q,)) else []
-        after = ""
+        # The batches go on from the last (text, person) pair, not the last text: a batch may end
+        # among the people who chose one text, and the rest of them are in the next (R3-AR-2).
+        # `correlation_id>=?` keeps it a range on the correlation index.
+        text, person = "", ""
         while _TOKEN.fullmatch(q):
             batch = store.all(
-                f"SELECT DISTINCT correlation_id AS c, user_id AS u FROM {table} WHERE correlation_id>? "
-                "AND correlation_id NOT GLOB ? AND correlation_id NOT GLOB ? ORDER BY correlation_id LIMIT ?",
-                (after, *_GENERATED_GLOB, _TOKEN_BATCH))
+                f"SELECT DISTINCT correlation_id AS c, user_id AS u FROM {table} WHERE correlation_id>=? "
+                "AND (correlation_id>? OR user_id>?) AND correlation_id NOT GLOB ? AND correlation_id NOT GLOB ? "
+                "ORDER BY correlation_id, user_id LIMIT ?",
+                (text, text, person, *_GENERATED_GLOB, _TOKEN_BATCH))
             found += [(row["c"], row["u"]) for row in batch if correlation_token(row["c"], row["u"], key) == q]
             if len(batch) < _TOKEN_BATCH:
                 break
-            after = batch[-1]["c"]
+            text, person = batch[-1]["c"], batch[-1]["u"]
         return found
 
     def _named(table: str, alias: str, q: str) -> tuple[str, list] | None:
