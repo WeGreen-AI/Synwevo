@@ -329,3 +329,24 @@ def test_a_flow_cannot_send_organization_content_out_from_a_sibling_workspace(su
     # Inside the organization the content may move; out to an address it may not.
     assert outcomes == {"send": ("blocked", "transfer_organization_external"), "keep": ("succeeded", None)}
     assert p.store.one("SELECT COUNT(*) AS n FROM form_requests")["n"] == 0
+
+
+@pytest.mark.parametrize("action", ["freeze", "delete"])
+def test_a_workspace_of_an_unavailable_organization_takes_no_policy_change(suite, action):
+    """CR-047 DFP-2: the Agent app answered for membership only, so an owner could widen a
+    workspace's data-flow (or processing) policy while its organization was frozen or deleted —
+    to take effect on recovery. Every workspace operation now closes alike."""
+    p = suite.people
+    alice = p.uid("alice")
+    orgs, oid, main = organization(p, "alice", "Fixture Org", "fixture-data-flow-org-" + action)
+    suite.sign_in("alice")
+    op(suite, "forms.form.list", ws=main)                      # open while the organization is active
+    orgs.transition(oid, alice, action, reason="Fixture lifecycle check")
+    suite.sign_in("alice")                                     # a fresh session after the transition
+    before = data_flow.workspace_outbound(p.store, main)
+    refused = op(suite, "agent.transfer_policy.set", {"outbound": "any", "revision": before["revision"]}, ws=main, expect=403)
+    assert refused["error"] == "app_access_denied"
+    refused = op(suite, "agent.workspace_policy.set", {"processing": "any", "providers": ["deepseek"]}, ws=main, expect=403)
+    assert refused["error"] == "app_access_denied"
+    assert data_flow.workspace_outbound(p.store, main) == before
+    assert op(suite, "forms.form.list", ws=main, expect=403)["error"] == "app_access_denied"
