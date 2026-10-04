@@ -20,6 +20,17 @@ def refusal(code):
     return ServiceError(409, code, "流程触发条件或授权不可用，请检查设置")
 
 
+def _strings(value) -> set[str]:
+    """Every string in a resolved read input — the ids a wait is reading."""
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, dict):
+        return set().union(*(_strings(v) for v in value.values())) if value else set()
+    if isinstance(value, list):
+        return set().union(*(_strings(v) for v in value)) if value else set()
+    return set()
+
+
 class Triggers:
     @staticmethod
     def _check_scope(spec, policy):
@@ -330,5 +341,24 @@ class Triggers:
                 except ServiceError:
                     continue                                # it fails alone when its own check falls due
                 if isinstance(step, WaitStep) and any((step.read.workspace_id, typ) in pairs for typ in step.event_types):
-                    t.execute("UPDATE flow_runs SET due_at=MIN(due_at,?) WHERE id=?", (self.clock(), run["id"]))
+                    # An event about the record the wait reads (the target its last check resolved)
+                    # wakes it at once. Any other event of that type in the workspace — other
+                    # people's activity, outsiders' public submissions — only says something *may*
+                    # have changed, and every check costs the run calls: it brings the next check
+                    # forward, but never closer than half the wait's poll_s to the previous one, so
+                    # unrelated activity can at most double how often the run checks, never drain
+                    # its budget with no time passing (review R3-FE-04).
+                    last = t.execute("SELECT updated_at, checks, reader_json FROM flow_steps WHERE run_id=? AND step_id=?",
+                                     (run["id"], run["step_id"])).fetchone()
+                    soonest = self.clock()
+                    if last and last["checks"]:
+                        target = _strings((json.loads(last["reader_json"] or "{}") or {}).get("input"))
+                        # the event's object and the ids its payload names (payloads carry ids only):
+                        # a submission event names the request a forms wait is reading
+                        about = set().union(*({e["object_id"]} | _strings(e["data"]) for e in events
+                                              if (e["workspace_id"], e["type"]) in
+                                              {(step.read.workspace_id, typ) for typ in step.event_types}))
+                        if not (about & target):
+                            soonest = max(soonest, last["updated_at"] + step.poll_s / 2)
+                    t.execute("UPDATE flow_runs SET due_at=MIN(due_at,?) WHERE id=?", (soonest, run["id"]))
             self.caps.advance(t, consumer, events[-1]["seq"])

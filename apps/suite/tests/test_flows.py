@@ -606,6 +606,37 @@ def test_outbox_listener_is_after_commit_and_wait_missed_event_still_polls(flow,
     assert f.row(rid)["status"] == "succeeded" and "agent.flow.step_completed" in notified
 
 
+def test_other_peoples_events_cannot_spend_a_waiting_run_faster_than_half_its_polling(flow):
+    """Review R3-FE-04: every committed event of a listed type in the read workspace pulled a waiting
+    run's check to now, and each check costs the run calls — so other members' unrelated decisions
+    (or outsiders' public submissions) spent its budget with no time passing. An event still brings
+    the check forward, but never closer than half the wait's poll_s to the previous check."""
+    f = flow
+    rid = f.start(f.create([f.write(), f.waiting(poll_s=60), f.write("next")]))
+    f.tick()
+    assert f.row(rid)["status"] == "waiting_approval"
+    used = f.row(rid)["calls_used"]
+
+    def unrelated(n):
+        with f.store.tx() as t:
+            for i in range(n):
+                record_event(t, type_="fixtureflow.decided", app="fixtureflow", workspace_id=f.ws,
+                             object_kind="fixture_approval", object_id=f"fixture-unrelated-{i}", data={"state": "approved"})
+        f.tick()
+    for _ in range(20):                       # twenty unrelated decisions, the clock standing still
+        unrelated(1)
+    assert f.row(rid)["calls_used"] == used, "no check sooner than half the polling interval"
+    f.clock.advance(31)                       # past half of poll_s: the next event is answered at once
+    unrelated(1)
+    assert f.row(rid)["calls_used"] > used and f.row(rid)["status"] == "waiting_approval"
+    unrelated(1)                              # right after that check: held back again
+    assert f.row(rid)["calls_used"] == (used := f.row(rid)["calls_used"])
+    # the decision on the record the wait reads is answered at once, however recent the last check
+    f.invoke("fixtureflow.decide", {"id": f.result(rid, "write")["id"], "state": "approved"}, who="bob")
+    f.tick()
+    assert f.row(rid)["status"] == "succeeded"
+
+
 def test_wrong_workspace_or_forged_event_cannot_approve_wait(flow):
     f = flow
     rid = f.start(f.create([f.write(), f.waiting(), f.write("next")]))

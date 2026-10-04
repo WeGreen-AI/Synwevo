@@ -9,6 +9,10 @@ is picked up through that existing entry. No Store/schema-entry change is requir
 
 With `ctx.start_jobs=True`, installation starts a lifecycle-managed `Ticker` every five seconds.
 Event listeners only wake it **after commit**. Durable polling still works if a listener is lost.
+A wait listed for an event type is checked at once when such an event names the record it reads
+(its object or an id in its payload); any other event of that type in the workspace brings the
+next check forward no closer than half the wait's `poll_s` to the previous one, because every
+check spends the run's calls and other people's activity must not drain them.
 Every replica can run the ticker: database leases, monotonically increasing fences, unique
 operation keys and atomic cursor/delivery writes arbitrate concurrent execution.
 
