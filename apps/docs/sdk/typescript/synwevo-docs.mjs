@@ -1578,13 +1578,12 @@ export function verifyWebhook(headers, body, secret, { toleranceS = WEBHOOK_TOLE
 export function verifyLegacyWebhook(headers, body, secret, { toleranceS = WEBHOOK_TOLERANCE_S, nowS = Date.now() / 1000 } = {}) {
   // Before anything else: an unset variable is undefined, which String() made the key 'undefined',
   // and '' an empty key — either way a signature anyone can make verified. The secret is used as
-  // its UTF-8 bytes (raw bytes as they are), and refused as verifyWebhook refuses it.
+  // its UTF-8 bytes (raw bytes as they are). No minimum length: the server signs with whatever
+  // non-empty secret the deployment configured, and refusing a short one would reject every
+  // genuine event of such a deployment.
   const bytes = typeof secret === 'string' || Buffer.isBuffer(secret) || secret instanceof Uint8Array;
-  if (!secret || !bytes) throw new WebhookVerificationError('no_secret', '没有提供签名密钥');
+  if (!secret || !bytes || secret.length === 0) throw new WebhookVerificationError('no_secret', '没有提供签名密钥');
   const key = typeof secret === 'string' ? Buffer.from(secret, 'utf8') : Buffer.from(secret);
-  if (key.length < WEBHOOK_MIN_KEY_BYTES) {
-    throw new WebhookVerificationError('weak_secret', `签名密钥为空或过短（至少 ${WEBHOOK_MIN_KEY_BYTES} 字节）：请检查配置`);
-  }
   const h = headerMap(headers);
   const ts = h['x-docweave-timestamp']; const sig = h['x-docweave-signature'];
   if (!ts || !sig) throw new WebhookVerificationError('missing_headers', '缺少 X-DocWeave-Timestamp / X-DocWeave-Signature');

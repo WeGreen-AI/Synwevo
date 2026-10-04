@@ -172,7 +172,9 @@ page size; omit `--all` to use `--cursor`/`--offset`. Use `--help` on each resou
 for commands including deletion, job cancellation/retry and webhook administration.
 Webhook add/rotate responses contain a new secret once: save stdout privately.
 `verify_webhook` and `verify_legacy_signature` verify raw bytes before JSON parsing, and both
-refuse a missing secret or one shorter than 16 bytes (an unset variable) instead of verifying with it.
+refuse a missing or empty secret (an unset variable) instead of verifying with it; `verify_webhook`
+also refuses one shorter than 16 bytes, while the legacy verifier accepts whatever non-empty
+deployment secret the server signs with.
 
 | Exit | Meaning |
 |---|---|

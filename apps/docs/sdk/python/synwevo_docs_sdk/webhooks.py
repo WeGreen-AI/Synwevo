@@ -126,15 +126,15 @@ def verify_legacy_signature(headers: Mapping[str, str] | Iterable, body: bytes |
                             tolerance: int = DEFAULT_TOLERANCE, *, now: float | None = None) -> dict:
     """Verify the deployment endpoint signature ``X-DocWeave-Signature: v1=<hex>`` and return the payload.
 
-    ``secret`` is the deployment secret as text, used as its UTF-8 bytes; a missing one, or one
-    shorter than ``MIN_KEY_BYTES``, raises `WebhookVerificationError` as `verify_webhook` does."""
+    ``secret`` is the deployment secret as text, used as its UTF-8 bytes; a missing or empty one
+    raises `WebhookVerificationError`. No minimum length is imposed here: the server signs with
+    whatever non-empty secret the deployment configured, and refusing a short one would reject
+    every genuine event of such a deployment."""
     # Before anything else: an unset variable (``os.environ.get(..., "")``) would make the HMAC key
     # empty, and a signature anyone can make would verify.
     if not isinstance(secret, str) or not secret:
         raise WebhookVerificationError("没有配置用于校验的密钥")
     key = secret.encode("utf-8")
-    if len(key) < MIN_KEY_BYTES:
-        raise WebhookVerificationError(f"签名密钥为空或过短（至少 {MIN_KEY_BYTES} 字节）：请检查配置")
     h = _lower(headers)
     ts = _check_time(h.get("x-docweave-timestamp"), tolerance, now)
     sig = (h.get("x-docweave-signature") or "").strip()

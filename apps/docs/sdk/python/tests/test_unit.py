@@ -130,14 +130,16 @@ def test_a_verifier_refuses_empty_or_short_key_material():
         raise AssertionError(f"accepted weak secret {weak!r}")
 
 
-def test_the_legacy_verifier_refuses_a_missing_empty_or_short_secret():
+def test_the_legacy_verifier_refuses_a_missing_or_empty_secret_but_not_a_short_one():
     """R3-WH-3: the WH-4 key check covered only the Standard Webhooks verifier. With the receiver's
     secret unset (``os.environ.get(..., "")``) the legacy one HMAC'd with an empty key, so a
-    signature anyone can make was accepted as genuine."""
+    signature anyone can make was accepted as genuine. A short secret is the deployment's own
+    choice (the server signs with any non-empty one): refusing it would reject every genuine
+    event of that deployment (review R4)."""
     import time as _time
     from synwevo_docs_sdk.webhooks import MIN_KEY_BYTES, verify_legacy_signature, WebhookVerificationError
     body, ts = b'{"id":"ev_forged","type":"job.succeeded"}', str(int(_time.time()))
-    for weak in ("", "short", "x" * (MIN_KEY_BYTES - 1), None, b"", 16):
+    for weak in ("", None, b"", 16):
         key = weak if isinstance(weak, bytes) else str(weak if weak is not None else "").encode()
         forged = "v1=" + hmac.new(key, f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
         headers = {"X-DocWeave-Timestamp": ts, "X-DocWeave-Signature": forged, "X-DocWeave-Event-Id": "ev_forged"}
@@ -146,7 +148,12 @@ def test_the_legacy_verifier_refuses_a_missing_empty_or_short_secret():
         except WebhookVerificationError:
             continue
         raise AssertionError(f"accepted weak secret {weak!r}")
-    # A secret of the minimum length still verifies what it signed.
-    key = "k" * MIN_KEY_BYTES
-    signed = "v1=" + hmac.new(key.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
-    assert verify_legacy_signature({"X-DocWeave-Timestamp": ts, "X-DocWeave-Signature": signed}, body, key)["id"] == "ev_forged"
+    # Any configured secret, short ones included, verifies what it signed and nothing else.
+    for key in ("k" * MIN_KEY_BYTES, "short", "x" * (MIN_KEY_BYTES - 1)):
+        signed = "v1=" + hmac.new(key.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+        assert verify_legacy_signature({"X-DocWeave-Timestamp": ts, "X-DocWeave-Signature": signed}, body, key)["id"] == "ev_forged"
+        try:
+            verify_legacy_signature({"X-DocWeave-Timestamp": ts, "X-DocWeave-Signature": signed}, body, key + "-other")
+        except WebhookVerificationError:
+            continue
+        raise AssertionError(f"verified with the wrong secret for {key!r}")

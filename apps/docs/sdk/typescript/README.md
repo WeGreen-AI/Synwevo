@@ -95,9 +95,10 @@ Downloads use a temporary file and atomic rename after hashing. Artifacts are ch
 manifest and HTTP SHA-256. Existing matching files are reused. ZIP and CSV endpoints currently
 do not provide a checksum header: their result truthfully reports `verified: false`. Acceptance
 also compares each ZIP entry with the checked artifact bytes. Standard and legacy webhook
-verification helpers require the original raw body, and refuse a missing secret (`no_secret`) or one
-shorter than `WEBHOOK_MIN_KEY_BYTES` (`weak_secret`) — an unset variable — instead of verifying with
-it. The optional receiver's duplicate cache is
+verification helpers require the original raw body, and refuse a missing or empty secret
+(`no_secret`) — an unset variable — instead of verifying with it; the Standard Webhooks verifier
+also refuses one shorter than `WEBHOOK_MIN_KEY_BYTES` (`weak_secret`), while the legacy one accepts
+whatever non-empty deployment secret the server signs with. The optional receiver's duplicate cache is
 process-local and acknowledges only after its handler succeeds. The n8n companion has persistent
 receipts; see [the receiver workflow](../n8n/README.md).
 

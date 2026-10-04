@@ -188,7 +188,7 @@ test('a verifier refuses empty or short key material (CR-049 WH-4)', () => {
   assert.throws(() => verifyWebhook(headers, body, ''), (e) => e.code === 'no_secret');
 });
 
-test('the legacy verifier refuses a missing, empty or short secret (R3-WH-3)', () => {
+test('the legacy verifier refuses a missing or empty secret but not a short one (R3-WH-3, R4)', () => {
   // process.env.X of an unset variable is undefined; String(undefined) was the key 'undefined'.
   const body = Buffer.from('{"id":"ev_forged","type":"job.succeeded"}'); const ts = String(Math.floor(Date.now() / 1000));
   const forge = (key) => ({ 'X-DocWeave-Timestamp': ts,
@@ -196,9 +196,11 @@ test('the legacy verifier refuses a missing, empty or short secret (R3-WH-3)', (
   for (const [weak, key] of [[undefined, 'undefined'], [null, 'null'], ['', ''], [16, '16']]) {
     assert.throws(() => verifyLegacyWebhook(forge(key), body, weak), (e) => e.code === 'no_secret', String(weak));
   }
-  for (const weak of ['short', 'x'.repeat(WEBHOOK_MIN_KEY_BYTES - 1), Buffer.alloc(0)]) {
-    assert.throws(() => verifyLegacyWebhook(forge(String(weak)), body, weak), (e) => e.code === 'weak_secret', String(weak));
+  assert.throws(() => verifyLegacyWebhook(forge(''), body, Buffer.alloc(0)), (e) => e.code === 'no_secret');
+  // a short secret is the deployment's own choice (the server signs with any non-empty one):
+  // it verifies what it signed and nothing else
+  for (const key of ['k'.repeat(WEBHOOK_MIN_KEY_BYTES), 'short', 'x'.repeat(WEBHOOK_MIN_KEY_BYTES - 1)]) {
+    assert.equal(verifyLegacyWebhook(forge(key), body, key).event.id, 'ev_forged');
+    assert.throws(() => verifyLegacyWebhook(forge(key), body, `${key}-other`), (e) => e.code === 'invalid_signature');
   }
-  const key = 'k'.repeat(WEBHOOK_MIN_KEY_BYTES);
-  assert.equal(verifyLegacyWebhook(forge(key), body, key).event.id, 'ev_forged');
 });
