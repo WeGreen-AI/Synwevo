@@ -186,6 +186,14 @@ export function requestHeading(t: T, r: { kind?: string; title?: string | null; 
   return r.title || r.form_title || t("未命名表单");
 }
 
+/** Who a submission is from: what the filler (or their account) gave, else the person the
+ *  personal request names (as the sender wrote them), else no one. */
+export function submitterName(t: T, s: { submitter_label?: string | null;
+                                        recipient?: { name?: string | null; email?: string | null } | null }): string {
+  if (s.submitter_label?.trim()) return s.submitter_label;
+  return [s.recipient?.name, s.recipient?.email].filter(Boolean).join(" · ") || t("匿名填写人");
+}
+
 export function requestStatus(t: T, s: string): [string, string] {
   switch (s) {
     case "open": return [t("待填写"), "info"];

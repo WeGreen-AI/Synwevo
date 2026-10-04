@@ -7,6 +7,7 @@ relies on (fixture people and workspaces only; isolated store under ``tmp_path``
   file was moved to revision 2.
 * D4 — the request page behind a public submission offered the personal-request actions;
   重新生成链接 there minted a link that opened to 链接无效 while the old public link kept working.
+* D8 — a submission on a personal request to a named outside recipient was headed 匿名填写人.
 """
 from __future__ import annotations
 
@@ -155,3 +156,30 @@ def test_the_public_links_request_is_managed_in_the_share_settings_only(suite):
     new = token_of(op(suite, "forms.public_link.set", p.a, {"form_id": fid, "enabled": True})["output"]["url"])
     assert suite.get(base, headers=filler).status_code == 404
     assert "definition" in suite.get(f"/api/suite/public/forms/r/{new}", headers=filler).json()
+
+
+# ---------------------------------------------------------------- D8: who a submission is from
+
+def test_a_personal_requests_submission_names_the_recipient_the_request_names(suite):
+    p = suite.people
+    suite.sign_in("bob")
+    fid = published_form(suite, p.a)
+    req = op(suite, "forms.request.create", p.a, {"form_id": fid, "recipient": {"email": "carol@outside.example",
+                                                                                "name": "Carol Fixture"}})["output"]
+    suite.cookies.clear()                      # Carol has no account: she fills the link signed out
+    sid = suite.post(f"/api/suite/public/forms/r/{token_of(req['url'])}/submit", headers=CSRF,
+                     json={"version": 1, "answers": good_answers(), "idempotency_key": "d8-submit-0001"}).json()["submission_id"]
+    suite.sign_in("bob")
+    named = {"name": "Carol Fixture", "email": "carol@outside.example"}
+    assert op(suite, "forms.submission.get", p.a, {"submission_id": sid})["output"]["recipient"] == named
+    listed = op(suite, "forms.submission.list", p.a, {"form_id": fid})["output"]["submissions"]
+    assert [s["recipient"] for s in listed] == [named]
+    on_request = op(suite, "forms.request.get", p.a, {"request_id": req["request_id"]})["output"]["submissions"]
+    assert [s["recipient"] for s in on_request] == [named]
+    # A public link names nobody.
+    public = token_of(op(suite, "forms.public_link.set", p.a, {"form_id": fid, "enabled": True})["output"]["url"])
+    suite.cookies.clear()
+    anon = suite.post(f"/api/suite/public/forms/r/{public}/submit", headers={"X-Synwevo-Filler": "q" * 32, **CSRF},
+                      json={"version": 1, "answers": good_answers(), "idempotency_key": "d8-submit-0002"}).json()["submission_id"]
+    suite.sign_in("bob")
+    assert op(suite, "forms.submission.get", p.a, {"submission_id": anon})["output"]["recipient"] is None

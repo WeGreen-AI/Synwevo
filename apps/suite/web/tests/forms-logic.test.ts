@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { blankField, checkAnswers, draftRefusals, evaluate, owningField, visibleFields, type Definition } from "../src/apps/forms/logic.ts";
-import { refusalText, requestHeading } from "../src/apps/forms/text.ts";
+import { refusalText, requestHeading, submitterName } from "../src/apps/forms/text.ts";
 
 const VECTORS = JSON.parse(readFileSync(join(import.meta.dirname, "forms-vectors.json"), "utf8"));
 
@@ -65,4 +65,14 @@ test("the public link's request page is headed by its form, never left empty", (
   assert.equal(shown, "「Expense claim」的公开填写");
   assert.equal(requestHeading(SAY, { kind: "personal", title: "", form_title: "Expense claim" }), "Expense claim");
   assert.equal(requestHeading(SAY, { kind: "personal", title: "Q3 claim", form_title: "Expense claim" }), "Q3 claim");
+});
+
+// ------------------------------------------------------------------ submissions (acceptance D8)
+test("a submission through a named person's link is headed by that person, not as anonymous", () => {
+  // `forms.submission.get` of a signed-out submission on a personal request to an outside recipient.
+  const named = { submitter_label: null, recipient: { name: "Carol Fixture", email: "carol@outside.example" } };
+  assert.equal(submitterName(SAY, named), "Carol Fixture · carol@outside.example");
+  assert.equal(submitterName(SAY, { submitter_label: null, recipient: { name: null, email: "carol@outside.example" } }), "carol@outside.example");
+  assert.equal(submitterName(SAY, { ...named, submitter_label: "Carol F." }), "Carol F.");
+  assert.equal(submitterName(SAY, { submitter_label: null, recipient: null }), "匿名填写人");
 });

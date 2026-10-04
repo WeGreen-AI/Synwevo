@@ -462,7 +462,7 @@ class Forms:
         subs = self.store.all("SELECT * FROM form_submissions WHERE request_id=? ORDER BY created_at DESC LIMIT 200",
                               (request_id,))
         out = self.request_json(row, can_write=can_write)
-        out["submissions"] = [self.submission_summary(s) for s in subs]
+        out["submissions"] = [self.submission_summary(s, row) for s in subs]
         form = self._form(workspace_id, row["form_id"])
         out["form_title"] = form["title"]
         return out
@@ -545,10 +545,19 @@ class Forms:
             return len(rows)
 
     # ============================================================== submissions
-    def submission_summary(self, s: dict) -> dict:
+    def submission_summary(self, s: dict, req: dict | None = None) -> dict:
+        """``recipient`` is the person a personal request names (its name and e-mail as the
+        sender wrote them), so a submission made through that link signed out is shown as
+        theirs rather than as anonymous; None for the public link. ``submitter_label`` stays
+        what the filler or their account said."""
+        if req is None:
+            req = self.store.one("SELECT kind, recipient_name, recipient_email FROM form_requests WHERE id=?",
+                                 (s["request_id"],)) or {}
+        recipient = ({"name": req.get("recipient_name"), "email": req.get("recipient_email")}
+                     if req.get("kind") == "personal" and (req.get("recipient_name") or req.get("recipient_email")) else None)
         return {"id": s["id"], "request_id": s["request_id"], "form_id": s["form_id"], "form_version": s["form_version"],
                 "revision": s["revision"], "status": s["status"], "submitted_by": s["submitted_by"],
-                "submitter_label": s["submitter_label"], "created_at": s["created_at"],
+                "submitter_label": s["submitter_label"], "recipient": recipient, "created_at": s["created_at"],
                 "reviewed_by": s["reviewed_by"], "reviewed_at": s["reviewed_at"], "review_note": s["review_note"]}
 
     def _submission(self, workspace_id: str, submission_id: str) -> dict:
@@ -580,21 +589,24 @@ class Forms:
 
     def list_submissions(self, workspace_id: str, *, form_id: str | None, request_id: str | None,
                          status: str | None, limit: int, before: float | None) -> dict:
-        sql = "SELECT * FROM form_submissions WHERE workspace_id=?"
+        sql = ("SELECT s.*, r.kind AS req_kind, r.recipient_name AS req_name, r.recipient_email AS req_email "
+               "FROM form_submissions s LEFT JOIN form_requests r ON r.id=s.request_id WHERE s.workspace_id=?")
         args: list = [workspace_id]
         for col, val in (("form_id", form_id), ("request_id", request_id), ("status", status)):
             if val:
-                sql += f" AND {col}=?"
+                sql += f" AND s.{col}=?"
                 args.append(val)
         if not status:
-            sql += " AND status!='superseded'"
+            sql += " AND s.status!='superseded'"
         if before is not None:
-            sql += " AND created_at<?"
+            sql += " AND s.created_at<?"
             args.append(before)
-        rows = self.store.all(sql + " ORDER BY created_at DESC LIMIT ?", (*args, limit + 1))
+        rows = self.store.all(sql + " ORDER BY s.created_at DESC LIMIT ?", (*args, limit + 1))
         more = len(rows) > limit
         rows = rows[:limit]
-        return {"submissions": [self.submission_summary(r) | {"answers": _j(r["answers_json"], {})} for r in rows],
+        return {"submissions": [self.submission_summary(r, {"kind": r["req_kind"], "recipient_name": r["req_name"],
+                                                            "recipient_email": r["req_email"]})
+                                | {"answers": _j(r["answers_json"], {})} for r in rows],
                 "next_before": rows[-1]["created_at"] if more and rows else None}
 
     def request_changes(self, call: Call, submission_id: str, *, note: str, items: list[dict]) -> dict:

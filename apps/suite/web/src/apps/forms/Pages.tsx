@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Modal, useDialog, useI18n, useToast, formatDate } from "@synwevo/ui";
 import { op, newKey, read } from "../../shared/ops";
 import { Empty, Failure, Loading } from "../../shared/states";
-import { failureText, requestHeading, requestStatus, submissionStatus } from "./text";
+import { failureText, requestHeading, requestStatus, submissionStatus, submitterName } from "./text";
 import { NewRequest, CopyField } from "./Share";
 import { fmtBytes } from "./Renderer";
 import { formatAnswer } from "./answers";
@@ -206,7 +206,7 @@ export function RequestDetail({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
          <div className="suite-list">{data.submissions.map((s) => {
            const [sl, st] = submissionStatus(t, s.status);
            return <Link key={s.id} className="suite-row" to={`/forms/w/${ws.id}/s/${s.id}`}>
-             <div className="grow"><div className="title">{s.submitter_label || t("匿名填写人")}</div>
+             <div className="grow"><div className="title">{submitterName(t, s)}</div>
                <div className="sub">{when(s.created_at)}{s.revision > 1 ? ` · ${t("第 {n} 次修订", { n: s.revision })}` : ""}</div></div>
              <span className={`badge ${st}`}>{sl}</span>
            </Link>;
@@ -239,7 +239,7 @@ export function Submissions({ ws }: { ws: WS }) {
      <div className="suite-list">{data.submissions.map((s) => {
        const [sl, st] = submissionStatus(t, s.status);
        return <Link key={s.id} className="suite-row" to={`/forms/w/${ws.id}/s/${s.id}`}>
-         <div className="grow"><div className="title">{s.submitter_label || t("匿名填写人")}</div>
+         <div className="grow"><div className="title">{submitterName(t, s)}</div>
            <div className="sub">{when(s.created_at)} · {t("版本 {v}", { v: s.form_version })}{s.revision > 1 ? ` · ${t("第 {n} 次修订", { n: s.revision })}` : ""}</div></div>
          <span className={`badge ${st}`}>{sl}</span>
        </Link>;
@@ -268,7 +268,7 @@ export function SubmissionDetail({ ws, canWrite }: { ws: WS; canWrite: boolean }
     <div className="suite-head">
       <div>
         <p className="muted small"><Link to={`/forms/w/${ws.id}/r/${data.request_id}`}>← {t("填写请求")}</Link></p>
-        <h1>{data.submitter_label || t("匿名填写人")}</h1>
+        <h1>{submitterName(t, data)}</h1>
         <p className="lede"><span className={`badge ${st}`}>{sl}</span> · {when(data.created_at)} · {t("版本 {v}", { v: data.form_version })}
           {data.revision > 1 ? ` · ${t("第 {n} 次修订", { n: data.revision })}` : ""}</p>
       </div>
