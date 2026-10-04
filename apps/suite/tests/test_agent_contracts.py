@@ -385,3 +385,35 @@ def test_real_template_copy_keeps_explicit_cross_workspace_contract(agent):
     assert json.loads(run["delegation"])["transfer_from"] == [p.b]  # provenance: an ID, no content
     assert wait_turn(p.store, turn["turn_id"], ("succeeded", "failed")) == "succeeded"
     assert p.store.one("SELECT workspace_id FROM forms WHERE id=?", (result["result"]["form_id"],))["workspace_id"] == p.a
+
+
+def test_a_flow_the_agent_defines_or_starts_stays_inside_the_conversation_scope(agent):
+    """CR-047 AGENT-DF-5: flow operations are personal, so the scope check on a tool call's
+    workspace never saw the workspaces a flow's steps act in."""
+    from synwevo_suite.agent.tools import ToolContext
+    p = agent.people
+    alice = p.uid("alice")
+    ctx = ToolContext(agent.caps, p.users["alice"], [p.a], "platform")
+
+    def step(sid, ws, **extra):
+        return {"id": sid, "kind": "call", "operation": "forms.form.list", "workspace_id": ws, "input": {}, **extra}
+
+    inside = {"steps": [step("read", p.a)]}
+    outside = {"steps": [step("read", p.a), step("write", p.b)]}
+    receipt = {"steps": [step("read", p.a, result_read={"operation": "forms.form.list", "workspace_id": p.b})]}
+    for definition, code in ((inside, None), (outside, "outside_conversation_scope"), (receipt, "outside_conversation_scope")):
+        prepared = ctx.prepare({"operation": "agent.flow.create", "input": {"name": "Fixture flow", "definition": definition}})
+        assert (prepared.get("code") if isinstance(prepared, dict) else None) == code, definition
+    # A flow made on the page, outside the scope: the Agent can neither start nor resume it.
+    flows = agent.api.state.flows
+    flow_id = flows.create(user_id=alice, name="Fixture page flow", definition=outside)["flow_id"]
+    started = ctx.prepare({"operation": "agent.flow.start",
+                           "input": {"flow_id": flow_id, "version": 1, "idempotency_key": "fixture-scope"}})
+    assert started["code"] == "outside_conversation_scope"
+    run_id = flows.start(flow_id, user_id=alice, version=1, parameters={}, idempotency_key="fixture-scope-page")["id"]
+    resumed = ctx.prepare({"operation": "agent.flow.resume", "input": {"run_id": run_id}})
+    assert resumed["code"] == "outside_conversation_scope"
+    # The same calls are fine when the conversation covers every workspace.
+    wide = ToolContext(agent.caps, p.users["alice"], None, "platform")
+    assert not isinstance(wide.prepare({"operation": "agent.flow.start",
+                                        "input": {"flow_id": flow_id, "version": 1, "idempotency_key": "fixture-scope"}}), dict)

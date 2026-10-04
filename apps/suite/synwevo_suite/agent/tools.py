@@ -281,6 +281,10 @@ class ToolContext:
             return {"code": "invalid_input", "message": "The input does not match the operation's schema.",
                     "detail": [{"loc": [str(p) for p in e.get("loc", ())], "message": e.get("msg")}
                                for e in err.errors()[:20]]}
+        if self.scope is not None and op.id.startswith("agent.flow."):
+            if self._flow_workspaces(op.id, clean) - set(self.scope):
+                return {"code": "outside_conversation_scope",
+                        "message": "The flow acts in a workspace outside the scope the person chose for this conversation."}
         try:
             self.caps.authorize(op, self.user["id"], ws)
             target = clean.get("target_workspace_id")
@@ -291,6 +295,29 @@ class ToolContext:
         except ServiceError as err:
             return {"code": err.code, "message": err.message}
         return op, ws, clean
+
+    def _flow_workspaces(self, op_id: str, clean: dict) -> set[str]:
+        """The workspaces a flow the Agent defines, publishes, starts or resumes acts in: its
+        steps, result reads and waits. A flow operation is personal, so the conversation's scope
+        would otherwise not reach the workspaces its steps name (CR-047 AGENT-DF-5)."""
+        spec = clean.get("definition")
+        if spec is None and op_id in ("agent.flow.start", "agent.flow.resume"):
+            if op_id == "agent.flow.resume":
+                run = self.store.one("SELECT flow_id, version FROM flow_runs WHERE id=? AND user_id=?",
+                                     (clean.get("run_id"), self.user["id"]))
+                ref = (run["flow_id"], run["version"]) if run else None
+            else:
+                ref = (clean.get("flow_id"), clean.get("version"))
+            row = self.store.one("SELECT v.spec_json FROM flow_versions v JOIN flow_definitions d ON d.id=v.flow_id "
+                                 "WHERE v.flow_id=? AND v.version=? AND d.user_id=?", (*ref, self.user["id"])) if ref else None
+            spec = json.loads(row["spec_json"]) if row else {}
+        named = set()
+        for step in (spec or {}).get("steps") or ():
+            named.add(step.get("workspace_id"))
+            for key in ("result_read", "read"):
+                if isinstance(step.get(key), dict):
+                    named.add(step[key].get("workspace_id"))
+        return named - {None}
 
     def for_model(self, op, workspace_id: str | None, result: Any, *, also=()) -> Any:
         """What the model may read of a result: all of it, or — when the workspace (or another one
