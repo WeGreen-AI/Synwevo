@@ -6,7 +6,13 @@ where an event went and how the attempt ended, never the event's data or a recei
 
 Separate from Synwevo Docs' ``webhook_subscriptions`` / ``webhook_deliveries``: those rows carry
 no application, and each application's dispatcher reads its own event log.
+
+`stopping` is here, beside the tables, because two things stop a subscription and must agree on
+where it stopped: its own dispatcher, and the security journal replayed over a restored database
+(`synwevo_core.journal`), which cannot import an application.
 """
+from __future__ import annotations
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS suite_webhook_subscriptions (
     id TEXT PRIMARY KEY,
@@ -61,3 +67,21 @@ CREATE INDEX IF NOT EXISTS suite_whdel_due ON suite_webhook_deliveries(status, n
 CREATE INDEX IF NOT EXISTS suite_whdel_head ON suite_webhook_deliveries(subscription_id, status);
 CREATE INDEX IF NOT EXISTS suite_whdel_log ON suite_webhook_deliveries(subscription_id, created_at);
 """
+
+
+def stopping(c, sub, unsent: int | None = None) -> tuple[int | None, float | None]:
+    """Where an active subscription stands as it stops (``gap_cursor``, ``gap_at``): before its
+    place in the log, before the first event still waiting to be sent, and before `unsent` — the
+    event whose refusal stopped it. Kept, so that what is not pushed can be pulled. One that had
+    already stopped keeps the place it stopped at."""
+    if sub["status"] != "active":
+        return sub["gap_cursor"], sub["gap_at"]
+    position, at = sub["cursor"], sub["cursor_at"]
+    first = c.execute("SELECT MIN(event_seq) AS s FROM suite_webhook_deliveries WHERE subscription_id=? AND status='pending' "
+                      "AND event_seq IS NOT NULL AND redelivery_of IS NULL", (sub["id"],)).fetchone()["s"]
+    if unsent is not None and (first is None or unsent < first):
+        first = unsent
+    if first is not None and first - 1 < position:
+        event = c.execute("SELECT created_at FROM app_events WHERE seq=?", (first,)).fetchone()
+        position, at = first - 1, min(at, event["created_at"]) if event else at
+    return position, at

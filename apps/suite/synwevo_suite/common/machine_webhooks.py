@@ -72,6 +72,7 @@ from synwevo_core import webhook_delivery as delivery
 from synwevo_core.errors import ServiceError
 from synwevo_core.http import SUITE_V1
 from synwevo_core.store import new_id, now
+from synwevo_core.suite_schema.webhooks import stopping
 from synwevo_core.webhook_delivery import (BACKOFF_S, RequestDeadline, ResolverBusy, UrlRejected, UrlUnresolvable,
                                            connect_pinned, new_secret, signature_header)
 
@@ -368,23 +369,9 @@ class Webhooks:
             note(action, sid, {"host": urlsplit(url).hostname, **{k: v for k, v in meta.items() if v is not None},
                                "delegation": {"kind": "oauth_client", "client_id": p["client_id"], "grant": p.get("grant_family")}})
 
-    @staticmethod
-    def _stopping(c, sub: dict, unsent: int | None = None) -> tuple[int | None, float | None]:
-        """Where an active subscription stands as it stops: before its place in the log, before the
-        first event still waiting to be sent, and before `unsent` — the event whose refusal stopped
-        it. Kept, so that what is not pushed can be pulled. One that had already stopped keeps the
-        place it stopped at."""
-        if sub["status"] != "active":
-            return sub["gap_cursor"], sub["gap_at"]
-        position, at = sub["cursor"], sub["cursor_at"]
-        first = c.execute("SELECT MIN(event_seq) AS s FROM suite_webhook_deliveries WHERE subscription_id=? AND status='pending' "
-                          "AND event_seq IS NOT NULL AND redelivery_of IS NULL", (sub["id"],)).fetchone()["s"]
-        if unsent is not None and (first is None or unsent < first):
-            first = unsent
-        if first is not None and first - 1 < position:
-            event = c.execute("SELECT created_at FROM app_events WHERE seq=?", (first,)).fetchone()
-            position, at = first - 1, min(at, event["created_at"]) if event else at
-        return position, at
+    #: Where a subscription stands as it stops. The rule is the tables' own (the journal's replay
+    #: of a stop over a restored database follows it too), so it lives beside them.
+    _stopping = staticmethod(stopping)
 
     # ------------------------------------------------------------------ management
     @staticmethod
@@ -899,7 +886,9 @@ class Webhooks:
             self._drop(d, "subscription_deleted")
             return None, None
         if sub["status"] not in (("active", "paused") if ping else ("active",)):
-            self._drop(d, f"subscription_{sub['status']}")
+            # In the words the stop itself uses for what it drops: a disable names its reason.
+            self._drop(d, f"subscription_disabled:{sub['disabled_reason']}" if sub["status"] == "disabled"
+                       else f"subscription_{sub['status']}")
             return None, None
         try:
             p = self._principal(sub)

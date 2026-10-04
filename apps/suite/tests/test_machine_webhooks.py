@@ -1483,6 +1483,91 @@ def test_what_was_taken_back_stays_taken_back_after_a_restore(hub, monkeypatch):
     assert rx.received == []
 
 
+def _as_the_backup_had_it(store, table: str, rows: list[dict]) -> None:
+    """Fixture: put rows back the way a restored backup holds them."""
+    for row in rows:
+        store.execute(f"INSERT OR REPLACE INTO {table} ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})",
+                      tuple(row.values()))
+
+
+def test_a_stop_replayed_over_a_restore_is_a_stop_like_any_other(hub):
+    """The backup was taken while a delivery waited for its retry; the subscription was paused
+    afterwards. Restored and replayed, it is stopped as a live disable would have stopped it: what
+    waited is dropped, where it stopped is a feed cursor, the version and the time of the change
+    moved — and after the documented way back, nothing from before the stop is sent."""
+    from synwevo_core import journal as security_journal
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver(lambda n: 200 if n == 1 else 500)
+    sid = hub.subscribe(alice, rx.url, events=["tables.*"])["id"]
+    already = hub.subscribe(alice, rx.url + "/gone", events=["forms.*"])["id"]
+    hub.service.disable(already, "gone")
+    table = a_table(hub.api, alice)
+    hub.service.tick()                                                   # delivered
+    r1 = a_record(hub.api, alice, table, "r1")["output"]["id"]
+    hub.service.tick()                                                   # refused: waits for its retry
+    r2 = a_record(hub.api, alice, table, "r2")["output"]["id"]           # not yet looked at
+    backup = hub.api.get(f"{BASE}/{sid}", headers=alice).json()
+    held = {t: hub.store.all(f"SELECT * FROM {t}") for t in ("suite_webhook_subscriptions", "suite_webhook_deliveries")}
+    assert (backup["status"], backup["version"]) == ("active", 1)
+    assert [(r["status"], r["attempts"]) for r in hub.rows(sid)] == [("delivered", 1), ("pending", 1)]
+    hub.api.post(f"{BASE}/{sid}/pause", headers=alice)                   # after the backup: journalled
+    for name, rows in held.items():                                      # the restore…
+        _as_the_backup_had_it(hub.store, name, rows)
+    security_journal.apply(hub.store, [e for e in journal(hub.store) if e["kind"] == "webhook_disabled"])   # …and the replay
+    r = hub.api.get(f"{BASE}/{sid}", headers=alice)
+    stopped = r.json()
+    assert (stopped["status"], stopped["disabled_reason"]) == ("disabled", "journal_replay")
+    assert stopped["version"] == 2 and r.headers["etag"] == '"2"' and stopped["status_changed_at"] > backup["status_changed_at"]
+    refused(hub.api.patch(f"{BASE}/{sid}", json={"description": "x"}, headers={**alice, "If-Match": '"1"'}), 409, "version_conflict")
+    assert [(d["status"], d["last_error"], d["next_attempt_at"]) for d in hub.rows(sid)] == [
+        ("delivered", None, None), ("dropped", "subscription_disabled:journal_replay", None)]
+    assert hub.api.get(f"{BASE}/{sid}/deliveries", params={"status": "pending"}, headers=alice).json()["items"] == []
+    # where it stopped: before the delivery that was waiting, so what was not pushed can be pulled
+    pulled = hub.api.get("/api/suite/v1/events", params={"cursor": stopped["missed_events_cursor"]}, headers=alice).json()
+    assert [e["object"]["id"] for e in pulled["items"]] == [r1, r2]
+    # one that was disabled before the backup keeps its reason, its version and when it stopped
+    was, now_ = next(x for x in held["suite_webhook_subscriptions"] if x["id"] == already), \
+        hub.store.one("SELECT * FROM suite_webhook_subscriptions WHERE id=?", (already,))
+    assert (now_["status"], now_["disabled_reason"], now_["version"], now_["status_changed_at"]) == (
+        "disabled", "gone", was["version"], was["status_changed_at"])
+    # the documented way back: rotate the secret, resume — and it starts from the present
+    rx.behaviour = lambda n: 200
+    assert hub.api.post(f"{BASE}/{sid}/rotate-secret", json={}, headers=alice).status_code == 200
+    assert hub.api.post(f"{BASE}/{sid}/resume", headers=alice).json()["status"] == "active"
+    hub.clock.advance(DAY)                                               # past any retry the backup had scheduled
+    hub.service.tick()
+    assert objects(rx) == [table, r1], "the delivery the backup held is not sent after the resume"
+    r3 = a_record(hub.api, alice, table, "r3")["output"]["id"]
+    hub.service.tick()
+    assert objects(rx) == [table, r1, r3]
+
+
+def test_a_delivery_found_waiting_on_a_stopped_subscription_is_dropped_in_the_documented_words(hub):
+    """A redelivery checks the subscription's status before its own transaction, so one can land
+    just after a stop. The dispatcher drops it unsent, and says why in the contract's closed words."""
+    from synwevo_suite.common.machine_contract import contract
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    sid = hub.subscribe(alice, rx.url, events=["tables.*"])["id"]
+    a_table(hub.api, alice)
+    hub.service.tick()
+    first = hub.rows(sid)[0]["id"]
+    words = contract(hub.api.caps.registry)["components"]["schemas"]["WebhookDelivery"]["properties"]["last_error"]["description"]
+    for stop, said, documented in (
+            (lambda: hub.service.disable(sid, "gone"), "subscription_disabled:gone", "subscription_disabled:<reason>"),
+            (lambda: hub.api.post(f"{BASE}/{sid}/pause", headers=alice), "subscription_paused", "subscription_paused")):
+        late = hub.api.post(f"{BASE}/{sid}/deliveries/{first}/redeliver", headers=alice).json()["id"]
+        stop()
+        # fixture: the redelivery as it stands when it was queued a moment after the stop
+        hub.store.execute("UPDATE suite_webhook_deliveries SET status='pending', last_error=NULL, next_attempt_at=? WHERE id=?",
+                          (hub.clock(), late))
+        hub.service.tick()
+        row = hub.store.one("SELECT status, attempts, last_error FROM suite_webhook_deliveries WHERE id=?", (late,))
+        assert (row["status"], row["attempts"], row["last_error"]) == ("dropped", 0, said) and documented in words
+        hub.api.post(f"{BASE}/{sid}/resume", headers=alice)
+    assert len(rx.received) == 1
+
+
 def test_changes_to_where_a_persons_events_go_are_in_the_audit_trail(hub, monkeypatch):
     monkeypatch.setenv("SYNWEVO_SUITE_WEBHOOK_ALLOW_PRIVATE", "127.0.0.0/8")
     alice = grant(hub.api, "alice")["auth"]

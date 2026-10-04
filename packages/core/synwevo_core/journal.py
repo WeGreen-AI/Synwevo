@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 from .store import Store, new_id
+from .suite_schema import webhooks as suite_webhooks
 
 FILENAME = "security-journal.jsonl"
 
@@ -436,6 +437,26 @@ def _apply_platform_revocation(store: Store, c, entry: dict) -> int:
     return len(candidates)
 
 
+def _disable_suite_webhook(c: sqlite3.Connection, sid, t: float) -> int:
+    """Stop a business application's subscription as its own dispatcher stops one: what was
+    waiting is dropped, where it stopped is kept as the place to pull from, and its version and
+    the time of the change move with the status. A resume then starts from the present, and never
+    with a delivery the backup still held. One that was already disabled keeps its reason and when."""
+    row = c.execute("SELECT * FROM suite_webhook_subscriptions WHERE id=?", (sid,)).fetchone()
+    if not row:
+        return 0
+    reason = row["disabled_reason"] or "journal_replay"
+    if row["status"] == "disabled":
+        c.execute("UPDATE suite_webhook_subscriptions SET disabled_reason=?, updated_at=? WHERE id=?", (reason, t, sid))
+    else:
+        c.execute("UPDATE suite_webhook_subscriptions SET status='disabled', disabled_reason=?, status_changed_at=?, "
+                  "updated_at=?, gap_cursor=?, gap_at=?, version=version+1 WHERE id=?",
+                  (reason, t, t, *suite_webhooks.stopping(c, row), sid))
+    c.execute("UPDATE suite_webhook_deliveries SET status='dropped', last_error=?, next_attempt_at=NULL "
+              "WHERE subscription_id=? AND status='pending'", (f"subscription_disabled:{reason}", sid))
+    return 1
+
+
 def apply(store: Store, entries: list[dict]) -> dict:
     """Make every withdrawal in `entries` true in `store`. Returns counts per kind.
 
@@ -601,9 +622,7 @@ def apply(store: Store, entries: list[dict]) -> dict:
                               "updated_at=? WHERE id=?", (t, e.get("subscription_id"))).rowcount
                 # The business applications' subscriptions are journalled under the same kind; their
                 # ids do not collide with Docs' (suite_schema/webhooks.py).
-                n += c.execute("UPDATE suite_webhook_subscriptions SET status='disabled', "
-                               "disabled_reason=COALESCE(disabled_reason,'journal_replay'), updated_at=? WHERE id=?",
-                               (t, e.get("subscription_id"))).rowcount
+                n += _disable_suite_webhook(c, e.get("subscription_id"), t)
             elif k == "passkey_removed":
                 for table in ("webauthn_credentials", "passkeys"):
                     try:
