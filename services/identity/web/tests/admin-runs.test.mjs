@@ -355,5 +355,11 @@ test("a correlation id the caller chose is recognised as the server's digest, an
   }
   // the form is the server's: "ext-" and 24 hex digits
   assert.match(SERVER, /^_TOKEN = re\.compile\(r"ext-\[0-9a-f\]\{24\}"\)$/m);
-  translated("调用方自己指定的关联编号，这里只显示它的摘要；用摘要或原文都能搜索到这些运行。");
+  translated("调用方自己指定的关联编号，这里只显示它的摘要；按摘要可以搜索到这些运行，按原文搜不到。");
+  // R3-AR-4: the server never searches by the caller's original text (only by the digest), so the
+  // page must not tell an administrator that the original finds the runs
+  for (const lang of ["zh-Hans", "en", "zh-Hant"]) {
+    const said = ui.translate(lang, "调用方自己指定的关联编号，这里只显示它的摘要；按摘要可以搜索到这些运行，按原文搜不到。", {});
+    assert.doesNotMatch(said, /或原文都能|or by the original text finds|或原文都能搜尋/, lang);
+  }
 });

@@ -96,9 +96,9 @@ registerMessages({
   "只看这个工作空间的运行": { en: "Show only this workspace's runs", "zh-Hant": "只看這個工作空間的執行" },
   "涉及的对象": { en: "Object", "zh-Hant": "涉及的物件" },
   "关联编号": { en: "Correlation ID", "zh-Hant": "關聯編號" },
-  "调用方自己指定的关联编号，这里只显示它的摘要；用摘要或原文都能搜索到这些运行。": {
-    en: "The caller chose this correlation ID, so only a digest of it is shown; searching by the digest or by the original text finds these runs.",
-    "zh-Hant": "呼叫方自行指定的關聯編號，這裡只顯示它的摘要；用摘要或原文都能搜尋到這些執行。" },
+  "调用方自己指定的关联编号，这里只显示它的摘要；按摘要可以搜索到这些运行，按原文搜不到。": {
+    en: "The caller chose this correlation ID, so only a digest of it is shown; searching by the digest finds these runs, searching by the original text does not.",
+    "zh-Hant": "呼叫方自行指定的關聯編號，這裡只顯示它的摘要；按摘要可以搜尋到這些執行，按原文搜尋不到。" },
   "所属流程运行": { en: "Flow run", "zh-Hant": "所屬流程執行" },
   "上一级运行": { en: "Parent run", "zh-Hant": "上一層執行" },
   "结束时间": { en: "Finished", "zh-Hant": "結束時間" },

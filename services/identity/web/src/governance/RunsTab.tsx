@@ -183,7 +183,7 @@ function Row({ name, children }: { name: string; children: ReactNode }) {
 function DigestNote({ id }: { id: string }) {
   const { t } = useI18n();
   return isCorrelationDigest(id)
-    ? <span className="cell-note">{t("调用方自己指定的关联编号，这里只显示它的摘要；用摘要或原文都能搜索到这些运行。")}</span> : null;
+    ? <span className="cell-note">{t("调用方自己指定的关联编号，这里只显示它的摘要；按摘要可以搜索到这些运行，按原文搜不到。")}</span> : null;
 }
 
 function RunDialog({ id, search, onClose, onOpen, onFilter }: {
