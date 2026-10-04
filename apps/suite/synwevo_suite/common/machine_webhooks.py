@@ -151,7 +151,7 @@ def _policy() -> dict:
     return {"allow_http": _on("SUITE_WEBHOOK_ALLOW_HTTP"), "http_refusal": "回调地址必须使用 https"}
 
 
-def resolve_checked(url: str, *, deadline: float | None = None, owner: str | None = None) -> list:
+def resolve_checked(url: str, *, owner: str, deadline: float | None = None) -> list:
     """This deployment's policy for the business applications' callbacks: https to a globally
     routable address. The two switches are the operator's, for local development and tests.
 
@@ -170,7 +170,7 @@ def resolve_checked(url: str, *, deadline: float | None = None, owner: str | Non
         raise UrlRejected("回调地址不可用：无法解析，或不被允许") from e
 
 
-def _resolve_now(url: str, owner: str | None = None) -> list:
+def _resolve_now(url: str, owner: str) -> list:
     """The check a management call makes, on the request's own thread: it gets `CHECK_TIMEOUT_S`,
     not a send's whole deadline. No resolver free in time is not a verdict on the address: the
     caller is told to come back, not that its URL is invalid."""
@@ -181,7 +181,7 @@ def _resolve_now(url: str, owner: str | None = None) -> list:
                            {"retry_after": LOCAL_RETRY_S}) from e
 
 
-def validate_url(url, owner: str | None = None) -> str:
+def validate_url(url, owner: str) -> str:
     """`owner` is the workspace the check is made for: its lookups are counted against it."""
     return delivery.validate_url(url, resolve=lambda u: _resolve_now(u, owner))
 

@@ -1576,12 +1576,21 @@ export function verifyWebhook(headers, body, secret, { toleranceS = WEBHOOK_TOLE
 
 /** The deployment-endpoint signature: X-DocWeave-Signature `v1=<hex>` over "<ts>.<body>". */
 export function verifyLegacyWebhook(headers, body, secret, { toleranceS = WEBHOOK_TOLERANCE_S, nowS = Date.now() / 1000 } = {}) {
+  // Before anything else: an unset variable is undefined, which String() made the key 'undefined',
+  // and '' an empty key — either way a signature anyone can make verified. The secret is used as
+  // its UTF-8 bytes (raw bytes as they are), and refused as verifyWebhook refuses it.
+  const bytes = typeof secret === 'string' || Buffer.isBuffer(secret) || secret instanceof Uint8Array;
+  if (!secret || !bytes) throw new WebhookVerificationError('no_secret', '没有提供签名密钥');
+  const key = typeof secret === 'string' ? Buffer.from(secret, 'utf8') : Buffer.from(secret);
+  if (key.length < WEBHOOK_MIN_KEY_BYTES) {
+    throw new WebhookVerificationError('weak_secret', `签名密钥为空或过短（至少 ${WEBHOOK_MIN_KEY_BYTES} 字节）：请检查配置`);
+  }
   const h = headerMap(headers);
   const ts = h['x-docweave-timestamp']; const sig = h['x-docweave-signature'];
   if (!ts || !sig) throw new WebhookVerificationError('missing_headers', '缺少 X-DocWeave-Timestamp / X-DocWeave-Signature');
   if (!/^\d{1,12}$/.test(ts)) throw new WebhookVerificationError('invalid_timestamp', 'X-DocWeave-Timestamp 不是 Unix 秒');
   if (Math.abs(nowS - Number(ts)) > toleranceS) throw new WebhookVerificationError('timestamp_out_of_tolerance', '时间戳超出容忍范围');
-  const want = Buffer.from(`v1=${createHmac('sha256', Buffer.from(String(secret), 'utf8')).update(`${ts}.`).update(toBytes(body)).digest('hex')}`);
+  const want = Buffer.from(`v1=${createHmac('sha256', key).update(`${ts}.`).update(toBytes(body)).digest('hex')}`);
   const got = Buffer.from(sig);
   if (got.length !== want.length || !timingSafeEqual(got, want)) throw new WebhookVerificationError('invalid_signature', '签名不匹配');
   return { id: h['x-docweave-event-id'] || null, timestamp: Number(ts), event: JSON.parse(toBytes(body).toString('utf8')) };

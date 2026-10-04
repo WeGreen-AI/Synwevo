@@ -171,7 +171,8 @@ JSON inputs can be `-` for stdin. `--timeout`, `--base-url`, `--max-retries`, an
 page size; omit `--all` to use `--cursor`/`--offset`. Use `--help` on each resource
 for commands including deletion, job cancellation/retry and webhook administration.
 Webhook add/rotate responses contain a new secret once: save stdout privately.
-`verify_webhook` and `verify_legacy_signature` verify raw bytes before JSON parsing.
+`verify_webhook` and `verify_legacy_signature` verify raw bytes before JSON parsing, and both
+refuse a missing secret or one shorter than 16 bytes (an unset variable) instead of verifying with it.
 
 | Exit | Meaning |
 |---|---|

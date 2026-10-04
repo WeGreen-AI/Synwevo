@@ -2066,7 +2066,7 @@ def test_an_ipv6_spelling_of_an_ipv4_address_is_not_a_place_to_send(hub, monkeyp
     # At send time the same name is an unresolved host (a receiver's fault), not an error of this server.
     from synwevo_core import webhook_delivery
     with pytest.raises(webhook_delivery.UrlUnresolvable):
-        webhook_delivery.resolve_checked("https://" + "a" * 64 + ".fixture.test/hook", timeout=1.0)
+        webhook_delivery.resolve_checked("https://" + "a" * 64 + ".fixture.test/hook", timeout=1.0, owner="w_fixture")
     assert hub.store.one("SELECT COUNT(*) AS n FROM suite_webhook_subscriptions")["n"] == 0
 
 
@@ -2144,7 +2144,7 @@ def test_management_checks_and_sends_count_lookups_for_their_workspace(hub, monk
     from synwevo_core import webhook_delivery
     owners = []
     real = webhook_delivery._resolve
-    monkeypatch.setattr(webhook_delivery, "_resolve", lambda h, p, d, owner=None: owners.append(owner) or real(h, p, d, owner))
+    monkeypatch.setattr(webhook_delivery, "_resolve", lambda h, p, d, owner: owners.append(owner) or real(h, p, d, owner))
     alice = grant(hub.api, "alice")["auth"]
     rx = hub.receiver()
     hub.subscribe(alice, rx.url, events=["tables.*"])

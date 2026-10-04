@@ -124,14 +124,24 @@ def verify_webhook(headers: Mapping[str, str] | Iterable, body: bytes | str,
 
 def verify_legacy_signature(headers: Mapping[str, str] | Iterable, body: bytes | str, secret: str,
                             tolerance: int = DEFAULT_TOLERANCE, *, now: float | None = None) -> dict:
-    """Verify the deployment endpoint signature ``X-DocWeave-Signature: v1=<hex>`` and return the payload."""
+    """Verify the deployment endpoint signature ``X-DocWeave-Signature: v1=<hex>`` and return the payload.
+
+    ``secret`` is the deployment secret as text, used as its UTF-8 bytes; a missing one, or one
+    shorter than ``MIN_KEY_BYTES``, raises `WebhookVerificationError` as `verify_webhook` does."""
+    # Before anything else: an unset variable (``os.environ.get(..., "")``) would make the HMAC key
+    # empty, and a signature anyone can make would verify.
+    if not isinstance(secret, str) or not secret:
+        raise WebhookVerificationError("没有配置用于校验的密钥")
+    key = secret.encode("utf-8")
+    if len(key) < MIN_KEY_BYTES:
+        raise WebhookVerificationError(f"签名密钥为空或过短（至少 {MIN_KEY_BYTES} 字节）：请检查配置")
     h = _lower(headers)
     ts = _check_time(h.get("x-docweave-timestamp"), tolerance, now)
     sig = (h.get("x-docweave-signature") or "").strip()
     if not sig.startswith("v1="):
         raise WebhookVerificationError("缺少 v1= 签名（X-DocWeave-Signature）")
     raw = _body_bytes(body)
-    want = "v1=" + hmac.new(secret.encode("utf-8"), f"{ts}.".encode() + raw, hashlib.sha256).hexdigest()
+    want = "v1=" + hmac.new(key, f"{ts}.".encode() + raw, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(want.encode(), sig.encode()):
         raise WebhookVerificationError("签名不匹配")
     return _payload(raw, h.get("x-docweave-event-id"))

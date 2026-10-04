@@ -1552,8 +1552,11 @@ export declare function verifyWebhook<E = WebhookEvent>(
   options?: VerifyWebhookOptions,
 ): VerifiedWebhook<E>;
 /**
- * The deployment-endpoint signature: X-DocWeave-Signature `v1=<hex>` over "<ts>.<body>".
- * @throws WebhookVerificationError; SyntaxError when the signed body is not JSON.
+ * The deployment-endpoint signature: X-DocWeave-Signature `v1=<hex>` over "<ts>.<body>". `secret`
+ * is used as its UTF-8 bytes; a missing one is `no_secret`, one shorter than
+ * `WEBHOOK_MIN_KEY_BYTES` is `weak_secret`.
+ * @throws WebhookVerificationError (no_secret, weak_secret, missing_headers, invalid_timestamp,
+ *   timestamp_out_of_tolerance, invalid_signature); SyntaxError when the signed body is not JSON.
  */
 export declare function verifyLegacyWebhook<E = WebhookEvent>(
   headers: WebhookHeaders,

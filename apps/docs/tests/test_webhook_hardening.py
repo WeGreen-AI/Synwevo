@@ -5,6 +5,7 @@ import json
 import socket
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -173,10 +174,12 @@ def test_a_hanging_resolver_counts_against_the_timeout(hub, monkeypatch):
     assert row["status"] == "pending" and row["attempts"] == 1 and "无法解析" in row["last_error"]
 
 
-def test_no_free_resolver_is_an_unresolved_host_not_the_receivers_timeout(hub, monkeypatch):
+def test_no_free_resolver_is_this_servers_wait_not_the_receivers_failure(hub, monkeypatch):
     """Every resolver slot of the process is held by lookups that have not returned. The attempt
-    waits its whole deadline for one, and what it records is that the host was not resolved —
-    the receiver was never reached, so it did not time out."""
+    waits its whole deadline for one; the receiver was never tried, so nothing is charged to it —
+    no attempt, no failure on the subscription's record (R3-WH-2: Docs counted both, where the
+    suite has waited untried since bb52dbc). The delivery comes back shortly; a ping, which nobody
+    would come back to, ends there and says why."""
     from synwevo_core import webhook_delivery
     monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_TIMEOUT_S", "1")
     rx = hub.receiver()
@@ -191,12 +194,199 @@ def test_no_free_resolver_is_an_unresolved_host_not_the_receivers_timeout(hub, m
     try:
         assert held == webhook_delivery.DNS_SLOTS
         d.run_once()
+        ping = hub.c.post(f"{BASE}/{sub['id']}/ping", headers=hub.keys["admin"]).json()
     finally:
         for _ in range(held):
             webhook_delivery._DNS_SLOTS.release()
     assert rx.received == []
     row = sub_rows(hub.store, sub["id"])[0]
-    assert row["status"] == "pending" and row["attempts"] == 1 and "无法解析" in row["last_error"]
+    assert (row["status"], row["attempts"], row["last_error"]) == ("pending", 0, "resolver_busy")
+    assert row["next_attempt_at"] <= hub.clock() + W.LOCAL_RETRY_S
+    assert (ping["status"], ping["attempts"], ping["last_error"]) == ("failed", 0, "resolver_busy")
+    s = hub.store.one("SELECT consecutive_failures, last_failure_at FROM webhook_subscriptions WHERE id=?", (sub["id"],))
+    assert (s["consecutive_failures"], s["last_failure_at"]) == (0, None)
+    # With a resolver free again it goes out, on its first attempt.
+    hub.clock.advance(W.LOCAL_RETRY_S)
+    d.run_once()
+    row = sub_rows(hub.store, sub["id"])[0]
+    assert (row["status"], row["attempts"], len(rx.received)) == ("delivered", 1, 1)
+
+
+# ------------------------------------------------------------------ the resolver pool is shared
+@pytest.fixture()
+def slow_names(monkeypatch):
+    """TEST FIXTURE: a name under ``slow.fixture.test`` is never answered while the test runs (an
+    authoritative server that does not reply); every other name resolves as usual. A lookup given
+    up at its deadline keeps its resolver until then, as one inside libc does. On the way out the
+    lookups are answered and waited for, so no later test meets a resolver they still hold."""
+    from synwevo_core import webhook_delivery
+    state = SimpleNamespace(release=threading.Event(), asked=threading.Event())
+    real = socket.getaddrinfo
+
+    def lookup(host, *a, **k):
+        if str(host).endswith(".slow.fixture.test"):
+            state.asked.set()
+            state.release.wait(30)
+            raise socket.gaierror(socket.EAI_NONAME, "fixture")
+        return real(host, *a, **k)
+
+    monkeypatch.setattr(socket, "getaddrinfo", lookup)
+    patience = time.monotonic() + 10                # lookups an earlier test left running end first
+    while (webhook_delivery._DNS_SLOTS._value < webhook_delivery.DNS_SLOTS or webhook_delivery._OWNERS) \
+            and time.monotonic() < patience:
+        time.sleep(0.02)
+    yield state
+    state.release.set()
+    patience = time.monotonic() + 10
+    while (webhook_delivery._DNS_SLOTS._value < webhook_delivery.DNS_SLOTS or webhook_delivery._OWNERS) \
+            and time.monotonic() < patience:
+        time.sleep(0.02)
+
+
+def test_one_workspace_cannot_take_the_resolvers_of_every_other(hub, monkeypatch, slow_names):
+    """R3-WH-1: Docs named nobody to the shared resolver pool. A check of a name that never answers
+    is given up at its deadline but keeps its resolver, so one workspace making such checks one
+    after another emptied the pool for every other Docs workspace and every business application.
+    Its lookups are counted for it now, as the suite's are: past its own few it is told to come
+    back (429, not a verdict on the address), and the others are untouched."""
+    from synwevo_core import webhook_delivery
+    monkeypatch.setattr(W, "timeout_s", lambda: 0.3)
+    free = webhook_delivery._DNS_SLOTS._value
+    answers = [hub.c.post(BASE, json={"url": f"https://h{n}.slow.fixture.test/hook"}, headers=hub.keys["admin"])
+               for n in range(webhook_delivery.OWNER_LOOKUPS + 2)]
+    codes = [(r.status_code, r.json()["error"]["code"]) for r in answers]
+    assert codes == [(400, "invalid_url")] * webhook_delivery.OWNER_LOOKUPS + [(429, "destination_check_busy")] * 2, codes
+    assert [r.headers.get("retry-after") for r in answers[-2:]] == [str(W.LOCAL_RETRY_S)] * 2
+    assert webhook_delivery._DNS_SLOTS._value >= free - webhook_delivery.OWNER_LOOKUPS
+    # Another workspace has its address checked and its events delivered as before.
+    rx = hub.receiver()
+    hub.create(rx.url, key="b_admin", events=["*"])
+    d = hub.dispatcher()
+    fixture_event(hub.store, "tenant-b")
+    d.run_once()
+    assert len(rx.received) == 1
+    assert hub.store.one("SELECT COUNT(*) AS n FROM webhook_subscriptions")["n"] == 1
+
+
+def test_a_workspace_has_one_address_checked_at_a_time(hub, monkeypatch, slow_names):
+    """R3-WH-1: a management check resolves on the request's own thread. As in the suite, a
+    workspace has one checked at a time and another waits for it (429), whatever its address;
+    other workspaces are not held up."""
+    monkeypatch.setattr(W, "timeout_s", lambda: 2.0)
+    first = {}
+    slow = threading.Thread(target=lambda: first.setdefault("r", hub.c.post(
+        BASE, json={"url": "https://h.slow.fixture.test/hook"}, headers=hub.keys["admin"])))
+    slow.start()
+    try:
+        assert slow_names.asked.wait(5)
+        rx = hub.receiver()
+        r = hub.c.post(BASE, json={"url": rx.url}, headers=hub.keys["admin"])
+        assert r.status_code == 429, r.text
+        assert (r.json()["error"]["code"], r.headers.get("retry-after")) == ("destination_check_busy", "2")
+        assert hub.c.post(BASE, json={"url": rx.url}, headers=hub.keys["b_admin"]).status_code == 201
+    finally:
+        slow.join(10)
+    assert first["r"].status_code == 400 and first["r"].json()["error"]["code"] == "invalid_url"
+    # Once it has been answered, the next check of the workspace goes ahead.
+    assert hub.c.post(BASE, json={"url": rx.url}, headers=hub.keys["admin"]).status_code == 201
+
+
+def test_owners_that_fill_the_pool_between_them_cost_another_workspaces_receiver_nothing(hub, monkeypatch, slow_names):
+    """R3-WH-2, the reviewer's case: eight workspaces, each inside its own budget of lookups,
+    between them hold every resolver of the process (a business application's or Docs'). A healthy
+    Docs receiver of another workspace waits for one untried: it loses no attempt, its event is not
+    given up, and three days of it do not disable the subscription as failing."""
+    from synwevo_core import webhook_delivery as wd
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_TIMEOUT_S", "1")
+    rx = hub.receiver()
+    sub = hub.create(rx.url, events=["*"])
+    d = hub.dispatcher()
+    fixture_event(hub.store, "default")
+
+    def give_up(owner):
+        try:
+            wd.resolve_checked("https://h.slow.fixture.test/hook", owner=owner, timeout=0.2)
+        except wd.UrlUnresolvable:
+            pass
+
+    owners = [f"w_fixture_{n}" for n in range(wd.DNS_SLOTS // wd.OWNER_LOOKUPS)]
+    lookups = [threading.Thread(target=give_up, args=(o,)) for o in owners for _ in range(wd.OWNER_LOOKUPS)]
+    for t in lookups:
+        t.start()
+    for t in lookups:
+        t.join(5)
+    assert wd._DNS_SLOTS._value == 0 and [wd._OWNERS.get(o) for o in owners] == [wd.OWNER_LOOKUPS] * len(owners)
+    for _ in range(2):
+        d.run_once()
+        hub.clock.advance(W.disable_after_s() + W.LOCAL_RETRY_S)
+    row = sub_rows(hub.store, sub["id"])[0]
+    assert (row["status"], row["attempts"], row["last_error"]) == ("pending", 0, "resolver_busy")
+    s = hub.store.one("SELECT status, consecutive_failures FROM webhook_subscriptions WHERE id=?", (sub["id"],))
+    assert (s["status"], s["consecutive_failures"]) == ("active", 0)
+    # The lookups end; the event goes out.
+    slow_names.release.set()
+    patience = time.monotonic() + 10
+    while wd._DNS_SLOTS._value < wd.DNS_SLOTS and time.monotonic() < patience:
+        time.sleep(0.02)
+    d.run_once()
+    assert len(rx.received) == 1 and sub_rows(hub.store, sub["id"])[0]["status"] == "delivered"
+
+
+def test_a_busy_resolver_is_not_a_verdict_on_the_address(hub, monkeypatch):
+    """R3-WH-1, as in the suite: creating, moving and resuming check the address on the request's
+    thread. With no resolver free the answer is "come back" (429) — Docs said the URL was invalid —
+    and nothing is changed."""
+    from synwevo_core import webhook_delivery
+    rx = hub.receiver()
+    sid = hub.create(rx.url, events=["*"])["id"]
+    hub.c.post(f"{BASE}/{sid}/pause", headers=hub.keys["admin"])
+    before = hub.store.all("SELECT * FROM webhook_subscriptions")
+    monkeypatch.setattr(W, "timeout_s", lambda: 0.3)
+    # TEST FIXTURE: the real pool, emptied (waiting for any lookup an earlier test left running).
+    held, patience = 0, time.monotonic() + 10
+    while held < webhook_delivery.DNS_SLOTS and webhook_delivery._DNS_SLOTS.acquire(timeout=max(0.0, patience - time.monotonic())):
+        held += 1
+    try:
+        assert held == webhook_delivery.DNS_SLOTS
+        for call, path, body in ((hub.c.post, BASE, {"url": rx.url + "/new"}), (hub.c.patch, f"{BASE}/{sid}", {"url": rx.url + "/moved"}),
+                                 (hub.c.post, f"{BASE}/{sid}/resume", None)):
+            r = call(path, headers=hub.keys["admin"], **({"json": body} if body is not None else {}))
+            assert r.status_code == 429, (path, r.text)
+            assert (r.json()["error"]["code"], r.headers.get("retry-after")) == ("destination_check_busy", str(W.LOCAL_RETRY_S))
+    finally:
+        for _ in range(held):
+            webhook_delivery._DNS_SLOTS.release()
+    assert hub.store.all("SELECT * FROM webhook_subscriptions") == before
+    # the same calls a moment later, with a resolver free
+    assert hub.c.post(f"{BASE}/{sid}/resume", headers=hub.keys["admin"]).json()["status"] == "active"
+
+
+def test_sends_count_lookups_for_their_destination_and_wait_briefly_for_their_own(hub, monkeypatch):
+    """R3-WH-1: a subscription's lookups are its workspace's, a deployment endpoint's are the
+    endpoint's. Lookups that answer in a moment are not refused for running beside others of the
+    same workspace: a workspace with several healthy receivers has all of them delivered in one
+    round, though the dispatcher looks their addresses up at the same time."""
+    from synwevo_core import webhook_delivery
+    owners, real_resolve, real_lookup = [], webhook_delivery._resolve, socket.getaddrinfo
+    monkeypatch.setattr(webhook_delivery, "_resolve", lambda h, p, d, owner: owners.append(owner) or real_resolve(h, p, d, owner))
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: time.sleep(0.2) or real_lookup(*a, **k))
+    rxs = [hub.receiver() for _ in range(4)]
+    for rx in rxs:
+        hub.create(rx.url, events=["*"])
+    endpoint = hub.receiver()
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_URLS", endpoint.url)
+    monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_SECRET", "s3cret-for-tests-0123456789")
+    d = hub.dispatcher(concurrency=4)
+    owners.clear()
+    fixture_event(hub.store, "default")
+    # A lookup that ends lets a waiting one of its owner go at once, not when the wait runs out.
+    monkeypatch.setattr(webhook_delivery, "OWNER_WAIT_S", 5.0)
+    started = time.monotonic()
+    d.run_once()
+    assert time.monotonic() - started < 3
+    assert [len(rx.received) for rx in rxs + [endpoint]] == [1] * 5
+    assert not hub.store.all("SELECT id FROM webhook_deliveries WHERE status!='delivered'")
+    assert sorted(set(owners)) == sorted({"default", W.DEPLOYMENT_OWNER + endpoint.url}), owners
 
 
 def test_a_send_checks_it_still_holds_the_claim(hub):
