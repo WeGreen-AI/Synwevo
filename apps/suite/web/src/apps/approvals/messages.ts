@@ -114,9 +114,9 @@ export const approvals = {
     "en": "All requests",
     "zh-Hant": "全部申請"
   },
-  "共 {n} 项": {
-    "en": { "one": "{n} item", "other": "{n} items" },
-    "zh-Hant": "共 {n} 項"
+  "共 {count} 项": {
+    "en": { "one": "{count} item", "other": "{count} items" },
+    "zh-Hant": "共 {count} 項"
   },
   "内容已修订": {
     "en": "Content revised",
@@ -189,6 +189,10 @@ export const approvals = {
   "发起人不能修改自己申请的审批人。": {
     "en": "Requesters cannot change their own approvers.",
     "zh-Hant": "發起人不能修改自己申請的審批人。"
+  },
+  "发起人不能审批自己的申请。要让这些成员也能发起，请调整下列阶段的通过规则或审批人。": {
+    "en": "Requesters cannot approve their own requests. To let these members file requests too, change the approval rule or approvers of the stages below.",
+    "zh-Hant": "發起人不能審批自己的申請。要讓這些成員也能發起，請調整下列階段的通過規則或審批人。"
   },
   "发起人始终不能审批自己的申请。没有有效审批人时等待修正，不会自动通过。": {
     "en": "Requesters can never approve their own requests. Missing eligible approvers pauses the request for repair; it never passes automatically.",
@@ -442,6 +446,18 @@ export const approvals = {
     "en": "The revision limit has been reached. Create a new request.",
     "zh-Hant": "已達到修訂上限，請發起新的申請。"
   },
+  "已退回补充": {
+    "en": "Returned for changes",
+    "zh-Hant": "已退回補充"
+  },
+  "已通过": {
+    "en": "Passed",
+    "zh-Hant": "已通過"
+  },
+  "已驳回": {
+    "en": "Rejected",
+    "zh-Hant": "已駁回"
+  },
   "币种代码": {
     "en": "Currency code",
     "zh-Hant": "幣別代碼"
@@ -510,9 +526,9 @@ export const approvals = {
     "en": "Approve",
     "zh-Hant": "批准"
   },
-  "指定 {n} 人": {
-    "en": { "one": "{n} named approver", "other": "{n} named approvers" },
-    "zh-Hant": "指定 {n} 人"
+  "指定 {count} 人": {
+    "en": { "one": "{count} named approver", "other": "{count} named approvers" },
+    "zh-Hant": "指定 {count} 人"
   },
   "指定票数": {
     "en": "Required number of votes",
@@ -918,6 +934,10 @@ export const approvals = {
     "en": "Add replacement approvers",
     "zh-Hant": "補充審批人"
   },
+  "被指定的审批人自己发起申请时，这个阶段凑不齐所需票数，申请会被拒绝。": {
+    "en": "When a named approver files a request themselves, this stage cannot reach its required votes, so that request is refused.",
+    "zh-Hant": "被指定的審批人自己發起申請時，這個階段湊不齊所需票數，申請會被拒絕。"
+  },
   "设置超时提醒": {
     "en": "Set deadline reminders",
     "zh-Hant": "設定逾時提醒"
@@ -1006,6 +1026,10 @@ export const approvals = {
     "en": "This template has no available published version",
     "zh-Hant": "這個範本尚無可用的發佈版本"
   },
+  "这个申请要经过的一个审批阶段需要你本人同意才能凑齐票数，但发起人不能审批自己的申请。请联系模板管理员调整该阶段的审批人。": {
+    "en": "A stage this request must pass needs your own approval to reach its votes, but requesters cannot approve their own requests. Ask a template manager to change that stage's approvers.",
+    "zh-Hant": "這個申請要經過的一個審批階段需要你本人同意才能湊齊票數，但發起人不能審批自己的申請。請聯絡範本管理員調整該階段的審批人。"
+  },
   "这是历史修订，不能在这个内容上提交当前决定。": {
     "en": "This is a historical revision. You cannot submit a current decision on this content.",
     "zh-Hant": "這是歷史修訂，不能在這個內容上提交目前決定。"
@@ -1013,6 +1037,10 @@ export const approvals = {
   "这次操作的内容已改变，请刷新后重试。": {
     "en": "This action's content changed. Refresh and retry.",
     "zh-Hant": "這次操作的內容已改變，請重新整理後重試。"
+  },
+  "进行中": {
+    "en": "In progress",
+    "zh-Hant": "進行中"
   },
   "连接中断，请使用相同内容重试。": {
     "en": "Connection interrupted. Retry with the same content.",
@@ -1042,6 +1070,10 @@ export const approvals = {
     "en": "Approval rule",
     "zh-Hant": "通過規則"
   },
+  "部分成员发起的申请会被拒绝": {
+    "en": "Some members' own requests will be refused",
+    "zh-Hant": "部分成員發起的申請會被拒絕"
+  },
   "重做编辑": {
     "en": "Redo edit",
     "zh-Hant": "重做編輯"
@@ -1066,9 +1098,9 @@ export const approvals = {
     "en": "Duplicate stage ID",
     "zh-Hant": "階段編號重複"
   },
-  "需要 {n} 票同意": {
-    "en": { "one": "Requires {n} approval vote", "other": "Requires {n} approval votes" },
-    "zh-Hant": "需要 {n} 票同意"
+  "需要 {count} 票同意": {
+    "en": { "one": "Requires {count} approval vote", "other": "Requires {count} approval votes" },
+    "zh-Hant": "需要 {count} 票同意"
   },
   "需要同意的人数": {
     "en": "Required approvals",

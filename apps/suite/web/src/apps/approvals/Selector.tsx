@@ -8,11 +8,12 @@ export function PeoplePicker({ ws, value, onChange, disabled = false, exclude = 
   ws: string; value: string[]; onChange: (v: string[]) => void; disabled?: boolean; exclude?: string[]; single?: boolean;
 }) {
   const { t } = useI18n(); const [q, setQ] = useState(""); const [offset, setOffset] = useState(0);
-  const result = useRead<Page<Member>>("members", { q, offset, limit: 50 }, ws);
+  // The list leaves out whom this picker hides, so its count and pages are what it shows.
+  const result = useRead<Page<Member>>("members", { q, offset, limit: 50, exclude }, ws);
   return <div className="ap-people"><label>{t("查找审批人")}<input className="input" disabled={disabled} value={q}
     onChange={e => { setQ(e.target.value); setOffset(0); }} /></label>
     {result.error ? <ErrorBox error={result.error} retry={result.reload} /> : !result.data ? <Loading /> : <>
-      <div className="ap-candidates">{result.data.items.filter(m => !exclude.includes(m.id)).map(m => <label className="ap-choice" key={m.id}>
+      <div className="ap-candidates">{result.data.items.map(m => <label className="ap-choice" key={m.id}>
         <input type="checkbox" checked={value.includes(m.id)} disabled={disabled} onChange={e => onChange(single ? e.target.checked ? [m.id] : []
           : e.target.checked ? [...value, m.id] : value.filter(u => u !== m.id))} />{m.display_name}</label>)}</div>
       <Pager page={result.data} offset={offset} setOffset={setOffset} /></>}

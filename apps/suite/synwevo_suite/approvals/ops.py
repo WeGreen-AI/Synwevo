@@ -30,6 +30,18 @@ class Page(Input):
     q: str = F(default="", max_length=100)
 
 
+class Members(Page):
+    exclude: list[str] = F(default_factory=list, max_length=100,
+                           description="People left out of the list and of its total, such as a request's requester and current approvers")
+    @field_validator("exclude")
+    @classmethod
+    def ids(cls, value):
+        import re
+        if any(not re.fullmatch(USER_ID, x) for x in value):
+            raise ValueError("valid user ids required")
+        return value
+
+
 class Templates(Page):
     status: Literal["active", "archived"] = "active"
 
@@ -149,7 +161,7 @@ def register(registry, s):
             object_kind="approval_template" if name.startswith("template.") else "approval_request",
             events=EVENTS if write else (), mode="async" if name == "request.wait" else "sync",
             result_guard=s.result_guard if write else None))
-    add("members", Page, s.members, "审批人候选", "審批人候選", "Eligible workspace approvers")
+    add("members", Members, s.members, "审批人候选", "審批人候選", "Eligible workspace approvers")
     add("template.list", Templates, s.templates, "审批模板", "審批範本", "List approval templates")
     add("template.get", TemplateRef, s.template, "查看审批模板", "查看審批範本", "Get approval template")
     add("template.create", CreateTemplate, s.create_template, "创建审批模板", "建立審批範本", "Create approval template", need="manage")

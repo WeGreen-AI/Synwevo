@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useI18n } from "@synwevo/ui";
 import { Loading } from "../../shared/states";
-import { base, ErrorBox, fieldTypes, modes, operators, problems, stamp, Status, useAction, useRead } from "./common";
+import { base, ErrorBox, fieldTypes, joined, modes, operators, problems, stamp, Status, useAction, useRead, warnings } from "./common";
 import { ApproverSelector } from "./Selector";
 import { Fields } from "./Fields";
 import type { Definition, Field, Stage, Template, Workspace } from "./types";
@@ -20,7 +20,7 @@ export default function Editor({ ws }: { ws: Workspace }) {
   if (!result.data) return <Loading />;
   return <Edit key={`${ws.id}:${tid}:${result.data.draft_rev}:${result.data.published_version}:${result.data.status}`} ws={ws} template={result.data} reload={result.reload} />;
 }
-function Edit({ ws, template, reload }: { ws: Workspace; template: Template; reload: () => void }) {
+export function Edit({ ws, template, reload }: { ws: Workspace; template: Template; reload: () => void }) {
   const { t } = useI18n(); const action = useAction(ws.id);
   const [title, setTitle] = useState(template.title); const [description, setDescription] = useState(template.description);
   const [history, setHistory] = useState<Definition[]>([template.draft]); const [position, setPosition] = useState(0);
@@ -54,7 +54,10 @@ function Edit({ ws, template, reload }: { ws: Workspace; template: Template; rel
       </div></header>
     <ErrorBox error={action.error} />
     <p role="status" className="muted">{t(action.busy ? "保存中…" : dirty ? "有未保存的修改" : "草稿已保存")}</p>
-    {!!template.problems.length && !dirty && <div className="notice warn"><strong>{t("发布前需要修正")}</strong><ul>{template.problems.map((p, n) => <li key={n}>{d.fields.find(f => f.id === p.field)?.label ?? d.stages.find(s => s.id === p.stage)?.name} · {t(problems[p.code] ?? "请检查字段、条件和审批人设置。")}</li>)}</ul></div>}
+    {!!template.problems.length && !dirty && <div className="notice warn"><strong>{t("发布前需要修正")}</strong><ul>{template.problems.map((p, n) => <li key={n}>{joined(d.fields.find(f => f.id === p.field)?.label ?? d.stages.find(s => s.id === p.stage)?.name, t(problems[p.code] ?? "请检查字段、条件和审批人设置。"))}</li>)}</ul></div>}
+    {!!template.warnings.length && !dirty && <div className="notice warn"><strong>{t("部分成员发起的申请会被拒绝")}</strong>
+      <p>{t("发起人不能审批自己的申请。要让这些成员也能发起，请调整下列阶段的通过规则或审批人。")}</p>
+      <ul>{template.warnings.map((w, n) => <li key={n}>{joined(d.stages.find(s => s.id === w.stage)?.name, t(warnings[w.code] ?? "请检查字段、条件和审批人设置。"))}</li>)}</ul></div>}
     {preview ? <section className="ap-panel"><h2>{title}</h2><p>{description}</p><p className="notice">{t("草稿预览不会创建申请或保存填写内容。")}</p><Fields fields={d.fields} values={previewValues} setValues={setPreviewValues} /></section> : <>
       <section className="ap-panel ap-fields"><label>{t("模板名称")}<input className="input" maxLength={200} value={title} disabled={!editable} onChange={e => setTitle(e.target.value)} /></label>
         <label>{t("模板说明")}<textarea className="input" maxLength={2000} value={description} disabled={!editable} onChange={e => setDescription(e.target.value)} /></label>
@@ -130,5 +133,5 @@ function VersionPreview({ ws, tid, version }: { ws: string; tid: string; version
   const { t } = useI18n(); const result = useRead<{ definition: Definition; title: string }>("template.version", { template_id: tid, version }, ws);
   if (result.error) return <ErrorBox error={result.error} />; if (!result.data) return <Loading />;
   return <div className="ap-condition"><h3>{result.data.title} · {t("版本 {v}", { v: version })}</h3><Fields fields={result.data.definition.fields} values={{}} setValues={() => {}} disabled />
-    <ol>{result.data.definition.stages.map(s => <li key={s.id}>{s.name} · {t(modes[s.mode])} · {t("指定 {n} 人", { n: s.approvers.users.length })}{s.condition && ` · ${t("条件路由")}`}</li>)}</ol></div>;
+    <ol>{result.data.definition.stages.map(s => <li key={s.id}>{s.name} · {t(modes[s.mode])} · {t("指定 {count} 人", { count: s.approvers.users.length })}{s.condition && ` · ${t("条件路由")}`}</li>)}</ol></div>;
 }

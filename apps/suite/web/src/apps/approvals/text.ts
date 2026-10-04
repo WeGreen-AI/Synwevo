@@ -4,6 +4,11 @@ export const statuses: Record<string, string> = {
   stalled: "等待修正审批人", approved: "已批准", rejected: "最终驳回", returned: "退回补充", withdrawn: "已撤回",
   pending: "待处理", transferred: "已转交", revoked: "权限已撤销", cancelled: "已取消", skipped: "条件不符，已跳过", not_started: "尚未开始",
 };
+/** A stage on a request's approval path: its own progress, never the template's status words. */
+export const stageStatuses: Record<string, string> = {
+  active: "进行中", stalled: "等待修正审批人", approved: "已通过", rejected: "已驳回", returned: "已退回补充",
+  skipped: "条件不符，已跳过", cancelled: "已取消", not_started: "尚未开始",
+};
 export const fieldTypes: Record<string, string> = { text: "单行文本", textarea: "多行文本", number: "数值", money: "金额", date: "日期", select: "单选" };
 export const modes: Record<string, string> = { all: "会签：全员同意", any: "或签：一人同意", n_of_m: "指定票数" };
 export const operators: Record<string, string> = { eq: "等于", neq: "不等于", gt: "大于", gte: "大于或等于", lt: "小于", lte: "小于或等于", in: "属于列表", not_in: "不属于列表", filled: "已填写", empty: "为空" };
@@ -28,6 +33,7 @@ export const errors: Record<string, string> = {
   invalid_input: "输入不符合要求，请检查字段和设置。", input_too_large: "内容过大，请缩短后重试。", too_many_approvers: "审批人超过 50 人，请收窄角色范围。",
   revision_limit: "已达到修订上限，请发起新的申请。", task_limit: "已达到修订上限，请发起新的申请。", idempotency_conflict: "这次操作的内容已改变，请刷新后重试。",
   not_for_agent: "这个决定需要本人在审批页面完成。", person_required: "这个决定不能由自动流程代为执行。",
+  stage_needs_requester: "这个申请要经过的一个审批阶段需要你本人同意才能凑齐票数，但发起人不能审批自己的申请。请联系模板管理员调整该阶段的审批人。",
 };
 export const problems: Record<string, string> = {
   duplicate_field_id: "字段编号重复", select_without_options: "选择字段至少需要一个选项", duplicate_option: "选项值不能重复",
@@ -38,4 +44,8 @@ export const problems: Record<string, string> = {
   condition_bad_value: "条件比较值无效", required: "请填写必填字段", unknown_field: "申请含有未知字段", not_text: "请输入文本", too_long: "文本过长",
   not_number: "请输入有效数值", too_many_decimals: "小数位超过允许范围", too_large: "数值过大", below_min: "数值低于最小值", above_max: "数值超过最大值",
   not_date: "日期格式应为年-月-日", not_option: "请选择有效选项",
+};
+/** What does not stop publishing but refuses some requests (the server's `warnings`). */
+export const warnings: Record<string, string> = {
+  stage_needs_requester: "被指定的审批人自己发起申请时，这个阶段凑不齐所需票数，申请会被拒绝。",
 };

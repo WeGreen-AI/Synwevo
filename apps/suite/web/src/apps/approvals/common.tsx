@@ -4,15 +4,23 @@ import { useI18n, formatDate } from "@synwevo/ui";
 import { newKey, op, read } from "../../shared/ops";
 import { Failure } from "../../shared/states";
 import type { Page } from "./types";
-import { errors, statuses, fieldTypes, modes, operators, events, problems } from "./text";
+import { errors, statuses, stageStatuses, fieldTypes, modes, operators, events, problems, warnings } from "./text";
 
-export { fieldTypes, modes, operators, events, problems };
+export { fieldTypes, modes, operators, events, problems, warnings };
 export const base = (ws: string) => `/approvals/w/${ws}`;
 export const stamp = (ts: number | null | undefined) => ts ? formatDate(ts * 1000, { dateStyle: "medium", timeStyle: "short" }) : "—";
+/** One line's parts joined by " · ", leaving out empty ones: no separator before or after nothing. */
+export const joined = (...parts: (string | null | undefined)[]) => parts.filter(x => x?.trim()).join(" · ");
 export function Status({ value }: { value: string }) {
   const { t } = useI18n();
   const tone = ["approved", "published", "active"].includes(value) ? "ok" : ["rejected", "revoked"].includes(value) ? "err" : ["stalled", "returned", "pending", "in_review"].includes(value) ? "warn" : "";
   return <span className={`badge ${tone}`}>{t(statuses[value] ?? value)}</span>;
+}
+/** A stage's own progress on a request's approval path. */
+export function StageStatus({ value }: { value: string }) {
+  const { t } = useI18n();
+  const tone = value === "approved" ? "ok" : value === "rejected" ? "err" : ["active", "stalled", "returned"].includes(value) ? "warn" : "";
+  return <span className={`badge ${tone}`}>{t(stageStatuses[value] ?? value)}</span>;
 }
 export function ErrorBox({ error, retry }: { error: unknown; retry?: () => void }) {
   const { t } = useI18n();
@@ -22,7 +30,7 @@ export function ErrorBox({ error, retry }: { error: unknown; retry?: () => void 
   return <><Failure error={localized} onRetry={retry} />
     {error instanceof ApiError && error.requestId && <p className="muted small">{t("请求编号：{id}", { id: error.requestId })}</p>}
     {!!(detail?.errors || detail?.problems) && <ul className="notice err">{[...detail?.errors ?? [], ...detail?.problems ?? []].map((p, n) =>
-      <li key={n}>{p.field ?? ("stage" in p ? p.stage : "")} · {t(problems[p.code] ?? "请检查字段、条件和审批人设置。")}</li>)}</ul>}</>;
+      <li key={n}>{joined(p.field ?? ("stage" in p ? p.stage : ""), t(problems[p.code] ?? "请检查字段、条件和审批人设置。"))}</li>)}</ul>}</>;
 }
 export function useRead<T>(name: string, input: Record<string, unknown>, ws: string) {
   const [data, setData] = useState<T>(); const [error, setError] = useState<unknown>(); const [generation, setGeneration] = useState(0);
@@ -59,7 +67,7 @@ export function useAction(ws: string) {
 }
 export function Pager({ page, offset, setOffset }: { page: Page<unknown>; offset: number; setOffset: (v: number) => void }) {
   const { t } = useI18n();
-  return <div className="ap-toolbar"><span className="muted">{t("共 {n} 项", { n: page.total })}</span>
+  return <div className="ap-toolbar"><span className="muted">{t("共 {count} 项", { count: page.total })}</span>
     <button type="button" className="btn sm" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 50))}>{t("上一页")}</button>
     <button type="button" className="btn sm" disabled={page.next_offset === null} onClick={() => setOffset(page.next_offset!)}>{t("下一页")}</button></div>;
 }

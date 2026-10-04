@@ -12,6 +12,7 @@ export type Stage = { id: string; name: string; approvers: Selector; mode: strin
 export type Definition = { fields: Field[]; stages: Stage[]; rules: { distinct_deciders: boolean } };
 export type Template = { id: string; title: string; description: string; status: string; draft: Definition; draft_rev: number;
   published_version: number | null; problems: { code: string; message: string; stage?: string; field?: string }[];
+  warnings: { code: string; message: string; stage: string; users: string[] }[];
   versions: { version: number; title: string; status: string; published_at: number; note: string }[] };
 export type Snapshot = { revision: number; fields: Record<string, string>; basis: string; fields_hash: string; basis_hash: string;
   note: string; submitted_at: number; submitted_by: string };

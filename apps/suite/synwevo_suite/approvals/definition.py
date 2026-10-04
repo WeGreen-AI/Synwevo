@@ -17,6 +17,11 @@ Rules stated once:
 * **Approvers** are named workspace members and/or "members with role ≥ X", resolved at the
   moment the stage opens. Deciding needs edit rights in the workspace, so only editors, admins
   and owners can be approvers; the requester is never one of the approvers of their own request.
+* **A named person's own request can be impossible.** "All must approve" counts every named
+  person, and a named person who cannot vote never lowers that count; "N votes" needs N people.
+  When a stage that will run can never gather its votes once the requester is left out, the
+  request is refused up front (:func:`needs_requester`) and the template lists the stage under
+  ``warnings`` (:func:`requester_warnings`) — publishing is allowed, everybody else can use it.
 """
 from __future__ import annotations
 
@@ -248,6 +253,42 @@ def problems(defn: Definition) -> list[dict]:
         if s.due and s.due.escalation and s.due.escalation.action == "add_approvers" \
                 and s.due.escalation.approvers.empty():
             out.append(_p("escalation_without_approvers", "超时升级为“增加审批人”时需要指定审批人", stage=s.id))
+    return out
+
+
+def needs_requester(stage: Stage, requester: str) -> bool:
+    """Whether ``stage``, when it runs, can never gather its required votes on a request that
+    ``requester`` filed — the requester never approves their own request, and nobody else the
+    template names can take that vote.
+
+    Only the certain case counts. A role selector may gain members and an escalation may add
+    people, so a stage that could still fill up that way is left to the stall-and-repair rules.
+    """
+    named = set(stage.approvers.users)
+    if requester not in named:
+        return False
+    extra = Approvers()
+    if stage.due and stage.due.escalation and stage.due.escalation.action == "add_approvers":
+        extra = stage.due.escalation.approvers
+    if stage.mode == "all":
+        # Every named person counts towards the quorum, the requester too; their vote can only
+        # be made up by somebody an escalation adds beyond the named people.
+        return extra.min_role is None and not set(extra.users) - named - {requester}
+    if stage.approvers.min_role or extra.min_role:
+        return False
+    required = (stage.required or 1) if stage.mode == "n_of_m" else 1
+    return len((named | set(extra.users)) - {requester}) < required
+
+
+def requester_warnings(defn: Definition) -> list[dict]:
+    """What does not stop publishing but refuses some requests: each stage whose named approvers'
+    own requests :func:`needs_requester` refuses, with those people under ``users``."""
+    out: list[dict] = []
+    for s in defn.stages:
+        users = [uid for uid in s.approvers.users if needs_requester(s, uid)]
+        if users:
+            out.append(_p("stage_needs_requester", "被指定的审批人自己发起申请时，这个阶段凑不齐所需票数，申请会被拒绝",
+                          stage=s.id, users=users))
     return out
 
 

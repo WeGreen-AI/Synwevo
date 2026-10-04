@@ -18989,9 +18989,18 @@
             "maxLength": 100,
             "title": "Q",
             "type": "string"
+          },
+          "exclude": {
+            "description": "People left out of the list and of its total, such as a request's requester and current approvers",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Exclude",
+            "type": "array"
           }
         },
-        "title": "Page",
+        "title": "Members",
         "type": "object"
       },
       "approvals.request.comment.input": {

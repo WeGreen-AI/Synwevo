@@ -2,8 +2,10 @@
 
 Quorums are frozen when a stage opens. Losing an approver never reduces a quorum; it stalls
 until a manager supplies eligible replacements. Requesters cannot decide, transfer to themselves,
-or repair their own approvals. Decisions never migrate between content revisions. Published
-versions being retired/archived only blocks new requests; already pinned requests continue.
+or repair their own approvals. A request — or a revision — whose stage that will run could never
+gather its votes once the requester is left out is refused before anything is written. Decisions
+never migrate between content revisions. Published versions being retired/archived only blocks
+new requests; already pinned requests continue.
 """
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ from types import SimpleNamespace
 from synwevo_core.capabilities import canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id, now
-from .definition import Definition, ROLE_RANK, check_values, evaluate, problems
+from .definition import Definition, ROLE_RANK, check_values, evaluate, needs_requester, problems, requester_warnings
 
 OPEN = ("in_review", "stalled", "returned")
 TERMINAL = ("approved", "rejected", "withdrawn")
@@ -125,6 +127,10 @@ class Approvals:
                     output = _without_correlation(dict(output))
             else:
                 hidden()
+            # A template result stored before templates listed their warnings: those follow from
+            # the draft the projection already compares, so their absence hides nothing.
+            if name.startswith("template.") and "warnings" not in output:
+                current.pop("warnings", None)
             if fingerprint(output) != fingerprint(current):
                 hidden()
 
@@ -176,7 +182,11 @@ class Approvals:
         rows = self.store.all("SELECT u.id,u.display_name,m.role FROM memberships m JOIN users u ON u.id=m.user_id "
                               "WHERE m.workspace_id=? AND u.status='active' ORDER BY u.id", (c.workspace_id,))
         # A display name is optional on an account; a member without one is still a candidate.
-        rows = [r for r in rows if self._eligible(c.workspace_id, r["id"]) and i.q.casefold() in (r["display_name"] or "").casefold()]
+        # People a picker hides (a requester, the current approvers) are left out here, so the
+        # total and the pages are what it lists.
+        hidden = set(i.exclude)
+        rows = [r for r in rows if r["id"] not in hidden and self._eligible(c.workspace_id, r["id"])
+                and i.q.casefold() in (r["display_name"] or "").casefold()]
         return {"items": rows[i.offset:i.offset+i.limit], "total": len(rows),
                 "next_offset": i.offset+i.limit if i.offset+i.limit < len(rows) else None}
 
@@ -191,7 +201,9 @@ class Approvals:
         row["versions"] = self.store.all("SELECT version,title,status,note,published_at,published_by,definition_hash "
             "FROM approval_template_versions WHERE template_id=? AND workspace_id=? ORDER BY version DESC",
             (i.template_id, c.workspace_id))
-        row["problems"] = problems(Definition.model_validate(row["draft"]))
+        draft = Definition.model_validate(row["draft"])
+        row["problems"] = problems(draft)
+        row["warnings"] = requester_warnings(draft)
         return row
 
     def create_template(self, c, i):
@@ -294,10 +306,20 @@ class Approvals:
         r.update(changes)
         r["state_version"] += 1
 
-    def _snapshot(self,r,i,c):
-        values,errors = check_values(self._def(r),i.values)
+    def _values(self,defn,i,requester):
+        """The submission's clean values. Refused before anything is written when a stage that will
+        run for them could never gather its votes, since the requester never approves their own
+        request and a named person who cannot vote never lowers the quorum."""
+        values,errors = check_values(defn,i.values)
         if errors:
             fail("invalid_values","请修正申请内容",422,{"errors":errors})
+        for stage in defn.stages:
+            if needs_requester(stage,requester) and (stage.condition is None or evaluate(stage.condition,defn,values)[0]):
+                fail("stage_needs_requester","申请要经过的一个审批阶段离不开发起人本人的同意，而发起人不能审批自己的申请；请联系模板管理员调整该阶段的审批人",
+                     422,{"stage":stage.id,"stage_name":stage.name})
+        return values
+
+    def _snapshot(self,r,values,i,c):
         self.store.execute("INSERT INTO approval_revisions (request_id,revision,workspace_id,fields_json,fields_hash,basis_json,basis_hash,note,submitted_by,submitted_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",(r["id"],r["revision"],r["workspace_id"],canonical(values),fingerprint(values),canonical(i.basis),fingerprint(i.basis),getattr(i,"note",""),c.user_id,now()))
 
@@ -368,11 +390,12 @@ class Approvals:
         version = self._version(c.workspace_id,i.template_id,i.version or template["published_version"])
         if version["status"]!="published":
             fail("version_retired","该版本已停用")
+        values = self._values(Definition.model_validate_json(version["definition_json"]),i,c.user_id)
         rid,ts = new_id("apr"),now()
         self.store.execute("INSERT INTO approval_requests (id,workspace_id,template_id,template_version,title,requester_id,status,correlation_id,created_at,updated_at) "
             "VALUES (?,?,?,?,?,?,'in_review',?,?,?)",(rid,c.workspace_id,i.template_id,version["version"],i.title,c.user_id,c.correlation_id,ts,ts))
         r = self._request(c.workspace_id,rid)
-        self._snapshot(r,i,c)
+        self._snapshot(r,values,i,c)
         self._record(r,"request.created",c=c)
         self._open(r,0,c)
         c.touches("approval_request",rid)
@@ -454,9 +477,10 @@ class Approvals:
             fail("note_required","请说明修订原因",422)
         if r["revision"]>=50:
             fail("revision_limit","已达到 50 次修订上限，请发起新的申请",422)
+        values = self._values(self._def(r),i,r["requester_id"])
         self._cancel_tasks(r,"revised")
         self._bump(r,revision=r["revision"]+1,status="in_review",stage_index=None,stage_run_id=None,finished_at=None)
-        self._snapshot(r,i,c)
+        self._snapshot(r,values,i,c)
         self._record(r,"request.revised",{"note":i.note},c=c)
         self._settle(r)
         self._open(r,0,c)
