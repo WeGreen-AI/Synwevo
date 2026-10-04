@@ -136,6 +136,10 @@ services:
       options: {max-size: '10m', max-file: '3'}
   portal:
     <<: *app
+    # The business applications run here (Forms, Tables, DataPrep, Approvals, Extract and its OCR child
+    # processes). Release acceptance measured up to ~0.5 GiB for one job (a 12-page OCR, a 50,000-row
+    # DataPrep run), one job per application at a time; installed on the host 2026-10-05.
+    mem_limit: 1536m
     environment:
       <<: *env
       SYNWEVO_ROLE: portal
