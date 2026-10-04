@@ -124,6 +124,32 @@ def test_two_moderators_deciding_at_once_settle_the_report_exactly_once(org):
     assert (settled["status"], settled["reviewed_by"], settled["decision_note"]) == ("dismissed", U["owner"]["id"], "保留")
 
 
+def test_one_decision_tells_every_reporter_and_closes_every_reviewer_to_do(org):
+    """Review of D13: a decision settled every open report of the message, but only the reporter
+    of the reviewed one was told, and each manager's review to-do stayed pending."""
+    c = org
+    U, n = c.users, c.api.state.notifier
+    from synwevo_core.messaging import Messaging
+    svc = Messaging(c.ident.store, c.ident)
+    g = svc.create_group(c.oid, U["owner"]["id"], name="多人举报", member_ids=[U["ann"]["id"], U["ben"]["id"], U["cid"]["id"]])
+    msg, _ = svc.send(g["id"], U["ann"]["id"], body="骚扰内容")
+    first = svc.report(msg["id"], U["ben"]["id"], "harassment")
+    second = svc.report(msg["id"], U["cid"]["id"], "harassment")
+    for rep in (first, second):      # the to-dos the messages application gives each manager (same keys as its route)
+        n.emit(U["owner"]["id"], "conversation.reported", params={"who": "x", "conversation": "多人举报"}, organization_id=c.oid,
+               object_kind="message_report", object_id=rep["id"], dedupe_key=f"report:{rep['id']}:{U['owner']['id']}", actionable=True,
+               target={"origin": "accounts", "path": f"/organizations/{c.oid}?report={rep['id']}"})
+    ho = login(c, "owner")
+    assert c.post("/api/auth/reauth", headers=ho, json={"password": PW, "scope": "admin"}).status_code == 200
+    done = c.post(f"{R}/{first['id']}/review", headers=ho, json={"decision": "removed", "note": "已删除"}).json()
+    assert done["status"] == "removed" and done["settled_with"] == [second["id"]]
+    for key, note in (("ben", "已删除"), ("cid", "")):
+        told = [x for x in n.list(U[key]["id"], locale="en")["items"] if x["kind"] == "conversation.report_removed"]
+        assert len(told) == 1 and told[0]["body"] == note, (key, told)
+    states = {x["object_id"]: x["action_state"] for x in n.list(U["owner"]["id"])["items"] if x["kind"] == "conversation.reported"}
+    assert states == {first["id"]: "done", second["id"]: "done"}
+
+
 def test_the_outcome_points_at_the_messages_origin_once_the_application_is_registered(org):
     """The same review, on a deployment where Synwevo Message has registered itself: the
     reporter's item links to that origin's thread, resolved through the registry at read time."""

@@ -720,14 +720,17 @@ class Messaging:
             if decision == "removed":
                 t.execute("UPDATE messages SET deleted_at=COALESCE(deleted_at,?), body='' WHERE id=?", (ts, r["message_id"]))
                 t.execute("DELETE FROM message_reactions WHERE message_id=?", (r["message_id"],))
-            # other open reports of the same message are settled by the same decision
+            # other open reports of the same message are settled by the same decision; their ids
+            # are returned so the caller can tell those reporters and close their reviewers' to-dos
+            also = [x["id"] for x in t.execute("SELECT id FROM message_reports WHERE message_id=? AND status='open' ORDER BY created_at",
+                                               (r["message_id"],)).fetchall()]
             t.execute("UPDATE message_reports SET status=?, reviewed_by=?, reviewed_at=?, decision_note=? WHERE message_id=? AND status='open'",
                       (decision, uid, ts, None, r["message_id"]))
         if decision == "removed":
             msg = self.store.one("SELECT * FROM messages WHERE id=?", (r["message_id"],))
             if msg:
                 self.publish(self._active_user_ids(r["conversation_id"]), {"type": "message_updated", "conversation_id": r["conversation_id"], "message": self._message_out(dict(msg))})
-        return self._report_out(self.store.one("SELECT * FROM message_reports WHERE id=?", (rid,)))
+        return {**self._report_out(self.store.one("SELECT * FROM message_reports WHERE id=?", (rid,))), "settled_with": also}
 
     def report_get(self, rid: str) -> dict:
         r = self.store.one("SELECT * FROM message_reports WHERE id=?", (rid,))
