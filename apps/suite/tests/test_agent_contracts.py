@@ -417,3 +417,20 @@ def test_a_flow_the_agent_defines_or_starts_stays_inside_the_conversation_scope(
     wide = ToolContext(agent.caps, p.users["alice"], None, "platform")
     assert not isinstance(wide.prepare({"operation": "agent.flow.start",
                                         "input": {"flow_id": flow_id, "version": 1, "idempotency_key": "fixture-scope"}}), dict)
+
+
+def test_reading_about_a_flow_also_stays_inside_the_conversation_scope(agent):
+    """R2-F6: run, runs and trigger deliveries brought a workspace outside the scope in as a source."""
+    from synwevo_suite.agent.tools import ToolContext
+    p = agent.people
+    alice = p.uid("alice")
+    flows = agent.api.state.flows
+    flow_id = flows.create(user_id=alice, name="Fixture B reader", definition={"steps": [
+        {"id": "read", "kind": "call", "operation": "forms.form.list", "workspace_id": p.b, "input": {}}]})["flow_id"]
+    run_id = flows.start(flow_id, user_id=alice, version=1, parameters={}, idempotency_key="fixture-scope-read")["id"]
+    ctx = ToolContext(agent.caps, p.users["alice"], [p.a], "platform")
+    for name, given in (("agent.flow.run", {"run_id": run_id}), ("agent.flow.runs", {"flow_id": flow_id}),
+                        ("agent.flow.get", {"flow_id": flow_id, "version": 1})):
+        assert ctx.prepare({"operation": name, "input": given})["code"] == "outside_conversation_scope", name
+    wide = ToolContext(agent.caps, p.users["alice"], None, "platform")
+    assert not isinstance(wide.prepare({"operation": "agent.flow.run", "input": {"run_id": run_id}}), dict)

@@ -297,26 +297,36 @@ class ToolContext:
         return op, ws, clean
 
     def _flow_workspaces(self, op_id: str, clean: dict) -> set[str]:
-        """The workspaces a flow the Agent defines, publishes, starts or resumes acts in: its
-        steps, result reads and waits. A flow operation is personal, so the conversation's scope
-        would otherwise not reach the workspaces its steps name (CR-047 AGENT-DF-5)."""
-        spec = clean.get("definition")
-        if spec is None and op_id in ("agent.flow.start", "agent.flow.resume"):
-            if op_id == "agent.flow.resume":
-                run = self.store.one("SELECT flow_id, version FROM flow_runs WHERE id=? AND user_id=?",
+        """The workspaces a flow the Agent defines, starts, controls or reads about acts in: its
+        steps, result reads and waits, and the workspace of the event that started a run. A flow
+        operation is personal, so the conversation's scope would otherwise not reach the workspaces
+        its steps name (CR-047 AGENT-DF-5, R2-F6)."""
+        specs, named = [clean["definition"]] if clean.get("definition") is not None else [], set()
+        if not specs:
+            run = None
+            if clean.get("run_id"):                         # resume, run, cancel, pause: that run's version
+                run = self.store.one("SELECT flow_id, version, event_json FROM flow_runs WHERE id=? AND user_id=?",
                                      (clean.get("run_id"), self.user["id"]))
-                ref = (run["flow_id"], run["version"]) if run else None
-            else:
-                ref = (clean.get("flow_id"), clean.get("version"))
-            row = self.store.one("SELECT v.spec_json FROM flow_versions v JOIN flow_definitions d ON d.id=v.flow_id "
-                                 "WHERE v.flow_id=? AND v.version=? AND d.user_id=?", (*ref, self.user["id"])) if ref else None
-            spec = json.loads(row["spec_json"]) if row else {}
-        named = set()
-        for step in (spec or {}).get("steps") or ():
-            named.add(step.get("workspace_id"))
-            for key in ("result_read", "read"):
-                if isinstance(step.get(key), dict):
-                    named.add(step[key].get("workspace_id"))
+                if run and run["event_json"]:
+                    named.add(json.loads(run["event_json"]).get("workspace_id"))
+            flow_id = run["flow_id"] if run else clean.get("flow_id")
+            if not flow_id and clean.get("trigger_id"):     # a trigger's deliveries: its flow
+                trig = self.store.one("SELECT flow_id FROM flow_triggers WHERE id=? AND user_id=?",
+                                      (clean["trigger_id"], self.user["id"]))
+                flow_id = trig["flow_id"] if trig else None
+            version = run["version"] if run else clean.get("version")
+            # A named version, or every version of the flow (its runs and triggers may use any).
+            rows = self.store.all(
+                "SELECT v.spec_json FROM flow_versions v JOIN flow_definitions d ON d.id=v.flow_id WHERE v.flow_id=? "
+                "AND d.user_id=?" + (" AND v.version=?" if version else ""),
+                (flow_id, self.user["id"], *((version,) if version else ()))) if flow_id else []
+            specs = [json.loads(r["spec_json"]) for r in rows]
+        for spec in specs:
+            for step in (spec or {}).get("steps") or ():
+                named.add(step.get("workspace_id"))
+                for key in ("result_read", "read"):
+                    if isinstance(step.get(key), dict):
+                        named.add(step[key].get("workspace_id"))
         return named - {None}
 
     def for_model(self, op, workspace_id: str | None, result: Any, *, also=()) -> Any:

@@ -325,6 +325,9 @@ class Agent:
             return []
         asst = self.store.one("SELECT sources_json FROM agent_messages WHERE id=?", (t["assistant_message_id"],))
         sources = self._content_workspaces(asst) & self._transmitted_workspaces(t, carried=True)
+        # What this conversation's writes left in the target, in any branch, goes along with
+        # whatever is written there next (publishing a draft another branch filled, for one).
+        sources |= self._carried_into(t, {target})
         if op.writes_elsewhere and wid:
             sources.add(wid)  # The operation itself copies from where it runs; its service checks it too.
         # A message or a form request reaches whoever it is addressed to, not only the target's members.
@@ -977,19 +980,19 @@ class Agent:
                 self._add_source(t["assistant_message_id"], {"workspace_id": source, "carried_into": result_wid})
 
     def _carried_into(self, t: dict, workspaces: set[str]) -> set[str]:
-        """Other workspaces whose content writes of this conversation branch carried into
-        ``workspaces`` (their recorded ``transfer_from``). A write whose outcome is not known yet
-        counts: it may have happened."""
+        """Other workspaces whose content writes of this conversation carried into ``workspaces``
+        (their recorded ``transfer_from``). Every branch: what a write left in a workspace is
+        that workspace's state, which a sibling branch reads and writes on just the same. A write
+        whose outcome is not known yet counts: it may have happened."""
         if not workspaces:
             return set()
-        branch = {m["id"] for m in self._path(t["conversation_id"], t["assistant_message_id"])}
         found = set()
         for c in self.store.all(
-                "SELECT c.operation, c.workspace_id, c.input_json, c.run_id, t.assistant_message_id FROM agent_tool_calls c "
-                "JOIN agent_turns t ON t.id=c.turn_id WHERE c.conversation_id=? AND c.run_id IS NOT NULL "
-                "AND c.status IN ('succeeded','unknown')", (t["conversation_id"],)):
+                "SELECT c.operation, c.workspace_id, c.input_json, c.run_id FROM agent_tool_calls c "
+                "WHERE c.conversation_id=? AND c.run_id IS NOT NULL AND c.status IN ('succeeded','unknown')",
+                (t["conversation_id"],)):
             op = self.caps.registry.get(c["operation"])
-            if c["assistant_message_id"] not in branch or not op or op.side_effect == "none":
+            if not op or op.side_effect == "none":
                 continue
             if self._result_workspace(op, c["workspace_id"], _j(c["input_json"], {})) not in workspaces:
                 continue

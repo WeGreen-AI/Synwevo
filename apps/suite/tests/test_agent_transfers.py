@@ -281,3 +281,75 @@ def test_a_card_proposed_before_a_read_in_the_same_step_is_reissued_not_stuck(go
     done = op(g.client, "agent.tool_call.confirm", {"tool_call_id": card["id"], "confirmation": again["input_hash"]})["output"]
     assert done["status"] == "succeeded"
     assert forms_in(g, g.people.a) == ["A roster", "Written before reading B"]
+
+
+# ---------------------------------------------------------------- second review round (R2)
+
+def _confirm_pending(g, turn):
+    card = g.store.one("SELECT * FROM agent_tool_calls WHERE turn_id=? AND status='awaiting_confirmation'", (turn["turn_id"],))
+    out = op(g.client, "agent.tool_call.confirm", {"tool_call_id": card["id"], "confirmation": card["input_hash"]})["output"]
+    return card, out
+
+
+def test_an_agent_write_keeps_its_sources_in_the_flows_its_event_starts(governed):
+    """R2-F2: the Agent read A and published a form in Alice's personal workspace; her trigger on
+    that event copied the title into ``wide``. The Agent's run record named A, the flow did not."""
+    from .test_data_flow_runs import SECRET, World, second_flow
+    from .test_forms import DEFINITION
+    g = governed
+    w = World(g.client)
+    g.client.sign_in("alice")
+    policy(g, g.people.a, "platform")
+    second = second_flow(w)
+    form = op(g.client, "forms.form.create", {"title": "Fixture empty", "definition": DEFINITION}, ws=w.personal)["output"]
+    steps = [read(g.people.a, "read-a"),
+             call("run_operation", {"operation": "forms.form.update_draft", "workspace_id": w.personal,
+                                    "input": {"form_id": form["id"], "draft_rev": 1, "title": SECRET}}, tid="upd"),
+             call("run_operation", {"operation": "forms.form.publish", "workspace_id": w.personal,
+                                    "input": {"form_id": form["id"], "draft_rev": 2}}, tid="pub"), say("done")]
+    _, turn = begin(g, steps)
+    for _ in range(2):
+        assert advance(g, turn)["status"] == "waiting_confirmation"
+        _confirm_pending(g, turn)
+    advance(g, turn)
+    assert json.loads(g.store.one("SELECT delegation FROM op_runs WHERE op='forms.form.publish' AND via='agent'")["delegation"])[
+        "transfer_from"] == [g.people.a]
+    for _ in range(4):
+        w.flows.tick()
+    runs = w.runs_of(second)
+    assert [(r["status"], r["error_code"]) for r in runs] == [("blocked", "transfer_audience_denied")]
+    assert SECRET not in w.titles(w.wide)
+
+
+def test_a_sibling_branch_does_not_publish_what_another_branch_carried(governed):
+    """R2-F3: what a write left in a workspace is that workspace's state, in every branch of the
+    conversation; a branch that never read A still publishes A's content when it publishes it."""
+    from .test_data_flow_runs import SECRET, World
+    from .test_forms import DEFINITION, token_of
+    from .test_forms_exposure import page
+    g = governed
+    w = World(g.client)
+    g.client.sign_in("alice")
+    policy(g, g.people.a, "platform")
+    policy(g, w.small, "platform")
+    form = op(g.client, "forms.form.create", {"title": "Fixture travel claim", "definition": DEFINITION}, ws=w.small)["output"]
+    op(g.client, "forms.form.publish", {"form_id": form["id"], "draft_rev": 1}, ws=w.small)
+    link = op(g.client, "forms.public_link.set", {"form_id": form["id"], "enabled": True}, ws=w.small)["output"]
+    cid, t0 = begin(g, [say("hello")])
+    assert advance(g, t0)["status"] == "succeeded"
+    upd = call("run_operation", {"operation": "forms.form.update_draft", "workspace_id": w.small,
+                                 "input": {"form_id": form["id"], "draft_rev": 1, "title": SECRET}}, tid="upd")
+    _, t1 = begin(g, [read(g.people.a, "read-a"), upd, say("saved")], conversation=cid)
+    assert advance(g, t1)["status"] == "waiting_confirmation"
+    _confirm_pending(g, t1)
+    assert advance(g, t1)["status"] == "succeeded"
+    # A sibling branch from the first answer, which never read A.
+    first = g.store.one("SELECT assistant_message_id FROM agent_turns WHERE id=?", (t0["turn_id"],))["assistant_message_id"]
+    g.model.steps = [call("run_operation", {"operation": "forms.form.publish", "workspace_id": w.small,
+                                            "input": {"form_id": form["id"], "draft_rev": 2}}, tid="pub-branch"), say("published")]
+    t3 = op(g.client, "agent.turn.start", {"conversation_id": cid, "text": "publish it", "parent_message_id": first})["output"]
+    assert advance(g, t3)["status"] == "waiting_confirmation"
+    card, out = _confirm_pending(g, t3)
+    assert [b["source"] for b in json.loads(card["transfer_json"])] == [g.people.a], "the card names where the draft came from"
+    assert out["status"] == "failed" and out["error"]["code"] == "transfer_audience_external"
+    assert page(w, token_of(link["url"]))["form"]["title"] == "Fixture travel claim"
