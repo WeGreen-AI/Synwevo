@@ -114,6 +114,9 @@ class Approvals:
                 if output.get("workspace_id") != call.workspace_id:
                     hidden()
                 current = self.get(call, SimpleNamespace(request_id=rid))
+                # A result stored before requests were read without their correlation still holds
+                # it: compared without it, as the request now reads (review R5).
+                output = _without_correlation(dict(output))
             else:
                 hidden()
             if fingerprint(output) != fingerprint(current):

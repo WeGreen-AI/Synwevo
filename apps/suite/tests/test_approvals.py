@@ -458,3 +458,21 @@ def test_a_requests_correlation_is_not_handed_to_other_members(suite):
         assert {x["id"] for x in listed}>={named["id"],plain["id"]} and all("correlation_id" not in x for x in listed), who
         for rid in (named["id"],plain["id"]):
             assert "correlation_id" not in out(c,"request.get",{"request_id":rid},user=who), (who,rid)
+
+
+def test_a_result_stored_before_requests_lost_their_correlation_still_replays(suite):
+    """Review R5: requests are read without the requester's correlation now, but results stored
+    before that still hold it; compared with the request as it reads now they no longer matched,
+    and the idempotent replay answered run_result_unavailable instead of the request."""
+    import json as _json
+    c=suite
+    t=template(c)
+    payload={"template_id":t["id"],"title":"Fixture claim","values":{"f_amount":"12.50"},"basis":"Invoice fixture"}
+    first=call(c,"request.create",payload,key="fixture-replay-k1")
+    row=c.people.store.one("SELECT output, correlation_id FROM op_runs WHERE id=?",(first["run_id"],))
+    old=dict(row["output"]) if isinstance(row["output"],dict) else _json.loads(row["output"])
+    old["correlation_id"]=row["correlation_id"]          # the shape such a result was stored in
+    c.people.store.execute("UPDATE op_runs SET output=? WHERE id=?",(_json.dumps(old),first["run_id"]))
+    again=call(c,"request.create",payload,key="fixture-replay-k1")
+    assert again["run_id"]==first["run_id"] and again["output"]["id"]==first["output"]["id"]
+    assert c.people.store.one("SELECT COUNT(*) AS n FROM approval_requests")["n"]==1
