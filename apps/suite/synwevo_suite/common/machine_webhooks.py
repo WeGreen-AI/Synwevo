@@ -695,18 +695,28 @@ class Webhooks:
         return delivery_public(self.store.one("SELECT * FROM suite_webhook_deliveries WHERE id=?", (new,)))
 
     # ------------------------------------------------------------------ disabling
-    def disable(self, sid: str, reason: str, *, unsent: int | None = None) -> bool:
+    def disable(self, sid: str, reason: str, *, unsent: int | None = None, version: int | None = None) -> bool:
         """Disable a subscription and stop what is queued for it; journalled, so restoring an older
         database cannot bring it back to life. `unsent`: the position of the event the receiver
-        would not take, when that is why."""
+        would not take, when that is why.
+
+        `version`: that of the row the decision was made on. The dispatcher judges rows it read a
+        moment — or a request of fifteen seconds — earlier; a subscription that has changed since
+        (bound to another grant, moved to another address, stopped and resumed) is no longer the
+        one that was judged. Nothing is done to it or to its queue, and that is not an error:
+        whoever looks next decides again, on the row as it stands."""
         t = self.clock()
+        judged, args = (" AND version=?", (version,)) if version is not None else ("", ())
         with self.store.tx() as c:
-            current = c.execute("SELECT * FROM suite_webhook_subscriptions WHERE id=? AND status!='disabled'", (sid,)).fetchone()
+            current = c.execute("SELECT * FROM suite_webhook_subscriptions WHERE id=? AND status!='disabled'" + judged,
+                                (sid, *args)).fetchone()
+            if not current and version is not None:
+                return False
             n = 0
             if current:
                 n = c.execute("UPDATE suite_webhook_subscriptions SET status='disabled', disabled_reason=?, status_changed_at=?, "
-                              "updated_at=?, gap_cursor=?, gap_at=?, version=version+1 WHERE id=?",
-                              (reason, t, t, *self._stopping(c, current, unsent), sid)).rowcount
+                              "updated_at=?, gap_cursor=?, gap_at=?, version=version+1 WHERE id=?" + judged,
+                              (reason, t, t, *self._stopping(c, current, unsent), sid, *args)).rowcount
             c.execute("UPDATE suite_webhook_deliveries SET status='dropped', last_error=?, next_attempt_at=NULL "
                       "WHERE subscription_id=? AND status='pending'", (f"subscription_disabled:{reason}", sid))
         if n:
@@ -781,7 +791,7 @@ class Webhooks:
         try:
             p = self._principal(sub)
         except ServiceError as gone:
-            self.disable(sub["id"], f"authorization_revoked:{gone.code}")
+            self.disable(sub["id"], f"authorization_revoked:{gone.code}", version=sub["version"])
             return 0
         position, at = sub["cursor"], sub["cursor_at"]
         if position > top:
@@ -806,7 +816,7 @@ class Webhooks:
             # Further behind than the feed keeps events (a receiver too slow for what it asked for, a
             # long outage, an event that could never be decided): what follows the cursor can no
             # longer be served by either channel. Stopped with the reason, not skipped in silence.
-            self.disable(sub["id"], "backlog_expired")
+            self.disable(sub["id"], "backlog_expired", version=sub["version"])
             return 0
         drained = len(rows) < FAN_ROWS
         visible, decided, stalled = self._decide(sub, p, rows)
@@ -893,8 +903,13 @@ class Webhooks:
         try:
             p = self._principal(sub)
         except ServiceError as gone:
-            self.disable(sub["id"], f"authorization_revoked:{gone.code}")
-            self._drop(d, f"subscription_disabled:authorization_revoked:{gone.code}")
+            if self.disable(sub["id"], f"authorization_revoked:{gone.code}", version=sub["version"]):
+                self._drop(d, f"subscription_disabled:authorization_revoked:{gone.code}")
+            else:
+                # It changed while its grant was being asked about (another grant bound it, or
+                # somebody stopped it): the delivery is decided again on the subscription as it
+                # stands. Nothing was tried.
+                self._untried(d, "subscription_changed", 0)
             return None, None
         if ping:
             item = {"id": d["event_id"], "type": PING_EVENT, "version": 1, "app": None, "object": None, "refs": {},
@@ -959,15 +974,7 @@ class Webhooks:
             return False
         attempts = d.get("attempts") or 1                    # counted when it was claimed
         single = d["event_type"] == PING_EVENT               # a ping is one attempt, whatever happens to it
-
-        def local(error: str, wait: float = LOCAL_RETRY_S) -> bool:
-            # This server could not try: not an attempt, and nothing about the receiver.
-            if single:
-                self._finish(d, "failed", attempts=attempts - 1, error=error)
-            else:
-                self._finish(d, "pending", attempts=attempts - 1, error=error, next_attempt_at=self.clock() + wait)
-            return False
-
+        local = lambda error, wait=LOCAL_RETRY_S: self._untried(d, error, wait)  # noqa: E731
         t = self.clock()
         try:
             keys = [sealed.unseal(self.store, "webhook-secret", sub["secret_enc"])]
@@ -1012,10 +1019,14 @@ class Webhooks:
             wait = delivery.retry_after(e.headers, self.clock()) if code in (429, 503) else None
             e.close()
             err = "redirect_not_followed" if 300 <= code < 400 else "http_status"
-            if code == 410 and not single:
+            if code == 410 and not single and self._unchanged(sub):
                 # 410 Gone is the receiver saying "stop": disabled with that reason, queue emptied.
+                # It is the address that was asked that says so: a subscription moved or bound
+                # anew while the request was out is not stopped by it, and the event goes on
+                # through its schedule like any other refusal.
                 if self._attempt_failed(d, None, attempts, code, err, retriable=False, duration_ms=_ms(started)):
-                    self.disable(sub["id"], "gone", unsent=None if d["redelivery_of"] else d["event_seq"])
+                    self.disable(sub["id"], "gone", unsent=None if d["redelivery_of"] else d["event_seq"],
+                                 version=sub["version"])
                 return False
             return self._after_failure(d, sub, attempts, code, err, not single, wait, _ms(started))
         except ResolverBusy:
@@ -1039,6 +1050,21 @@ class Webhooks:
             self.store.execute("UPDATE suite_webhook_subscriptions SET consecutive_failures=0, failing_since=NULL, "
                                "last_success_at=? WHERE id=?", (self.clock(), sub["id"]))
         return True
+
+    def _untried(self, d: dict, error: str, wait: float = LOCAL_RETRY_S) -> bool:
+        """This server could not try: not an attempt, and nothing about the receiver. The delivery
+        waits `wait` seconds with the attempt its claim counted taken back; a ping, which nobody
+        would come back to, ends there and says why."""
+        attempts = max(0, (d.get("attempts") or 1) - 1)
+        if d["event_type"] == PING_EVENT:
+            self._finish(d, "failed", attempts=attempts, error=error)
+        else:
+            self._finish(d, "pending", attempts=attempts, error=error, next_attempt_at=self.clock() + wait)
+        return False
+
+    def _unchanged(self, sub: dict) -> bool:
+        return bool(self.store.one("SELECT 1 AS x FROM suite_webhook_subscriptions WHERE id=? AND version=?",
+                                   (sub["id"], sub["version"])))
 
     def _after_failure(self, d, sub, attempts, code, err, retriable, retry_after, duration_ms) -> bool:
         self._attempt_failed(d, sub, attempts, code, err, retriable=retriable, retry_after=retry_after, duration_ms=duration_ms)
@@ -1071,7 +1097,7 @@ class Webhooks:
             c.execute("UPDATE suite_webhook_subscriptions SET consecutive_failures=consecutive_failures+1, last_failure_at=?, "
                       "failing_since=? WHERE id=?", (t, since if since is not None else t, sub["id"]))
         if since is not None and t - since >= DISABLE_AFTER_S and count >= MAX_ATTEMPTS:
-            self.disable(sub["id"], "failing", unsent=unsent)
+            self.disable(sub["id"], "failing", unsent=unsent, version=sub["version"])
 
     def _dropped(self, d: dict) -> bool:
         row = self.store.one("SELECT status FROM suite_webhook_deliveries WHERE id=?", (d["id"],))
@@ -1172,7 +1198,7 @@ class Webhooks:
             try:
                 self._principal(sub)
             except ServiceError as gone:
-                self.disable(sub["id"], f"authorization_revoked:{gone.code}")
+                self.disable(sub["id"], f"authorization_revoked:{gone.code}", version=sub["version"])
             except Exception:  # noqa: BLE001 — one subscription's fault must not stop the housekeeping
                 log.exception("webhook sweep could not check %s", sub["id"])
         for sub in self.store.all("SELECT id FROM suite_webhook_subscriptions WHERE status='disabled' AND deleted_at IS NULL "

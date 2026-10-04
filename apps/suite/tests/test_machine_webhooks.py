@@ -635,6 +635,134 @@ def test_the_grant_that_answers_is_the_one_that_last_bound_it(hub):
     assert (back["status"], back["disabled_reason"], back["authorized_by_caller"]) == ("active", None, True)
 
 
+@pytest.mark.parametrize("looking", ["fan-out", "a send", "the sweep"])
+def test_a_grant_judged_on_an_earlier_reading_does_not_undo_a_rebind(hub, monkeypatch, looking):
+    """The dispatcher reads a subscription and then asks whether its grant still stands. In between,
+    the person has authorised the client again and bound the subscription to the new grant (200).
+    The old grant's end is then no reason to stop it: nothing is disabled, nothing is dropped, and
+    the event goes out under the grant that answers now."""
+    first, second = grant(hub.api, "alice"), grant(hub.api, "alice")
+    rx = hub.receiver()
+    sid = hub.subscribe(first["auth"], rx.url, events=["tables.*"])["id"]
+    table = a_table(hub.api, second["auth"])
+    if looking == "a send":
+        assert hub.service.fan_out() == 1
+    _token_revoked(hub, first)                                           # ended, and nothing has noticed yet
+    real, rebound = hub.service._principal, []
+
+    def asked(sub):
+        # fixture: the rebind lands after the row was read and before its grant is asked about
+        if not rebound:
+            rebound.append(hub.api.post(f"{BASE}/{sid}/resume", headers=second["auth"]).json())
+        return real(sub)
+    monkeypatch.setattr(hub.service, "_principal", asked)
+    {"fan-out": hub.service.fan_out, "a send": hub.service.deliver_due, "the sweep": hub.service.sweep}[looking]()
+    assert (rebound[0]["status"], rebound[0]["authorized_by_caller"], rebound[0]["version"]) == ("active", True, 2)
+    after = hub.api.get(f"{BASE}/{sid}", headers=second["auth"]).json()
+    assert (after["status"], after["disabled_reason"], after["version"]) == ("active", None, 2)
+    assert rx.received == [] and not [r for r in hub.rows(sid) if r["status"] != "pending" or r["attempts"]]
+    assert not [e for e in journal(hub.store) if e.get("subscription_id") == sid]
+    hub.service.tick()
+    hub.service.tick()
+    assert objects(rx) == [table] and [(r["status"], r["attempts"]) for r in hub.rows(sid)] == [("delivered", 1)]
+
+
+def test_a_backlog_judged_on_an_earlier_reading_does_not_stop_a_subscription_resumed_since(hub, monkeypatch):
+    """Too far behind is said of where a subscription stood when it was read. One its holder has
+    resumed since stands at the present, and is not stopped for the place it left."""
+    monkeypatch.setattr(hub.W, "MAX_PENDING", 1)
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver(lambda n: 500)
+    sid = hub.subscribe(alice, rx.url, events=["tables.*"])["id"]
+    table = a_table(hub.api, alice)
+    a_record(hub.api, alice, table, "r1")
+    hub.service.tick()                                                   # one queued and refused; the other waits in the log
+    hub.clock.advance(32 * DAY)
+    rx.behaviour = lambda n: 200
+    hub.service.tick()                                                   # the queued one is past the window: dropped
+    real, resumed = hub.service._principal, []
+
+    def asked(sub):
+        # fixture: the holder pauses and resumes — "from the present" — after the row was read
+        if not resumed:
+            hub.api.post(f"{BASE}/{sid}/pause", headers=alice)
+            resumed.append(hub.api.post(f"{BASE}/{sid}/resume", headers=alice).json())
+        return real(sub)
+    monkeypatch.setattr(hub.service, "_principal", asked)
+    hub.service.tick()
+    after = hub.api.get(f"{BASE}/{sid}", headers=alice).json()
+    assert resumed[0]["status"] == "active" and (after["status"], after["disabled_reason"], after["version"]) == ("active", None, 3)
+    hub.service.tick()                                                   # the next look is at the row as it stands
+    assert hub.api.get(f"{BASE}/{sid}", headers=alice).json()["status"] == "active"
+
+
+def test_an_answer_from_an_address_the_subscription_has_left_does_not_stop_it(hub):
+    """410 is the address that was asked saying "stop", and three days of failures are that
+    address's. A subscription moved to another address while the request was out is not disabled
+    by either: it stays as its holder just left it, and the event goes on to the new address."""
+    from synwevo_core.webhook_delivery import BACKOFF_S
+    alice = grant(hub.api, "alice")["auth"]
+    new = hub.receiver()
+    moved = []
+
+    def gone(n):
+        # fixture: the holder moves the subscription while this request is out
+        moved.append(hub.api.patch(f"{BASE}/{sid}", json={"url": new.url}, headers=alice).status_code)
+        return 410
+    old = hub.receiver(gone)
+    sid = hub.subscribe(alice, old.url, events=["tables.table.changed"])["id"]
+    table = a_table(hub.api, alice)
+    hub.service.tick()
+    after = hub.api.get(f"{BASE}/{sid}", headers=alice).json()
+    assert moved == [200] and (after["status"], after["disabled_reason"], after["url"]) == ("active", None, new.url)
+    waiting = hub.rows(sid)[0]
+    assert (waiting["status"], waiting["attempts"], waiting["last_code"]) == ("pending", 1, 410), "refused there, not given up"
+    hub.clock.advance(BACKOFF_S[0] * 1.2 + 1)
+    hub.service.tick()
+    assert objects(new) == [table] and len(old.received) == 1 and hub.rows(sid)[0]["status"] == "delivered"
+    # the failing rule: the attempt that completes three days and a whole schedule is answered by
+    # an address the subscription leaves while that request is out
+    elsewhere = hub.receiver()
+
+    def failing(n):
+        if n == hub.W.MAX_ATTEMPTS:
+            moved.append(hub.api.patch(f"{BASE}/{sid}", json={"url": elsewhere.url}, headers=alice).status_code)
+        return 500
+    new.received.clear()
+    new.behaviour = failing
+    a_table(hub.api, alice, "Second", "t2")
+    hub.service.tick()
+    for step in BACKOFF_S:
+        hub.clock.advance(step * 1.2 + 1)
+        hub.service.tick()
+    after = hub.api.get(f"{BASE}/{sid}", headers=alice).json()
+    assert moved == [200, 200] and len(new.received) == hub.W.MAX_ATTEMPTS and hub.clock.offset >= 3 * DAY
+    assert (after["status"], after["disabled_reason"], after["url"]) == ("active", None, elsewhere.url)
+    third = a_table(hub.api, alice, "Third", "t3")
+    hub.service.tick()
+    assert objects(elsewhere) == [third]
+
+
+def test_gone_is_not_acted_on_once_the_subscription_has_changed_however_late(hub, monkeypatch):
+    """The last moment a move can land: the 410 has been recorded against the delivery, the
+    subscription has not been disabled yet. It is still not the subscription that was asked."""
+    alice = grant(hub.api, "alice")["auth"]
+    old, new = hub.receiver(lambda n: 410), hub.receiver()
+    sid = hub.subscribe(alice, old.url, events=["tables.table.changed"])["id"]
+    a_table(hub.api, alice)
+    real, moved = hub.service._attempt_failed, []
+
+    def recorded(d, *args, **kwargs):
+        # fixture: the move lands between the two writes the 410 leads to
+        moved.append(hub.api.patch(f"{BASE}/{sid}", json={"url": new.url}, headers=alice).status_code)
+        return real(d, *args, **kwargs)
+    monkeypatch.setattr(hub.service, "_attempt_failed", recorded)
+    hub.service.tick()
+    after = hub.api.get(f"{BASE}/{sid}", headers=alice).json()
+    assert moved == [200] and (after["status"], after["disabled_reason"], after["url"]) == ("active", None, new.url)
+    assert [(r["status"], r["last_code"]) for r in hub.rows(sid)] == [("failed", 410)], "what was observed stays recorded"
+
+
 def test_binding_checks_the_whole_filter_against_the_grant_that_binds(hub):
     wide = grant(hub.api, "alice")
     narrow = grant(hub.api, "alice", scopes="forms.read")
