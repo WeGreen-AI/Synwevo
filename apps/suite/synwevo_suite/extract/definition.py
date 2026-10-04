@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 from synwevo_core.errors import ServiceError
 
 
@@ -13,21 +13,30 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# Refusals are raised on the input they concern, so the template editor can word each one next
+# to that input: the operation layer returns `loc` and `type` per error, and each of these
+# validators is the only `value_error` its input can raise.
 class Rule(Strict):
     kind: Literal["prefix", "cell", "column"] = "prefix"
-    prefix: str = Field(default="", max_length=120)
+    prefix: str = Field(default="", max_length=120, validate_default=True)
     table: str = Field(default="", max_length=120)
     row: int = Field(default=1, ge=1, le=2000)
     column: int = Field(default=1, ge=1, le=100)
-    header: str = Field(default="", max_length=120)
+    header: str = Field(default="", max_length=120, validate_default=True)
 
-    @model_validator(mode="after")
-    def valid(self):
-        if self.kind == "prefix" and not self.prefix.strip():
+    @field_validator("prefix")
+    @classmethod
+    def prefix_given(cls, value: str, info: ValidationInfo):
+        if info.data.get("kind", "prefix") == "prefix" and not value.strip():
             raise ValueError("prefix must be nonempty")
-        if self.kind == "column" and not self.header.strip():
+        return value
+
+    @field_validator("header")
+    @classmethod
+    def header_given(cls, value: str, info: ValidationInfo):
+        if info.data.get("kind") == "column" and not value.strip():
             raise ValueError("column header must be nonempty")
-        return self
+        return value
 
 
 class FieldSpec(Strict):
@@ -42,11 +51,13 @@ class FieldSpec(Strict):
     minimum: str | None = Field(default=None, max_length=50, pattern=r"^-?[0-9]{1,30}(\.[0-9]{1,12})?$")
     maximum: str | None = Field(default=None, max_length=50, pattern=r"^-?[0-9]{1,30}(\.[0-9]{1,12})?$")
 
-    @model_validator(mode="after")
-    def bounds(self):
-        if self.minimum is not None and self.maximum is not None and Decimal(self.minimum) > Decimal(self.maximum):
-            raise ValueError("minimum exceeds maximum")
-        return self
+    @field_validator("maximum")
+    @classmethod
+    def bounds(cls, value: str | None, info: ValidationInfo):
+        minimum = info.data.get("minimum")       # absent when the minimum itself was refused
+        if value is not None and minimum is not None and Decimal(minimum) > Decimal(value):
+            raise ValueError("maximum is below minimum")
+        return value
 
 
 class Definition(Strict):
@@ -96,6 +107,10 @@ def normalize(raw: dict, description: dict, *, ocr: bool) -> dict:
     Page/line and table/cell locations are supplied by the parser; no boxes are fabricated.
     """
     status = raw.get("status")
+    # The reader found a structurally damaged file (truncated, objects missing). Whatever lines it
+    # still read are not the document; reviewing them would pass a partial file off as whole.
+    if raw.get("damaged"):
+        raise ServiceError(422, "damaged_file", "文件已损坏或不完整，请用生成它的程序重新导出后上传")
     if status == "needs_ocr":
         raise ServiceError(422, "ocr_required", "该文件需要文字识别，请启用已配置的识别服务")
     if status != "ready":
@@ -144,11 +159,22 @@ def normalize(raw: dict, description: dict, *, ocr: bool) -> dict:
             "segments": segments}
 
 
+#: Matches one field may hold. Beyond it the field is left unread with its counts (`over_limit`);
+#: the other fields are still read and the task still reaches review.
+MAX_MATCHES = 100
+
+
 def extract(definition: Definition, parsed: dict) -> dict:
+    """Every match of a rule is accounted for. A line that starts with the label but has nothing
+    after it is an unresolved occurrence (text recognition often reads a column of stacked labels
+    apart from their values), never silently skipped: the field is `incomplete` and needs a
+    person. The value is not taken from the next line — the line order recognition produces does
+    not prove which value belongs to which label. `occurrences` counts labelled matches against
+    values located, so a reviewer sees 2 of 38 rather than a confident partial list."""
     results = {}
     segments = parsed["segments"]
     for field in definition.fields:
-        rule, found = field.rule, []
+        rule, found, unresolved, labelled, located = field.rule, [], [], 0, 0
         headers = [s for s in segments if s["kind"] == "cell" and s["table_row"] == 1
                    and s["text"] == rule.header and (not rule.table or s["source"]["table"] == rule.table)]
         for seg in segments:
@@ -169,16 +195,31 @@ def extract(definition: Definition, parsed: dict) -> dict:
             text = seg["text"][start:]
             start += len(text) - len(text.lstrip())
             value = text.strip()
+            labelled += 1
+            located += bool(value)
+            if labelled > MAX_MATCHES:
+                continue                    # only counted: the field is left unread below
             if not value:
+                # An empty cell is a cell read as empty; a label with nothing after it is not a reading.
+                if rule.kind == "prefix":
+                    unresolved.append({"reason": "no_value_after_label", "ocr": bool(seg["source"].get("ocr")),
+                                       "evidence": {"segment_id": seg["id"], "start": start, "end": start,
+                                                    "source": seg["source"]}})
                 continue
             found.append({"value": value, "evidence": {"segment_id": seg["id"], "start": start,
                           "end": start + len(value), "source": seg["source"]},
                           "verified": seg["located"], "validation": value_error(field, value),
                           "ocr": bool(seg["source"].get("ocr"))})
-            if len(found) > 100:
-                raise ServiceError(413, "candidate_limit", "匹配值过多，请缩小规则范围或拆分文件")
+        occurrences = {"labelled": labelled, "located": located}
+        if labelled > MAX_MATCHES:
+            results[field.id] = {"value": [] if field.many else None, "status": "over_limit", "candidates": [],
+                                 "unresolved": [], "occurrences": occurrences, "limit": MAX_MATCHES,
+                                 "requires_review": True, "origin": "deterministic_rule"}
+            continue
         status = "extracted"
-        if not found:
+        if unresolved:
+            status = "incomplete"
+        elif not found:
             status = "missing"
         elif not field.many and len(found) > 1:
             status = "ambiguous" if len({x["value"] for x in found}) == 1 else "conflict"
@@ -187,7 +228,8 @@ def extract(definition: Definition, parsed: dict) -> dict:
         elif not all(x["verified"] for x in found):
             status = "unverified"
         value = [x["value"] for x in found] if field.many else (found[0]["value"] if len(found) == 1 else None)
-        results[field.id] = {"value": value, "status": status, "candidates": found,
+        results[field.id] = {"value": value, "status": status, "candidates": found, "unresolved": unresolved,
+                             "occurrences": occurrences,
                              "requires_review": field.review_required or status != "extracted" or any(x["ocr"] for x in found),
                              "origin": "deterministic_rule"}
     import json

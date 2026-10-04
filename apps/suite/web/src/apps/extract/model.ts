@@ -16,14 +16,19 @@ export interface Template { id: string; title: string; draft_rev: number; publis
 export type Location = { page?: number; line?: number; table?: string; row?: number; column?: number; ocr?: boolean };
 export interface Evidence { segment_id: string; start: number; end: number; source: Location }
 export interface Value { value: string | string[] | null; status: string; origin: string;
-  candidates: { value: string; evidence: Evidence; verified: boolean; validation: string | null }[] }
+  candidates: { value: string; evidence: Evidence; verified: boolean; validation: string | null }[];
+  /** Labels the rule found with no value after them (results made before this was recorded have none). */
+  unresolved?: { evidence: Evidence; reason: string }[];
+  /** Matches of the rule against values read; `limit` is set when the matches exceeded it. */
+  occurrences?: { labelled: number; located: number }; limit?: number }
 export interface Segment { id: string; text: string; source: Location; located: boolean }
 export interface Task {
   id: string; title: string; workspace_id: string; template_id: string; template_version: number; status: string;
   revision: number; confirmed_revision: number | null; error_code: string | null; attempts: number;
   file: { id: string; filename: string; content_digest: string; scan: { status: string }; source?: { app?: string; submission_id?: string; workspace_id?: string } };
   definition: { fields: Field[] }; machine: Record<string, Value> | null; values: Record<string, Value> | null;
-  history: { revision: number; kind: string; note: string; actor_id: string; created_at: number }[];
+  /** `actor_name` is how the reviewer is shown; null when their account no longer exists. */
+  history: { revision: number; kind: string; note: string; actor_id: string; actor_name: string | null; created_at: number }[];
 }
 export const blankField = (): Field => ({ id: `f_${newKey().replaceAll("-", "").slice(0, 12)}`, label: "", type: "text",
   required: true, many: false, review_required: true, max_length: 2000, minimum: null, maximum: null,
@@ -80,10 +85,11 @@ export const errors: Record<string, string> = {
   parser_not_configured: "文件解析服务未配置", ocr_not_configured: "文字识别服务未配置",
   ocr_required: "文件需要启用文字识别", ocr_incomplete: "文字识别未完整完成",
   parse_failed: "文件无法解析，请检查格式或重新导出", encrypted_file: "请移除文件密码后重新上传",
+  damaged_file: "文件已损坏或不完整（可能被截断），没有从中取值；请用生成它的程序重新导出后重新上传",
   parse_timeout: "解析超时，请拆分文件后重试", parse_limit: "解析结果不完整，请拆分文件后重试",
   candidate_limit: "匹配值过多，请缩小规则范围", result_limit: "提取结果过大，请缩小规则范围",
   review_conflict: "结果已被修改，请刷新后重试", draft_conflict: "模板已被修改，请刷新后重试",
-  review_unresolved: "请先处理缺失、歧义、冲突或无效字段", unverified_ack_required: "请明确确认无可靠来源的值",
+  review_unresolved: "请先处理缺失、不完整、歧义、冲突、无效或匹配过多的字段", unverified_ack_required: "请明确确认无可靠来源的值",
   invalid_correction: "修正值未通过字段校验", queue_full: "提取队列已满，请稍后重试",
   export_not_allowed: "没有导出权限", result_not_confirmed: "该结果版本尚未确认或已被替代",
   not_a_member: "你已无权访问该工作空间", read_only_role: "你目前只有查看权限",

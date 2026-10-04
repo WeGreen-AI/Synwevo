@@ -5,7 +5,8 @@ import { useI18n } from "@synwevo/ui";
 import { Empty, Failure, Loading, RunBadge } from "../../shared/states";
 import { newKey } from "../../shared/ops";
 import { blankField, displayValue, useAction, useErrorText, useLoad } from "./model";
-import type { Evidence, Field, Location, Props, Segment, Task, Template } from "./model";
+import { editorProblems, problemAt } from "./editorErrors";
+import type { Evidence, Field, Location, Props, Segment, Task, Template, Value } from "./model";
 
 function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
   const text = useErrorText(error);
@@ -55,7 +56,20 @@ function EditorForm({ ws, canWrite, initial, reload }: Props & { initial?: Templ
   const persistedInput = useRef(initial ? JSON.stringify({ title: initial.title, definition: initial.draft }) : "");
   const action = useAction(ws.id); const [saved, setSaved] = useState(false);
   const disabled = !canWrite || action.busy || !!initial?.archived;
-  const edit = (n: number, patch: Partial<Field>) => { setSaved(false); setFields(fs => fs.map((f, i) => i === n ? { ...f, ...patch } : f)); };
+  // A refused save names its inputs; each message stays beside its input until that input is edited.
+  const problems = editorProblems(action.error);
+  const [cleared, setCleared] = useState<Set<string>>(() => new Set());
+  useEffect(() => setCleared(new Set()), [action.error]);
+  const problem = (n: number, input: string) => cleared.has(`${n}:${input}`) ? undefined : problemAt(problems, n, input);
+  const problemId = (n: number, input: string) => `extract-problem-${n}-${input.replace(".", "-")}`;
+  const marked = (n: number, input: string) => problem(n, input) ? { "aria-invalid": true, "aria-describedby": problemId(n, input) } : {};
+  const note = (n: number, input: string) => { const key = problem(n, input); return key ? <small className="extract-problem" id={problemId(n, input)}>{t(key)}</small> : null; };
+  const edit = (n: number, patch: Partial<Field>, ...inputs: string[]) => {
+    setSaved(false); setFields(fs => fs.map((f, i) => i === n ? { ...f, ...patch } : f));
+    if (inputs.length) setCleared(old => new Set([...old, ...inputs.map(input => `${n}:${input}`)]));
+  };
+  // Adding or removing a field moves the others: messages placed by position no longer apply.
+  const reshape = (change: (fs: Field[]) => Field[]) => { setFields(change); setSaved(false); action.setError(undefined); };
   const save = async (publish: boolean) => {
     const input = { title, definition: { fields } };
     const current = persisted.current;
@@ -75,36 +89,40 @@ function EditorForm({ ws, canWrite, initial, reload }: Props & { initial?: Templ
     <header className="suite-head"><div><Link to={`${baseOf(ws)}/templates`}>{t("提取模板")}</Link><h1>{initial?.title ?? t("新建提取模板")}</h1></div></header>
     <p className="notice">{t("规则只从解析原文取值，不使用模型推测。日期使用年－月－日，小数不使用指数格式。")}</p>
     <form className="extract-editor" onSubmit={e => { e.preventDefault(); void save(false); }}>
-      <label>{t("模板名称")}<input className="input" required maxLength={160} value={title} disabled={disabled} onChange={e => { setTitle(e.target.value); setSaved(false); }} /></label>
+      <label>{t("模板名称")}<input className="input" required maxLength={160} value={title} disabled={disabled}
+        {...(problems?.title && !cleared.has("title") ? { "aria-invalid": true, "aria-describedby": "extract-problem-title" } : {})}
+        onChange={e => { setTitle(e.target.value); setSaved(false); setCleared(old => new Set([...old, "title"])); }} />
+        {problems?.title && !cleared.has("title") && <small className="extract-problem" id="extract-problem-title">{t(problems.title)}</small>}</label>
       {fields.map((field, n) => <fieldset className="extract-field" key={field.id} disabled={disabled}>
-        <legend>{t("字段 {n}", { n: n + 1 })}</legend><div className="extract-grid">
-          <label>{t("字段名称")}<input className="input" required maxLength={120} value={field.label} onChange={e => edit(n, { label: e.target.value })} /></label>
+        <legend>{t("字段 {n}", { n: n + 1 })}</legend>{note(n, "field")}{note(n, "rule")}<div className="extract-grid">
+          <label>{t("字段名称")}<input className="input" required maxLength={120} value={field.label} {...marked(n, "label")} onChange={e => edit(n, { label: e.target.value }, "label")} />{note(n, "label")}</label>
           <label>{t("字段类型")}<select className="input" value={field.type} onChange={e => edit(n, { type: e.target.value as Field["type"] })}>
             <option value="text">{t("文本")}</option><option value="decimal">{t("精确小数")}</option><option value="date">{t("日期")}</option><option value="boolean">{t("布尔值")}</option></select></label>
           <label>{t("取值方式")}<select className="input" value={field.rule.kind} onChange={e => edit(n, { rule: { ...field.rule, kind: e.target.value as Field["rule"]["kind"] } })}>
             <option value="prefix">{t("行首文字之后")}</option><option value="cell">{t("指定单元格")}</option><option value="column">{t("按列标题取值")}</option></select></label>
-          {field.rule.kind === "prefix" ? <label>{t("精确行首文字")}<input className="input" required maxLength={120} value={field.rule.prefix} onChange={e => edit(n, { rule: { ...field.rule, prefix: e.target.value } })} /></label> : <>
-            <label>{t("表格名称（留空匹配全部）")}<input className="input" maxLength={120} value={field.rule.table} onChange={e => edit(n, { rule: { ...field.rule, table: e.target.value } })} /></label>
-            {field.rule.kind === "column" ? <label>{t("第一行的精确列标题")}<input className="input" required maxLength={120} value={field.rule.header} onChange={e => edit(n, { rule: { ...field.rule, header: e.target.value } })} /></label> : <>
-              <label>{t("行号（从一开始）")}<input className="input" type="number" min={1} max={2000} value={field.rule.row} onChange={e => edit(n, { rule: { ...field.rule, row: Number(e.target.value) } })} /></label>
-              <label>{t("列号（从一开始）")}<input className="input" type="number" min={1} max={100} value={field.rule.column} onChange={e => edit(n, { rule: { ...field.rule, column: Number(e.target.value) } })} /></label></>}
+          {field.rule.kind === "prefix" ? <label>{t("精确行首文字")}<input className="input" required maxLength={120} value={field.rule.prefix} {...marked(n, "rule.prefix")} onChange={e => edit(n, { rule: { ...field.rule, prefix: e.target.value } }, "rule.prefix", "rule")} />{note(n, "rule.prefix")}</label> : <>
+            <label>{t("表格名称（留空匹配全部）")}<input className="input" maxLength={120} value={field.rule.table} {...marked(n, "rule.table")} onChange={e => edit(n, { rule: { ...field.rule, table: e.target.value } }, "rule.table")} />{note(n, "rule.table")}</label>
+            {field.rule.kind === "column" ? <label>{t("第一行的精确列标题")}<input className="input" required maxLength={120} value={field.rule.header} {...marked(n, "rule.header")} onChange={e => edit(n, { rule: { ...field.rule, header: e.target.value } }, "rule.header", "rule")} />{note(n, "rule.header")}</label> : <>
+              <label>{t("行号（从一开始）")}<input className="input" type="number" min={1} max={2000} value={field.rule.row} {...marked(n, "rule.row")} onChange={e => edit(n, { rule: { ...field.rule, row: Number(e.target.value) } }, "rule.row")} />{note(n, "rule.row")}</label>
+              <label>{t("列号（从一开始）")}<input className="input" type="number" min={1} max={100} value={field.rule.column} {...marked(n, "rule.column")} onChange={e => edit(n, { rule: { ...field.rule, column: Number(e.target.value) } }, "rule.column")} />{note(n, "rule.column")}</label></>}
           </>}
-          <label>{t("最大文字长度")}<input className="input" type="number" min={1} max={2000} value={field.max_length} onChange={e => edit(n, { max_length: Number(e.target.value) })} /></label>
-          {field.type === "decimal" && <><label>{t("最小值")}<input className="input" maxLength={50} value={field.minimum ?? ""} onChange={e => edit(n, { minimum: e.target.value || null })} /></label>
-            <label>{t("最大值")}<input className="input" maxLength={50} value={field.maximum ?? ""} onChange={e => edit(n, { maximum: e.target.value || null })} /></label></>}
+          <label>{t("最大文字长度")}<input className="input" type="number" min={1} max={2000} value={field.max_length} {...marked(n, "max_length")} onChange={e => edit(n, { max_length: Number(e.target.value) }, "max_length")} />{note(n, "max_length")}</label>
+          {field.type === "decimal" && <><label>{t("最小值")}<input className="input" maxLength={50} value={field.minimum ?? ""} {...marked(n, "minimum")} onChange={e => edit(n, { minimum: e.target.value || null }, "minimum", "maximum")} />{note(n, "minimum")}</label>
+            <label>{t("最大值")}<input className="input" maxLength={50} value={field.maximum ?? ""} {...marked(n, "maximum")} onChange={e => edit(n, { maximum: e.target.value || null }, "maximum")} />{note(n, "maximum")}</label></>}
         </div><div className="extract-actions">
           <label className="extract-check"><input type="checkbox" checked={field.required} onChange={e => edit(n, { required: e.target.checked })} />{t("必填字段")}</label>
           <label className="extract-check"><input type="checkbox" checked={field.many} onChange={e => edit(n, { many: e.target.checked })} />{t("保留重复明细")}</label>
-          <button type="button" className="btn sm" disabled={fields.length === 1} onClick={() => { setFields(fs => fs.filter((_, i) => n !== i)); setSaved(false); }}>{t("移除字段")}</button>
+          <button type="button" className="btn sm" disabled={fields.length === 1} onClick={() => reshape(fs => fs.filter((_, i) => n !== i))}>{t("移除字段")}</button>
         </div><small className="muted">{t("固定字段标识：{id}", { id: field.id })}</small>
       </fieldset>)}
-      <div className="extract-actions"><button type="button" className="btn" disabled={disabled || fields.length >= 40} onClick={() => { setFields(fs => [...fs, blankField()]); setSaved(false); }}>{t("添加提取字段")}</button>
+      <div className="extract-actions"><button type="button" className="btn" disabled={disabled || fields.length >= 40} onClick={() => reshape(fs => [...fs, blankField()])}>{t("添加提取字段")}</button>
         <button type="submit" className="btn primary" disabled={disabled}>{action.busy ? t("保存中…") : t("保存草稿")}</button>
         <button type="button" className="btn" disabled={disabled} onClick={e => { if (e.currentTarget.form?.reportValidity()) void save(true); }}>{t("保存并发布新版本")}</button>
         {saved && <span role="status">{t("已保存")}</span>}
       </div>
     </form>
-    {!!action.error && <ErrorNotice error={action.error} retry={reload} />}
+    {problems ? <p className="notice warn" role="alert">{t(problems.placed ? "请修正标出的字段后再保存" : "此项不符合要求，请检查后重新保存")}</p>
+      : !!action.error && <ErrorNotice error={action.error} retry={reload} />}
     {initial && <section className="extract-section"><h2>{t("发布版本")}</h2>
       {initial.versions.map(v => <div className="suite-row" key={v.version}><span className="grow">{t("版本 {v}", { v: v.version })} {v.retired ? t("已停用") : ""}</span>
         {canWrite && !v.retired && <button className="btn sm" disabled={action.busy} onClick={async () => { if (await action.execute("extract.template.retire", { template_id: initial.id, version: v.version })) reload?.(); }}>{t("停用此版本")}</button>}</div>)}
@@ -172,7 +190,24 @@ function ImportFiles({ ws, onDone }: { ws: Props["ws"]; onDone: () => void }) {
   </section>;
 }
 
-const valueLabels: Record<string, string> = { extracted: "已定位取值", missing: "缺失", ambiguous: "有多个相同匹配", conflict: "取值冲突", invalid: "校验失败", unverified: "无可靠来源" };
+const valueLabels: Record<string, string> = { extracted: "已定位取值", missing: "缺失", ambiguous: "有多个相同匹配", conflict: "取值冲突", invalid: "校验失败", unverified: "无可靠来源",
+  incomplete: "不完整，需复核", over_limit: "匹配过多，未取值" };
+/** What the rule found for a field, beside its value: how many matches yielded a value, which
+ *  labels yielded none, and a field the match limit left unread. Machine facts, so not shown once a
+ *  person has replaced the value. */
+function Occurrences({ value, many, pick }: { value: Value; many: boolean; pick: (evidence: Evidence) => void }) {
+  const { t } = useI18n();
+  const counts = value.occurrences;
+  if (!counts || value.origin === "human") return null;
+  const unresolved = value.unresolved ?? [];
+  return <>
+    {value.status === "over_limit" ? <p className="notice warn" role="note">{t("共匹配 {labelled} 处，超过每个字段 {limit} 处的上限，此字段未取值；请缩小规则范围或拆分文件", { labelled: counts.labelled, limit: value.limit ?? 100 })}</p>
+      : (many || counts.labelled !== counts.located) && <p className="muted">{t("已读取 {located} 处取值，共匹配 {labelled} 处", { located: counts.located, labelled: counts.labelled })}</p>}
+    {unresolved.length > 0 && <p className="notice warn" role="note">{t("有 {n} 处标签后面没有读到值，请对照原文补全后保存修正", { n: unresolved.length })}</p>}
+    {unresolved.map((item, n) => <button key={`unresolved-${n}`} className="extract-evidence extract-unresolved" type="button" onClick={() => pick(item.evidence)}>
+      <span>{t("标签后没有读到值")}</span><small><LocationText source={item.evidence.source} /></small></button>)}
+  </>;
+}
 export function TaskDetail({ ws, canWrite }: Props) {
   const { tid } = useParams(); const { t } = useI18n();
   const load = useLoad<Task>("extract.task.get", { task_id: tid }, ws.id, true);
@@ -221,6 +256,7 @@ function Review({ task, ws, canWrite, reload }: Props & { task: Task; reload: ()
           disabled={!canWrite || action.busy} value={edits[field.id] ?? (value.value === null ? "" : displayValue(value))}
           onChange={e => setEdits(old => ({ ...old, [field.id]: e.target.value }))} /></label>
         <p className="muted">{value.origin === "human" ? t("当前值由人工修正") : t("当前值来自确定性规则")}</p>
+        <Occurrences value={value} many={field.many} pick={pick} />
         {value.candidates.map((candidate, n) => <button key={n} className="extract-evidence" type="button" onClick={() => pick(candidate.evidence)}>
           <span>{candidate.value}</span><small><LocationText source={candidate.evidence.source} />{!candidate.verified && ` · ${t("无可靠来源")}`}</small></button>)}
         <details><summary>{t("最初机器结果")}</summary><pre>{displayValue(task.machine?.[field.id])}</pre></details>
@@ -239,7 +275,7 @@ function Review({ task, ws, canWrite, reload }: Props & { task: Task; reload: ()
     {task.confirmed_revision && <a className="btn primary" href={`/api/suite/extract/tasks/${task.id}/export?workspace_id=${encodeURIComponent(ws.id)}&revision=${task.confirmed_revision}`}>{t("导出已确认结果")}</a>}
     <section className="extract-section"><h2>{t("修正与确认历史")}</h2>{task.history.length === 0 ? <p className="muted">{t("尚无人工复核记录")}</p> : task.history.map(item => <div className="suite-row extract-history" key={item.revision}>
       <button className="btn sm" onClick={() => setHistory(item.revision)}>{t("复核版本 {v}", { v: item.revision })}</button>
-      <div className="grow"><strong>{item.kind === "confirmation" ? t("人工确认") : t("人工修正")}</strong><p>{item.note}</p><small>{item.actor_id} · <time dateTime={new Date(item.created_at * 1000).toISOString()}>{new Date(item.created_at * 1000).toLocaleString()}</time></small></div>
+      <div className="grow"><strong>{item.kind === "confirmation" ? t("人工确认") : t("人工修正")}</strong><p>{item.note}</p><small>{item.actor_name || t("账户已不存在的成员")} · <time dateTime={new Date(item.created_at * 1000).toISOString()}>{new Date(item.created_at * 1000).toLocaleString()}</time></small></div>
     </div>)}{history && <History task={task} ws={ws} revision={history} onClose={() => setHistory(undefined)} />}</section>
   </>;
 }
