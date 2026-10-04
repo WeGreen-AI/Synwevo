@@ -138,3 +138,14 @@ CREATE TABLE IF NOT EXISTS form_review_items (
 );
 CREATE INDEX IF NOT EXISTS form_review_items_submission ON form_review_items(submission_id);
 """
+
+#: A version freezes what link holders are shown, not only the fields: the fill page used to read
+#: the description from the live form row, so a draft save changed a published page.
+COLUMNS = (("form_versions", "description", "TEXT"),)
+
+
+def migrate(c) -> None:
+    # Versions published before the column existed (or by older code during a rolling start)
+    # keep the description link holders already saw: the live one at upgrade time.
+    c.execute("UPDATE form_versions SET description=COALESCE((SELECT description FROM forms "
+              "WHERE forms.id=form_versions.form_id), '') WHERE description IS NULL")
