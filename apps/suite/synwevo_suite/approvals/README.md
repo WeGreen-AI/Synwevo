@@ -20,6 +20,12 @@ Conditions use typed field comparisons, including exact decimal amounts. At leas
 be unconditional. Role selectors exclude the requester and, when configured, earlier deciders.
 Explicitly configured people who become ineligible do not silently lower the required vote count.
 Missing people leave a stage stalled. Repair/escalation adds replacements without reducing quorum.
+The requester is such a person on their own request. When a stage that will run for the submitted
+values could never gather its votes without them — "all" naming the requester, or "any"/"N votes"
+with too few other named people, and no role selector or add-approvers escalation that could
+still fill it — `request.create` and `request.revise` refuse with `stage_needs_requester` (422,
+`{stage, stage_name}`) before writing anything. Publishing is allowed; `template.get` lists such
+stages under `warnings` (`{code, stage, users}`, the named people whose own requests are refused).
 A rejection ends the request; a return requests a new content revision; withdrawal cancels it.
 
 Every revision stores the submitted fields and evidence text, canonical SHA-256 fingerprints,

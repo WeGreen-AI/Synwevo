@@ -4,9 +4,9 @@ import { useI18n, formatDate } from "@synwevo/ui";
 import { newKey, op, read } from "../../shared/ops";
 import { Failure } from "../../shared/states";
 import type { Page } from "./types";
-import { errors, statuses, fieldTypes, modes, operators, events, problems } from "./text";
+import { errors, statuses, fieldTypes, modes, operators, events, problems, warnings } from "./text";
 
-export { fieldTypes, modes, operators, events, problems };
+export { fieldTypes, modes, operators, events, problems, warnings };
 export const base = (ws: string) => `/approvals/w/${ws}`;
 export const stamp = (ts: number | null | undefined) => ts ? formatDate(ts * 1000, { dateStyle: "medium", timeStyle: "short" }) : "—";
 export function Status({ value }: { value: string }) {

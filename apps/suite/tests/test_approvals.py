@@ -227,10 +227,10 @@ def test_role_resolution_excludes_requester_and_threshold(suite):
     assert vote(suite,vote(suite,r),"oscar")["status"]=="approved"
     t=template(suite,[stage(suite,("bob","oscar"),"n_of_m",required=1)])
     assert vote(suite,request(suite,t))["status"]=="approved"
-    # Explicitly selecting only the requester never becomes an empty automatic approval.
+    # Explicitly selecting only the requester never becomes an empty automatic approval: the
+    # requester's own request is refused, since that stage could never gather its vote.
     t=template(suite,[stage(suite,("alice",))])
-    r=request(suite,t)
-    assert r["status"]=="stalled" and r["stages"][0]["required"]==1
+    error("stage_needs_requester",lambda:request(suite,t))
 
 
 def test_publish_and_snapshot_input_validation(suite):
@@ -498,3 +498,67 @@ def test_an_approvers_result_stored_with_the_requesters_correlation_stays_hidden
     error("run_result_unavailable",lambda: call(c,"request.decide",payload,user="bob",key="fixture-bob-decide-k1"))
     receipt=c.caps.run(first["run_id"],user_id=c.people.uid("bob"))
     assert "fixture-alice-private-trace" not in _json.dumps(receipt), receipt
+
+
+def test_a_stage_that_needs_the_requesters_own_vote_refuses_her_request_up_front(suite):
+    """Acceptance (Approvals, medium): Alice, the workspace's only manager, published a
+    "会签：全员同意" stage naming Alice and Bob and filed on it herself. The request stalled at once
+    (2 votes required, only Bob may vote), her repair was refused as it must be and nobody else could
+    repair it: only withdrawing ended it. Explicitly named people who cannot vote never lower the
+    quorum (README), so such a request is refused before anything is written, the template says so
+    while it is edited, and everybody else can still use it."""
+    c=suite
+    count=lambda table:c.people.store.one(f"SELECT COUNT(*) AS n FROM {table}")["n"]
+    t=template(c,[stage(c,("alice","bob"))])
+    assert t["warnings"]==[{"code":"stage_needs_requester","message":t["warnings"][0]["message"],"stage":"s_first","users":[c.people.uid("alice"),c.people.uid("bob")]}]
+    before=(count("approval_requests"),count("approval_revisions"),count("approval_tasks"),count("app_events"))
+    with pytest.raises(ServiceError) as refused:
+        request(c,t)
+    assert (refused.value.code,refused.value.status)==("stage_needs_requester",422)
+    assert refused.value.detail=={"stage":"s_first","stage_name":"Independent review"}
+    assert (count("approval_requests"),count("approval_revisions"),count("approval_tasks"),count("app_events"))==before
+    # Somebody the stage does not name files as before: both named people must approve.
+    add_oscar(c)
+    r=out(c,"request.create",{"template_id":t["id"],"title":"Fixture claim","values":{"f_amount":"12.50"}},user="oscar")
+    assert r["status"]=="in_review" and r["stages"][0]["required"]==2 and len(r["tasks"])==2
+    assert vote(c,vote(c,r,"alice"),"bob")["status"]=="approved"
+    # "N votes" the others can still give, and "any one" with somebody else named, are fine.
+    assert request(c,template(c,[stage(c,("alice","bob"),"n_of_m",required=1)]))["status"]=="in_review"
+    error("stage_needs_requester",lambda:request(c,template(c,[stage(c,("alice","bob"),"n_of_m",required=2)])))
+    assert request(c,template(c,[stage(c,("alice","bob"),"any")]))["status"]=="in_review"
+    error("stage_needs_requester",lambda:request(c,template(c,[stage(c,("alice",),"any")])))
+    # A role selector or an escalation that adds somebody else may still fill the stage: those are
+    # left to the stall-and-repair rules, as before.
+    assert not template(c,[{**stage(c,("alice",),"any"),"approvers":{"users":[c.people.uid("alice")],"min_role":"editor"}}])["warnings"]
+    escalate={"hours":1,"escalation":{"after_hours":1,"action":"add_approvers","approvers":{"users":[c.people.uid("oscar")]}}}
+    t=template(c,[stage(c,("alice","bob"),due=escalate)])
+    assert not t["warnings"] and request(c,t)["status"]=="stalled"
+    # A conditional stage counts only when it will run for the submitted values, on revision too.
+    gated=stage(c,("alice","bob"),sid="s_large",condition={"rules":[{"field":"f_amount","op":"gt","value":"1000"}]})
+    t=template(c,[gated,stage(c,sid="s_last")])
+    assert [(w["stage"],w["users"]) for w in t["warnings"]]==[("s_large",[c.people.uid("alice"),c.people.uid("bob")]),("s_last",[c.people.uid("bob")])]
+    r=request(c,t)
+    assert r["status"]=="in_review" and r["stages"][0]["status"]=="skipped"
+    error("stage_needs_requester",lambda:request(c,t,values={"f_amount":"5000"}))
+    error("stage_needs_requester",lambda:out(c,"request.revise",change(r,values={"f_amount":"5000"},basis="larger",note="Larger amount")))
+    fresh=out(c,"request.get",{"request_id":r["id"]})
+    assert (fresh["revision"],fresh["state_version"],fresh["status"])==(1,r["state_version"],"in_review")
+    assert out(c,"request.revise",change(r,values={"f_amount":"20"},basis="small",note="Still small"))["revision"]==2
+
+
+def test_a_template_result_stored_before_warnings_existed_still_replays(suite):
+    """Template results now carry ``warnings``; one stored before that is still the same draft, so
+    its idempotent replay is not hidden for lacking a field derived from that draft."""
+    import json as _json
+    c=suite
+    t=template(c)
+    result=call(c,"template.update",{"template_id":t["id"],"draft_rev":t["draft_rev"],"title":"Fixture edit","definition":t["draft"]})
+    row=c.people.store.one("SELECT * FROM op_runs WHERE id=?",(result["run_id"],))
+    old=_json.loads(row["output"]) if isinstance(row["output"],str) else dict(row["output"])
+    old.pop("warnings")
+    row["output"]=_json.dumps(old)
+    guard=guard_call(c,row)
+    guard.op.result_guard(guard,row)
+    old["problems"]=[{"code":"fixture","message":"changed"}]
+    row["output"]=_json.dumps(old)
+    error("approval_result_unavailable",lambda:guard.op.result_guard(guard,row))

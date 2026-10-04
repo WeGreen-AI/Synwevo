@@ -190,6 +190,10 @@ export const approvals = {
     "en": "Requesters cannot change their own approvers.",
     "zh-Hant": "發起人不能修改自己申請的審批人。"
   },
+  "发起人不能审批自己的申请。要让这些成员也能发起，请调整下列阶段的通过规则或审批人。": {
+    "en": "Requesters cannot approve their own requests. To let these members file requests too, change the approval rule or approvers of the stages below.",
+    "zh-Hant": "發起人不能審批自己的申請。要讓這些成員也能發起，請調整下列階段的通過規則或審批人。"
+  },
   "发起人始终不能审批自己的申请。没有有效审批人时等待修正，不会自动通过。": {
     "en": "Requesters can never approve their own requests. Missing eligible approvers pauses the request for repair; it never passes automatically.",
     "zh-Hant": "發起人始終不能審批自己的申請。沒有有效審批人時等待修正，不會自動通過。"
@@ -918,6 +922,10 @@ export const approvals = {
     "en": "Add replacement approvers",
     "zh-Hant": "補充審批人"
   },
+  "被指定的审批人自己发起申请时，这个阶段凑不齐所需票数，申请会被拒绝。": {
+    "en": "When a named approver files a request themselves, this stage cannot reach its required votes, so that request is refused.",
+    "zh-Hant": "被指定的審批人自己發起申請時，這個階段湊不齊所需票數，申請會被拒絕。"
+  },
   "设置超时提醒": {
     "en": "Set deadline reminders",
     "zh-Hant": "設定逾時提醒"
@@ -1006,6 +1014,10 @@ export const approvals = {
     "en": "This template has no available published version",
     "zh-Hant": "這個範本尚無可用的發佈版本"
   },
+  "这个申请要经过的一个审批阶段需要你本人同意才能凑齐票数，但发起人不能审批自己的申请。请联系模板管理员调整该阶段的审批人。": {
+    "en": "A stage this request must pass needs your own approval to reach its votes, but requesters cannot approve their own requests. Ask a template manager to change that stage's approvers.",
+    "zh-Hant": "這個申請要經過的一個審批階段需要你本人同意才能湊齊票數，但發起人不能審批自己的申請。請聯絡範本管理員調整該階段的審批人。"
+  },
   "这是历史修订，不能在这个内容上提交当前决定。": {
     "en": "This is a historical revision. You cannot submit a current decision on this content.",
     "zh-Hant": "這是歷史修訂，不能在這個內容上提交目前決定。"
@@ -1041,6 +1053,10 @@ export const approvals = {
   "通过规则": {
     "en": "Approval rule",
     "zh-Hant": "通過規則"
+  },
+  "部分成员发起的申请会被拒绝": {
+    "en": "Some members' own requests will be refused",
+    "zh-Hant": "部分成員發起的申請會被拒絕"
   },
   "重做编辑": {
     "en": "Redo edit",
