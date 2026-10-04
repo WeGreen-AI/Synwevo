@@ -1,11 +1,10 @@
 /** Synwevo Forms' list and detail pages: the form library, fill-in requests and submissions. */
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ApiError } from "@synwevo/auth-client";
 import { Modal, useDialog, useI18n, useToast, formatDate } from "@synwevo/ui";
 import { op, newKey, read } from "../../shared/ops";
 import { Empty, Failure, Loading } from "../../shared/states";
-import { requestHeading, requestStatus, submissionStatus } from "./text";
+import { failureText, requestHeading, requestStatus, submissionStatus } from "./text";
 import { NewRequest, CopyField } from "./Share";
 import { fmtBytes } from "./Renderer";
 import { formatAnswer } from "./answers";
@@ -51,7 +50,7 @@ export function Library({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
     try {
       const out = await op<{ id: string }>("forms.form.create", { title: title.trim().slice(0, 200) }, { workspace: ws.id, key: newKey() });
       navigate(`/forms/w/${ws.id}/f/${out.output.id}`);
-    } catch (e) { toast(e instanceof ApiError ? e.message : String(e), "err"); }
+    } catch (e) { toast(failureText(t, e), "err"); }
   }
 
   return <>
@@ -66,7 +65,7 @@ export function Library({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
       </div>
       <input className="input sm suite-search" type="search" value={q} placeholder={t("搜索表单名称")} aria-label={t("搜索表单名称")} onChange={(e) => setQ(e.target.value)} />
     </div>
-    {error ? <Failure error={error} onRetry={reload} /> : !data ? <Loading /> :
+    {error ? <Failure error={error} onRetry={reload} text={failureText(t, error)} /> : !data ? <Loading /> :
      data.forms.length === 0 ? <Empty title={query ? t("没有找到匹配的表单") : status === "archived" ? t("没有归档的表单") : t("还没有表单")}
                                      action={canWrite && !query && status === "active" ? <button type="button" className="btn primary" onClick={() => void create()}>{t("新建表单")}</button> : undefined}>
        {!query && status === "active" && <p>{t("表单可以用在多个流程里：每一次填写请求都有独立的编号、数据与结果。")}</p>}
@@ -107,7 +106,7 @@ export function Requests({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
           {["open", "submitted", "changes_requested", "accepted", "expired", "closed", "revoked"].map((s) => <option key={s} value={s}>{requestStatus(t, s)[0]}</option>)}
         </select></label>
     </div>
-    {error ? <Failure error={error} onRetry={reload} /> : !data ? <Loading /> :
+    {error ? <Failure error={error} onRetry={reload} text={failureText(t, error)} /> : !data ? <Loading /> :
      data.requests.length === 0 ? <Empty title={t("还没有填写请求")}>{t("在表单的“分享与填写请求”里，或点击右上角发出请求。")}</Empty> :
      <div className="suite-list">{data.requests.map((r) => {
        const [label, tone] = requestStatus(t, r.status);
@@ -145,7 +144,7 @@ export function RequestDetail({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
   const toast = useToast();
   const { rid = "" } = useParams();
   const { data, error, reload } = useOp((s) => read<RequestRow & { submissions: any[] }>("forms.request.get", { request_id: rid }, ws.id, s), [ws.id, rid]);
-  if (error) return <Failure error={error} onRetry={reload} />;
+  if (error) return <Failure error={error} onRetry={reload} text={failureText(t, error)} />;
   if (!data) return <Loading />;
   const [label, tone] = requestStatus(t, data.status);
   const active = !["closed", "revoked", "accepted"].includes(data.status);
@@ -155,7 +154,7 @@ export function RequestDetail({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
   async function act(name: string, input: Record<string, unknown>, confirm?: [string, string, string, boolean?]) {
     if (confirm && !(await dialog.confirm(confirm[0], confirm[1], confirm[2], confirm[3]))) return;
     try { await op(name, input, { workspace: ws.id }); reload(); }
-    catch (e) { toast(e instanceof ApiError ? e.message : String(e), "err"); }
+    catch (e) { toast(failureText(t, e), "err"); }
   }
   async function extend() {
     const v = await dialog.prompt(t("修改截止时间"), t("新的截止时间（YYYY-MM-DD HH:MM，留空表示不限）"),
@@ -235,7 +234,7 @@ export function Submissions({ ws }: { ws: WS }) {
         {["submitted", "changes_requested", "accepted"].map((s) => <option key={s} value={s}>{submissionStatus(t, s)[0]}</option>)}
       </select>
     </div>
-    {error ? <Failure error={error} onRetry={reload} /> : !data ? <Loading /> :
+    {error ? <Failure error={error} onRetry={reload} text={failureText(t, error)} /> : !data ? <Loading /> :
      data.submissions.length === 0 ? <Empty title={t("还没有提交")} /> :
      <div className="suite-list">{data.submissions.map((s) => {
        const [sl, st] = submissionStatus(t, s.status);
@@ -254,7 +253,7 @@ export function SubmissionDetail({ ws, canWrite }: { ws: WS; canWrite: boolean }
   const { sid = "" } = useParams();
   const [asking, setAsking] = useState(false);
   const { data, error, reload } = useOp((s) => read<any>("forms.submission.get", { submission_id: sid }, ws.id, s), [ws.id, sid]);
-  if (error) return <Failure error={error} onRetry={reload} />;
+  if (error) return <Failure error={error} onRetry={reload} text={failureText(t, error)} />;
   if (!data) return <Loading />;
   const [sl, st] = submissionStatus(t, data.status);
   const byField: Record<string, any[]> = {};
@@ -262,7 +261,7 @@ export function SubmissionDetail({ ws, canWrite }: { ws: WS; canWrite: boolean }
 
   async function accept() {
     try { await op("forms.submission.accept", { submission_id: sid }, { workspace: ws.id, key: newKey() }); reload(); }
-    catch (e) { toast(e instanceof ApiError ? e.message : String(e), "err"); }
+    catch (e) { toast(failureText(t, e), "err"); }
   }
 
   return <>
@@ -327,7 +326,7 @@ function RequestChanges({ ws, data, onClose, onDone }: { ws: WS; data: any; onCl
         ? { submission_id: data.id, note: note.trim(), items: perField }
         : { submission_id: data.id, note: "", items: [{ note: note.trim() }] }, { workspace: ws.id, key: newKey() });
       onDone();
-    } catch (e) { toast(e instanceof ApiError ? e.message : String(e), "err"); } finally { setBusy(false); }
+    } catch (e) { toast(failureText(t, e), "err"); } finally { setBusy(false); }
   }
   return <Modal title={t("要求补充或修改")} onClose={onClose} size="wide" footer={<>
     <button type="button" className="btn" onClick={onClose}>{t("取消")}</button>

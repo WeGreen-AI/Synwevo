@@ -17,7 +17,7 @@ import { blankField, draftRefusals, newFieldId, owningField, type Condition, typ
          type FieldDef, type FieldType } from "./logic";
 import { Renderer } from "./Renderer";
 import { FieldProps } from "./FieldProps";
-import { problemText, refusalText, typeLabel } from "./text";
+import { failureText, problemText, refusalText, typeLabel } from "./text";
 import { ShareDrawer } from "./Share";
 
 interface FormData_ {
@@ -116,7 +116,7 @@ export default function Editor({ ws, canWrite }: { ws: { id: string; name: strin
           const items = draftRefusals(cur.defn, e.detail);
           setRefused({ defn: cur.defn, items: items.length ? items : [{ part: "other" }] });
           setSave("error");
-        } else { setSave("error"); toast(e instanceof ApiError ? e.message : String(e), "err"); }
+        } else { setSave("error"); toast(failureText(t, e), "err"); }
         return false;
       }
     };
@@ -239,7 +239,7 @@ export default function Editor({ ws, canWrite }: { ws: { id: string; name: strin
       else if (e instanceof ApiError && e.code === "draft_unsaved") {
         toast(t("有修改还没有保存，没有发布。保存后再发布。"), "err");
         schedule();
-      } else toast(e instanceof ApiError ? e.message : String(e), "err");
+      } else toast(failureText(t, e), "err");
     }
   }
 
@@ -252,18 +252,21 @@ export default function Editor({ ws, canWrite }: { ws: { id: string; name: strin
   }
 
   async function archive(archived: boolean) {
-    await op("forms.form.archive", { form_id: fid, archived }, { workspace: ws.id });
+    try { await op("forms.form.archive", { form_id: fid, archived }, { workspace: ws.id }); }
+    catch (e) { toast(failureText(t, e), "err"); return; }
     await load();
   }
 
   async function duplicateForm() {
     const name = await dialog.prompt(t("复制表单"), t("新表单的名称"), `${title} ${t("（副本）")}`, t("复制"));
     if (!name) return;
-    const out = await op<{ form_id: string }>("forms.form.duplicate", { form_id: fid, title: name.slice(0, 200) }, { workspace: ws.id, key: newKey() });
-    navigate(`/forms/w/${ws.id}/f/${out.output.form_id}`);
+    try {
+      const out = await op<{ form_id: string }>("forms.form.duplicate", { form_id: fid, title: name.slice(0, 200) }, { workspace: ws.id, key: newKey() });
+      navigate(`/forms/w/${ws.id}/f/${out.output.form_id}`);
+    } catch (e) { toast(failureText(t, e), "err"); }
   }
 
-  if (error) return <Failure error={error} onRetry={load} />;
+  if (error) return <Failure error={error} onRetry={load} text={failureText(t, error)} />;
   if (!form) return <Loading />;
   const readOnly = !canWrite || form.status === "archived";
 
@@ -381,8 +384,9 @@ export default function Editor({ ws, canWrite }: { ws: { id: string; name: strin
          <div className="muted small">{formatDate(v.published_at * 1000, { dateStyle: "medium", timeStyle: "short" })}{v.note ? ` · ${v.note}` : ""}</div>
          {canWrite && v.status === "published" && <button type="button" className="btn ghost sm" onClick={async () => {
            if (!(await dialog.confirm(t("停用版本 {v}", { v: v.version }), t("停用后不能再用这个版本发出新的填写请求；已发出、仍未结束的请求不受影响。"), t("停用")))) return;
-           await op("forms.form.retire_version", { form_id: fid, version: v.version }, { workspace: ws.id });
-           await load();
+           try { await op("forms.form.retire_version", { form_id: fid, version: v.version }, { workspace: ws.id }); }
+           catch (e) { toast(failureText(t, e), "err"); return; }
+           await refreshVersions();
          }}>{t("停用")}</button>}
        </li>)}</ul>}
     </Drawer>}

@@ -12,6 +12,7 @@ import { Brand, LanguageMenu, useI18n, formatDate } from "@synwevo/ui";
 import { checkAnswers, visibleFields, type Definition, type FieldError } from "./logic";
 import { Renderer, type UploadedFile } from "./Renderer";
 import { Failure, Loading } from "../../shared/states";
+import { failureText } from "./text";
 
 interface Loaded {
   request: { id: string | null; kind: "personal" | "public"; title: string; status: string; due_at: number | null;
@@ -269,7 +270,7 @@ export default function Fill() {
          {defn && <Renderer definition={defn} answers={answers} onChange={change} errors={errors} files={files}
                             onUpload={upload} onRemoveFile={removeFile} only={stepFields} notes={notes} />}
          {errors.length > 0 && <p className="fm-err" role="alert">{t("还有 {n} 处需要填写或更正。", { n: errors.length })}</p>}
-         {error ? <Failure error={error} /> : null}
+         {error ? <Failure error={error} text={failureText(t, error)} /> : null}
          <div className="fm-actions">
            <SaveIndicator state={save} at={savedAt} />
            <span className="spacer" />
@@ -304,7 +305,7 @@ function FillError({ error, state, onRetry }: { error: unknown; state: any; onRe
   if (error instanceof ApiError && (error.code === "link_not_found" || error.status === 404)) {
     return <div className="fm-fill-card"><h1>{t("链接无效")}</h1><p>{t("这个填写链接不存在或已失效。请向发出请求的人索取新的链接。")}</p></div>;
   }
-  return <Failure error={error} onRetry={onRetry} />;
+  return <Failure error={error} onRetry={onRetry} text={failureText(t, error)} />;
 }
 
 function closedText(t: (k: string, p?: any) => string, code: string): string {
