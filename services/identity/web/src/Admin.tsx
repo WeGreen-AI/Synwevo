@@ -2,6 +2,7 @@ import { ModelCostsTab } from "./governance/ModelCostsTab";
 import { ModelProviderTab } from "./governance/ModelProviderTab";
 import { ModelPricesTab } from "./governance/ModelPricesTab";
 import { SettingsTab } from "./governance/SettingsTab";
+import { AppRunsTab, FlowRunsTab } from "./governance/RunsTab";
 import { SuperAdminOffersAdmin, SuperAdminReadiness } from "./governance/SuperAdminHandover";
 import { MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
 import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
@@ -97,6 +98,8 @@ function AdminViews({ held, tab }: { held: Held; tab: Tab }) {
     {tab === "registration" && <SettingsTab onDenied={onDenied} held={held} />}
     {tab === "identity" && <IdentityProvidersTab onDenied={onDenied} />}
     {tab === "mail" && <MailTab onDenied={onDenied} held={held} />}
+    {tab === "app-runs" && <AppRunsTab onDenied={onDenied} />}
+    {tab === "flow-runs" && <FlowRunsTab onDenied={onDenied} />}
     {tab === "audit" && <AuditTab onDenied={onDenied} />}
     {access && <PlatformAccessDialog user={access} onClose={() => setAccess(null)} onChanged={() => {
       setAccessRevision((n) => n + 1);

@@ -50,3 +50,14 @@ CREATE TABLE IF NOT EXISTS flow_trigger_deliveries (
  PRIMARY KEY(trigger_id,occurrence)
 );
 """
+
+#: For the platform's run overview, which reads flow runs across owners. Counting the runs that
+#: finished inside a time window reads (status, updated_at): `flow_runs_due` starts with the
+#: state but orders by due time. One person's runs, newest first, are read through
+#: (user_id, created_at): `flow_runs_owner` orders by id, which is random. The runs of one chain
+#: are listed by correlation id newest first: `flow_runs_chain` (correlation_id, user_id) finds
+#: them, but only this single-column index (which ends in the rowid) gives their order without a
+#: sort, as `op_runs_correlation` does for an operation's.
+INDEXES = (("flow_runs_status_updated", "flow_runs", ("status", "updated_at")),
+           ("flow_runs_user_created", "flow_runs", ("user_id", "created_at")),
+           ("flow_runs_correlation", "flow_runs", ("correlation_id",)))

@@ -53,6 +53,7 @@ const SERVER = [
   { file: ID + "admin_model_prices.py", surfaces: ["admin"] },
   { file: ID + "admin_model_costs.py", surfaces: ["admin"] },
   { file: ID + "admin_model_provider.py", surfaces: ["admin"] },
+  { file: ID + "admin_runs.py", surfaces: ["admin"] },
   { file: ID + "wallet_routes.py", surfaces: ["account"] },
   { file: CORE + "billing/catalogue.py", surfaces: ["admin"] },
   { file: CORE + "billing/cost_settings.py", surfaces: ["admin"] },

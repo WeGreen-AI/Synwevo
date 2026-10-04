@@ -17,7 +17,13 @@ from .models import (BranchStep, CallStep, Definition, FailStep, Policy, Read, W
 from .triggers import Triggers
 
 ACTIVE = ("queued", "running", "waiting_input", "waiting_approval", "retrying")
+# Where a run stays until its owner acts. No worker claims these again (`claim` selects ACTIVE):
+# "paused" by the owner, "blocked" by a refusal (401/403), "unknown" after a dispatched call
+# whose outcome was not confirmed. `resume` re-queues them, `cancel` ends them.
+PARKED = ("paused", "blocked", "unknown")
 TERMINAL = ("succeeded", "partial", "failed", "cancelled")
+# Every state a row of flow_runs can hold: what a reader that lists runs by state has to expect.
+STATES = ACTIVE + PARKED + TERMINAL
 # A step is complete when its operation reached a definite outcome with a result. "partial" (for
 # example a DataPrep run that finished with row issues) completes it too and stays visible to
 # branches as outcome.<step>; the run that ends after it ends partial, never plain succeeded.

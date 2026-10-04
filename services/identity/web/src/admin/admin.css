@@ -39,16 +39,17 @@
 @media (pointer: coarse) { .admin-nav-link { min-height: 44px; } .admin-breadcrumb a { min-height: 32px; } }
 
 /* An account's status and its action stay visible together on a phone. This is the same
-   table and the same RowMenu; only the presentation changes, with full labels per value. */
+   table and the same RowMenu; only the presentation changes, with full labels per value.
+   `.admin-cards-*` is the same presentation for the other lists that use it (the run pages). */
 @media (max-width: 720px) {
-  .admin-content .admin-users-wrap { border: 0; background: transparent; overflow: visible; }
-  .admin-content table.gov.admin-users-table { display: block; min-width: 0; width: 100%; }
-  .admin-users-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .admin-users-table tbody { display: grid; gap: 12px; }
-  .admin-users-table tr { display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
-  .admin-content .admin-users-table tbody th { display: block; padding: 0 0 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
-  .admin-content .admin-users-table td { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border: 0; padding: 0; text-align: right; overflow-wrap: anywhere; }
-  .admin-users-table td[data-label]::before { content: attr(data-label); color: var(--muted); text-align: left; flex: none; }
-  .admin-content .list-wrap .admin-users-table td.act { width: auto; position: static; box-shadow: none; align-items: center; padding-top: 4px; }
-  .admin-users-table .empty-row td { justify-content: center; }
+  .admin-content :is(.admin-users-wrap, .admin-cards-wrap) { border: 0; background: transparent; overflow: visible; }
+  .admin-content table.gov:is(.admin-users-table, .admin-cards-table) { display: block; min-width: 0; width: 100%; }
+  :is(.admin-users-table, .admin-cards-table) thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  :is(.admin-users-table, .admin-cards-table) tbody { display: grid; gap: 12px; }
+  :is(.admin-users-table, .admin-cards-table) tr { display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+  .admin-content :is(.admin-users-table, .admin-cards-table) tbody th { display: block; padding: 0 0 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .admin-content :is(.admin-users-table, .admin-cards-table) td { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border: 0; padding: 0; text-align: right; overflow-wrap: anywhere; }
+  :is(.admin-users-table, .admin-cards-table) td[data-label]::before { content: attr(data-label); color: var(--muted); text-align: left; flex: none; }
+  .admin-content .list-wrap :is(.admin-users-table, .admin-cards-table) td.act { width: auto; position: static; box-shadow: none; align-items: center; padding-top: 4px; }
+  :is(.admin-users-table, .admin-cards-table) .empty-row td { justify-content: center; }
 }

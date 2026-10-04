@@ -33,6 +33,13 @@ for each (the brief asks that each be written here):
   administrator's only (by construction), and the claim itself refuses the actor and any account
   holding a live platform grant (`self_claim`, `target_is_platform_admin`): a platform role is
   never the way to a document, for whoever holds it. `.manage` keeps freeze and unfreeze.
+* `platform.apps.view` is added for the run records of the business applications
+  (synwevo_identity.admin_runs): which operation or flow ran, for whom, how it ended and when.
+  It is metadata only — the routes never select an input, an output, an error message or an
+  authored name — so it is a read permission of the same kind as `platform.mail.view`, and the
+  three roles that already read the mail outbox hold it (`access_admin`, `support`, `auditor`).
+  `api_platform_admin` does not: it manages credentials, and a credential's calls are already
+  in its own console.
 
 Rules that are properties of the data rather than of a caller's discipline:
 
@@ -112,6 +119,7 @@ PERMISSIONS: dict[str, str] = {
     "platform.config.manage": "change platform settings and govern model credentials, routes, prices and cost limits",
     "platform.mail.view": "read the mail outbox metadata",
     "platform.mail.manage": "retry a failed reset or verification mail",
+    "platform.apps.view": "read business application run and flow run metadata (operation, state, timing, error code; never inputs, outputs or content)",
     "platform.audit.view": "read the platform audit log",
     "platform.roles.view": "read the role catalogue, the administrator roster and permission explanations",
     "platform.roles.assign": "grant and revoke delegated platform roles",
@@ -130,14 +138,15 @@ ROLES: dict[str, frozenset[str]] = {
     "access_admin": frozenset({
         "platform.overview.view", "platform.users.view", "platform.users.manage", "platform.users.support",
         "platform.workspaces.view", "platform.workspaces.manage", "platform.orgs.view", "platform.orgs.manage",
-        "platform.config.view", "platform.mail.view", "platform.mail.manage", "platform.audit.view",
-        "platform.roles.view"}),
+        "platform.config.view", "platform.mail.view", "platform.mail.manage", "platform.apps.view",
+        "platform.audit.view", "platform.roles.view"}),
     "support": frozenset({
         "platform.overview.view", "platform.users.view", "platform.users.support", "platform.workspaces.view",
-        "platform.orgs.view", "platform.mail.view"}),
+        "platform.orgs.view", "platform.mail.view", "platform.apps.view"}),
     "auditor": frozenset({
         "platform.overview.view", "platform.users.view", "platform.workspaces.view", "platform.orgs.view",
-        "platform.config.view", "platform.mail.view", "platform.audit.view", "platform.roles.view"}),
+        "platform.config.view", "platform.mail.view", "platform.apps.view", "platform.audit.view",
+        "platform.roles.view"}),
     "api_platform_admin": frozenset({"platform.overview.view", "api_platform.manage"}),
 }
 ROLE_ORDER = (SUPER_ADMIN, "access_admin", "support", "auditor", "api_platform_admin")
