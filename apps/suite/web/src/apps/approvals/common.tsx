@@ -65,7 +65,7 @@ export function useAction(ws: string) {
 }
 export function Pager({ page, offset, setOffset }: { page: Page<unknown>; offset: number; setOffset: (v: number) => void }) {
   const { t } = useI18n();
-  return <div className="ap-toolbar"><span className="muted">{t("共 {n} 项", { n: page.total })}</span>
+  return <div className="ap-toolbar"><span className="muted">{t("共 {count} 项", { count: page.total })}</span>
     <button type="button" className="btn sm" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 50))}>{t("上一页")}</button>
     <button type="button" className="btn sm" disabled={page.next_offset === null} onClick={() => setOffset(page.next_offset!)}>{t("下一页")}</button></div>;
 }

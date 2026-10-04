@@ -2,14 +2,14 @@
  *  every locale, and what the request page shows. Fixtures are isolated: no API, no user data. */
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { createServer, type ViteDevServer } from "vite";
 import { translate } from "@synwevo/ui/i18n-core";
-import "../src/apps/approvals/messages.ts";
+import { approvals } from "../src/apps/approvals/messages.ts";
 import * as text from "../src/apps/approvals/text.ts";
 
 // The pages themselves, compiled the way the shell is and rendered to markup (in the default
@@ -82,4 +82,29 @@ test("a stage on the approval path shows its own progress, not a template's stat
     english(text.stageStatuses[status], status);
   }
   assert.equal(translate("en", text.stageStatuses.active), "In progress");
+});
+
+test("counted phrases choose their English plural from the count they show", async () => {
+  // Acceptance: "Requires 1 approval votes" and "1 named approvers". The catalogue picks the form
+  // from `count`, and these phrases were passed `{n}`, so English always took the plural.
+  const dir = join(import.meta.dirname, "..", "src", "apps", "approvals");
+  const source = readdirSync(dir).filter(f => /\.tsx?$/.test(f) && f !== "messages.ts").map(f => readFileSync(join(dir, f), "utf8")).join("\n");
+  const counted = Object.entries(approvals as Record<string, { en: unknown }>).filter(([, v]) => typeof v.en !== "string").map(([k]) => k);
+  assert.ok(counted.length >= 3, counted.join());
+  for (const key of counted) {
+    assert.match(key, /\{count\}/, `${key}: a counted phrase shows {count}`);
+    const quoted = JSON.stringify(key).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const calls = [...source.matchAll(new RegExp(`\\bt\\(${quoted}\\s*(,\\s*\\{[^}]*\\})?\\)`, "g"))].map(m => m[0]);
+    assert.ok(calls.length, `${key}: not used`);
+    for (const call of calls) assert.match(call, /\bcount:/, call);
+  }
+  assert.equal(translate("en", "需要 {count} 票同意", { count: 1 }), "Requires 1 approval vote");
+  assert.equal(translate("en", "需要 {count} 票同意", { count: 2 }), "Requires 2 approval votes");
+  assert.equal(translate("en", "指定 {count} 人", { count: 1 }), "1 named approver");
+  assert.equal(translate("en", "共 {count} 项", { count: 1 }), "1 item");
+  assert.equal(translate("zh-Hant", "指定 {count} 人", { count: 3 }), "指定 3 人");
+  // The page fills the phrase it renders.
+  const lines = visible(await detail());
+  assert.ok(lines.includes("需要 1 票同意"), lines.join(" | "));
+  assert.deepEqual(lines.filter(x => /\{[a-z]+\}/.test(x)), []);
 });

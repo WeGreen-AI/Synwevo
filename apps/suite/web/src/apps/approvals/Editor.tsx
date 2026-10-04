@@ -133,5 +133,5 @@ function VersionPreview({ ws, tid, version }: { ws: string; tid: string; version
   const { t } = useI18n(); const result = useRead<{ definition: Definition; title: string }>("template.version", { template_id: tid, version }, ws);
   if (result.error) return <ErrorBox error={result.error} />; if (!result.data) return <Loading />;
   return <div className="ap-condition"><h3>{result.data.title} · {t("版本 {v}", { v: version })}</h3><Fields fields={result.data.definition.fields} values={{}} setValues={() => {}} disabled />
-    <ol>{result.data.definition.stages.map(s => <li key={s.id}>{s.name} · {t(modes[s.mode])} · {t("指定 {n} 人", { n: s.approvers.users.length })}{s.condition && ` · ${t("条件路由")}`}</li>)}</ol></div>;
+    <ol>{result.data.definition.stages.map(s => <li key={s.id}>{s.name} · {t(modes[s.mode])} · {t("指定 {count} 人", { count: s.approvers.users.length })}{s.condition && ` · ${t("条件路由")}`}</li>)}</ol></div>;
 }

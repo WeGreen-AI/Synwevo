@@ -113,7 +113,7 @@ export function RequestDetail({ ws, r, reload }: { ws: Workspace; r: ApprovalReq
       <section className="ap-panel"><h2>{t("审批路径")}</h2><ol className="ap-stages">{r.definition.stages.map((s, n) => {
         const run = r.stages[n];
         return <li key={s.id}><strong>{s.name}</strong><p>{t(modes[s.mode])}</p><StageStatus value={run?.status ?? "not_started"} />
-          {run && <p className="muted">{t("需要 {n} 票同意", { n: run.required })}</p>}
+          {run && <p className="muted">{t("需要 {count} 票同意", { count: run.required })}</p>}
           {run?.due_at && <p className="muted">{t("截止时间")}<br /><time>{stamp(run.due_at)}</time></p>}
           {!!run?.reminded_at && <p>{t("已提醒")}</p>}{!!run?.escalated_at && <p>{t("已升级")}</p>}</li>;
       })}</ol></section>

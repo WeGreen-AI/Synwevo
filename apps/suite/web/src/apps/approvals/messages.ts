@@ -114,9 +114,9 @@ export const approvals = {
     "en": "All requests",
     "zh-Hant": "全部申請"
   },
-  "共 {n} 项": {
-    "en": { "one": "{n} item", "other": "{n} items" },
-    "zh-Hant": "共 {n} 項"
+  "共 {count} 项": {
+    "en": { "one": "{count} item", "other": "{count} items" },
+    "zh-Hant": "共 {count} 項"
   },
   "内容已修订": {
     "en": "Content revised",
@@ -526,9 +526,9 @@ export const approvals = {
     "en": "Approve",
     "zh-Hant": "批准"
   },
-  "指定 {n} 人": {
-    "en": { "one": "{n} named approver", "other": "{n} named approvers" },
-    "zh-Hant": "指定 {n} 人"
+  "指定 {count} 人": {
+    "en": { "one": "{count} named approver", "other": "{count} named approvers" },
+    "zh-Hant": "指定 {count} 人"
   },
   "指定票数": {
     "en": "Required number of votes",
@@ -1098,9 +1098,9 @@ export const approvals = {
     "en": "Duplicate stage ID",
     "zh-Hant": "階段編號重複"
   },
-  "需要 {n} 票同意": {
-    "en": { "one": "Requires {n} approval vote", "other": "Requires {n} approval votes" },
-    "zh-Hant": "需要 {n} 票同意"
+  "需要 {count} 票同意": {
+    "en": { "one": "Requires {count} approval vote", "other": "Requires {count} approval votes" },
+    "zh-Hant": "需要 {count} 票同意"
   },
   "需要同意的人数": {
     "en": "Required approvals",
