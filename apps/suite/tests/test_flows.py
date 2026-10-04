@@ -648,6 +648,14 @@ def test_an_event_is_about_a_wait_only_when_it_names_everything_the_wait_reads()
     assert names_read({"fixture-request"}, {"object_id": "fixture-submission", "data": {"submission_id": "fixture-submission",
                                                                                         "request_id": "fixture-request"}})
     assert not names_read(set(), {"object_id": "x", "data": {}}), "nothing read: never about it"
+    # review R5: what a wait reads is its ids, not its filter literals — a status no event names
+    # must not keep the submission it waits for from waking it
+    from synwevo_core.flows.triggers import _read_target
+    reader = json.dumps({"operation": "forms.submission.list", "input": {"request_id": "fixture-request", "status": "submitted"}})
+    assert _read_target(reader) == {"fixture-request"}
+    assert names_read(_read_target(reader), {"object_id": "fixture-submission", "data": {"request_id": "fixture-request"}})
+    assert _read_target(json.dumps({"input": {"table_id": "T", "record_id": "R", "q": "x", "ids": ["a"]}})) == {"T", "R"}
+    assert _read_target("[" * 100000) == set(), "a damaged row too deep to parse is not about anything"
 
 
 def test_a_damaged_wait_row_does_not_stop_the_tick_for_everyone(flow):

@@ -26,13 +26,25 @@ def names_read(target: set[str], event: dict) -> bool:
 
 
 def _read_target(reader_json) -> set[str]:
-    """The ids a wait's last check read, from its stored reader; empty when the row cannot be read
-    (a damaged row or one another release wrote must not stop the tick for everyone)."""
+    """The ids a wait's last check read, from its stored reader — the values of its `id` and
+    `*_id` inputs, not filter literals such as a status an event never names (review R5) —; empty
+    when the row cannot be read (a damaged row or one another release wrote must not stop the tick
+    for everyone)."""
     try:
         reader = json.loads(reader_json or "{}")
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         return set()
-    return _strings(reader.get("input")) if isinstance(reader, dict) else set()
+    return _ids(reader.get("input")) if isinstance(reader, dict) else set()
+
+
+def _ids(value, key: str | None = None) -> set[str]:
+    if isinstance(value, str):
+        return {value} if key and (key == "id" or key.endswith("_id")) else set()
+    if isinstance(value, dict):
+        return set().union(*(_ids(v, k) for k, v in value.items())) if value else set()
+    if isinstance(value, list):
+        return set().union(*(_ids(v, key) for v in value)) if value else set()
+    return set()
 
 
 def _strings(value) -> set[str]:
