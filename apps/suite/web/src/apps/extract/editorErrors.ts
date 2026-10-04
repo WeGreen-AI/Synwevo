@@ -16,12 +16,16 @@ export interface EditorProblems {
 }
 
 const DECIMAL = "请填写不带指数的十进制数，例如 1000 或 -2.5";
-/** By error type, then by input where the same type means different things. */
+/** A `value_error` is the definition's own rule for that input (extract/definition.py: each of
+ *  these inputs has exactly one). */
+const RULE_OF_INPUT: Record<string, string> = {
+  maximum: "最大值不能小于最小值",
+  "rule.prefix": "请填写行首文字（不能只有空格）",
+  "rule.header": "请填写列标题（不能只有空格）",
+};
+/** Pydantic's own error types, the same for every input. */
 const BY_TYPE: Record<string, string> = {
   string_pattern_mismatch: DECIMAL,
-  bounds_order: "最大值不能小于最小值",
-  prefix_required: "请填写行首文字（不能只有空格）",
-  header_required: "请填写列标题（不能只有空格）",
   string_too_short: "请填写此项",
   missing: "请填写此项",
   string_too_long: "内容超过允许的长度",
@@ -33,7 +37,7 @@ const BY_TYPE: Record<string, string> = {
 export const FALLBACK = "此项不符合要求，请检查后重新保存";
 
 /** Every catalogue key this module can return (the catalogue test holds them to three languages). */
-export const EDITOR_ERROR_KEYS = [...new Set([...Object.values(BY_TYPE), FALLBACK, "请修正标出的字段后再保存"])];
+export const EDITOR_ERROR_KEYS = [...new Set([...Object.values(RULE_OF_INPUT), ...Object.values(BY_TYPE), FALLBACK, "请修正标出的字段后再保存"])];
 
 export function editorProblems(error: unknown): EditorProblems | null {
   const failure = error as { code?: unknown; detail?: { fields?: unknown } } | null;
@@ -41,12 +45,13 @@ export function editorProblems(error: unknown): EditorProblems | null {
   const out: EditorProblems = { fields: {}, placed: true };
   for (const item of failure.detail.fields as { loc?: unknown; type?: unknown }[]) {
     const loc = Array.isArray(item?.loc) ? item.loc.map(String) : [];
-    const key = BY_TYPE[String(item?.type)] ?? FALLBACK;
-    if (loc[0] === "title" && loc.length === 1) { out.title ??= key; continue; }
+    const type = String(item?.type);
+    if (loc[0] === "title" && loc.length === 1) { out.title ??= BY_TYPE[type] ?? FALLBACK; continue; }
     const index = Number(loc[2]);
     if (loc[0] !== "definition" || loc[1] !== "fields" || loc.length < 3 || !Number.isInteger(index)) { out.placed = false; continue; }
     // A whole-field refusal (no input below the field) is shown at the top of that field.
     const input = loc.slice(3).join(".") || "field";
+    const key = (type === "value_error" ? RULE_OF_INPUT[input] : BY_TYPE[type]) ?? FALLBACK;
     (out.fields[index] ??= {})[input] ??= key;
   }
   return out;

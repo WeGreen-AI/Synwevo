@@ -6,7 +6,6 @@ from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
-from pydantic_core import PydanticCustomError
 from synwevo_core.errors import ServiceError
 
 
@@ -14,8 +13,9 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-# Refusals are raised on the input they concern, with their own type, so the template editor can
-# word each one next to that input (the operation layer returns `loc` and `type` per error).
+# Refusals are raised on the input they concern, so the template editor can word each one next
+# to that input: the operation layer returns `loc` and `type` per error, and each of these
+# validators is the only `value_error` its input can raise.
 class Rule(Strict):
     kind: Literal["prefix", "cell", "column"] = "prefix"
     prefix: str = Field(default="", max_length=120, validate_default=True)
@@ -28,14 +28,14 @@ class Rule(Strict):
     @classmethod
     def prefix_given(cls, value: str, info: ValidationInfo):
         if info.data.get("kind", "prefix") == "prefix" and not value.strip():
-            raise PydanticCustomError("prefix_required", "prefix must be nonempty")
+            raise ValueError("prefix must be nonempty")
         return value
 
     @field_validator("header")
     @classmethod
     def header_given(cls, value: str, info: ValidationInfo):
         if info.data.get("kind") == "column" and not value.strip():
-            raise PydanticCustomError("header_required", "column header must be nonempty")
+            raise ValueError("column header must be nonempty")
         return value
 
 
@@ -56,7 +56,7 @@ class FieldSpec(Strict):
     def bounds(cls, value: str | None, info: ValidationInfo):
         minimum = info.data.get("minimum")       # absent when the minimum itself was refused
         if value is not None and minimum is not None and Decimal(minimum) > Decimal(value):
-            raise PydanticCustomError("bounds_order", "maximum is below minimum")
+            raise ValueError("maximum is below minimum")
         return value
 
 

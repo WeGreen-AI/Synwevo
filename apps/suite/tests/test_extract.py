@@ -446,15 +446,15 @@ def test_template_refusals_name_the_field_and_the_rule_broken(ex):
         body = op(ex, "template.create", {"title": "Fixture", "definition": {"fields": [DEFINITION["fields"][0], field]}}, status=422)
         assert body["error"] == "invalid_input"
         return [(e["loc"], e["type"]) for e in body["detail"]["fields"]]
-    assert refused(minimum="10", maximum="2") == [(["definition", "fields", "1", "maximum"], "bounds_order")]
+    assert refused(minimum="10", maximum="2") == [(["definition", "fields", "1", "maximum"], "value_error")]
     assert refused(minimum="1e3") == [(["definition", "fields", "1", "minimum"], "string_pattern_mismatch")]
-    assert refused(rule={"prefix": "   "}) == [(["definition", "fields", "1", "rule", "prefix"], "prefix_required")]
-    assert refused(rule={"kind": "column", "header": " "}) == [(["definition", "fields", "1", "rule", "header"], "header_required")]
+    assert refused(rule={"prefix": "   "}) == [(["definition", "fields", "1", "rule", "prefix"], "value_error")]
+    assert refused(rule={"kind": "column", "header": " "}) == [(["definition", "fields", "1", "rule", "header"], "value_error")]
     # An omitted prefix or header is refused like a blank one.
     for rule in ({"kind": "prefix"}, {"kind": "column"}):
         with pytest.raises(ValidationError) as missing:
             Definition.model_validate({"fields": [{"id": "x", "label": "X", "rule": rule}]})
-        assert [e["type"] for e in missing.value.errors()] == ["prefix_required" if rule["kind"] == "prefix" else "header_required"]
+        assert [(e["loc"], e["type"]) for e in missing.value.errors()] == [(("fields", 0, "rule", rule["kind"] == "prefix" and "prefix" or "header"), "value_error")]
     assert Definition.model_validate({"fields": [{"id": "x", "label": "X", "rule": {"kind": "cell"}}]})
     assert op(ex, "template.list")["output"]["items"] == []
 
