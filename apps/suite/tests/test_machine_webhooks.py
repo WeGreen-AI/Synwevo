@@ -17,6 +17,7 @@ rule:
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import importlib.util
@@ -180,6 +181,25 @@ def set_reading_role(api, auth, table, role, key):
 def journal(store) -> list[dict]:
     path = Path(store.root) / "security-journal.jsonl"
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+@contextlib.contextmanager
+def every_resolver_taken(hub, monkeypatch):
+    """Fixture: every resolver slot of the process is held, as lookups that never return hold them
+    (the pool is the real one, shared with Synwevo Docs), and an address check waits 0.3 s for one
+    instead of its whole deadline. Nothing of the code under test is replaced."""
+    from synwevo_core import webhook_delivery
+    held = 0
+    while webhook_delivery._DNS_SLOTS.acquire(blocking=False):
+        held += 1
+    try:
+        assert held, "fixture: there was no resolver slot to take"
+        with monkeypatch.context() as short:
+            short.setattr(hub.W, "TIMEOUT_S", 0.3)
+            yield
+    finally:
+        for _ in range(held):
+            webhook_delivery._DNS_SLOTS.release()
 
 
 # --------------------------------------------------------------------------------- what is delivered
@@ -1304,31 +1324,51 @@ def test_another_workspaces_events_cost_a_subscription_nothing(hub):
 
 # --------------------------------------------------------------------------------- whose fault it is
 def test_what_is_this_servers_fault_is_not_an_attempt(hub, monkeypatch):
-    from synwevo_core.webhook_delivery import ResolverBusy
+    """No resolver is free for the whole of the send's deadline. The delivery goes through the
+    address check a real send makes and comes back as not tried: nothing counted, nobody blamed."""
     alice = grant(hub.api, "alice")["auth"]
     rx = hub.receiver()
     sid = hub.subscribe(alice, rx.url, events=["tables.*"])["id"]
     table = a_table(hub.api, alice)
-    real = hub.W.resolve_checked
-
-    def busy(url, **kwargs):
-        raise ResolverBusy("fixture: every resolver is taken")
-    monkeypatch.setattr(hub.W, "resolve_checked", busy)
-    hub.service.tick()
+    with every_resolver_taken(hub, monkeypatch):
+        hub.service.tick()
     row = hub.rows(sid)[0]
     assert (row["status"], row["attempts"], row["last_error"], row["last_code"]) == ("pending", 0, "resolver_busy", None)
     assert 0 < row["next_attempt_at"] - hub.clock() <= hub.W.LOCAL_RETRY_S
     health = hub.api.get(f"{BASE}/{sid}", headers=alice).json()
     assert (health["consecutive_failures"], health["last_failure_at"]) == (0, None) and rx.received == []
-    monkeypatch.setattr(hub.W, "resolve_checked", real)
+    assert health["status"] == "active" and hub.store.one(
+        "SELECT failing_since FROM suite_webhook_subscriptions WHERE id=?", (sid,))["failing_since"] is None
     hub.clock.advance(hub.W.LOCAL_RETRY_S + 1)
     hub.service.tick()
     row = hub.rows(sid)[0]
     assert (row["status"], row["attempts"]) == ("delivered", 1) and objects(rx) == [table]
     # a ping that could not be tried says so at once, instead of waiting where nobody looks
-    monkeypatch.setattr(hub.W, "resolve_checked", busy)
-    ping = hub.api.post(f"{BASE}/{sid}/ping", headers=alice).json()
+    with every_resolver_taken(hub, monkeypatch):
+        ping = hub.api.post(f"{BASE}/{sid}/ping", headers=alice).json()
     assert (ping["status"], ping["attempts"], ping["last_error"]) == ("failed", 0, "resolver_busy")
+    assert len(rx.received) == 1
+
+
+def test_a_busy_resolver_is_not_a_verdict_on_the_address(hub, monkeypatch):
+    """Creating, moving and resuming check the address on the request's thread. With no resolver
+    free the answer is "come back" — never that the URL is invalid — and nothing is changed."""
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    sid = hub.subscribe(alice, rx.url, events=["tables.*"])["id"]
+    hub.api.post(f"{BASE}/{sid}/pause", headers=alice)
+    before = hub.store.all("SELECT * FROM suite_webhook_subscriptions")
+    with every_resolver_taken(hub, monkeypatch):
+        for call, path, body in ((hub.api.post, BASE, {"url": rx.url + "/new", "events": ["tables.*"]}),
+                                 (hub.api.patch, f"{BASE}/{sid}", {"url": rx.url + "/moved"}),
+                                 (hub.api.post, f"{BASE}/{sid}/resume", None)):
+            r = call(path, headers=alice, **({"json": body} if body is not None else {}))
+            assert refused(r, 429, "destination_check_busy")["details"] == {"retry_after": hub.W.LOCAL_RETRY_S}
+            assert r.headers["retry-after"] == str(hub.W.LOCAL_RETRY_S)
+    assert hub.store.all("SELECT * FROM suite_webhook_subscriptions") == before
+    # the same calls a moment later, with a resolver free
+    assert hub.api.patch(f"{BASE}/{sid}", json={"url": rx.url + "/moved"}, headers=alice).json()["url"] == rx.url + "/moved"
+    assert hub.api.post(f"{BASE}/{sid}/resume", headers=alice).json()["status"] == "active"
 
 
 def test_one_host_gets_only_so_many_requests_a_minute_whoever_subscribes(hub, monkeypatch):

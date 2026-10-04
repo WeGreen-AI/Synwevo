@@ -290,6 +290,8 @@ X-Synwevo-Event: tables.record.changed
 
 **地址。** 只接受 https、可公开路由的地址，URL 里不能带账号密码；创建、修改、恢复时检查，**每次发送前再检查一次**，并且
 只连接到刚检查过的那个地址（主机名不会被解析第二次）。“无法解析”和“解析到不允许的地址”是同一个拒绝，不加区分。
+创建、修改、恢复时如果同时在检查的地址太多、或解析器一时都被占用，应答是 429 `destination_check_busy`（带
+`Retry-After`）：这不是对地址的判断，什么都没有改变，稍后原样重试即可。
 投递记录的 `last_error` 是固定词表（`http_status`、`redirect_not_followed`、`timeout`、`tls_failed`、`connect_failed`、
 `destination_unavailable` 等），从不包含接收端的应答或平台的网络细节。
 

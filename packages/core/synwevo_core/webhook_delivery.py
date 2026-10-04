@@ -270,7 +270,7 @@ class RequestDeadline:
         if self.sock is not None:
             self.sock.close()
         # A header parser can return EOF rather than a timeout when shutdown interrupts it.
-        if time.monotonic() >= self.end and (exc[0] is None or exc[0] is not UrlUnresolvable):
+        if time.monotonic() >= self.end and (exc[0] is None or not issubclass(exc[0], UrlUnresolvable)):
             raise TimeoutError("回调请求超时")
 
 

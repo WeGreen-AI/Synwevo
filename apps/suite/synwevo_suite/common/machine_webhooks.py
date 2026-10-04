@@ -151,6 +151,8 @@ def resolve_checked(url: str, *, deadline: float | None = None) -> list:
     try:
         return delivery.resolve_checked(url, deadline=deadline, timeout=TIMEOUT_S, allow_private=_allow_private(),
                                         allow_http=_on("SUITE_WEBHOOK_ALLOW_HTTP"), http_refusal="回调地址必须使用 https")
+    except ResolverBusy:
+        raise                                               # this server's fault: says nothing about the address
     except UrlUnresolvable as e:
         raise UrlUnresolvable("回调地址不可用：无法解析，或不被允许") from e
     except UrlRejected as e:
@@ -159,8 +161,18 @@ def resolve_checked(url: str, *, deadline: float | None = None) -> list:
         raise UrlRejected("回调地址不可用：无法解析，或不被允许") from e
 
 
+def _resolve_now(url: str) -> list:
+    """The check a management call makes. No resolver free in time is not a verdict on the
+    address: the caller is told to come back, not that its URL is invalid."""
+    try:
+        return resolve_checked(url)
+    except ResolverBusy as e:
+        raise ServiceError(429, "destination_check_busy", "正在检查的回调地址过多，请稍后再试",
+                           {"retry_after": LOCAL_RETRY_S}) from e
+
+
 def validate_url(url) -> str:
-    return delivery.validate_url(url, resolve=resolve_checked)
+    return delivery.validate_url(url, resolve=_resolve_now)
 
 
 def _connect_pinned(address, timeout, deadline=None):
@@ -547,7 +559,7 @@ class Webhooks:
             return self.get(p, sid)
         try:
             with self._checking():
-                resolve_checked(row["url"])
+                _resolve_now(row["url"])
         except UrlRejected as e:
             raise ServiceError(400, "invalid_url", str(e), {"field": "url"}) from e
         with self.store.tx() as c:
