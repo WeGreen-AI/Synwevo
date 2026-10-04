@@ -34,6 +34,7 @@ Delivery never blocks a job: the artifacts stay downloadable regardless of what 
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import http.client
@@ -54,7 +55,7 @@ from synwevo_core.errors import ServiceError
 # Where a callback may go, how it is signed and when it is retried are the shared delivery layer's;
 # the names below are the ones this module has always had.
 from synwevo_core.webhook_delivery import (  # noqa: F401 — part of this module's surface
-    BACKOFF_S, JITTER, MAX_URL_LEN, RETRY_AFTER_CAP_S, SECRET_PREFIX, UrlRejected, UrlUnresolvable,
+    BACKOFF_S, JITTER, MAX_URL_LEN, RETRY_AFTER_CAP_S, SECRET_PREFIX, ResolverBusy, UrlRejected, UrlUnresolvable,
     new_secret, secret_bytes, sign_standard, signature_header, verify_standard)
 from synwevo_core.webhook_delivery import (
     RequestDeadline as _RequestDeadline, connect_pinned as _connect_pinned, retry_after as _retry_after)
@@ -91,6 +92,11 @@ GRACE_S = 120
 HEARTBEAT_S = 30
 
 MAX_SUBSCRIPTIONS = 16
+LOCAL_RETRY_S = 15                       # after a fault of this server's own, which is not an attempt
+CHECK_CONCURRENCY = 4                    # addresses being checked for management calls at once, one a workspace
+# Whom a lookup is counted for in the resolver pool every application of the process shares: a
+# subscription's workspace, or — for an endpoint the operator configured — that endpoint itself.
+DEPLOYMENT_OWNER = "deployment:"
 MAX_OVERLAP_S = 86400
 DEFAULT_OVERLAP_S = 86400
 MAX_DESCRIPTION_LEN = 500
@@ -174,29 +180,67 @@ def _allow_private() -> list[str]:
 
 
 # ----------------------------------------------------------------------------- address policy
-def check_url(url: str) -> str:
+def check_url(url: str, *, owner: str) -> str:
     """Reject callbacks that would reach into private networks unless explicitly allowed.
 
     Returns the url. Use `resolve_checked` when you are about to connect: this function answers
     "is this address acceptable", and the answer stops being true the moment it returns.
     """
-    resolve_checked(url)
+    resolve_checked(url, owner=owner)
     return url
 
 
-def resolve_checked(url: str, *, deadline: float | None = None) -> list:
+def resolve_checked(url: str, *, owner: str, deadline: float | None = None) -> list:
     """Validate the callback host under this deployment's Docs policy **and return the exact
     addresses that were validated** — the caller connects to one of these, never to the hostname
-    again (`synwevo_core.webhook_delivery.resolve_checked` says why)."""
+    again (`synwevo_core.webhook_delivery.resolve_checked` says why). The lookup is counted for
+    `owner` (a workspace, or ``DEPLOYMENT_OWNER`` + an operator's endpoint), as the suite's are."""
     return _delivery.resolve_checked(
-        url, deadline=deadline, timeout=timeout_s(), allow_private=_allow_private(),
+        url, owner=owner, deadline=deadline, timeout=timeout_s(), allow_private=_allow_private(),
         allow_http=(env.docs("WEBHOOK_ALLOW_HTTP") or "").lower() in ("1", "true", "on", "yes"),
         http_refusal="回调默认要求 https；确需 http 时设置 SYNWEVO_DOCS_WEBHOOK_ALLOW_HTTP=1")
 
 
-def validate_url(url) -> str:
-    """A subscription URL, checked the way a delivery will check it. Raises 400 with field=url."""
-    return _delivery.validate_url(url, resolve=resolve_checked)
+_CHECKS = threading.BoundedSemaphore(CHECK_CONCURRENCY)
+_CHECKING: set[str] = set()
+_CHECKING_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def _checking(workspace: str):
+    """One of the process's places for a management call's address check, or 429. The check
+    resolves a name on the request's own thread, and the resolvers are shared with every delivery
+    of every workspace: a workspace has one place at a time, so one whose names resolve slowly
+    waits for itself and keeps nobody else out (the suite's rule)."""
+    with _CHECKING_LOCK:
+        if workspace in _CHECKING or not _CHECKS.acquire(blocking=False):
+            raise ServiceError(429, "destination_check_busy", "正在检查的回调地址过多，请稍后再试", {"retry_after": 2})
+        _CHECKING.add(workspace)
+    try:
+        yield
+    finally:
+        with _CHECKING_LOCK:
+            _CHECKING.discard(workspace)
+        _CHECKS.release()
+
+
+def _look_up(url: str, workspace: str) -> list:
+    """Where a subscription's address leads, asked for a management call of `workspace`. No
+    resolver free in time is not a verdict on the address: the caller is told to come back, not
+    that its URL is invalid."""
+    with _checking(workspace):
+        try:
+            return resolve_checked(url, owner=workspace)
+        except ResolverBusy as e:
+            raise ServiceError(429, "destination_check_busy", "正在检查的回调地址过多，请稍后再试",
+                               {"retry_after": LOCAL_RETRY_S}) from e
+
+
+def validate_url(url, owner: str) -> str:
+    """A subscription URL, checked the way a delivery will check it. Raises 400 with field=url, or
+    429 ``destination_check_busy`` when it cannot be checked now. `owner` is the workspace the
+    check is made for: its lookups are counted against it."""
+    return _delivery.validate_url(url, resolve=lambda u: _look_up(u, owner))
 
 
 # ----------------------------------------------------------------------------- signatures
@@ -558,7 +602,8 @@ class WebhookDispatcher:
             # Validate and connect to *the same* address. Calling check_url and then letting
             # urllib resolve the name again is the hole this closes.
             with _RequestDeadline(timeout_s()) as deadline:
-                validated = resolve_checked(url, deadline=deadline.end)
+                validated = resolve_checked(url, deadline=deadline.end,
+                                            owner=sub["tenant"] if sub is not None else DEPLOYMENT_OWNER + url)
                 # DNS can take most of the attempt. A pause, restore or another claimant may
                 # have intervened since the payload was made; never connect on stale authority.
                 if not self._owns_claim(d):
@@ -837,7 +882,7 @@ def send_test(url: str, key: str | None = None) -> dict:
     started = time.monotonic()
     try:
         with _RequestDeadline(timeout_s()) as deadline:
-            validated = resolve_checked(url, deadline=deadline.end)
+            validated = resolve_checked(url, deadline=deadline.end, owner=DEPLOYMENT_OWNER + url)
             with _pinned_opener(validated, deadline).open(
                     urllib.request.Request(url, data=body, method="POST", headers=headers),
                     timeout=deadline.remaining()) as resp:
@@ -954,7 +999,7 @@ class Subscriptions:
         if not tenant:
             raise ServiceError(400, "tenant_required", "请指定工作空间")
         self._check_fields(body, self.WRITABLE)
-        url = validate_url(body.get("url"))
+        url = validate_url(body.get("url"), tenant)
         events = normalize_events(body.get("events"))
         desc = self._description(body.get("description"))
         plain = new_secret()
@@ -1009,7 +1054,7 @@ class Subscriptions:
                                    {"current_version": row["version"]})
         values: dict = {}
         if "url" in body:
-            values["url"] = validate_url(body["url"])
+            values["url"] = validate_url(body["url"], row["tenant"])
             values["created_by"] = authority.dumps(by)
         if "events" in body:
             values["events"] = json.dumps(normalize_events(body["events"]))
@@ -1062,7 +1107,7 @@ class Subscriptions:
         row = self._row(tenant, sid)
         if row["status"] != "active":
             try:
-                resolve_checked(row["url"])
+                _look_up(row["url"], row["tenant"])
             except UrlRejected as e:
                 raise ServiceError(400, "invalid_url", f"当前回调地址不可用，无法恢复：{e}", {"field": "url"}) from e
             t = self.clock()

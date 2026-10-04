@@ -297,16 +297,16 @@ def test_private_targets_need_the_allowlist(monkeypatch):
     monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_HTTP", "1")
     monkeypatch.delenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE", raising=False)
     with pytest.raises(W.UrlRejected):
-        W.check_url("http://127.0.0.1:9/hook")
+        W.check_url("http://127.0.0.1:9/hook", owner="default")
     with pytest.raises(W.UrlRejected):
-        W.check_url("http://192.168.0.5/hook")
+        W.check_url("http://192.168.0.5/hook", owner="default")
     with pytest.raises(W.UrlRejected):
-        W.check_url("file:///etc/passwd")
+        W.check_url("file:///etc/passwd", owner="default")
     monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE", "127.0.0.0/8")
-    assert W.check_url("http://127.0.0.1:9/hook")
+    assert W.check_url("http://127.0.0.1:9/hook", owner="default")
     monkeypatch.delenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_HTTP", raising=False)
     with pytest.raises(W.UrlRejected):
-        W.check_url("http://example.com/hook")            # https required by default
+        W.check_url("http://example.com/hook", owner="default")  # https required by default
 
 
 def test_disabled_without_secret_without_a_job_runner(monkeypatch, api):
@@ -351,7 +351,7 @@ def test_the_validated_address_is_the_one_connected_to(monkeypatch):
     ])
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: next(answers))
 
-    validated = webhooks.resolve_checked("https://rebind.example.com/hook")
+    validated = webhooks.resolve_checked("https://rebind.example.com/hook", owner="default")
     assert validated == ["93.184.216.34"], "第一次解析通过的应当被记下来"
 
     # The second, hostile answer is never consulted, because the opener is pinned.
@@ -376,7 +376,7 @@ def test_a_host_resolving_to_a_private_address_is_refused(monkeypatch):
                         lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))])
     monkeypatch.delenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE", raising=False)
     with pytest.raises(webhooks.UrlRejected, match="内网"):
-        webhooks.resolve_checked("https://localhost-in-disguise.example.com/hook")
+        webhooks.resolve_checked("https://localhost-in-disguise.example.com/hook", owner="default")
 
 
 def test_the_cloud_metadata_address_is_refused(monkeypatch):
@@ -387,7 +387,7 @@ def test_the_cloud_metadata_address_is_refused(monkeypatch):
     monkeypatch.delenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE", raising=False)
     monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_HTTP", "1")
     with pytest.raises(webhooks.UrlRejected):
-        webhooks.resolve_checked("http://metadata.example.com/latest/meta-data/")
+        webhooks.resolve_checked("http://metadata.example.com/latest/meta-data/", owner="default")
 
 
 def test_delivery_does_not_use_the_ambient_proxy(monkeypatch):
@@ -424,7 +424,7 @@ def test_an_explicitly_allowed_private_target_still_works(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo",
                         lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 443))])
     monkeypatch.setenv("SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE", "10.0.0.0/8")
-    assert webhooks.resolve_checked("https://internal.example.com/hook") == ["10.0.0.5"]
+    assert webhooks.resolve_checked("https://internal.example.com/hook", owner="default") == ["10.0.0.5"]
 
 
 def test_worker_downtime_preserves_backlog_for_unchanged_endpoints(client, hook_env, monkeypatch):

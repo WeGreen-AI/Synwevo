@@ -50,8 +50,13 @@ _DNS_SLOTS = threading.BoundedSemaphore(DNS_SLOTS)
 # returns: a lookup abandoned at its deadline still holds a resolver, so whoever named a slow name
 # must not be able to take the shared pool one abandoned lookup at a time.
 OWNER_LOOKUPS = 2
+# How long an owner at its limit waits for one of its own lookups to end. Names that answer in a
+# moment are not refused for being looked up beside others of the same owner (a dispatcher sends to
+# several of one workspace's receivers at once); an owner whose names do not answer is told so
+# without holding the caller's thread for a whole deadline.
+OWNER_WAIT_S = 1.0
 _OWNERS: dict[str, int] = {}
-_OWNERS_LOCK = threading.Lock()
+_OWNERS_LOCK = threading.Condition()                 # notified whenever an owner's lookup ends
 
 # NAT64 (RFC 6052's well-known prefix, RFC 8215's local-use one): an IPv6 spelling of an IPv4
 # address. Where it leads is the translating gateway's decision — a private network included —
@@ -97,9 +102,9 @@ def check_address_text(url: str, *, allow_http: bool = False,
     return host, port
 
 
-def resolve_checked(url: str, *, deadline: float | None = None, allow_http: bool = False,
+def resolve_checked(url: str, *, owner: str, deadline: float | None = None, allow_http: bool = False,
                     allow_private=(), timeout: float = DEFAULT_TIMEOUT_S,
-                    http_refusal: str = "回调默认要求 https", owner: str | None = None) -> list:
+                    http_refusal: str = "回调默认要求 https") -> list:
     """Validate the callback host **and return the exact addresses that were validated.**
 
     The caller must connect to one of these rather than to the hostname again. Resolving twice —
@@ -107,6 +112,10 @@ def resolve_checked(url: str, *, deadline: float | None = None, allow_http: bool
     control can answer with a public address for the check and `169.254.169.254` or `127.0.0.1`
     a moment later for the connection. The check then proves nothing about where the request
     actually goes, which is the whole point of having it.
+
+    `owner` is whoever the lookup is made for (a workspace; an operator's own endpoint). It is
+    required: the resolver pool is shared by every application in the process, and a lookup
+    counted for nobody is one that whoever names slow names can take the whole pool with.
 
     `allow_private` lists hosts and networks the deployment's operator permits although they are
     not global addresses; `allow_http` permits plain http. Both default to the safe answer.
@@ -144,21 +153,21 @@ def _routable(ip) -> bool:
     return ip.version == 4 or ip in GLOBAL_UNICAST6
 
 
-def _resolve(host: str, port: int, deadline: float, owner: str | None = None):
-    if owner is not None:
-        with _OWNERS_LOCK:
-            if _OWNERS.get(owner, 0) >= OWNER_LOOKUPS:
-                raise ResolverBusy("无法解析回调地址主机：同一来源仍有解析未结束")
-            _OWNERS[owner] = _OWNERS.get(owner, 0) + 1
+def _resolve(host: str, port: int, deadline: float, owner: str):
+    with _OWNERS_LOCK:
+        if not _OWNERS_LOCK.wait_for(lambda: _OWNERS.get(owner, 0) < OWNER_LOOKUPS,
+                                     timeout=min(OWNER_WAIT_S, max(0.0, deadline - time.monotonic()))):
+            raise ResolverBusy("无法解析回调地址主机：同一来源仍有解析未结束")
+        _OWNERS[owner] = _OWNERS.get(owner, 0) + 1
 
     def owner_done():
-        if owner is not None:
-            with _OWNERS_LOCK:
-                left = _OWNERS.get(owner, 1) - 1
-                if left:
-                    _OWNERS[owner] = left
-                else:
-                    _OWNERS.pop(owner, None)
+        with _OWNERS_LOCK:
+            left = _OWNERS.get(owner, 1) - 1
+            if left:
+                _OWNERS[owner] = left
+            else:
+                _OWNERS.pop(owner, None)
+            _OWNERS_LOCK.notify_all()
 
     if not _DNS_SLOTS.acquire(timeout=max(0, deadline - time.monotonic())):
         owner_done()
@@ -193,9 +202,10 @@ def _in_allow(ip, entry: str) -> bool:
         return False
 
 
-def validate_url(url, *, resolve=resolve_checked) -> str:
+def validate_url(url, *, resolve) -> str:
     """A subscription URL, checked the way a delivery will check it. Raises 400 with field=url.
-    `resolve` is the caller's own `resolve_checked`, carrying its deployment's policy.
+    `resolve` is the caller's own `resolve_checked`, carrying its deployment's policy and saying
+    whom the lookup is for.
 
     Every refusal is ``invalid_url`` in this module's words: what the URL parser or the resolver's
     codec has to say about a malformed address is not an answer to give a caller."""
