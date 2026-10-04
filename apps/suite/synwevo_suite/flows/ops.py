@@ -67,10 +67,25 @@ class Deliveries(TriggerRef):
     limit: int = Field(default=50, ge=1, le=200)
 
 
+def _runs_in(value: dict) -> list[str]:
+    """The flow runs an answer describes: a run, a page of runs, or a trigger's deliveries."""
+    if "runs" in value:
+        return [r["id"] for r in value["runs"]]
+    if "deliveries" in value:
+        return [d["run_id"] for d in value["deliveries"] if d.get("run_id")]
+    if value.get("id") and value.get("flow_id") and "status" in value:
+        return [value["id"]]
+    return []
+
+
 def register(registry, flows):
     def add(suffix, input_, handler, *, write=False, person=False):
         def invoke(call, inp):
             value = handler(call, inp)
+            if isinstance(value, dict) and call.via == "agent":
+                # A run's progress was decided on what it read. The Agent counts these workspaces
+                # as sources of what its model is told (processing policy, transfers, memories).
+                value = {**value, "source_workspaces": flows.carried(_runs_in(value), user_id=call.user_id)}
             if isinstance(value, dict):
                 if value.get("trigger_id"):
                     call.touches("flow_trigger", value["trigger_id"])

@@ -270,6 +270,12 @@ class Agent:
                     continue
                 checked.add(key)
                 try:
+                    if "reported_by" in source:
+                        # No object there to re-read: the answer stays visible while the person
+                        # still belongs to the workspace it reflects.
+                        if not self.identity.membership(wid, user_id):
+                            lost.add(wid)
+                        continue
                     if "catalogue_name" in source:
                         self.caps.check_workspace(user_id, source["app"], wid, "read")
                         if self._ws_name(wid) != source["catalogue_name"]:
@@ -922,9 +928,14 @@ class Agent:
         result = out["output"]
         result_wid = self._result_workspace(op, wid, clean)
         result_workspaces = {result_wid} if result_wid else set()
-        for_model = ctx.for_model(op, result_wid, {"status": out["status"], "run_id": out["run_id"], "output": result})
+        # A personal answer may reflect workspaces it names (a flow run's progress was decided on
+        # what the run read): they are sources like any other, though no object there was read.
+        reported = {w for w in (result.get("source_workspaces") or ()) if isinstance(w, str)} \
+            if op.need == "personal" and isinstance(result, dict) else set()
+        for_model = ctx.for_model(op, result_wid, {"status": out["status"], "run_id": out["run_id"], "output": result},
+                                  also=sorted(reported))
         if not for_model.get("withheld"):
-            for_model["source_workspaces"] = sorted(result_workspaces)
+            for_model["source_workspaces"] = sorted(result_workspaces | reported)
         status = "succeeded" if out["status"] == "succeeded" else "unknown"
         error = None if status == "succeeded" else {"code": "outcome_unresolved", "message": "操作尚未确认完成，请在应用中查看"}
         if record:
@@ -933,6 +944,8 @@ class Agent:
             self._update_call(t, call_id, status, result=result, for_model=for_model, run_id=out["run_id"], error=error)
         for result_wid in result_workspaces:
             self._record_source(t, op, result_wid, clean, result, out["run_id"])
+        for source in sorted(reported - result_workspaces):
+            self._add_source(t["assistant_message_id"], {"workspace_id": source, "reported_by": op.id})
 
     def _update_call(self, t: dict, call_id: str, status: str, *, result=None, for_model=None, error=None, run_id=None) -> None:
         self.store.execute("UPDATE agent_tool_calls SET status=?, result_json=COALESCE(?,result_json), "

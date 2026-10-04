@@ -292,10 +292,11 @@ class ToolContext:
             return {"code": err.code, "message": err.message}
         return op, ws, clean
 
-    def for_model(self, op, workspace_id: str | None, result: Any) -> Any:
-        """What the model may read of a result: all of it, or — when the workspace does not allow
-        its content to be processed with this credential — a note that the person can see it."""
-        if not policy_allows(self.store, workspace_id, self.credential_kind, self.provider):
+    def for_model(self, op, workspace_id: str | None, result: Any, *, also=()) -> Any:
+        """What the model may read of a result: all of it, or — when the workspace (or another one
+        whose content the result reflects, ``also``) does not allow its content to be processed
+        with this credential — a note that the person can see it."""
+        if not all(policy_allows(self.store, w, self.credential_kind, self.provider) for w in (workspace_id, *also)):
             return {"withheld": True,
                     "reason": ("This workspace does not allow its content to be processed by the assistant. "
                                "The person can see the result in the conversation; do not guess its content.")}

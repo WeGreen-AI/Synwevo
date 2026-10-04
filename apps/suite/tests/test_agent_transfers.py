@@ -125,30 +125,69 @@ def test_c4_losing_b_stops_later_b_work_keeps_a_and_hides_what_depended_on_b(gov
     assert op(g.client, "forms.form.get", {"form_id": copied}, ws=g.people.a)["output"]["title"] == "From B roster"
 
 
-def test_a_flow_run_read_by_the_agent_carries_no_step_snapshots(governed):
-    """A personal operation's answer names no source workspace: workspace content given to the
-    model through it would be untracked, and would pass the workspace's AI-processing policy too."""
-    g = governed
+def read_b_by_flow(g, key="fixture-read"):
+    """A finished run of Alice's flow that read B, which only Oscar can open up."""
     p = g.people
     g.client.sign_in("oscar")
     op(g.client, "forms.form.create", {"title": "Fixture roster of B"}, ws=p.b)
-    g.client.sign_in("alice")  # Alice only views B: no export right, and B allows no model processing
+    g.client.sign_in("alice")  # Alice only views B: no export right
     flows = g.client.api.state.flows
     flow_id = flows.create(user_id=p.uid("alice"), name="Fixture flow", definition={"steps": [
-        {"id": "read", "kind": "call", "operation": "forms.form.list", "workspace_id": p.b, "input": {}}]})["flow_id"]
-    run_id = flows.start(flow_id, user_id=p.uid("alice"), version=1, parameters={}, idempotency_key="fixture-read")["id"]
+        {"id": "read", "kind": "call", "operation": "forms.form.list", "workspace_id": p.b, "input": {}},
+        {"id": "check", "kind": "branch", "condition": {"left": {"$ref": "steps.read.forms.0.title"}, "op": "eq",
+                                                         "right": "Fixture roster of B"}, "then": "yes", "otherwise": "no"},
+        {"id": "yes", "kind": "fail", "code": "fixture_title_matched"},
+        {"id": "no", "kind": "fail", "code": "fixture_title_differs"}]})["flow_id"]
+    run_id = flows.start(flow_id, user_id=p.uid("alice"), version=1, parameters={}, idempotency_key=key)["id"]
     flows.tick()
-    # In the page she sees the snapshot, as she may read B.
+    # In the page she sees the snapshot and the path, as she may read B.
     shown = op(g.client, "agent.flow.run", {"run_id": run_id})["output"]
-    assert shown["status"] == "succeeded" and shown["steps"][0]["output"]["forms"][0]["title"] == "Fixture roster of B"
+    assert shown["error_code"] == "fixture_title_matched"
+    assert shown["steps"][0]["output"]["forms"][0]["title"] == "Fixture roster of B"
+    return run_id
+
+
+def test_a_flow_run_is_withheld_from_the_model_when_a_workspace_it_read_allows_no_processing(governed):
+    """AGENT-DF-2: a run's path and error code were decided on B's content. B allows no model
+    processing, so the model is not told them, and nothing of it becomes a personal memory."""
+    g = governed
+    run_id = read_b_by_flow(g)
     _, turn = begin(g, [call("run_operation", {"operation": "agent.flow.run", "input": {"run_id": run_id}}, tid="read-run"),
-                        say("The run finished.")])
+                        call("run_operation", {"operation": "agent.memory.add", "input": {"body": "B's title matched"}},
+                             tid="remember"),
+                        say("Done.")])
+    advance(g, turn)
+    read = g.store.one("SELECT status, for_model_json FROM agent_tool_calls WHERE tool_use_id='read-run'")
+    told = json.loads(read["for_model_json"])
+    assert read["status"] == "succeeded" and told.get("withheld") is True
+    assert "fixture_title_matched" not in read["for_model_json"] and "Fixture roster of B" not in read["for_model_json"]
+    assert calls(g, turn)["remember"] == ("failed", "source_transfer_unavailable")
+    assert g.store.one("SELECT COUNT(*) AS n FROM agent_memories")["n"] == 0
+
+
+def test_a_flow_run_read_by_the_agent_names_what_it_read_and_carries_no_step_snapshots(governed):
+    """Where B allows processing, the model gets the run's progress, never the steps' business
+    snapshots, and the answer names B as a source of the conversation."""
+    g = governed
+    policy(g, g.people.b, "platform")
+    run_id = read_b_by_flow(g, "fixture-read-allowed")
+    cid, turn = begin(g, [call("run_operation", {"operation": "agent.flow.run", "input": {"run_id": run_id}}, tid="read-run"),
+                          say("The run finished.")])
     assert advance(g, turn)["status"] == "succeeded"
     read = g.store.one("SELECT status, result_json, for_model_json FROM agent_tool_calls WHERE tool_use_id='read-run'")
     assert read["status"] == "succeeded"
     assert "Fixture roster of B" not in read["for_model_json"] and "Fixture roster of B" not in read["result_json"]
-    told = json.loads(read["for_model_json"])["result"]["output"]["steps"][0]
+    payload = json.loads(read["for_model_json"])
+    assert payload["source_workspaces"] == [g.people.b]
+    told = payload["result"]["output"]["steps"][0]
     assert (told["status"], told["output"], told["snapshot_hidden"]) == ("succeeded", None, True)
+    message = g.store.one("SELECT sources_json FROM agent_messages WHERE id=(SELECT assistant_message_id FROM agent_turns "
+                          "WHERE id=?)", (turn["turn_id"],))
+    assert {"workspace_id": g.people.b, "reported_by": "agent.flow.run"} in json.loads(message["sources_json"])
+    # The answer stays only while she belongs to B; leaving it hides what depended on it.
+    assert g.engine._lost_workspaces(g.people.uid("alice"), cid) == set()
+    g.people.ident.remove_member(g.people.b, g.people.uid("alice"))
+    assert g.engine._lost_workspaces(g.people.uid("alice"), cid) == {g.people.b}
 
 
 def test_audience_lets_a_record_through_but_not_a_send_to_other_people(governed):

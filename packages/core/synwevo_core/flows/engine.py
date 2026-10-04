@@ -204,6 +204,17 @@ class Flows(Triggers):
                                     "correlation_id", "parent_run_id", "depth", "calls_used", "deadline",
                                     "created_at", "updated_at", "finished_at")}
 
+    def carried(self, run_ids, *, user_id) -> list[str]:
+        """Workspaces whose content these runs of this person may reflect (``_sources``). Not
+        only a step's value: which steps ran, a run's state and its error code were decided on
+        what the run read, so a reader that tracks sources counts them for a run's progress too."""
+        found = set()
+        for run_id in dict.fromkeys(run_ids):
+            row = self.store.one("SELECT * FROM flow_runs WHERE id=? AND user_id=?", (run_id, user_id))
+            if row:
+                found |= self._sources(row)
+        return sorted(found)
+
     def run(self, run_id, *, user_id, after=0, limit=100, outputs=True):
         """``outputs=False`` leaves the steps' business snapshots out: the answer of a personal
         operation carries no source workspace, so a reader that tracks sources (the Agent's
