@@ -361,8 +361,10 @@ httpx 默认遵循环境里的 `HTTP_PROXY`，而这些连接上跑的是**授�
 
 - 持久化在 `oidc_keys`。**每次启动重新生成会让所有已签发令牌失效**——那看起来就是一次没有原因的
   集体登出。
-- 轮换：`manage.py keys rotate` 让旧密钥转 `retiring`，**仍在 JWKS 中发布**，因此此前签发的令牌
-  继续可验证。等最长令牌有效期过去后再 `keys retire --kid …`。
+- 轮换：`python -m synwevo_identity.cli keys rotate` 让旧密钥转 `retiring`，**仍在 JWKS 中发布**，
+  因此此前签发的令牌继续可验证。`keys retire --kid …` 只接受 retiring 的密钥，并且要等它签发的令牌
+  全部过期（轮换后 `SIGNED_TOKEN_MAX_S` = 300 + 60 秒）；当前密钥永远不能退役。泄露时用 `--force --yes`。
+  访问令牌和刷新令牌是不透明随机串，不依赖签名密钥。
 - 私钥 (`oidc_keys.private_jwk`) 与数据库同库。拿到数据库文件即可取得签名能力——备份必须按密钥
   对待，见 [identity-migration.md](identity-migration.md) §5。
 

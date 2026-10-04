@@ -253,3 +253,30 @@ def test_secret_status_reports_a_mismatch(world, capsys):
     world["mp"].setenv("SYNWEVO_SECRET", "an-external-root-secret-0123456789")
     code, out, _ = cli(world, capsys, "secret", "status")
     assert code == 0 and "服务会拒绝启动" in out and "totp_secrets.secret_enc=1" in out
+
+
+# ---------------------------------------------------------------- D9: signing-key retirement
+def test_keys_retire_refuses_the_active_key_an_unknown_kid_and_an_unconfirmed_force(world, capsys):
+    """Admin defect D9: `keys retire` retired whatever it was given — the active key, a key whose
+    tokens were still valid, a kid that never existed — and reported success each time."""
+    keys = oidc.Keys(world["store"])
+    first = keys.active()["kid"]
+    code, out, _ = cli(world, capsys, "keys", "rotate")
+    assert code == 0 and "--kid" in out
+    active = keys.active()["kid"]
+    code, _, err = cli(world, capsys, "keys", "retire", "--kid", active)
+    assert code == 2 and "keys rotate" in err
+    code, _, err = cli(world, capsys, "keys", "retire", "--kid", "k_missing")
+    assert code == 2 and "k_missing" in err
+    code, _, err = cli(world, capsys, "keys", "retire", "--kid", first)
+    assert code == 2 and "--force" in err
+    code, _, err = cli(world, capsys, "keys", "retire", "--kid", first, "--force")
+    assert code == 2 and "--yes" in err
+    assert [a["result"] for a in _audit(world, "cli.keys.retire")] == ["denied"] * 3
+    assert world["store"].one("SELECT status FROM oidc_keys WHERE kid=?", (first,))["status"] == "retiring"
+    code, out, _ = cli(world, capsys, "keys", "retire", "--kid", first, "--force", "--yes")
+    assert code == 0 and "已退役" in out
+    done = _audit(world, "cli.keys.retire")[-1]
+    assert done["result"] == "ok" and json.loads(done["meta"])["forced"] is True
+    code, out, _ = cli(world, capsys, "keys", "retire", "--kid", first, "--force", "--yes")
+    assert code == 0 and "早已退役" in out and len(_audit(world, "cli.keys.retire")) == 4

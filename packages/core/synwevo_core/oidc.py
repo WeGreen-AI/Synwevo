@@ -37,6 +37,12 @@ CODE_TTL_S = 60                      # short: a code is exchanged immediately or
 ACCESS_TTL_S = int(env.get("ACCESS_TTL_S", "900"))
 REFRESH_TTL_S = int(env.get("REFRESH_TTL_S", str(14 * 24 * 3600)))
 ID_TOKEN_TTL_S = 300
+LOGOUT_TOKEN_TTL_S = 120
+LOGOUT_TOKEN_SKEW_S = 60             # what verify_logout_token tolerates past `exp`
+# How long a token signed with a key can still be verified after that key stopped signing:
+# the longest signed-token lifetime plus the clock skew a verifier allows. Access and refresh
+# tokens are opaque and never depend on the signing key.
+SIGNED_TOKEN_MAX_S = max(ID_TOKEN_TTL_S, LOGOUT_TOKEN_TTL_S) + LOGOUT_TOKEN_SKEW_S
 ALG = "RS256"
 # The longest an old client secret may keep working after a rotation. Bounded because a grace
 # period is a second valid credential: it exists so a running automation can be redeployed with
@@ -164,8 +170,37 @@ class Keys:
             n = t.execute("UPDATE oidc_keys SET status='retiring' WHERE status='active'").rowcount
         return self.active()["kid"], n
 
-    def retire(self, kid: str) -> None:
-        self.store.execute("UPDATE oidc_keys SET status='retired', retired_at=? WHERE kid=?", (now(), kid))
+    def retirable_at(self, kid: str) -> float | None:
+        """When a retiring key can be withdrawn without failing a token it signed: the moment it
+        stopped signing plus SIGNED_TOKEN_MAX_S. `rotate()` flips the old key to retiring and then
+        mints its successor, so the earliest key created after this one marks that moment. None
+        when no later key exists (nothing proves the key stopped signing)."""
+        row = self.store.one("SELECT k.created_at FROM oidc_keys k, oidc_keys o WHERE o.kid=? "
+                             "AND k.created_at > o.created_at ORDER BY k.created_at LIMIT 1", (kid,))
+        return row["created_at"] + SIGNED_TOKEN_MAX_S if row else None
+
+    def retire(self, kid: str, *, force: bool = False) -> bool:
+        """Stop publishing a retiring key. Returns False when it was already retired.
+
+        The active key is never retired (rotate first): the next request would silently mint a
+        replacement and every token signed seconds earlier would stop verifying. A retiring key
+        waits until the tokens it signed have expired; `force` skips the wait for a compromised
+        key, and only for a retiring one."""
+        with self.store.tx() as t:
+            row = t.execute("SELECT status FROM oidc_keys WHERE kid=?", (kid,)).fetchone()
+            if not row:
+                raise ServiceError(404, "no_key", f"没有签名密钥 {kid}")
+            if row["status"] == "retired":
+                return False
+            if row["status"] != "retiring":
+                raise ServiceError(409, "key_in_use", "这是当前签名密钥，不能退役；先执行 keys rotate")
+            if not force:
+                at = self.retirable_at(kid)
+                if at is None or now() < at:
+                    raise ServiceError(409, "key_still_verifying", "用这把密钥签发的令牌可能仍在有效期内，暂不能退役",
+                                       {"retirable_at": at})
+            t.execute("UPDATE oidc_keys SET status='retired', retired_at=? WHERE kid=?", (now(), kid))
+        return True
 
 
 # ---------------------------------------------------------------------- clients
@@ -703,7 +738,7 @@ class Grants:
         iat = int(time.time())
         claims = {
             "iss": issuer(), "sub": user_id, "aud": client["client_id"],
-            "iat": iat, "exp": iat + 120, "jti": new_id("lt"), "sid": sid,
+            "iat": iat, "exp": iat + LOGOUT_TOKEN_TTL_S, "jti": new_id("lt"), "sid": sid,
             "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
         }
         return jwt.encode({"alg": ALG, "kid": key["kid"], "typ": "logout+jwt"},
@@ -809,7 +844,7 @@ def verify_logout_token(raw: str, *, jwks: dict, client_id: str, expected_issuer
         exp = int(claims.get("exp"))
     except (TypeError, ValueError):
         raise ServiceError(400, "bad_logout_token", "登出令牌缺少有效的 exp") from None
-    if exp + 60 < ts:                                 # a minute of clock skew, no more
+    if exp + LOGOUT_TOKEN_SKEW_S < ts:                # a minute of clock skew, no more
         raise ServiceError(400, "bad_logout_token", "登出令牌已过期")
     return dict(claims)
 

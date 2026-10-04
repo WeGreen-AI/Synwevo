@@ -282,8 +282,12 @@ principal 形状相同，因此没有任何调用点需要知道自己拿到的�
 ```bash
 python -m synwevo_identity.cli keys list
 python -m synwevo_identity.cli keys rotate            # 新密钥签名，旧密钥转 retiring 仍在 JWKS 中
-python -m synwevo_identity.cli keys retire --kid k_xxx   # 等最长令牌有效期过去之后
+python -m synwevo_identity.cli keys retire --kid k_xxx   # 只退役 retiring 的密钥，轮换约 6 分钟后才放行
 ```
+
+`keys retire` 拒绝当前签名密钥（先轮换）、不存在的 kid，以及签发的令牌可能仍有效的密钥：等待时间是
+id_token 的 300 秒加 60 秒校验容差（`oidc.SIGNED_TOKEN_MAX_S`），拒绝时会打印最早可退役的时间。
+密钥被泄露时用 `--force --yes` 立即退役，审计记录 `forced=true`。
 
 签名密钥持久化保存。每次启动重新生成密钥，会让所有已签发令牌失效——那看起来就是一次没有原因的
 集体登出。
