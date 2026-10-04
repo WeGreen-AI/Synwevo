@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { ApiKey, Client, WorkspaceClient, errorFromResponse, ConflictError, RateLimitError, ValidationError,
   parseRetryAfter, parseRateLimitReset, safeFilename, signWebhook, verifyWebhook,
-  verifyLegacyWebhook, createWebhookReceiver } from '../synwevo-docs.mjs';
+  verifyLegacyWebhook, createWebhookReceiver, WEBHOOK_MIN_KEY_BYTES } from '../synwevo-docs.mjs';
 
 test('parses envelope, problem details, request IDs and rate-limit hints', () => {
   const conflict = errorFromResponse(409, new Headers({ 'x-request-id': 'synthetic-id' }),
@@ -186,4 +186,19 @@ test('a verifier refuses empty or short key material (CR-049 WH-4)', () => {
     assert.throws(() => verifyWebhook(headers, body, weak), (e) => e.code === 'weak_secret', String(weak));
   }
   assert.throws(() => verifyWebhook(headers, body, ''), (e) => e.code === 'no_secret');
+});
+
+test('the legacy verifier refuses a missing, empty or short secret (R3-WH-3)', () => {
+  // process.env.X of an unset variable is undefined; String(undefined) was the key 'undefined'.
+  const body = Buffer.from('{"id":"ev_forged","type":"job.succeeded"}'); const ts = String(Math.floor(Date.now() / 1000));
+  const forge = (key) => ({ 'X-DocWeave-Timestamp': ts,
+    'X-DocWeave-Signature': `v1=${createHmac('sha256', key).update(`${ts}.`).update(body).digest('hex')}` });
+  for (const [weak, key] of [[undefined, 'undefined'], [null, 'null'], ['', ''], [16, '16']]) {
+    assert.throws(() => verifyLegacyWebhook(forge(key), body, weak), (e) => e.code === 'no_secret', String(weak));
+  }
+  for (const weak of ['short', 'x'.repeat(WEBHOOK_MIN_KEY_BYTES - 1), Buffer.alloc(0)]) {
+    assert.throws(() => verifyLegacyWebhook(forge(String(weak)), body, weak), (e) => e.code === 'weak_secret', String(weak));
+  }
+  const key = 'k'.repeat(WEBHOOK_MIN_KEY_BYTES);
+  assert.equal(verifyLegacyWebhook(forge(key), body, key).event.id, 'ev_forged');
 });
