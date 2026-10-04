@@ -21,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from .platform_fixture import legacy_platform_role_row, make_platform_admin
+from .test_admin_runs import flow as flow_run_fixture, run as op_run_fixture
 from synwevo_core import platform_access
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
@@ -84,6 +85,11 @@ ROUTES = [
     ("GET", "/api/admin/identity-providers", "platform.config.view", False),
     ("GET", "/api/admin/mail", "platform.mail.view", False),
     ("POST", "/api/admin/mail/{mid}/retry", "platform.mail.manage", True),
+    ("GET", "/api/admin/app-runs", "platform.apps.view", False),
+    ("GET", "/api/admin/app-runs/summary", "platform.apps.view", False),
+    ("GET", "/api/admin/app-runs/{run_id}", "platform.apps.view", False),
+    ("GET", "/api/admin/flow-runs", "platform.apps.view", False),
+    ("GET", "/api/admin/flow-runs/{flow_run_id}", "platform.apps.view", False),
     ("GET", "/api/admin/audit", "platform.audit.view", False),
     ("GET", "/api/admin/platform/roles", "platform.roles.view", False),
     ("GET", "/api/admin/users/{uid}/platform-access", "platform.roles.view", False),
@@ -137,6 +143,9 @@ def world(tmp_path, monkeypatch):
         draft, _ = catalogue.create(spec=PRICE_SPEC, actor_id=root["id"],
                                     idempotency_key="matrix_draft_fixture")
     plain = verified(store, ident, "plain@example.test")
+    # One run of each kind, so the run routes have a row to answer about (admin_runs).
+    op_run_fixture(store, "run_matrix_fixture", user=plain, workspace=ident.workspaces_for(plain["id"])[0]["id"])
+    flow_run_fixture(store, "fr_matrix_fixture", user=plain)
     clients: list[TestClient] = []
 
     def login(user, *, remember=False):
@@ -183,7 +192,7 @@ LEGACY_WID = "default"
 def _path(template, w, *, legacy: str | None = None):
     wid = legacy if legacy and template.endswith(HISTORICAL) else w["wid"]
     return template.format(uid=w["plain"]["id"], wid=wid, mid="mail_fixture_missing",
-                           draft_id=w["draft_id"],
+                           draft_id=w["draft_id"], run_id="run_matrix_fixture", flow_run_id="fr_matrix_fixture",
                            oid="org_fixture_missing", action="freeze", gid="pg_fixture_missing")
 
 

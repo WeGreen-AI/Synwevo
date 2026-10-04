@@ -366,16 +366,21 @@ Webhook 是本服务**主动向外发起**的请求，因此它的风险方向�
 | 内置角色 | 权限 | 明确不可以 |
 |---|---|---|
 | `super_admin` 最高管理员 | 目录中的全部权限（按定义；新登记的权限自动属于它） | **不获得任何工作空间内文档正文的读取权** |
-| `access_admin` 账户与访问管理员 | 概览；账户查看/停用恢复/支持；空间查看/冻结解冻；组织查看/自有组织生命周期；配置查看；邮件查看/重试；审计；管理员名册 | 授予或撤销任何平台角色；指派历史数据；修改注册策略；API 管理 |
-| `support` 支持 | 概览；账户查看；找回邮件与结束会话；空间、组织、邮件查看 | 停用账户；任何修改配置或空间状态的操作 |
-| `auditor` 审计查看 | 概览、账户、空间、组织、配置、邮件、审计、管理员名册的只读 | 任何写操作 |
+| `access_admin` 账户与访问管理员 | 概览；账户查看/停用恢复/支持；空间查看/冻结解冻；组织查看/自有组织生命周期；配置查看；邮件查看/重试；应用运行记录查看；审计；管理员名册 | 授予或撤销任何平台角色；指派历史数据；修改注册策略；API 管理 |
+| `support` 支持 | 概览；账户查看；找回邮件与结束会话；空间、组织、邮件、应用运行记录查看 | 停用账户；任何修改配置或空间状态的操作 |
+| `auditor` 审计查看 | 概览、账户、空间、组织、配置、邮件、应用运行记录、审计、管理员名册的只读 | 任何写操作 |
 | `api_platform_admin` API 平台管理员 | 概览；`api_platform.manage` | 账户、空间与配置管理 |
 
 权限 ID：`platform.overview.view`、`platform.users.view|manage|support`、`platform.workspaces.view|manage|claim`、
-`platform.orgs.view|manage`、`platform.config.view|manage`、`platform.mail.view|manage`、`platform.audit.view`、
-`platform.roles.view|assign|assign_super`、`api_platform.manage`。与草案（admin-coverage.md §3.1）相比新增
+`platform.orgs.view|manage`、`platform.config.view|manage`、`platform.mail.view|manage`、`platform.apps.view`、
+`platform.audit.view`、`platform.roles.view|assign|assign_super`、`api_platform.manage`。与草案（admin-coverage.md §3.1）相比新增
 `platform.orgs.manage`（组织生命周期路由是写操作，不能挂在只读权限上）和 `platform.workspaces.claim`
 （指派历史数据是业务内容的交付，只属于最高管理员；`.manage` 只剩冻结与解冻），理由写在模块文档里。
+
+`platform.apps.view` 读「应用运行」「流程运行」两页（`synwevo_identity/admin_runs.py`，五个只读路由），由已能读邮件投递的
+三个角色与最高管理员持有，`api_platform_admin` 不持有。这两页只显示运行的元数据——哪个操作、状态、时间、错误代码、入口、
+账户与空间——其中包括个人 Agent 操作的操作名与时间，但从不显示对话正文，也不显示任何输入、输出、失败说明或用户起的名称。
+授权拒绝（403）与输入校验失败（422）发生在运行行建立之前，不留下运行行，所以页面上的「失败」只统计处理过程中的失败。
 
 强制点与规则：
 

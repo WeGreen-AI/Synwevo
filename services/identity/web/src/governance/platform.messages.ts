@@ -10,9 +10,9 @@ export const platformMessages = {
   "审计查看": { en: "Audit viewer", "zh-Hant": "稽核檢視" },
   "API 平台管理员": { en: "API platform administrator", "zh-Hant": "API 平台管理員" },
   "全部平台管理能力，包括授予和撤销管理员角色。": { en: "Every platform management capability, including granting and revoking administrator roles.", "zh-Hant": "全部平台管理能力，包括授予和撤銷管理員角色。" },
-  "管理账户、工作空间、组织和邮件，查看审计；不能授予管理员角色。": { en: "Manages accounts, workspaces, organizations and mail, and reads the audit log; cannot grant administrator roles.", "zh-Hant": "管理帳戶、工作空間、組織和郵件，檢視稽核；不能授予管理員角色。" },
-  "查看账户与工作空间，发送找回邮件、结束会话；不能停用账户。": { en: "Views accounts and workspaces, sends recovery mail and ends sessions; cannot suspend accounts.", "zh-Hant": "檢視帳戶與工作空間，傳送找回郵件、結束工作階段；不能停用帳戶。" },
-  "只读：概览、账户、工作空间、组织、配置、邮件、审计与管理员名册。": { en: "Read-only: overview, accounts, workspaces, organizations, settings, mail, audit and the administrator roster.", "zh-Hant": "唯讀：概覽、帳戶、工作空間、組織、設定、郵件、稽核與管理員名冊。" },
+  "管理账户、工作空间、组织和邮件，查看应用运行记录与审计；不能授予管理员角色。": { en: "Manages accounts, workspaces, organizations and mail, and reads application run records and the audit log; cannot grant administrator roles.", "zh-Hant": "管理帳戶、工作空間、組織和郵件，檢視應用執行記錄與稽核；不能授予管理員角色。" },
+  "查看账户、工作空间与应用运行记录，发送找回邮件、结束会话；不能停用账户。": { en: "Views accounts, workspaces and application run records, sends recovery mail and ends sessions; cannot suspend accounts.", "zh-Hant": "檢視帳戶、工作空間與應用執行記錄，傳送找回郵件、結束工作階段；不能停用帳戶。" },
+  "只读：概览、账户、工作空间、组织、配置、邮件、应用运行记录、审计与管理员名册。": { en: "Read-only: overview, accounts, workspaces, organizations, settings, mail, application run records, audit and the administrator roster.", "zh-Hant": "唯讀：概覽、帳戶、工作空間、組織、設定、郵件、應用執行記錄、稽核與管理員名冊。" },
   "只使用 API 管理平台和概览；不含账户管理。": { en: "Uses the API management console and the overview only; no account management.", "zh-Hant": "只使用 API 管理平台和概覽；不含帳戶管理。" },
 
   // ---- permissions

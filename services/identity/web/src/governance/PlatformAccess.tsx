@@ -8,6 +8,7 @@ import { useAdminData } from "./data";
 import { errText } from "./labels";
 import "./messages";
 import "./platform.messages";
+import "./runs.messages";
 /**
  * Delegated platform roles (synwevo_core.platform_access): the administrator roster and the
  * per-account platform-access dialog.
@@ -26,9 +27,9 @@ const ROLE_LABEL: Record<string, string> = {
 };
 const ROLE_SUMMARY: Record<string, string> = {
   super_admin: "全部平台管理能力，包括授予和撤销管理员角色。",
-  access_admin: "管理账户、工作空间、组织和邮件，查看审计；不能授予管理员角色。",
-  support: "查看账户与工作空间，发送找回邮件、结束会话；不能停用账户。",
-  auditor: "只读：概览、账户、工作空间、组织、配置、邮件、审计与管理员名册。",
+  access_admin: "管理账户、工作空间、组织和邮件，查看应用运行记录与审计；不能授予管理员角色。",
+  support: "查看账户、工作空间与应用运行记录，发送找回邮件、结束会话；不能停用账户。",
+  auditor: "只读：概览、账户、工作空间、组织、配置、邮件、应用运行记录、审计与管理员名册。",
   api_platform_admin: "只使用 API 管理平台和概览；不含账户管理。",
 };
 const PERMISSION_LABEL: Record<string, string> = {
@@ -38,6 +39,7 @@ const PERMISSION_LABEL: Record<string, string> = {
   "platform.orgs.view": "查看组织",
   "platform.orgs.manage": "在管理后台管理自己拥有的组织", "platform.config.view": "查看平台配置与登录方式",
   "platform.config.manage": "修改注册策略与非秘密平台配置", "platform.mail.view": "查看邮件投递", "platform.mail.manage": "重试失败的找回与验证邮件",
+  "platform.apps.view": "查看业务应用与流程的运行记录（不含内容）",
   "platform.audit.view": "查看审计记录", "platform.roles.view": "查看平台管理员与权限说明",
   "platform.roles.assign": "授予和撤销委派角色", "platform.roles.assign_super": "授予和撤销最高管理员",
   "api_platform.manage": "使用 API 管理平台",

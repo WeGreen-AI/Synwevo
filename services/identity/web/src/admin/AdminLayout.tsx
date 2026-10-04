@@ -7,7 +7,7 @@ import AdminStepUp from "../components/AdminStepUp";
 import { useLoad } from "../lib/hooks";
 import { errText } from "../governance/labels";
 import type { Held } from "../governance/access";
-import { adminGroups, adminHref, resolveAdminPage, type AdminPage, type AdminGroup } from "./navigation";
+import { ADMIN_HEADING_ID, adminGroups, adminHref, adminPlace, movedPage, resolveAdminPage, type AdminPage, type AdminGroup } from "./navigation";
 import "../governance/messages";
 import "./messages";
 import "./admin.css";
@@ -49,7 +49,12 @@ export function AdminLayout({ children, contentClassName = "" }: {
   const title = group?.items.find(item => item.id === active)?.label || "管理员中心";
   const locked = !!me?.admin_locked || !!session.data?.step_up.required;
   const heading = useRef<HTMLHeadingElement>(null);
-  const previous = useRef(pathname + search);
+  // Which page this is (navigation.ts `adminPlace`), known once the session has answered for
+  // this address. Until the first answer there is no previous place: comparing against the
+  // address as it was before the session resolved made every first load look like a move, and
+  // took focus out of a run dialog opened by its link.
+  const place = session.loading ? null : adminPlace(pathname, search, active);
+  const previous = useRef<string | null>(null);
   useEffect(() => { document.title = `${t(title)} · Synwevo Admin`; }, [t, title]);
   useEffect(() => {
     // Re-entering an old browser tab re-checks grants. Business APIs still decide each request.
@@ -58,11 +63,10 @@ export function AdminLayout({ children, contentClassName = "" }: {
     return () => window.removeEventListener("focus", check);
   }, [session.reload]);
   useEffect(() => {
-    const location = pathname + search;
-    if (previous.current !== location && !session.loading) {
-      heading.current?.focus(); previous.current = location;
-    }
-  }, [pathname, search, session.loading]);
+    if (place === null) return;
+    if (movedPage(previous.current, place)) heading.current?.focus();
+    previous.current = place;
+  }, [place]);
   const missing = session.error instanceof ApiError && !session.error.upstream && session.error.status === 404;
   if (missing || (session.data && !session.loading && !session.error && !active)) {
     return <PageState as="main"><h1>{t("页面不存在")}</h1><a href="/account">{t("前往账户设置")}</a></PageState>;
@@ -93,7 +97,7 @@ export function AdminLayout({ children, contentClassName = "" }: {
           </div>
         </div>
         <div className="admin-content acct-page">
-          <div className="admin-page-heading"><div><h1 ref={heading} tabIndex={-1}>{t(title)}</h1>
+          <div className="admin-page-heading"><div><h1 ref={heading} id={ADMIN_HEADING_ID} tabIndex={-1}>{t(title)}</h1>
             <p className="muted">{t("平台治理不授予组织、工作空间或文档内容的访问权。")}</p></div>
             <button className="btn sm" disabled={session.loading} onClick={session.reload}>{t("刷新管理权限")}</button>
           </div>

@@ -983,6 +983,10 @@ export const governanceMessages = {
     "en": "{p0}–{p1} of {p2} items",
     "zh-Hant": "{p0}–{p1} / {p2} 項"
   },
+  "{p0}–{p1} / {p2}+ 项": {
+    "en": "{p0}–{p1} of {p2}+ items",
+    "zh-Hant": "{p0}–{p1} / {p2}+ 項"
+  },
   "0 项": {
     "en": "0 items",
     "zh-Hant": "0 項"
