@@ -442,3 +442,60 @@ def test_the_agent_may_switch_a_public_link_off_after_reading_a_source(governed)
     assert done["off"] == ("awaiting_confirmation", None)
     assert _confirm_pending(g, turn)[1]["status"] == "succeeded"
     assert g.store.one("SELECT public_token_hash FROM forms WHERE id=?", (form,))["public_token_hash"] is None
+
+
+def test_a_duplicate_carries_what_a_flow_of_the_conversation_left_where_it_copies_from(governed):
+    """Review R4: a flow the conversation started copied A's form title into Alice's personal
+    workspace (legal: only she is there); a later forms.form.duplicate from personal into ``wide``
+    was asked only personal → wide, so A's title reached Oz, who is not in A. What the
+    conversation's writes left in the place a copy reads from goes along with it."""
+    from synwevo_core import data_flow
+    from .test_data_flow_runs import SECRET, TITLE, World, create as flow_create, read as flow_read
+    g = governed
+    w = World(g.client)
+    g.client.sign_in("alice")
+    policy(g, w.personal, "platform")
+    policy(g, w.wide, "platform")
+    data_flow.set_workspace_outbound(w.store, w.personal, "any", actor_id=w.alice,
+                                     revision=data_flow.workspace_outbound(w.store, w.personal)["revision"])
+    copier = w.flow([flow_read(g.people.a), flow_create("hop", w.personal, TITLE)], "copier-fixture-r4-dup")
+    start = call("run_operation", {"operation": "agent.flow.start",
+                                   "input": {"flow_id": copier, "version": 1, "idempotency_key": "fixture-r4-dup"}}, tid="start")
+    cid, turn = begin(g, [start, say("started")])
+    assert advance(g, turn)["status"] == "waiting_confirmation"
+    assert _confirm_pending(g, turn)[1]["status"] == "succeeded"
+    advance(g, turn)
+    w.flows.tick()
+    assert SECRET in w.titles(w.personal)
+    fid = w.store.one("SELECT id FROM forms WHERE workspace_id=? AND title=?", (w.personal, SECRET))["id"]
+    dup = call("run_operation", {"operation": "forms.form.duplicate", "workspace_id": w.personal,
+                                 "input": {"form_id": fid, "target_workspace_id": w.wide}}, tid="dup")
+    _, later = begin(g, [dup, say("done")], conversation=cid)
+    advance(g, later)
+    status, code = calls(g, later)["dup"]
+    assert status != "succeeded" and code == "transfer_audience_denied", calls(g, later)
+    assert SECRET not in w.titles(w.wide)
+
+
+def test_a_deadline_change_is_asked_as_outward_before_the_card(governed):
+    """Review R4: forms.request.extend was refused as an outward send only by its service, after
+    the person had confirmed a card that called the transfer allowed. The Agent asks it as
+    outward before showing anything, like switching a public link on."""
+    from .test_forms import DEFINITION
+    g = governed
+    setup(g)
+    g.client.sign_in("alice")
+    small = g.people.ident.create_workspace("Fixture Alice only", owner_id=g.people.uid("alice"))["id"]
+    form = op(g.client, "forms.form.create", {"title": "Fixture request form", "definition": DEFINITION}, ws=small)["output"]["id"]
+    op(g.client, "forms.form.publish", {"form_id": form, "draft_rev": 1}, ws=small)
+    rid = op(g.client, "forms.request.create", {"form_id": form, "recipient": {"email": "outside@example.test"}},
+             ws=small)["output"]["request_id"]
+    ext = call("run_operation", {"operation": "forms.request.extend", "workspace_id": small,
+                                 "input": {"request_id": rid, "due_at": 4102444800.0}}, tid="ext")
+    _, turn = begin(g, [read(g.people.a, "read-a"), ext, say("Extended.")])
+    advance(g, turn)
+    assert not g.store.one("SELECT 1 FROM agent_tool_calls WHERE turn_id=? AND status='awaiting_confirmation'", (turn["turn_id"],)), \
+        "no card promising a transfer the service will refuse"
+    status, code = calls(g, turn)["ext"]
+    assert status != "succeeded" and code == "transfer_audience_external", calls(g, turn)
+    assert g.store.one("SELECT due_at FROM form_requests WHERE id=?", (rid,))["due_at"] != 4102444800.0

@@ -178,6 +178,11 @@ class Operation:
     #: flow has yet to fill in is a reference, so the answer for it must be True. None: every
     #: call of an ``external`` operation does. See :meth:`outward`.
     outward_when: Callable[[dict], bool] | None = None
+    #: A plain ``write`` whose result a link holder sees (a form request's deadline on its fill
+    #: page): not an external send for idempotency, but content it carries from other workspaces
+    #: is asked as an outward send all the same — by its service and, through :meth:`outward`,
+    #: by the Agent's confirmation card and the flow engine before they ask anyone (review R4).
+    shown_to_link_holders: bool = False
 
     def __post_init__(self):
         _text(self.title, what=f"operation {self.id} title")
@@ -203,7 +208,7 @@ class Operation:
         """Whether this call, with this input, reaches people outside the workspace it runs in,
         so that content it carries from other workspaces is asked as an outward send."""
         if self.side_effect != "external":
-            return False
+            return self.shown_to_link_holders
         if self.outward_when is None:
             return True
         try:

@@ -236,6 +236,7 @@ def register(registry, forms: Forms) -> None:
     op(id="forms.request.extend", title=T("修改截止时间", "修改截止時間", "Change the deadline"),
        summary="Change or clear a request's deadline; an expired request reopens.",
        input=ExtendRequest, need="write", side_effect="write", agent="confirm", object_kind="form_request",
+       shown_to_link_holders=True,
        handler=lambda c, i: forms.extend_request(c, i.request_id, i.due_at))
     op(id="forms.request.reissue_link", title=T("重新生成链接", "重新產生連結", "Reissue the link"),
        summary="Replace a request's link; the old link stops working.",
