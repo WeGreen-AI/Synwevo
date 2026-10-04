@@ -85,6 +85,17 @@ class Flows(Triggers):
             raise error("flow_version_not_found", 404)
         return Definition.model_validate(decode(row["spec_json"]))
 
+    def _stored_step(self, run):
+        """The run's pinned definition and the step it is at — or, for a row that no longer fits
+        its definition (a damaged row, a version a later or earlier release stored that this one
+        cannot read), a refusal for that run alone. It must never escape a worker's loop: one such
+        row would stop every person's runs (CR-048 DF-B4)."""
+        try:
+            spec = self._spec(run["flow_id"], run["version"])
+            return spec, next(st for st in spec.steps if st.id == run["step_id"])
+        except (StopIteration, ValueError) as exc:          # pydantic's ValidationError is a ValueError
+            raise error("flow_definition_invalid", 409) from exc
+
     def _operation(self, ref, user_id, *, read=False):
         op = self.caps.registry.get(ref.operation)
         if not op or op.version != ref.operation_version:
@@ -243,11 +254,15 @@ class Flows(Triggers):
         history = self.store.all("SELECT * FROM flow_history WHERE run_id=? AND seq>? ORDER BY seq LIMIT ?",
                                 (run_id, after, limit + 1))
         steps = []
-        positions = {s.id: n for n, s in enumerate(self._spec(row["flow_id"], row["version"]).steps)}
+        try:
+            spec = self._spec(row["flow_id"], row["version"])
+        except (ValueError, ServiceError):
+            spec = None                                     # a damaged row still shows what it holds
+        positions = {s.id: n for n, s in enumerate(spec.steps)} if spec else {}
         stored_steps = self.store.all("SELECT * FROM flow_steps WHERE run_id=?", (run_id,))
-        for step in sorted(stored_steps, key=lambda s: positions[s["step_id"]]):
+        for step in sorted(stored_steps, key=lambda s: (positions.get(s["step_id"], len(positions)), s["step_id"])):
             public = {k: step[k] for k in ("step_id", "status", "attempt", "checks", "op_run_id", "error_code")}
-            definition = self._spec(row["flow_id"], row["version"]).steps[positions[step["step_id"]]]
+            definition = spec.steps[positions[step["step_id"]]] if step["step_id"] in positions else None
             receipt = self._prior_op(row, definition, step) if isinstance(definition, CallStep) else None
             public["operation_status"] = receipt["status"] if receipt else None
             if receipt:
@@ -534,8 +549,7 @@ class Flows(Triggers):
                 self._policy(run)
                 if self.clock() >= run["deadline"]:
                     raise error("flow_deadline_exceeded")
-                spec = self._spec(run["flow_id"], run["version"])
-                step = next(s for s in spec.steps if s.id == run["step_id"])
+                spec, step = self._stored_step(run)
                 ts = self.clock()
                 t.execute("INSERT OR IGNORE INTO flow_steps (run_id,step_id,status,started_at,updated_at) VALUES (?,?,'queued',?,?)",
                           (run["id"], step.id, ts, ts))
@@ -702,8 +716,14 @@ class Flows(Triggers):
                 run = self._fenced(claim)
             except LostLease:
                 return
-            spec = self._spec(run["flow_id"], run["version"])
-            step = next(s for s in spec.steps if s.id == run["step_id"])
+            try:
+                spec, step = self._stored_step(run)
+            except ServiceError as broken:
+                # Nothing of the run can be trusted to say which step failed: it ends here, with
+                # the code that says why, and every other run goes on.
+                self._release(t, run, "failed", code=broken.code)
+                self._history(t, run, "step_failed", "failed", code=broken.code)
+                return
             saved = self._step_row(run)
             ts = self.clock()
             if not saved:

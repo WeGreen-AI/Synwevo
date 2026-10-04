@@ -275,8 +275,10 @@ class Triggers:
             pairs = {(e["workspace_id"], e["type"]) for e in events if e["version"] == 1 and e["type"].startswith(e["app"] + ".")}
             runs = self.store.all("SELECT * FROM flow_runs WHERE status IN ('waiting_input','waiting_approval') ORDER BY due_at LIMIT 200")
             for run in runs:
-                spec = self._spec(run["flow_id"], run["version"])
-                step = next(s for s in spec.steps if s.id == run["step_id"])
+                try:
+                    _, step = self._stored_step(run)
+                except ServiceError:
+                    continue                                # it fails alone when its own check falls due
                 if isinstance(step, WaitStep) and any((step.read.workspace_id, typ) in pairs for typ in step.event_types):
                     t.execute("UPDATE flow_runs SET due_at=MIN(due_at,?) WHERE id=?", (self.clock(), run["id"]))
             self.caps.advance(t, consumer, events[-1]["seq"])
