@@ -291,6 +291,20 @@ def test_a_workspace_has_one_address_checked_at_a_time(hub, monkeypatch, slow_na
     assert hub.c.post(BASE, json={"url": rx.url}, headers=hub.keys["admin"]).status_code == 201
 
 
+def test_a_management_check_holds_its_place_only_for_the_checks_own_deadline(hub, monkeypatch, slow_names):
+    """Review R4: a management check took a send's whole deadline (15 s by default) while holding
+    one of the process's four places, so four workspaces naming slow names kept every other
+    tenant's create, change of address and resume at 429. It gets its own short deadline, as the
+    suite's does."""
+    monkeypatch.setattr(W, "timeout_s", lambda: 30.0)
+    monkeypatch.setattr(W, "CHECK_TIMEOUT_S", 0.3)
+    started = time.monotonic()
+    r = hub.c.post(BASE, json={"url": "https://h.slow.fixture.test/hook"}, headers=hub.keys["admin"])
+    assert time.monotonic() - started < 5, "answered at the check's deadline, not the send's"
+    assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_url", r.text
+    assert W._CHECKS._value == W.CHECK_CONCURRENCY, "the place is free again"
+
+
 def test_owners_that_fill_the_pool_between_them_cost_another_workspaces_receiver_nothing(hub, monkeypatch, slow_names):
     """R3-WH-2, the reviewer's case: eight workspaces, each inside its own budget of lookups,
     between them hold every resolver of the process (a business application's or Docs'). A healthy

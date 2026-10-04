@@ -95,6 +95,7 @@ HEARTBEAT_S = 30
 MAX_SUBSCRIPTIONS = 16
 LOCAL_RETRY_S = 15                       # after a fault of this server's own, which is not an attempt
 CHECK_CONCURRENCY = 4                    # addresses being checked for management calls at once, one a workspace
+CHECK_TIMEOUT_S = 5.0                    # an address looked up for a management call: the caller is waiting
 # Whom a lookup is counted for in the resolver pool every application of the process shares: a
 # subscription's workspace, or — for an endpoint the operator configured — that endpoint itself.
 DEPLOYMENT_OWNER = "deployment:"
@@ -231,7 +232,10 @@ def _look_up(url: str, workspace: str) -> list:
     that its URL is invalid."""
     with _checking(workspace):
         try:
-            return resolve_checked(url, owner=workspace)
+            # The check's own short deadline, not a send's whole one: one of the process's few
+            # places is held only that long, so names that answer slowly cannot keep every other
+            # tenant's management calls at 429 (review R4; the suite's rule).
+            return resolve_checked(url, owner=workspace, deadline=time.monotonic() + CHECK_TIMEOUT_S)
         except ResolverBusy as e:
             raise ServiceError(429, "destination_check_busy", "正在检查的回调地址过多，请稍后再试",
                                {"retry_after": LOCAL_RETRY_S}) from e
