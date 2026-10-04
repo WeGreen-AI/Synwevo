@@ -26,8 +26,9 @@ Two kinds of destination receive job events, and they differ in who owns them:
 
 Retries: every non-2xx except 410 is retried on 5s, 5m, 30m, 2h, 5h, 10h, 14h, 20h, 24h (±20 %
 jitter; ``Retry-After`` on 429/503 is honoured as a minimum). 410 disables a subscription. A
-subscription that has failed for three days is disabled with a recorded reason. The receiver's
-response body is never read or stored.
+subscription that has failed for three days is disabled with a recorded reason. A delivery this
+server could not try (no resolver free, ``resolver_busy``) is not an attempt and is not held against
+the subscription. The receiver's response body is never read or stored.
 
 Delivery never blocks a job: the artifacts stay downloadable regardless of what a receiver does.
 """
@@ -633,6 +634,10 @@ class WebhookDispatcher:
             self._attempt_failed(d, sub, attempts, code, err, retriable=(code != 410 and not single_attempt),
                                  retry_after=wait, duration_ms=_ms(started))
             return False
+        except ResolverBusy:
+            # No resolver was free in time — this server's fault, not the receiver's, as in the
+            # suite: not an attempt, and nothing on the subscription's record.
+            return self._untried(d, "resolver_busy", single_attempt)
         except UrlUnresolvable as e:
             self._attempt_failed(d, sub, attempts, None, str(e)[:300], retriable=not single_attempt, duration_ms=_ms(started))
             return False
@@ -701,6 +706,16 @@ class WebhookDispatcher:
                 self._drop(d, "predates_subscription")
                 return None, None
         return sub, event
+
+    def _untried(self, d: dict, error: str, single_attempt: bool) -> bool:
+        """This server could not try: the delivery waits `LOCAL_RETRY_S` with its attempts as they
+        were; a single attempt (a ping), which nobody would come back to, ends there and says why."""
+        attempts = d.get("attempts") or 0
+        if single_attempt:
+            self._finish(d, "failed", attempts=attempts, error=error)
+        else:
+            self._finish(d, "pending", attempts=attempts, error=error, next_attempt_at=self.clock() + LOCAL_RETRY_S)
+        return False
 
     def next_delay(self, attempts: int, retry_after: float | None = None) -> float | None:
         """Seconds until the next attempt after `attempts` failed ones; None when exhausted."""
