@@ -95,7 +95,8 @@ rechecked. Application configuration/template versions belong explicitly in oper
 
 * Transactional calls, successful step history, next-step transition and outbox commit together.
   A failed attempt rolls back business writes; its attempt/error and consumed read budget are
-  recorded separately. Explicit retry codes apply only to transactional server failures, with
+  recorded separately. A refusal (401/403) inside the attempt does not spend the attempt: nothing
+  was done, the run is blocked, and resuming it once the refusal is lifted asks again. Explicit retry codes apply only to transactional server failures, with
   exponential bounded backoff, at most five attempts, per-run call budget and deadline.
 * Non-transactional calls persist a dispatch marker before I/O. An expired marker is never
   dispatched again. A successful `op_runs` receipt permits finishing the step; a missing,

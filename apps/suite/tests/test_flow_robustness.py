@@ -249,3 +249,58 @@ def test_a_stored_reader_this_release_cannot_read_refuses_its_source_alone(flow)
     assert state(f, healthy)[0] == "succeeded"
     view = f.e.run(rid, user_id=f.uid)                       # metadata stays, the snapshot is hidden
     assert [s["output"] for s in view["steps"] if s["step_id"] == "write"] == [None]
+
+
+# ---------------------------------------------------------------- a refusal inside an attempt (R3-FE-05)
+
+def test_a_refusal_inside_a_transactional_attempt_does_not_spend_it(flow):
+    """The handler refuses (a record-level 403) inside the attempt, which rolls back: nothing was
+    done, so nothing of max_attempts (1) is spent. Once access is granted, resuming asks again and
+    the write is made, once."""
+    from .test_flows import fixture_operation
+    f = flow
+    allowed = {"yes": False}
+
+    def guarded(c, i):
+        if not allowed["yes"]:
+            raise ServiceError(403, "fixture_record_forbidden", "fixture record-level refusal")
+        c.store.execute("INSERT INTO fixture_flow_records (id,workspace_id,owner_id,text,state) VALUES (?,?,?,?,'pending')",
+                        ("fixture_guarded", c.workspace_id, c.user_id, i.text))
+        return {"ok": True}
+    fixture_operation(f, "guarded", guarded)
+    rid = f.start(f.create([f.write(operation="fixtureflow.guarded", result_read=None)]))
+    f.tick()
+    assert state(f, rid) == ("blocked", "fixture_record_forbidden")
+    allowed["yes"] = True
+    assert f.e.resume(rid, user_id=f.uid)["status"] == "queued"   # used to answer flow_attempts_exhausted
+    f.tick()
+    assert state(f, rid) == ("succeeded", None)
+    assert f.store.one("SELECT COUNT(*) AS n FROM fixture_flow_records WHERE id='fixture_guarded'")["n"] == 1
+
+
+def test_a_result_read_that_would_be_refused_is_asked_before_its_step_runs(flow):
+    """A read step in A with literal input, whose result read in A takes a value read in B: the
+    B -> A question is asked before the step runs, so the refused step spends neither its attempt
+    nor a call. Once B's owner opens B's policy, resuming finishes the run."""
+    f = flow
+    f.store.execute("UPDATE memberships SET role='editor' WHERE workspace_id=? AND user_id=?", (f.p.b, f.uid))
+    mine = f.invoke("fixtureflow.create", {"text": "A"})["id"]
+    pointer = f.invoke("fixtureflow.create", {"text": mine}, who="oscar", ws=f.p.b)["id"]
+    rid = f.start(f.create([
+        {"id": "readb", "kind": "call", "operation": "fixtureflow.get", "workspace_id": f.p.b, "input": {"id": pointer}},
+        {"id": "reada", "kind": "call", "operation": "fixtureflow.get", "workspace_id": f.ws, "input": {"id": mine},
+         "result_read": {"operation": "fixtureflow.get", "workspace_id": f.ws, "input": {"id": {"$ref": "steps.readb.text"}}}},
+    ]))
+    f.e.tick(limit=1)
+    assert f.row(rid)["step_id"] == "reada"
+    spent = f.row(rid)["calls_used"]
+    f.tick()
+    assert state(f, rid) == ("blocked", "transfer_audience_denied")      # B shares only with its audience
+    assert f.row(rid)["calls_used"] == spent
+    from synwevo_core import data_flow
+    data_flow.set_workspace_outbound(f.store, f.p.b, "any", actor_id=f.p.uid("oscar"),
+                                     revision=data_flow.workspace_outbound(f.store, f.p.b)["revision"])
+    assert f.e.resume(rid, user_id=f.uid)["status"] == "queued"
+    f.tick()
+    assert state(f, rid) == ("succeeded", None)
+    assert f.result(rid, "reada")["id"] == mine

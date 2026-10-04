@@ -519,6 +519,10 @@ class Flows(Triggers):
         if step.result_read and step.result_read.workspace_id != step.workspace_id:
             # The receipt of one workspace drives a read in another, with all the step was given.
             self._transfer(run, step.result_read.workspace_id, also={step.workspace_id})
+        elif step.result_read and self._takes(run, step.result_read.input, own=("receipt",)):
+            # The question _complete_call asks of the result read, asked before the step runs: a
+            # refusal then costs the run neither the step's attempt nor its call (R3-FE-05).
+            self._transfer(run, step.result_read.workspace_id)
         return carried
 
     def _resolve(self, run, value, **extra):
@@ -804,7 +808,11 @@ class Flows(Triggers):
             # The failed transactional attempt was rolled back with its business data. Its
             # bounded attempt accounting and error history are committed separately here.
             op = self.caps.registry.get(step.operation) if isinstance(step, CallStep) else None
-            if isinstance(exc, AttemptFailed):
+            if isinstance(exc, AttemptFailed) and exc.status not in (401, 403):
+                # A refusal (the handler's own, or a transfer question asked inside the attempt)
+                # rolled back with the attempt: nothing was done, so nothing of max_attempts is
+                # spent, and resuming the blocked run once the refusal is lifted asks again
+                # (R3-FE-05). Its calls stay spent.
                 attempts = exc.attempt
             if charges:
                 self.store.execute("UPDATE flow_runs SET calls_used=calls_used+? WHERE id=?", (charges, run["id"]))
