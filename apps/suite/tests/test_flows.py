@@ -637,6 +637,32 @@ def test_other_peoples_events_cannot_spend_a_waiting_run_faster_than_half_its_po
     assert f.row(rid)["status"] == "succeeded"
 
 
+def test_an_event_is_about_a_wait_only_when_it_names_everything_the_wait_reads():
+    """Review R4: matching any shared id let every change in a table wake a wait on one record of
+    it (record events carry their table_id), so co-editors still drained the run's budget."""
+    from synwevo_core.flows.triggers import names_read
+    record_wait = {"fixture-table-T", "fixture-record-R"}
+    assert names_read(record_wait, {"object_id": "fixture-record-R", "data": {"table_id": "fixture-table-T", "record_id": "fixture-record-R"}})
+    assert not names_read(record_wait, {"object_id": "fixture-record-S", "data": {"table_id": "fixture-table-T", "record_id": "fixture-record-S"}})
+    # a submission names the request a forms wait reads in its payload
+    assert names_read({"fixture-request"}, {"object_id": "fixture-submission", "data": {"submission_id": "fixture-submission",
+                                                                                        "request_id": "fixture-request"}})
+    assert not names_read(set(), {"object_id": "x", "data": {}}), "nothing read: never about it"
+
+
+def test_a_damaged_wait_row_does_not_stop_the_tick_for_everyone(flow):
+    """Review R4: the wake rule parsed a waiting step's stored reader unguarded; one damaged row
+    made every tick raise before any run was claimed (the R3-FE-01 stall)."""
+    f = flow
+    broken = f.start(f.create([f.write(), f.waiting(), f.write("next")]), key="broken")
+    other = f.start(f.create([f.write(), f.waiting(), f.write("next")]), key="other")
+    f.tick()
+    f.store.execute("UPDATE flow_steps SET reader_json='fixture-not-json' WHERE run_id=? AND step_id='wait'", (broken,))
+    f.invoke("fixtureflow.decide", {"id": f.result(other, "write")["id"], "state": "approved"}, who="bob")
+    f.tick()
+    assert f.row(other)["status"] == "succeeded"
+
+
 def test_wrong_workspace_or_forged_event_cannot_approve_wait(flow):
     f = flow
     rid = f.start(f.create([f.write(), f.waiting(), f.write("next")]))

@@ -20,6 +20,21 @@ def refusal(code):
     return ServiceError(409, code, "流程触发条件或授权不可用，请检查设置")
 
 
+def names_read(target: set[str], event: dict) -> bool:
+    """Whether one event is about what a wait reads: it names every id the read names."""
+    return bool(target) and target <= {event.get("object_id")} | _strings(event.get("data"))
+
+
+def _read_target(reader_json) -> set[str]:
+    """The ids a wait's last check read, from its stored reader; empty when the row cannot be read
+    (a damaged row or one another release wrote must not stop the tick for everyone)."""
+    try:
+        reader = json.loads(reader_json or "{}")
+    except (TypeError, ValueError):
+        return set()
+    return _strings(reader.get("input")) if isinstance(reader, dict) else set()
+
+
 def _strings(value) -> set[str]:
     """Every string in a resolved read input — the ids a wait is reading."""
     if isinstance(value, str):
@@ -352,13 +367,14 @@ class Triggers:
                                      (run["id"], run["step_id"])).fetchone()
                     soonest = self.clock()
                     if last and last["checks"]:
-                        target = _strings((json.loads(last["reader_json"] or "{}") or {}).get("input"))
-                        # the event's object and the ids its payload names (payloads carry ids only):
-                        # a submission event names the request a forms wait is reading
-                        about = set().union(*({e["object_id"]} | _strings(e["data"]) for e in events
-                                              if (e["workspace_id"], e["type"]) in
-                                              {(step.read.workspace_id, typ) for typ in step.event_types}))
-                        if not (about & target):
+                        target = _read_target(last["reader_json"])
+                        # About the record: one event that names every id the read names — its
+                        # object and the ids its payload carries (payloads carry ids only). A
+                        # submission names the request a forms wait reads; a record event names its
+                        # table *and* its record, so another record of the same table is not about
+                        # this one (review R4). An unreadable reader row is simply not about it.
+                        listed = {(step.read.workspace_id, typ) for typ in step.event_types}
+                        if not any(names_read(target, e) for e in events if (e["workspace_id"], e["type"]) in listed):
                             soonest = max(soonest, last["updated_at"] + step.poll_s / 2)
                     t.execute("UPDATE flow_runs SET due_at=MIN(due_at,?) WHERE id=?", (soonest, run["id"]))
             self.caps.advance(t, consumer, events[-1]["seq"])
