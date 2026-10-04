@@ -414,7 +414,10 @@ class Flows(Triggers):
             step = specs[version][row["step_id"]]
             used = {path[1] for path in references(step.model_dump(mode="json")) if path[0] in ("steps", "outcome")}
             if row["failed"] and step.on_error:
-                used.add(step.id)
+                # A handled failure is an answer from where the step ran. A result read it never
+                # reached told it nothing; a read that did happen is counted from its stored reader.
+                found.add(step.workspace_id if isinstance(step, CallStep)
+                          else step.read.workspace_id if isinstance(step, WaitStep) else None)
             for other in used:
                 found |= self._places(specs[version].get(other))
         return found - {None}
@@ -739,7 +742,12 @@ class Flows(Triggers):
             if charges:
                 self.store.execute("UPDATE flow_runs SET calls_used=calls_used+? WHERE id=?", (charges, run["id"]))
             state, due = "failed", ts
-            uncertain = (saved["status"] in ("executing", "operation_wait", "unknown")
+            # Refused while waiting for a dispatched operation's receipt (a policy closed, a role
+            # withdrawn): the operation's own run still records its outcome, so nothing is
+            # uncertain. The step keeps waiting for it, and the run resumes from there once the
+            # refusal is lifted (CR-048 DF-B3) instead of asking for a reconciliation for ever.
+            waiting = saved["status"] == "operation_wait" and exc.status in (401, 403)
+            uncertain = (not waiting and saved["status"] in ("executing", "operation_wait", "unknown")
                          and exc.code not in DEFINITE.values())
             if exc.code == "flow_outcome_unknown" or uncertain:
                 state = "unknown"
@@ -748,7 +756,8 @@ class Flows(Triggers):
             elif not uncertain and op and op.transactional and exc.status >= 500 and exc.code in step.retry_codes and attempts < step.max_attempts:
                 state, due = "retrying", ts + min(3600, step.backoff_s * 2 ** max(0, attempts - 1))
             t.execute("UPDATE flow_steps SET status=?,attempt=?,error_code=?,updated_at=? WHERE run_id=? AND step_id=?",
-                      ("unknown" if state == "unknown" else "failed", attempts, exc.code, ts, run["id"], step.id))
+                      ("operation_wait" if waiting else "unknown" if state == "unknown" else "failed", attempts,
+                       exc.code, ts, run["id"], step.id))
             # A dispatched external call remains recoverable by its original key, never a retry.
             if uncertain:
                 t.execute("UPDATE flow_steps SET status='unknown' WHERE run_id=? AND step_id=?", (run["id"], step.id))
@@ -784,8 +793,7 @@ class Flows(Triggers):
             self._policy(run)
             if self.clock() >= run["deadline"]:
                 raise error("flow_deadline_exceeded")
-            spec = self._spec(run["flow_id"], run["version"])
-            step = next(s for s in spec.steps if s.id == run["step_id"])
+            spec, step = self._stored_step(run)
             saved = self._step_row(run)
             if isinstance(step, FailStep):
                 raise error("flow_not_resumable")

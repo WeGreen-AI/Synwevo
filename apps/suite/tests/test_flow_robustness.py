@@ -56,3 +56,55 @@ def test_a_stored_definition_this_release_cannot_read_fails_its_run_alone(flow):
     assert state(f, broken) == ("failed", "flow_definition_invalid")
     assert state(f, healthy)[0] == "succeeded"
     assert f.e.run(broken, user_id=f.uid)["status"] == "failed"
+
+
+# ---------------------------------------------------------------- a refusal while waiting (DF-B3)
+
+def _set_outbound(f, ws, outbound):
+    from synwevo_core import data_flow
+    data_flow.set_workspace_outbound(f.store, ws, outbound, actor_id=f.uid,
+                                     revision=data_flow.workspace_outbound(f.store, ws)["revision"])
+
+
+def test_a_refusal_while_waiting_for_a_receipt_keeps_the_wait_and_resumes_from_it(flow):
+    """CR-048 DF-B3: A is closed while its job runs; the poll is refused. The job then fails
+    definitely and A reopens: resuming takes the job's own outcome (on_error), not a reconciliation
+    request that never goes away."""
+    from synwevo_core.errors import ServiceError
+    from .test_flows_outcomes import job, jobs, steps_of
+    f = flow
+    started = jobs(f)
+    _set_outbound(f, f.ws, "any")
+    cross = {"result_read": {"operation": "fixtureflow.get", "workspace_id": f.p.b, "input": {"id": {"$ref": "receipt.job"}}}}
+    rid = f.start(f.create([job(f, on_error="cleanup", **cross), f.write("after", next="end"), f.write("cleanup")]))
+    f.tick()
+    assert steps_of(f, rid)["job"][0] == "operation_wait"
+    _set_outbound(f, f.ws, "none")
+    f.clock.advance(31)
+    f.tick()
+    assert state(f, rid) == ("blocked", "transfer_source_closed")
+    assert steps_of(f, rid)["job"][0] == "operation_wait", "the step still waits for its receipt"
+    _set_outbound(f, f.ws, "any")
+    f.caps.update_run(started[0], "failed", error=ServiceError(422, "fixture_job_failed", "fixture"))
+    assert f.e.resume(rid, user_id=f.uid)["status"] == "queued"
+    f.tick()
+    assert state(f, rid)[0] in ("succeeded", "partial"), state(f, rid)
+    assert steps_of(f, rid)["job"] == ("failed", "flow_operation_failed") and steps_of(f, rid)["cleanup"][0] == "succeeded"
+
+
+def test_a_role_withdrawn_while_waiting_and_restored_lets_the_run_finish(flow):
+    from .test_flows_outcomes import job, jobs, steps_of
+    f = flow
+    started = jobs(f)
+    f.p.ident.add_member(f.ws, f.p.uid("bob"), "owner")
+    rid = f.start(f.create([job(f), f.write("after")]))
+    f.tick()
+    f.store.execute("UPDATE memberships SET role='viewer' WHERE workspace_id=? AND user_id=?", (f.ws, f.uid))
+    f.clock.advance(31)
+    f.tick()
+    assert state(f, rid)[0] == "blocked" and steps_of(f, rid)["job"][0] == "operation_wait"
+    f.store.execute("UPDATE memberships SET role='owner' WHERE workspace_id=? AND user_id=?", (f.ws, f.uid))
+    f.caps.update_run(started[0], "succeeded", output={"job": started[0], "issues": 0})
+    f.e.resume(rid, user_id=f.uid)
+    f.tick()
+    assert state(f, rid)[0] == "succeeded", (state(f, rid), steps_of(f, rid))
