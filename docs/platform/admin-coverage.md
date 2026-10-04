@@ -155,13 +155,13 @@
 | D3 | 高 | **注册策略 `closed` 与 `invite` 的执行完全相同（已复核）。** 两处都只判断 `!= "open"`（`ac/registration.py:66`、`ac/external.py:580`），所以 `closed` 下邀请仍能创建账号。 |
 | D4 | 高 | **API 控制台轮换时写死零过渡期。** `Credentials.tsx:19` 传 `grace_seconds:0`，`Requests.tsx:27` 传 `overlap_s:0`，而后端支持最长 24 h。每次轮换都会立即中断正在运行的集成。 |
 | D5 | 高 | **命令行可绕过所有者同意。** `dw/cli.py` 的 `apikey create` 和 `ac/cli.py` 的 `client register --service` 创建的凭据不绑定审批，控制台也不标记。CLI 还能扩大未绑定服务账户的 scope 或换掉空间。<br>**修复状态（2026-10-04，7695c54）：** 服务账户重新登记只能改名或收窄，不能换空间、换应用或扩权；目录接口要求有效的空间批准。CLI 是否仍可直接签发、既有未绑定凭据如何处置待所有者决定（§4.2 第 8 项）。 |
-| D6 | 高 | **CLI 应用开关绕过服务层。**<br>• `app disable --workspace` 直接删行，不写安全日志（`ac/cli.py:221-226`），从备份恢复时可能被静默重新启用。<br>• `app grant` 不检查成员身份、冻结状态和空间是否启用了该应用。<br>**修复状态（2026-10-04，5d49d48）：** `app disable --workspace` 走服务层并写安全日志，恢复备份后重放；`app grant` 走与成员页相同的规则（成员、已启用、空间未冻结）。 |
+| D6 | 高 | **CLI 应用开关绕过服务层。**<br>• `app disable --workspace` 直接删行，不写安全日志（`ac/cli.py:221-226`），从备份恢复时可能被静默重新启用。<br>• `app grant` 不检查成员身份、冻结状态和空间是否启用了该应用。<br>**修复状态（2026-10-04，5d49d48）：** `app disable --workspace` 走服务层并写安全日志，恢复备份后重放；`app grant` 走与成员页相同的规则（成员、已启用、空间未冻结；拒绝文案 f7f3c7f）。 |
 | D7 | 高 | **停用 messages 应用后出现两个写入源。** 停用后 `messages_launch_url()` 返回 None，账户源上旧的 `/api/auth/messaging` 路由重新可写；消息进程却继续服务已有会话。<br>**修复状态（2026-10-04，1d5c03b，第一步）：** 账户源的旧会话接口与页面只看 Message 是否登记，停用后返回 410 / 交给 Message 源，不再成为第二写入源。停用是否立即终止既有会话待所有者决定（§4.2 第 7 项）。 |
 | D8 | 高 | **5 个管理写操作在提交后才写审计（已复核）。** 涉及 status、claim、freeze/unfreeze、platform-role、revoke-sessions。`audit()` 失败会抛出异常，此时变更已生效却没有记录。 |
 | D9 | 高 | **`keys retire` 没有保护。** 可以退役当前正在用的签名密钥，也可以在最长令牌有效期结束前退役。<br>**修复状态（2026-10-04）：** `Keys.retire` 拒绝当前密钥（409）、未知 kid（404）以及签发的令牌可能仍有效的 retiring 密钥（轮换后 300 + 60 秒）；`--force --yes` 仅对 retiring 密钥生效并记 `forced`；轮换提示改为 `keys retire --kid`。 |
 | D10 | 高 | **管理员重认证只接受口令。** 只用外部身份登录、没有口令的管理员永远无法使用后台。平台也不要求管理员启用 MFA。 |
 | D11 | 高 | **停用前不检查唯一拥有者。** 停用账户时不检查对方是否是某组织或空间的唯一拥有者（账户删除会查，`ac/profile.py:71-103`），也没有平台交接路径，可能留下无主的组织或空间。 |
-| D12 | 中 | **组织自定义角色的理由被丢弃。**<br>• UI 要求填写理由，但路由既不接收也不存储（`ac/organization_routes.py:191,203,217,229,241`）。<br>• 移除角色时不要求操作者持有该角色的权限（`core/org_roles.py:287-289`）。 |
+| D12 | 中 | **组织自定义角色的理由被丢弃。**<br>• UI 要求填写理由，但路由既不接收也不存储（`ac/organization_routes.py:191,203,217,229,241`）。<br>• 移除角色时不要求操作者持有该角色的权限（`core/org_roles.py:287-289`）。<br>**修复状态（2026-10-04，49701fe）：** 五个角色写操作要求并记录理由（8–500 字）；分配时加上和收回的角色都须在操作者权限之内，保留不动的角色不要求；分配对话框禁用够不着的角色并说明原因。 |
 | D13 | 中 | **举报复核有并发问题。**<br>• 先查后改，更新语句没有 `WHERE status='open'`（`core/messaging.py:699-721`），两人同时复核时后者覆盖前者。<br>• 其他管理者的 `conversation.reported` 待办永远停在 pending。<br>**修复状态（2026-10-04，e730e0f）：** 举报在删除消息的同一事务里先以 `WHERE status='open'` 认领，并发的第二个决定得到 409，消息不变。 |
 | D14 | 中 | **转换器内存上限高于容器上限。** `CONVERTER_MEMORY_MB` 默认 8192 MB，而 docs 容器的 `mem_limit` 是 2304m（`prod/compose.yaml:69`）。 |
 | D15 | 中 | **扫描上限低于上传上限。** 扫描上限 25 MiB（`SYNWEVO_CLAMD_MAX_BYTES`），Docs 上传上限 100 MB，nginx `client_max_body_size` 是 100m。25–100 MiB 的文件会被接收，然后永远停在 `scan_failed/too_large`。 |
