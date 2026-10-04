@@ -15,7 +15,7 @@ import io
 import json
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "packages/ui/app-icons"
@@ -71,6 +71,35 @@ def outputs() -> dict[Path, bytes]:
     return result
 
 
+#: Largest per-channel difference `--check` accepts, as brand_assets.py: resampling is pinned to one
+#: Pillow version, but the PNG encoder's bytes and a CPU's vector rounding differ between machines
+#: (the CI image is not this laptop); a stale, hand-edited or re-drawn file differs by far more.
+TOLERANCE = 2
+
+
+def same_pixels(a: bytes, b: bytes) -> bool:
+    x, y = (Image.open(io.BytesIO(data)).convert("RGBA") for data in (a, b))
+    if x.size != y.size:
+        return False
+    return max(hi for _, hi in ImageChops.difference(x, y).getextrema()) <= TOLERANCE
+
+
+def without_encoder_fields(manifest: bytes) -> list:
+    """The provenance record minus what depends on the PNG encoder (output bytes and hash)."""
+    return [{k: v for k, v in entry.items() if k not in ("bytes", "sha256")} for entry in json.loads(manifest)]
+
+
+def same_output(path: Path, raw: bytes) -> bool:
+    if not path.is_file():
+        return False
+    committed = path.read_bytes()
+    if path.suffix == ".png":
+        return same_pixels(committed, raw)
+    if path.name == "derived-manifest.json":
+        return without_encoder_fields(committed) == without_encoder_fields(raw)
+    return committed == raw
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
@@ -78,7 +107,7 @@ def main() -> None:
     built = outputs()
     for path, raw in built.items():
         if check:
-            assert path.is_file() and path.read_bytes() == raw, f"Regenerate {path.relative_to(ROOT)}"
+            assert same_output(path, raw), f"Regenerate {path.relative_to(ROOT)}"
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(raw)
