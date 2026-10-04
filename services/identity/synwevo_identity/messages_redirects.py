@@ -30,9 +30,11 @@ CID = re.compile(r"^cv_[A-Za-z0-9_-]{1,64}$")
 
 def messages_handoff(store: Store, cid: str | None, lang: str | None = None) -> str | None:
     """The absolute sign-in-start URL on the messages origin for a conversation (or the list),
-    or None while the application is not registered."""
-    from synwevo_core.apps import messages_launch_url
-    base = messages_launch_url(store)
+    or None while the application is not registered. A registered but disabled application still
+    gets the hand-over: its own sign-in says it is disabled, and the account origin never serves
+    conversations again (admin defect D7)."""
+    from synwevo_core.apps import messages_registered_url
+    base = messages_registered_url(store)
     if not base:
         return None
     origin = "{0.scheme}://{0.netloc}".format(urllib.parse.urlsplit(base))

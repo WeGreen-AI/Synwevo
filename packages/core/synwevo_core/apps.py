@@ -422,7 +422,24 @@ def messages_launch_url(store: Store) -> str | None:
     row = store.one("SELECT launch_url, status FROM apps WHERE id=?", (MESSAGES_APP_ID,))
     if not row or row["status"] != "active":
         return None
-    url = (row["launch_url"] or "").strip()
+    return _http_url(row["launch_url"])
+
+
+def messages_registered_url(store: Store) -> str | None:
+    """The messages application's launch URL once it has registered, whatever its status — None
+    only on a deployment that never added it.
+
+    What decides whether the account origin still serves conversations itself: once Synwevo
+    Message exists it is the only writer, and disabling it must not hand conversations back to the
+    account origin's legacy fallback (which would also bypass the disable). Pointing people at the
+    origin is still `messages_launch_url`'s, active only (admin defect D7).
+    """
+    row = store.one("SELECT launch_url FROM apps WHERE id=?", (MESSAGES_APP_ID,))
+    return _http_url(row["launch_url"]) if row else None
+
+
+def _http_url(raw) -> str | None:
+    url = (raw or "").strip()
     return url.rstrip("/") if url.startswith(("http://", "https://")) else None
 
 

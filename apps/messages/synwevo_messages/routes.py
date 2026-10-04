@@ -203,13 +203,13 @@ class MessageHub:
 def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
                  prefix: str = PREFIX, legacy_guard: bool = False) -> APIRouter:
     """The messaging API. `legacy_guard` is for the account origin's old prefix: every route then
-    answers 410 the moment the registry says Synwevo Message is active, naming its address, so
-    conversations have exactly one write source at any time."""
+    answers 410 from the moment Synwevo Message has registered, naming its address — also while
+    it is disabled — so conversations have exactly one write source at any time."""
     def moved(request: Request) -> None:
         # One primary-key read per request, uncached: the switch has to take effect the moment
         # the messages process registers itself, not a cache lifetime later.
-        from synwevo_core.apps import messages_launch_url
-        url = messages_launch_url(store)
+        from synwevo_core.apps import messages_registered_url
+        url = messages_registered_url(store)
         if url:
             raise ServiceError(410, "moved", f"消息已迁到 Synwevo Message（{url}），此地址不再提供会话接口",
                                {"messages_url": url})

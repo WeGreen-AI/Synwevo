@@ -65,8 +65,8 @@ def install_legacy(api: FastAPI, plat: Platform, *, notifier: Notifier | None = 
 
     Mounted by the composer on the `accounts` role only (this package does not know the account
     service, and the account service does not know this package). Every route carries a guard:
-    the moment the registry says Synwevo Message is active, they answer 410 naming its address,
-    so conversations never have two write sources — two processes would each hold their own
+    from the moment Synwevo Message has registered — whether it is active or disabled — they
+    answer 410 naming its address, so conversations never have two write sources — two processes would each hold their own
     event fan-out, and a message sent through one would not reach tabs streaming from the other.
     """
     from .routes import LEGACY_PREFIX, build_router
