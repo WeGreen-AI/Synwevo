@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field as F, SecretStr, field_serializer, field_validator
 
-from synwevo_core import sealed
+from synwevo_core import data_flow, sealed
 from synwevo_core.billing import BillingError
 from synwevo_core.capabilities import Operation, canonical, fingerprint
 from synwevo_core.errors import ServiceError
@@ -256,6 +256,12 @@ class MemoryRef(_In):
     memory_id: str = F(pattern=MEM)
 
 
+class TransferPolicySet(_In):
+    outbound: Literal["none", "audience", "organization", "any"]
+    #: The revision the person was looking at (0 while nobody has chosen a policy).
+    revision: int = F(ge=0)
+
+
 class PolicySet(_In):
     processing: Literal["none", "platform", "any"]
     providers: list[Literal["anthropic", "deepseek"]] | None = F(default=None, max_length=2)
@@ -323,8 +329,17 @@ def policies_json(store, identity, user_id: str) -> dict:
     out = []
     for w in identity.workspaces_for(user_id):
         out.append({"workspace_id": w["id"], "name": w["name"], "kind": w["kind"], "role": w["role"],
-                    **workspace_policy(store, w["id"]), "can_change": w["role"] in ("owner", "admin")})
+                    **workspace_policy(store, w["id"]), "can_change": w["role"] in ("owner", "admin"),
+                    "transfer": transfer_json(store, w)})
     return {"workspaces": out}
+
+
+def transfer_json(store, w: dict) -> dict:
+    """Where the workspace's content may go (synwevo_core.data_flow), with the organization's cap."""
+    policy = data_flow.workspace_outbound(store, w["id"])
+    cap = data_flow.organization_outbound(store, w.get("organization_id"))
+    return {"outbound": policy["outbound"], "explicit": policy["explicit"], "revision": policy["revision"],
+            "in_organization": bool(w.get("organization_id")), "organization_outbound": cap["outbound"]}
 
 
 def register(registry, agent: Agent, store, identity) -> None:
@@ -334,7 +349,7 @@ def register(registry, agent: Agent, store, identity) -> None:
         if c.op.id == "agent.conversation.create":
             cid = out.get("id")
         if c.op.id in ("agent.conversation.delete", "agent.memory.delete", "agent.settings.update",
-                       "agent.workspace_policy.set", "agent.billing.budget.set",
+                       "agent.workspace_policy.set", "agent.transfer_policy.set", "agent.billing.budget.set",
                        "agent.consent.create", "agent.consent.revoke"):
             # Only a deletion receipt, masked key state or policy enum; no business body.
             return
@@ -583,6 +598,26 @@ def register(registry, agent: Agent, store, identity) -> None:
         c.emit("agent.workspace_policy.changed", object_kind="workspace", object_id=c.workspace_id, data=result)
         return result
 
+    def set_transfer(c, i):
+        current = data_flow.workspace_outbound(store, c.workspace_id)
+        if current["revision"] != i.revision:
+            raise ServiceError(409, "transfer_policy_changed", data_flow.REFUSALS["transfer_policy_changed"])
+        if current["explicit"] and current["outbound"] == i.outbound:
+            return {"workspace_id": c.workspace_id, **current}  # nothing changed, no new revision
+        result = {"workspace_id": c.workspace_id,
+                  **data_flow.set_workspace_outbound(store, c.workspace_id, i.outbound, actor_id=c.user_id,
+                                                     revision=i.revision)}
+        c.touches("workspace", c.workspace_id)
+        c.emit("agent.transfer_policy.changed", object_kind="workspace", object_id=c.workspace_id,
+               data={"workspace_id": c.workspace_id, "outbound": i.outbound, "revision": result["revision"],
+                     "before": current["outbound"]})
+        return result
+
+    op(id="agent.transfer_policy.set", title=T("设置数据流政策", "設定資料流政策", "Set the data-flow policy"),
+       summary="Owners and admins decide where this workspace's content may be carried: nowhere, to workspaces "
+               "whose members already belong here, within the organization, or anywhere the person may write.",
+       input=TransferPolicySet, need="manage", side_effect="write", agent="never", unattended=False,
+       events=("agent.transfer_policy.changed",), handler=set_transfer)
     op(id="agent.workspace_policy.set", title=T("设置 AI 处理政策", "設定 AI 處理政策", "Set the AI processing policy"),
        summary="Owners and admins decide whether the workspace's content may be sent to the Agent's model provider.",
        input=PolicySet, need="manage", side_effect="write", agent="never", unattended=False,

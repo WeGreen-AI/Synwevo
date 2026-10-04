@@ -11,6 +11,7 @@ import pytest
 
 from synwevo_suite.agent.provider import Credential, ProviderError
 from .test_agent import ScriptedModel, agent, call, op, say  # noqa: F401 (fixture)
+from .test_data_flow import revision
 
 
 class GovernanceModel(ScriptedModel):
@@ -56,6 +57,9 @@ def policy(g, workspace, processing):
 def pending_copy(g, *, source_policy="platform", target_policy="platform", read_source=False):
     g.client.sign_in("oscar")
     source = op(g.client, "forms.form.create", {"title": "Fixture source definition"}, ws=g.people.b)["output"]["id"]
+    # The legal transfer path (synwevo_core.data_flow): Alice may export from B, B lets content go to A.
+    op(g.client, "agent.transfer_policy.set", {"outbound": "any", "revision": revision(g.people.store, g.people.b)}, ws=g.people.b)
+    g.people.ident.change_role(g.people.b, g.people.uid("alice"), "viewer", can_export=True)
     policy(g, g.people.b, source_policy)
     policy(g, g.people.a, target_policy)
     steps = []
@@ -139,18 +143,32 @@ def test_separately_read_source_still_constrains_copy_continuation(governed):
     assert refused["error_code"] == "source_policy_changed" and len(g.model.requests) == sent
 
 
-def test_copy_result_keeps_target_policy_dependency_for_subsequent_writes(governed):
+@pytest.mark.parametrize("outbound, outcome", [("none", "transfer_source_closed"), ("audience", None)])
+def test_copy_result_keeps_target_policy_dependency_for_subsequent_writes(governed, outbound, outcome):
+    """The copy now belongs to A: a later write elsewhere carries A's content, under A's policy.
+    The third workspace has only Alice, so A's "audience" policy lets it go there; "none" does not."""
     g = governed
     third = g.people.ident.create_workspace("Fixture third workspace", owner_id=g.people.uid("alice"))["id"]
     _, turn, card, _ = pending_copy(g)
     saved, _ = confirm(g, card)
     copied_id = json.loads(saved["result_json"])["form_id"]
+    op(g.client, "agent.transfer_policy.set", {"outbound": outbound, "revision": revision(g.people.store, g.people.a)}, ws=g.people.a)
     g.model.steps = [call("run_operation", {"operation": "forms.form.create", "workspace_id": third,
                                            "input": {"title": copied_id}}, tid="export-receipt"), say("stopped")]
-    assert advance(g, turn)["status"] == "succeeded"
-    refused = g.store.one("SELECT error_code FROM agent_tool_calls WHERE turn_id=? AND tool_use_id='export-receipt'",
-                          (turn["turn_id"],))
-    assert refused["error_code"] == "source_transfer_unavailable"
+    status = advance(g, turn)["status"]
+    later = g.store.one("SELECT * FROM agent_tool_calls WHERE turn_id=? AND tool_use_id='export-receipt'",
+                        (turn["turn_id"],))
+    if outcome:
+        assert status == "succeeded" and later["error_code"] == outcome
+        assert not g.store.one("SELECT 1 FROM forms WHERE workspace_id=?", (third,))
+        return
+    assert status == "waiting_confirmation" and later["status"] == "awaiting_confirmation"
+    assert [b["source"] for b in json.loads(later["transfer_json"])] == [g.people.a]
+    # The card was confirmed against A's policy as it was; tightening it voids the confirmation.
+    op(g.client, "agent.transfer_policy.set", {"outbound": "none", "revision": revision(g.people.store, g.people.a)}, ws=g.people.a)
+    result = op(g.client, "agent.tool_call.confirm", {"tool_call_id": later["id"],
+                                                    "confirmation": later["input_hash"]})["output"]
+    assert result["status"] == "failed" and result["error"]["code"] == "transfer_source_closed"
     assert not g.store.one("SELECT 1 FROM forms WHERE workspace_id=?", (third,))
 
 

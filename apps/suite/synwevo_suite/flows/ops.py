@@ -107,7 +107,10 @@ def register(registry, flows):
     add("start", Start, lambda c, i: flows.start(i.flow_id, user_id=c.user_id, version=i.version, parameters=i.parameters,
                                                 idempotency_key=i.idempotency_key, correlation_id=c.correlation_id,
                                                 parent_run_id=c.run_id, depth=c.depth), write=True)
-    add("run", History, lambda c, i: flows.run(i.run_id, user_id=c.user_id, after=i.after, limit=i.limit))
+    # The Agent's model gets the run's progress, not its steps' business snapshots: a personal
+    # operation's answer names no source workspace, so content passed through it would be untracked.
+    add("run", History, lambda c, i: flows.run(i.run_id, user_id=c.user_id, after=i.after, limit=i.limit,
+                                               outputs=c.via != "agent"))
     add("cancel", Run, lambda c, i: flows.cancel(i.run_id, user_id=c.user_id), write=True)
     add("pause", Run, lambda c, i: flows.pause(i.run_id, user_id=c.user_id), write=True)
     add("resume", Run, lambda c, i: flows.resume(i.run_id, user_id=c.user_id), write=True)

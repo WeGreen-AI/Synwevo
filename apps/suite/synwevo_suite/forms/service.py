@@ -14,7 +14,7 @@ import threading
 import time
 from typing import Any
 
-from synwevo_core import env, sealed
+from synwevo_core import data_flow, env, sealed
 from synwevo_core.capabilities import Call, canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import Store, new_id, now
@@ -221,11 +221,13 @@ class Forms:
 
     def duplicate(self, call: Call, form_id: str, *, target_workspace_id: str | None, title: str | None) -> dict:
         """Copy the draft definition — and nothing else: no versions, no links, no requests, no
-        submissions, no files. Into another workspace only where the caller can create forms."""
+        submissions, no files. Into another workspace only where the caller can create forms and
+        the source's data-flow policy lets its content go (synwevo_core.data_flow)."""
         row = self._form(call.workspace_id, form_id)
         target = target_workspace_id or call.workspace_id
         if target != call.workspace_id:
             self.caps.check_workspace(call.user_id, APP, target, "write")
+            data_flow.check(self.store, user_id=call.user_id, source=call.workspace_id, target=target)
         elif not call.can("write"):
             call.require("write")
         defn = Definition.model_validate(_j(row["draft_json"], {}))

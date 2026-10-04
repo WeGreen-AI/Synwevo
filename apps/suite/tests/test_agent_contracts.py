@@ -13,6 +13,7 @@ import pytest
 from synwevo_core.errors import ServiceError
 from synwevo_suite.agent.provider import AnthropicProvider, Credential, ProviderError
 from .test_agent import agent, call, op, say, start, wait_turn, ScriptedModel  # noqa: F401 (fixture)
+from .test_data_flow import revision
 
 
 def pending(c, *, title="Fixture", operation="forms.form.create", payload=None):
@@ -355,17 +356,32 @@ def test_parallel_confirmation_never_resumes_while_another_action_is_running(age
 
 
 def test_real_template_copy_keeps_explicit_cross_workspace_contract(agent):
-    """C1/C2's existing template-copy contract: B viewer may copy its template into A."""
+    """C1/C2: a B viewer copies B's template into A only once B lets its content go there
+    (synwevo_core.data_flow): the export right, then B's outbound policy."""
     p = agent.people
     agent.sign_in("oscar")
     fid = op(agent, "forms.form.create", {"title": "Source template"}, ws=p.b)["output"]["id"]
+    copy = call("run_operation", {"operation": "forms.form.duplicate", "workspace_id": p.b,
+                                  "input": {"form_id": fid, "target_workspace_id": p.a}})
     agent.sign_in("alice")
-    conv, turn = start(agent, [call("run_operation", {"operation": "forms.form.duplicate", "workspace_id": p.b,
-                                                   "input": {"form_id": fid, "target_workspace_id": p.a}}), say("copied")])
+    _, refused = start(agent, [copy, say("could not copy")])
+    assert wait_turn(p.store, refused["turn_id"], ("succeeded", "failed")) == "succeeded"
+    row = p.store.one("SELECT status,error_code FROM agent_tool_calls WHERE turn_id=?", (refused["turn_id"],))
+    assert dict(row) == {"status": "failed", "error_code": "transfer_export_denied"}  # no card for a doomed copy
+    p.ident.change_role(p.b, p.uid("alice"), "viewer", can_export=True)
+    agent.sign_in("oscar")
+    op(agent, "agent.transfer_policy.set", {"outbound": "any", "revision": revision(p.store, p.b)}, ws=p.b)
+    agent.sign_in("alice")
+    conv, turn = start(agent, [copy, say("copied")])
     assert wait_turn(p.store, turn["turn_id"]) == "waiting_confirmation"
-    card = p.store.one("SELECT * FROM agent_tool_calls")
+    card = p.store.one("SELECT * FROM agent_tool_calls WHERE turn_id=?", (turn["turn_id"],))
+    shown = op(agent, "agent.conversation.get", {"conversation_id": conv})["output"]
+    pending = [c for m in shown["messages"] for c in m["tool_calls"] if c["id"] == card["id"]][0]
+    assert pending["transfer_from"] == [{"workspace_id": p.b, "workspace_name": "Workspace B", "outbound": "any"}]
     result = op(agent, "agent.tool_call.confirm", {"tool_call_id": card["id"], "confirmation": card["input_hash"]})["output"]
     assert result["status"] == "succeeded" and result["result"]["workspace_id"] == p.a
     assert result["target_workspace_id"] == p.a and f"/w/{p.a}/" in result["link"]
+    run = p.store.one("SELECT delegation FROM op_runs WHERE id=?", (result["run_id"],))
+    assert json.loads(run["delegation"])["transfer_from"] == [p.b]  # provenance: an ID, no content
     assert wait_turn(p.store, turn["turn_id"], ("succeeded", "failed")) == "succeeded"
     assert p.store.one("SELECT workspace_id FROM forms WHERE id=?", (result["result"]["form_id"],))["workspace_id"] == p.a

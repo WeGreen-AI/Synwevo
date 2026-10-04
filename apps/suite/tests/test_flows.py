@@ -666,6 +666,7 @@ def test_event_depth_limit_is_a_persistent_refusal(flow):
 
 
 def test_independent_workspace_targets_work_but_content_transfer_needs_policy(flow):
+    from synwevo_core import data_flow
     f = flow
     f.store.execute("UPDATE memberships SET role='editor' WHERE workspace_id=? AND user_id=?", (f.p.b, f.uid))
     second = f.write("second", workspace_id=f.p.b, result_read=None)
@@ -674,9 +675,21 @@ def test_independent_workspace_targets_work_but_content_transfer_needs_policy(fl
     assert f.row(rid)["status"] == "succeeded"
     assert {r["workspace_id"] for r in f.store.all("SELECT workspace_id FROM fixture_flow_records")} == {f.ws, f.p.b}
     second["input"] = {"text": {"$ref": "steps.write.text"}}
-    blocked = f.start(f.create([f.write(), second]))
+    flow_id = f.create([f.write(), second])
+    blocked = f.start(flow_id, key="blocked")
     f.tick()
-    assert f.row(blocked)["error_code"] == "flow_transfer_policy_required"
+    # B has a member A does not (Oscar): A's default policy keeps its content from him.
+    assert f.row(blocked)["error_code"] == "transfer_audience_denied"
+    assert f.store.one("SELECT COUNT(*) AS n FROM fixture_flow_records WHERE workspace_id=?", (f.p.b,))["n"] == 1
+    data_flow.set_workspace_outbound(f.store, f.ws, "any", actor_id=f.uid, revision=data_flow.workspace_outbound(f.store, f.ws)["revision"])
+    carried = f.start(flow_id, key="carried")
+    f.tick()
+    assert f.row(carried)["status"] == "succeeded"
+    assert f.store.one("SELECT COUNT(*) AS n FROM fixture_flow_records WHERE workspace_id=?", (f.p.b,))["n"] == 2
+    data_flow.set_workspace_outbound(f.store, f.ws, "none", actor_id=f.uid, revision=data_flow.workspace_outbound(f.store, f.ws)["revision"])  # rechecked on every run
+    closed = f.start(flow_id, key="closed")
+    f.tick()
+    assert f.row(closed)["error_code"] == "transfer_source_closed"
 
 
 def test_source_changed_after_wait_stops_cached_branch(flow):

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .. import data_flow
 from ..capabilities import MAX_DEPTH, canonical, fingerprint, record_event
 from ..errors import ServiceError
 from ..store import new_id, now
@@ -83,14 +84,18 @@ class Flows(Triggers):
         op = self.caps.registry.get(ref.operation)
         if not op or op.version != ref.operation_version:
             raise error("flow_operation_version_unavailable")
-        if op.id.startswith("agent.flow.") or not op.unattended:
+        if op.need == "personal" or not op.unattended:
+            # A personal operation has no workspace, so no transfer question can be asked of it:
+            # as a step it would take workspace content into personal records (a memory, a
+            # conversation) or hand personal records, whatever they hold, to a workspace.
             raise error("person_required", 403)
         if op.writes_elsewhere:
             # Scope cannot be proven from the explicit target when an operation has implicit
             # second destinations. Compose separate, explicitly targeted operations instead.
             raise error("flow_indirect_target_unsupported", 403)
         if isinstance(ref, CallStep) and ref.result_read and ref.result_read.workspace_id != ref.workspace_id:
-            raise error("flow_transfer_policy_required", 403)
+            # The receipt of one workspace drives a read in another: the same transfer question.
+            data_flow.check(self.store, user_id=user_id, source=ref.workspace_id, target=ref.result_read.workspace_id)
         if read and (op.side_effect != "none" or op.mode != "sync"):
             raise error("flow_read_required")
         self.caps.authorize(op, user_id, ref.workspace_id)
@@ -200,7 +205,10 @@ class Flows(Triggers):
                                     "correlation_id", "parent_run_id", "depth", "calls_used", "deadline",
                                     "created_at", "updated_at", "finished_at")}
 
-    def run(self, run_id, *, user_id, after=0, limit=100):
+    def run(self, run_id, *, user_id, after=0, limit=100, outputs=True):
+        """``outputs=False`` leaves the steps' business snapshots out: the answer of a personal
+        operation carries no source workspace, so a reader that tracks sources (the Agent's
+        model) must not be given workspace content through it."""
         if not 1 <= limit <= 200 or after < 0:
             raise error("flow_page_invalid", 422)
         row = self._owned_run(run_id, user_id)
@@ -217,7 +225,7 @@ class Flows(Triggers):
             if receipt:
                 public["op_run_id"] = receipt["id"]
             public.update(output=None, snapshot_hidden=bool(step["value_json"]))
-            if step["value_json"] is not None:
+            if outputs and step["value_json"] is not None:
                 try:
                     current = self._source(row, step, charge=False)
                     if fingerprint(current) == fingerprint(decode(step["value_json"])):
@@ -321,7 +329,45 @@ class Flows(Triggers):
                 raise error("flow_reference_missing", 422) from None
         return value
 
-    def _resolve(self, run, value, *, target_workspace=NO_TARGET, **extra):
+    @staticmethod
+    def _references(value):
+        """Step ids a definition's input takes values from (``outcome`` is one bit, not content)."""
+        if isinstance(value, dict):
+            if set(value) == {"$ref"}:
+                path = str(value["$ref"]).split(".")
+                if path[0] == "steps" and len(path) > 1:
+                    yield path[1]
+                return
+            for item in value.values():
+                yield from Flows._references(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from Flows._references(item)
+
+    def _lineage(self, spec, step_id, seen=None):
+        """Every workspace whose content a step's value may carry: where it ran and was read,
+        and the lineage of each step its inputs took values from. A hop through a third
+        workspace inside one run therefore does not make a source's content somebody else's."""
+        seen = set() if seen is None else seen
+        if step_id in seen:
+            return set()
+        seen.add(step_id)
+        step = next((s for s in spec.steps if s.id == step_id), None)
+        places, inputs = set(), []
+        if isinstance(step, CallStep):
+            places.add(step.workspace_id)
+            inputs.append(step.input)
+            if step.result_read:
+                places.add(step.result_read.workspace_id)
+                inputs.append(step.result_read.input)
+        elif isinstance(step, WaitStep):
+            places.add(step.read.workspace_id)
+            inputs.append(step.read.input)
+        for other in {ref for value in inputs for ref in self._references(value)}:
+            places |= self._lineage(spec, other, seen)
+        return places - {None}
+
+    def _resolve(self, run, value, *, target_workspace=NO_TARGET, external=False, **extra):
         if isinstance(value, dict):
             if set(value) == {"$ref"}:
                 path = value["$ref"].split(".")
@@ -330,14 +376,14 @@ class Flows(Triggers):
                     if not step or step["status"] not in COMPLETE:
                         raise error("flow_reference_missing", 422)
                     if target_workspace is not NO_TARGET:
-                        origin = next(s for s in self._spec(run["flow_id"], run["version"]).steps if s.id == path[1])
+                        spec = self._spec(run["flow_id"], run["version"])
                         reader = decode(step["reader_json"])
-                        source_workspace = reader["workspace_id"] if reader else getattr(origin, "workspace_id", None)
-                        if source_workspace is not None and source_workspace != target_workspace:
-                            # Membership in two spaces does not grant transfer/export permission.
-                            # Independent explicitly targeted steps work; content transfer needs
-                            # a shared data-flow policy contract before this gate can be extended.
-                            raise error("flow_transfer_policy_required", 403)
+                        sources = self._lineage(spec, path[1]) | ({reader["workspace_id"]} if reader else set())
+                        for source_workspace in sorted(sources - {None, target_workspace}):
+                            # Membership in two spaces does not grant transfer: the owner must
+                            # still be allowed to carry each source's content there, every time.
+                            data_flow.check(self.store, user_id=run["user_id"], source=source_workspace,
+                                            target=target_workspace, external=external)
                     saved = self._path(decode(step["value_json"]), path[2:])
                     current = self._path(self._source(run, step, charge=True), path[2:])
                     if fingerprint(saved) != fingerprint(current):
@@ -352,9 +398,10 @@ class Flows(Triggers):
                 if path[0] not in roots:
                     raise error("flow_reference_missing", 422)
                 return self._path(roots[path[0]], path[1:])
-            return {k: self._resolve(run, v, target_workspace=target_workspace, **extra) for k, v in value.items()}
+            return {k: self._resolve(run, v, target_workspace=target_workspace, external=external, **extra)
+                    for k, v in value.items()}
         if isinstance(value, list):
-            return [self._resolve(run, v, target_workspace=target_workspace, **extra) for v in value]
+            return [self._resolve(run, v, target_workspace=target_workspace, external=external, **extra) for v in value]
         return value
 
     def _predicate(self, run, predicate, **extra):
@@ -511,7 +558,8 @@ class Flows(Triggers):
             return None
         if saved["attempt"] >= step.max_attempts:
             raise error("flow_attempts_exhausted")
-        payload = self._resolve(run, step.input, target_workspace=step.workspace_id)
+        payload = self._resolve(run, step.input, target_workspace=step.workspace_id,
+                                external=op.side_effect == "external")
         attempt = saved["attempt"] + 1
         key = f"flow:{run['flow_id']}:{run['id']}:{step.id}:{attempt}"
         self._charge(run)
@@ -543,7 +591,8 @@ class Flows(Triggers):
         reader, value = None, result["output"]
         if step.result_read:
             if step.result_read.workspace_id != step.workspace_id:
-                raise error("flow_transfer_policy_required", 403)
+                data_flow.check(self.store, user_id=run["user_id"], source=step.workspace_id,
+                                target=step.result_read.workspace_id)
             reader = step.result_read.model_copy(update={"input": self._resolve(run, step.result_read.input,
                             target_workspace=step.result_read.workspace_id, receipt=value)})
         elif self.caps.registry.get(step.operation).side_effect == "none":
