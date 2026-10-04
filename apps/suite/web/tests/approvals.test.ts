@@ -108,3 +108,25 @@ test("counted phrases choose their English plural from the count they show", asy
   assert.ok(lines.includes("需要 1 票同意"), lines.join(" | "));
   assert.deepEqual(lines.filter(x => /\{[a-z]+\}/.test(x)), []);
 });
+
+test("a separator joins two things, never one and nothing", async () => {
+  // Acceptance: a revision without a note read "2026年10月5日 00:21 ·".
+  const stray = (lines: string[]) => lines.filter(x => /^·|·$/.test(x));
+  let lines = visible(await detail(fixtureRequest("")));
+  assert.deepEqual(stray(lines), []);
+  lines = visible(await detail(fixtureRequest("Fixture revision note")));
+  assert.ok(lines.some(x => / · Fixture revision note$/.test(x)), lines.join(" | "));
+  assert.deepEqual(stray(lines), []);
+  // A template problem or a refused field with nothing to name is listed without a separator.
+  const template = { id: "apt_fixture00001", title: "Fixture template", description: "", status: "active", draft_rev: 1, published_version: null,
+    draft: { fields: [], stages: [{ ...fixtureStage("s_one", "Fixture gated"), condition: { match: "all", rules: [{ field: "f_x", op: "filled" }] } }], rules: { distinct_deciders: false } },
+    problems: [{ code: "no_unconditional_stage", message: "x" }, { code: "condition_unknown_field", message: "x", stage: "s_one", field: "f_x" }], warnings: [], versions: [] };
+  lines = visible(await render("/src/apps/approvals/Editor.tsx", "Edit", { ws: { ...ws, role: "admin" }, template, reload: () => {} }));
+  assert.ok(lines.includes("至少有一个阶段必须始终执行") && lines.includes("Fixture gated · 条件引用的字段不存在"), lines.join(" | "));
+  assert.deepEqual(stray(lines), []);
+  const { ApiError } = await vite.ssrLoadModule("@synwevo/auth-client");
+  const error = new ApiError(422, "not_publishable", "fixture", { problems: template.problems });
+  lines = visible(await render("/src/apps/approvals/common.tsx", "ErrorBox", { error }));
+  assert.ok(lines.includes("至少有一个阶段必须始终执行") && lines.includes("f_x · 条件引用的字段不存在"), lines.join(" | "));
+  assert.deepEqual(stray(lines), []);
+});

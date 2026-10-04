@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useI18n } from "@synwevo/ui";
 import { canWrite } from "../../shared/AppFrame";
 import { Empty, Loading } from "../../shared/states";
-import { base, ErrorBox, events, modes, operators, Pager, StageStatus, stamp, Status, useAction, useRead } from "./common";
+import { base, ErrorBox, events, joined, modes, operators, Pager, StageStatus, stamp, Status, useAction, useRead } from "./common";
 import { Fields } from "./Fields";
 import { PeoplePicker } from "./Selector";
 import type { ApprovalRequest, Definition, Page, RequestRow, Snapshot, Template, Timeline, Workspace } from "./types";
@@ -124,7 +124,7 @@ export function RequestDetail({ ws, r, reload }: { ws: Workspace; r: ApprovalReq
 }
 function SnapshotView({ r, snapshot, previous }: { r: ApprovalRequest; snapshot: Snapshot; previous: Snapshot | null }) {
   const { t } = useI18n();
-  return <><p className="muted">{stamp(snapshot.submitted_at)} · {snapshot.note}</p>
+  return <><p className="muted">{joined(stamp(snapshot.submitted_at), snapshot.note)}</p>
     <dl className="ap-snapshot">{r.definition.fields.map(f => {
       const changed = previous && previous.fields[f.id] !== snapshot.fields[f.id];
       const show = (v: string | undefined) => f.type === "select" ? f.options.find(o => o.value === v)?.label ?? v ?? "—" : v ?? "—";
