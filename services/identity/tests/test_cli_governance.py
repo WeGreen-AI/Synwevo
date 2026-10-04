@@ -163,6 +163,49 @@ def test_disabling_an_app_for_a_workspace_is_journalled_and_survives_a_restore(w
     assert code == 2 and "no-such-app" in err and len(_audit(world, "cli.app.workspace_disable")) == 1
 
 
+def _journal_fails_once(world):
+    real, calls = journal.record, []
+
+    def flaky(*a, **kw):
+        calls.append(a[1])
+        if len(calls) == 1:
+            raise PermissionError("fixture: journal not writable")
+        return real(*a, **kw)
+    world["mp"].setattr(journal, "record", flaky)
+
+
+def test_a_journal_failure_leaves_the_app_on_so_running_again_journals_it(world, capsys):
+    """Review of D6: the row was deleted before the journal write, so after a journal failure the
+    advised re-run found nothing to disable, journalled nothing and reported success."""
+    store, ws = world["store"], world["ws"]
+    _journal_fails_once(world)
+    code, _, err = cli(world, capsys, "app", "disable", "docweave", "--workspace", ws)
+    assert code == 3 and "仍是启用状态" in err
+    assert store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id='docweave'", (ws,)), "rolled back"
+    code, out, _ = cli(world, capsys, "app", "disable", "docweave", "--workspace", ws)
+    assert code == 0 and "已停用" in out
+    assert [e["app_id"] for e in journal.read(world["d"]) if e["kind"] == "workspace_app_disabled"] == ["docweave"]
+
+
+def test_switching_an_app_off_platform_wide_is_journalled_and_survives_a_restore(world, capsys):
+    """Review of D6: `app disable <id>` without --workspace was a bare UPDATE, so a restore from a
+    backup taken while the application was on turned it back on for everyone."""
+    store = world["store"]
+    _journal_fails_once(world)
+    code, _, err = cli(world, capsys, "app", "disable", "docweave")
+    assert code == 3 and "已回滚" in err and store.one("SELECT status FROM apps WHERE id='docweave'")["status"] == "active"
+    code, out, _ = cli(world, capsys, "app", "disable", "docweave")
+    assert code == 0 and "已停用" in out
+    assert [e["app_id"] for e in journal.read(world["d"]) if e["kind"] == "app_disabled"] == ["docweave"]
+    store.execute("UPDATE apps SET status='active' WHERE id='docweave'")       # the backup, taken while it was on
+    journal.apply(store, journal.read(world["d"]))
+    assert store.one("SELECT status FROM apps WHERE id='docweave'")["status"] == "disabled"
+    code, out, _ = cli(world, capsys, "app", "disable", "docweave")
+    assert code == 0 and "没有需要修改的" in out and len(_audit(world, "cli.app.disable")) == 2   # the error and the change
+    code, out, _ = cli(world, capsys, "app", "enable", "docweave")
+    assert code == 0 and "已启用" in out and store.one("SELECT status FROM apps WHERE id='docweave'")["status"] == "active"
+
+
 def test_granting_an_app_from_the_cli_follows_the_members_page_rules(world, capsys):
     """CR D6: `app grant` was a bare upsert — a non-member, a workspace without the application, a
     frozen workspace and an unknown application id were all written and reported as granted."""

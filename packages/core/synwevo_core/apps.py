@@ -160,13 +160,33 @@ class Apps:
 
         Journalled like every other withdrawal, so restoring a backup taken while the
         application was still on does not quietly turn it back on. Only when something was
-        actually turned off; a journal failure raises, as in :meth:`revoke`.
+        actually turned off. The entry is written inside the transaction that deletes the row: a
+        journal failure raises and rolls the deletion back, so running the command again after
+        fixing the data directory still finds the row and journals it.
         """
         from . import journal
-        changed = self.store.execute("DELETE FROM workspace_apps WHERE workspace_id=? AND app_id=?",
-                                     (workspace_id, app_id)) > 0
-        if changed:
-            journal.record(self.store, "workspace_app_disabled", workspace_id=workspace_id, app_id=app_id)
+        with self.store.tx() as t:
+            changed = t.execute("DELETE FROM workspace_apps WHERE workspace_id=? AND app_id=?",
+                                (workspace_id, app_id)).rowcount > 0
+            if changed:
+                journal.record(self.store, "workspace_app_disabled", workspace_id=workspace_id, app_id=app_id)
+        return changed
+
+    def set_status(self, app_id: str, status: str) -> bool:
+        """Turn an application on or off platform-wide. Returns whether anything changed.
+
+        Turning it off is a withdrawal like any other and is journalled inside the same
+        transaction (a journal failure rolls it back), so a restore from a backup taken while it
+        was on keeps it off. Turning it on is not journalled, the same as enabling it for a
+        workspace."""
+        from . import journal
+        if status not in ("active", "disabled"):
+            raise ValueError(status)
+        with self.store.tx() as t:
+            changed = t.execute("UPDATE apps SET status=?, updated_at=? WHERE id=? AND status<>?",
+                                (status, now(), app_id, status)).rowcount > 0
+            if changed and status == "disabled":
+                journal.record(self.store, "app_disabled", app_id=app_id)
         return changed
 
     # ------------------------------------------------------------------ eligibility

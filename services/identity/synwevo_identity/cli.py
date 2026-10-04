@@ -200,8 +200,19 @@ def cmd_app(args) -> int:
         if not apps.get(args.app):
             print(f"没有名为 {args.app} 的应用", file=sys.stderr)
             return 2
-        store.execute("UPDATE apps SET status=?, updated_at=? WHERE id=?",
-                      ("active" if args.action == "enable" else "disabled", now(), args.app))
+        # Through the service, which journals a platform-wide switch-off: a database restored
+        # from a backup taken while the application was on keeps it off.
+        try:
+            changed = apps.set_status(args.app, "active" if args.action == "enable" else "disabled")
+        except OSError as e:
+            _audit(store, f"cli.app.{args.action}", object_kind="app", object_id=args.app, result="error",
+                   meta={"journal": "failed"})
+            print(f"没有停用 {args.app}：写入安全日志失败（{e}），停用已回滚。请修复数据目录的写权限后再执行一次本命令。",
+                  file=sys.stderr)
+            return 3
+        if not changed:
+            print(f"应用 {args.app} 本来就是{'启用' if args.action == 'enable' else '停用'}状态，没有需要修改的。")
+            return 0
         _audit(store, f"cli.app.{args.action}", object_kind="app", object_id=args.app)
         print(f"应用 {args.app} 已{'启用' if args.action == 'enable' else '停用'}")
         return 0
@@ -238,9 +249,8 @@ def cmd_app(args) -> int:
         except OSError as e:
             _audit(store, "cli.app.workspace_disable", object_kind="app", object_id=args.app,
                    workspace_id=args.workspace, result="error", meta={"journal": "failed"})
-            print(f"工作空间 {args.workspace} 已停用 {args.app}（立即生效），但写入安全日志失败：{e}\n"
-                  "从备份恢复数据库时，这次停用不会被自动重放。请修复数据目录的写权限后再执行一次本命令。",
-                  file=sys.stderr)
+            print(f"没有停用：写入安全日志失败（{e}），工作空间 {args.workspace} 的 {args.app} 仍是启用状态。"
+                  "请修复数据目录的写权限后再执行一次本命令。", file=sys.stderr)
             return 3
         if not changed:
             print(f"工作空间 {args.workspace} 没有启用 {args.app}，没有需要停用的。")
