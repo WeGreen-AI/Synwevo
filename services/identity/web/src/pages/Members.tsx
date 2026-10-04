@@ -1,4 +1,4 @@
-import { t as tr, useI18n } from "@synwevo/ui";
+import { AppIcon, t as tr, useI18n } from "@synwevo/ui";
 import "../governance/messages";
 /**
  * Members and invitations of one workspace, for its owners and admins.
@@ -129,7 +129,7 @@ function WorkspaceMembers({ wid }: { wid: string }) {
                     <span>{tr("你的角色：{p0}", {p0: roleLabel(page.caller.role)})}</span>
                     {page.app && <>
                       <span aria-hidden="true">·</span>
-                      <span>{page.app.name}：{page.app.access_policy === "members" ? tr("使用资格随成员关系，可逐人撤销") : tr("需要逐人授予使用资格")}</span>
+                      <span className="app-identity"><AppIcon id={page.app.id} size={16} /><span>{page.app.name}：{page.app.access_policy === "members" ? tr("使用资格随成员关系，可逐人撤销") : tr("需要逐人授予使用资格")}</span></span>
                     </>}
                   </div>
                 </div>

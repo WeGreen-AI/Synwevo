@@ -6,7 +6,7 @@
  *  is delete-for-me, and a group manager's removal is named as such. Nothing here says
  *  "delivered": the server has no such fact (§7.4). */
 import { useCallback, useRef, useState, type ReactNode } from "react";
-import { useI18n, useToast } from "@synwevo/ui";
+import { AppIcon, useI18n, useToast } from "@synwevo/ui";
 import type { Attachment, Capabilities, Conversation, Message, Presence } from "../types";
 import { URL_RE, colorSlot, initials, linksIn, withinWindow } from "../lib/thread";
 import { clock, fullDate } from "../lib/time";
@@ -18,7 +18,7 @@ const LONG_PRESS_MS = 500;
 
 /** A person's initial, a group's icon or — when the server has one for the group (§7.17) — the
  *  group's picture; a picture that fails to load falls back to the icon, never to a broken image. */
-export function Avatar({ id, name, kind = "dm", size = 32, presence, app, src }: { id: string; name: string; kind?: "dm" | "group"; size?: number; presence?: Presence; app?: boolean; src?: string | null }) {
+export function Avatar({ id, name, kind = "dm", size = 32, presence, app, appId, src }: { id: string; name: string; kind?: "dm" | "group"; size?: number; presence?: Presence; app?: boolean; appId?: string; src?: string | null }) {
   const { t } = useI18n();
   const [failed, setFailed] = useState<string | null>(null);
   const label = presence === "online" ? t("在线") : presence === "away" ? t("离开") : presence === "offline" ? t("离线") : null;
@@ -27,7 +27,7 @@ export function Avatar({ id, name, kind = "dm", size = 32, presence, app, src }:
     <span className={`msg-avatar ${kind} ${app ? "app" : ""} ${picture ? "pic" : ""} slot-${colorSlot(id)}`} aria-hidden="true" style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}>
       {picture ? <img src={picture} alt="" width={size} height={size} loading="lazy" decoding="async" onError={() => setFailed(picture)} />
         : kind === "group" ? <svg width={Math.round(size * 0.55)} height={Math.round(size * 0.55)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3.2" /><circle cx="17" cy="9" r="2.6" /><path d="M3 19a6 6 0 0112 0" /><path d="M15 19a4.5 4.5 0 016-4" /></svg>
-        : app ? <svg width={Math.round(size * 0.55)} height={Math.round(size * 0.55)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 12h8M12 8v8" /></svg>
+        : app ? <AppIcon id={appId} size={32} />
         : initials(name)}
     </span>
     {label && <span className={`msg-presence ${presence}`} title={label}><span className="sr-only">{label}</span></span>}
@@ -101,7 +101,7 @@ export function MessageItem({ m, head, tail, own, uid, conv, caps, reactions, co
 
   return <div className={`msg-row ${own ? "own" : ""} ${head ? "head" : ""} ${tail ? "tail" : ""} ${highlight ? "target" : ""} ${fresh ? "fresh" : ""} ${menu || picker ? "active" : ""} ${isApp ? "from-app" : ""}`}
     id={`msg-${m.seq}`} data-seq={m.seq || undefined} tabIndex={-1}>
-    <div className="msg-gutter">{!own && head && <Avatar id={m.sender_id} name={m.sender} size={32} app={isApp} />}</div>
+    <div className="msg-gutter">{!own && head && <Avatar id={m.sender_id} name={m.sender} size={32} app={isApp} appId={m.card?.app} />}</div>
     <div className="msg-col">
       {head && <div className="msg-head"><span className="msg-sender">{own ? t("我") : m.sender}</span>{isApp && <span className="badge msg-app-badge">{t("应用")}</span>}<time className="msg-time" dateTime={new Date(m.created_at * 1000).toISOString()} title={fullDate(m.created_at, locale)}>{clock(m.created_at, locale)}</time></div>}
       <div className="msg-line">

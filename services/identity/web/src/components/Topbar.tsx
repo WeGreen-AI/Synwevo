@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { ApiError, holdsPlatformAccess, platformHandoffUrl, useSession, MessagesLink, messagesHref, NotificationBell } from "@synwevo/auth-client";
-import { Brand, Drawer, LanguageMenu, useI18n, useMediaQuery } from "@synwevo/ui";
+import { AppIcon, Brand, Drawer, LanguageMenu, useI18n, useMediaQuery } from "@synwevo/ui";
 import { chooseReturnTarget, rememberOrigin } from "../lib/returnTarget";
 import "./Topbar.messages";
 
@@ -60,13 +60,13 @@ export function Topbar({ title, children, product = "Account", mobileNavigation 
   const current = (path: string) => (pathname === path || pathname.startsWith(path + "/") ? "page" : undefined);
   const items = (
     <>
-      <a className="btn ghost sm" href={link("/account")} aria-current={pathname === "/account" ? "page" : undefined}>{t("账户与安全")}</a>
+      <a className="btn ghost sm" href={link("/account")} aria-current={pathname === "/account" ? "page" : undefined}><AppIcon id="/account" />{t("账户与安全")}</a>
       <a className="btn ghost sm" href={link("/organizations")} aria-current={current("/organizations")}>{t("组织")}</a>
       {/* Conversations are Synwevo Message's (CI-66): the registry address through its sign-in
           start; the account origin's own /messages (a server redirect) only while it is not registered. */}
       <MessagesLink href={messagesHref(state, { lang: locale })} />
-      {isAdmin && product !== "Admin" && <a className="btn ghost sm" href={link("/admin")} aria-current={pathname === "/admin" ? "page" : undefined}>{t("平台管理")}</a>}
-      {canApi && product !== "Admin" && <a className="btn ghost sm" href={link("/admin/api-platform")} aria-current={current("/admin/api-platform")}>{t("API 管理")}</a>}
+      {isAdmin && product !== "Admin" && <a className="btn ghost sm" href={link("/admin")} aria-current={pathname === "/admin" ? "page" : undefined}><AppIcon id="/admin" />{t("平台管理")}</a>}
+      {canApi && product !== "Admin" && <a className="btn ghost sm" href={link("/admin/api-platform")} aria-current={current("/admin/api-platform")}><AppIcon id="/admin/api-platform" />{t("API 管理")}</a>}
     </>
   );
   const signOutButton = (
@@ -79,8 +79,8 @@ export function Topbar({ title, children, product = "Account", mobileNavigation 
   return <><header className="topbar wrap acct-topbar">
     <Brand href={product === "Admin" ? link("/admin") : platformHandoffUrl(state?.portal_url, { next: "/workspace", lang: locale }) ?? link("/")} product={product} label={t(product === "Admin" ? "管理员中心" : "返回工作空间")} markBelow={720} />
     <nav className="acct-back row gap4" aria-label={t("返回")}>
-      {workspaceUrl && <a className="btn ghost sm acct-back-link acct-back-workspace" href={workspaceUrl}>← {t(narrow ? "工作空间" : "返回工作空间")}</a>}
-      {appBack && <a className="btn ghost sm acct-back-link" href={link(appBack.url)} title={appBack.workspace_name ? t("回到「{name}」继续之前的任务", { name: appBack.workspace_name }) : undefined}>← {backLabel}</a>}
+      {workspaceUrl && <a className="btn ghost sm acct-back-link acct-back-workspace" href={workspaceUrl}><AppIcon id="platform" />{t(narrow ? "工作空间" : "返回工作空间")}</a>}
+      {appBack && <a className="btn ghost sm acct-back-link" href={link(appBack.url)} title={appBack.workspace_name ? t("回到「{name}」继续之前的任务", { name: appBack.workspace_name }) : undefined}><AppIcon id={appBack.id} />{backLabel}</a>}
       {parent && <a className="btn ghost sm acct-back-link acct-back-parent" href={link(parent.href)}>← {t(parent.label)}</a>}
     </nav>
     <b className="grow acct-title">{title}</b>{children}
@@ -89,8 +89,8 @@ export function Topbar({ title, children, product = "Account", mobileNavigation 
         <button type="button" className="btn ghost sm" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>{t("菜单")} <span aria-hidden="true">☰</span></button>
         {open && <Drawer title={t(product === "Admin" ? "管理员导航" : "账户导航")} onClose={() => setOpen(false)}>
           {me && <div className="drawer-label" aria-hidden="true">{me.email}</div>}
-          {workspaceUrl && <a className="btn ghost" href={workspaceUrl}>← {t("返回工作空间")}</a>}
-          {appBack && <a className="btn ghost" href={link(appBack.url)}>← {backLabel}</a>}
+          {workspaceUrl && <a className="btn ghost" href={workspaceUrl}><AppIcon id="platform" />{t("返回工作空间")}</a>}
+          {appBack && <a className="btn ghost" href={link(appBack.url)}><AppIcon id={appBack.id} />{backLabel}</a>}
           {mobileNavigation && <>{mobileNavigation}<hr /></>}
           {items}
           <hr />

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { del, get, post, useSession } from '@synwevo/auth-client';
-import { useDialog, useI18n, useToast } from '@synwevo/ui';
+import { AppIcon, useDialog, useI18n, useToast } from '@synwevo/ui';
 import { Topbar } from '../components/Topbar';
 import { LeaveDialog } from '../governance/dialogs';
 import { canExport } from '../lib/labels';
@@ -77,7 +77,7 @@ export default function Account() {
   }
   // The hero states whose account this is (name and address), not a welcome line: the bar's
   // title already says where the person is.
-  return <div className="app"><Topbar title={t('账户与安全')} /><div style={{ overflow: 'auto', flex: 1 }}>
+  return <div className="app"><Topbar title={<span className="app-identity"><AppIcon id="/account" size={24} />{t('账户与安全')}</span>} /><div style={{ overflow: 'auto', flex: 1 }}>
     <main className="account-center">{profile && <header className="account-hero"><div><p className="account-eyebrow">Synwevo Account</p>
       <h1>{profile.display_name || profile.email}</h1>{profile.display_name && <p className="muted">{profile.email}</p>}</div></header>}
       <ErrorNotice error={profileError} retry={loadProfile} />

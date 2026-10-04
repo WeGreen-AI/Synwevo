@@ -11,7 +11,7 @@
  *  ones, a full-width panel with a back control on phones. The body is the same. */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, get, post, put } from "@synwevo/auth-client";
-import { Drawer, Menu, useDialog, useI18n, useToast } from "@synwevo/ui";
+import { AppIcon, Drawer, Menu, useDialog, useI18n, useToast } from "@synwevo/ui";
 import { M, groupAvatarUrl, objectOf } from "../api";
 import { AvatarPictureError, avatarPng } from "../lib/avatar";
 import type { Conversation, Member, ObjectInfo, Presence } from "../types";
@@ -120,7 +120,7 @@ export function InfoBody({ conv, uid, presence, onChanged, onLeft, onGroupFrom, 
     <FlowError error={error} />
     {object && <Section title={t("关联对象")}>
       <div className="msg-object">
-        <span className="msg-card-kind">{object.app_name}</span>
+        <span className="msg-card-kind app-identity"><AppIcon id={object.app} size={16} />{object.app_name}</span>
         <span className="msg-card-title">{object.title}</span>
         {!object.degraded && object.href && <a className="btn sm" href={object.href}><IcLink /> {t("在 {app} 中打开", { app: object.app_name })}</a>}
         {object.degraded && <span className="tiny muted">{t("你没有权限打开这个对象；会话仍然可用。")}</span>}

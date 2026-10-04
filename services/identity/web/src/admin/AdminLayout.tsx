@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useRef } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { ApiError, get, useSession } from "@synwevo/auth-client";
-import { PageState, useI18n, useMediaQuery } from "@synwevo/ui";
+import { AppIcon, PageState, useI18n, useMediaQuery } from "@synwevo/ui";
 import { Topbar } from "../components/Topbar";
 import AdminStepUp from "../components/AdminStepUp";
 import { useLoad } from "../lib/hooks";
@@ -81,7 +81,7 @@ export function AdminLayout({ children, contentClassName = "" }: {
     : instance === "normal" ? t("常规实例") : t("实例类型未标注");
   return <div className="app admin-app">
     <a className="admin-skip" href="#admin-main">{t("跳到主要内容")}</a>
-    <Topbar title={t("管理员中心")} product="Admin" mobileNavigation={navigation} />
+    <Topbar title={<span className="app-identity"><AppIcon id={active === "api-platform" ? "/admin/api-platform" : "/admin"} size={24} />{t(active === "api-platform" ? "API 管理平台" : "管理员中心")}</span>} product="Admin" mobileNavigation={navigation} />
     <div className={`admin-frame${!navigation ? " admin-frame-single" : ""}`}>
       {!narrow && navigation && <aside className="admin-sidebar">{navigation}</aside>}
       <main id="admin-main" className={`admin-main ${contentClassName}`} tabIndex={-1}>

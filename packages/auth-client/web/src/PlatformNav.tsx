@@ -20,7 +20,7 @@ import { useEffect, useState } from "react";
 import { ApiError, get, post, setWorkspaceContext } from "./api";
 import { useSession } from "./session";
 import { platformHandoffUrl } from "./handoff";
-import { LanguageMenu, Menu, useI18n, useToast } from "@synwevo/ui";
+import { AppIcon, LanguageMenu, Menu, useI18n, useToast } from "@synwevo/ui";
 import { NotificationBell } from "./NotificationBell";
 import { MessagesLink, messagesHref } from "./MessagesLink";
 import "./session.messages";
@@ -99,7 +99,7 @@ export function PlatformNav() {
         // own sign-in start so the portal has its session in the same hop (user feedback
         // 2026-09-27: this link used to land on the public home page).
         <a className="btn ghost sm" href={platformHandoffUrl(state.portal_url, { next: "/workspace", lang: locale }) ?? state.portal_url} title={t("返回工作空间")}>
-          ← {platformName}
+          <AppIcon id="platform" />{platformName}
         </a>
       )}
       {spaces.length === 0 ? (
@@ -118,18 +118,18 @@ export function PlatformNav() {
           sign-in start, a plain path on the same origin, the account origin's /messages when the
           application is not registered. On the messages origin itself this is the current page. */}
       {apps.length > 0 && <Menu label={t("应用")} ariaLabel={t("切换应用")} items={[
-        ...(state?.portal_url ? [{ label: t("工作空间"), onSelect: () => window.location.assign(platformHandoffUrl(state.portal_url!, { next: "/workspace", lang: locale }) ?? state.portal_url!) }] : []),
+        ...(state?.portal_url ? [{ label: <span className="app-identity"><AppIcon id="platform" />{t("工作空间")}</span>, onSelect: () => window.location.assign(platformHandoffUrl(state.portal_url!, { next: "/workspace", lang: locale }) ?? state.portal_url!) }] : []),
         ...apps.map(app => {
           const here = app.id === state?.app_id || (app.id === "messages" && state?.role === "messages");
           const href = safeLaunch(app.launch_url);
-          return { label: app.name, disabled: here || !href, hint: here ? t("当前应用") : undefined,
+          return { label: <span className="app-identity"><AppIcon id={app.id} />{app.name}</span>, disabled: here || !href, hint: here ? t("当前应用") : undefined,
                    onSelect: () => { if (href) window.location.assign(href); } };
         }),
       ]} />}
       <MessagesLink href={messagesHref(state, { lang: locale })} current={state?.role === "messages"} />
       <NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} />
       <LanguageMenu />
-      <a className="btn ghost sm" href={accountHref(state?.account_url, state?.app_id)} title={t("账户与安全")}>{t("账户")}</a>
+      <a className="btn ghost sm" href={accountHref(state?.account_url, state?.app_id)} title={t("账户与安全")}><AppIcon id="/account" />{t("账户")}</a>
       <button type="button" className="btn ghost sm" onClick={() => void signOut().catch(() => undefined)}>{t("退出登录")}</button>
     </>
   );

@@ -1,11 +1,25 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Brand, LanguageMenu, Logo, Menu, useI18n, useMediaQuery } from "@synwevo/ui";
+import { AppIcon, Brand, LanguageMenu, Logo, Menu, useI18n, useMediaQuery } from "@synwevo/ui";
 import { ApiError, get, holdsPlatformAccess, post, setWorkspaceContext, SignedOut, type Me, useSession } from "@synwevo/auth-client";
 import { PublicHome } from "./PublicHome";
 import { PublicPage } from "./PublicPages";
 import { PUBLIC_META, isWorkspacePath, publicPath, publicRoute, siteHref, workspaceSurface } from "./publicRoutes";
 import "./messages";
 import { MessagesLink, messagesHref, NotificationBell } from "@synwevo/auth-client";
+
+/** What each application on a workspace card is for, in one line. */
+function appDescription(t: (key: string) => string, id: string): string {
+  switch (id) {
+    case "docweave": return t("从来源数据到可交付的文档。");
+    case "messages": return t("组织内的私聊与群聊。");
+    case "forms": return t("设计表单、发出填写请求并审阅提交。");
+    case "tables": return t("带类型字段与修订记录的业务数据表。");
+    case "dataprep": return t("导入、清理与合并数据，逐行报告问题。");
+    case "approvals": return t("多阶段审批、退回修订与完整时间线。");
+    case "extract": return t("从 PDF 与图片提取字段，并标出原文位置。");
+    default: return t("打开已授权的应用。");
+  }
+}
 
 export const signInUrl = "/auth/start?next=%2Fworkspace";
 type Workspace = { id: string; name: string; kind: string; role: string; status?: string; org_id?: string | null; org_name?: string | null; organization_id?: string | null; organization_name?: string | null };
@@ -150,17 +164,17 @@ export function Portal() {
     group.workspaces.push(workspace); groups.set(key, group);
   }
   const accountItems = [
-    { label: t("账户与安全"), onSelect: () => window.location.assign(accountLink(account, "/account")) },
-    ...(isPlatformAdmin ? [{ label: t("平台管理"), onSelect: () => window.location.assign(accountLink(account, "/admin")) }] : []),
-    ...(canManageApi ? [{ label: t("API 管理"), onSelect: () => window.location.assign(accountLink(account, "/admin/api-platform")) }] : []),
+    { label: <span className="app-identity"><AppIcon id="/account" />{t("账户与安全")}</span>, onSelect: () => window.location.assign(accountLink(account, "/account")) },
+    ...(isPlatformAdmin ? [{ label: <span className="app-identity"><AppIcon id="/admin" />{t("平台管理")}</span>, onSelect: () => window.location.assign(accountLink(account, "/admin")) }] : []),
+    ...(canManageApi ? [{ label: <span className="app-identity"><AppIcon id="/admin/api-platform" />{t("API 管理")}</span>, onSelect: () => window.location.assign(accountLink(account, "/admin/api-platform")) }] : []),
     // Leaving from the platform home itself: the shared sign-out ends the platform session (the
     // portal is a relying party) and returns to this origin's /signed-out page.
     { label: t("退出登录"), onSelect: () => void session.signOut().catch(() => undefined) },
   ];
   return <Shell right={narrow ? <Menu ariaLabel={t("账户菜单")} buttonClass="btn ghost pt-account-btn" items={accountItems}
       trigger={<><span className="pt-avatar" aria-hidden="true">{(me.display_name || me.email).slice(0, 1).toUpperCase()}</span>{t("账户")}</>} /> : <div className="pt-account">
-    <a className="pt-link" href={accountLink(account, "/account")}>{t("账户与安全")}</a>
-    {isPlatformAdmin && <><a className="pt-link" href={accountLink(account, "/admin")}>{t("平台管理")}</a>{canManageApi && <a className="pt-link" href={accountLink(account, "/admin/api-platform")}>{t("API 管理")}</a>}</>}
+    <a className="pt-link" href={accountLink(account, "/account")}><AppIcon id="/account" />{t("账户与安全")}</a>
+    {isPlatformAdmin && <><a className="pt-link" href={accountLink(account, "/admin")}><AppIcon id="/admin" />{t("平台管理")}</a>{canManageApi && <a className="pt-link" href={accountLink(account, "/admin/api-platform")}><AppIcon id="/admin/api-platform" />{t("API 管理")}</a>}</>}
     <span className="pt-avatar" title={me.email} aria-label={me.display_name || me.email}>{(me.display_name || me.email).slice(0, 1).toUpperCase()}</span>
     <button type="button" className="pt-link" onClick={() => void session.signOut().catch(() => undefined)}>{t("退出登录")}</button>
   </div>}>
@@ -168,7 +182,7 @@ export function Portal() {
       <a className="btn" href={accountLink(account, "/onboarding")}>{t("创建或加入工作空间")}</a></div>
     <div className="pt-dashboard">
       <aside className="pt-spaces" aria-label={t("工作空间")}>
-        <h2>{t("工作空间")}</h2><p className="pt-hint">{t("只显示你已加入的工作空间。")}</p>
+        <h2 className="app-identity"><AppIcon id="platform" size={24} />{t("工作空间")}</h2><p className="pt-hint">{t("只显示你已加入的工作空间。")}</p>
         {[...groups].map(([key, group]) => <div className="pt-space-group" key={key}><h3>{group.name}</h3>{group.workspaces.map(workspace => <button key={workspace.id}
           className={`pt-space${workspace.id === current?.id ? " is-current" : ""}`} aria-pressed={workspace.id === current?.id}
           disabled={switching !== null || unavailable(workspace)}
@@ -184,7 +198,7 @@ export function Portal() {
           {current && ["owner", "admin"].includes(current.role) && <a className="pt-link" href={accountLink(account, `/account/workspaces/${encodeURIComponent(current.id)}/members`)}>{t("成员与邀请")} <span aria-hidden="true">↗</span></a>}</div>
           {switchError && <p className="pt-error" role="alert">{t("切换失败，已重新核对当前工作空间，请重试。")}</p>}
           {switching !== null ? <div className="pt-empty" role="status"><span className="pt-loader" aria-hidden="true" /><h3>{t("正在切换工作空间…")}</h3><p>{t("页面将重新载入以更新权限。")}</p></div> : home.apps.length ? <ul className="pt-apps">{home.apps.map(app => <li key={`${app.id}:${app.workspace_id}`}>
-            <a className="pt-app-card" href={safeLink(app.launch_url, "/workspace")}><span className="pt-doc-icon" aria-hidden="true">{app.icon === "chat" ? <ChatIcon /> : <DocumentIcon />}</span><span className="pt-app-body"><strong>{app.name}</strong><span>{app.workspace_name}</span><span className="pt-app-description">{app.icon === "doc" ? t("从来源数据到可交付的文档。") : app.icon === "chat" ? t("组织内的私聊与群聊。") : t("打开已授权的应用。")}</span></span><span className="pt-card-arrow" aria-hidden="true">↗</span></a>
+            <a className="pt-app-card" href={safeLink(app.launch_url, "/workspace")}><AppIcon id={app.id} size={48} /><span className="pt-app-body"><strong>{app.name}</strong><span>{app.workspace_name}</span><span className="pt-app-description">{appDescription(t, app.id)}</span></span><span className="pt-card-arrow" aria-hidden="true">↗</span></a>
           </li>)}</ul> : <div className="pt-empty"><DocumentIcon /><h3>{t(home.workspaces.length ? "当前工作空间暂无可用应用" : "先加入一个工作空间")}</h3><p>{t(home.workspaces.length ? "请联系工作空间管理员确认应用是否启用，以及你的使用资格。" : "创建工作空间，或用发到当前邮箱的邀请加入团队。")}</p><a className="pt-link" href={accountLink(account, "/onboarding")}>{t("前往设置工作空间")} <span aria-hidden="true">→</span></a></div>}
           <p className="pt-context-note">{t("应用与文档权限按工作空间分别授予；切换不会合并内容。")}</p>
         </section>
@@ -199,10 +213,6 @@ export function Portal() {
 
 export function DocumentIcon() {
   return <svg viewBox="0 0 32 36" width="32" height="36" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M7 3h12l6 6v24H7z" strokeLinejoin="round"/><path d="M19 3v7h6M12 17h8M12 22h8M12 27h5" strokeLinecap="round"/></svg>;
-}
-/** The card icon of Synwevo Message: two speech bubbles, drawn like the document icon. */
-export function ChatIcon() {
-  return <svg viewBox="0 0 32 36" width="32" height="36" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M5 8h16a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-8l-6 5v-5H5a3 3 0 0 1-3-3v-8a3 3 0 0 1 3-3z" strokeLinejoin="round"/><path d="M27 14h1a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3h-1v4l-5-4h-6" strokeLinejoin="round"/><path d="M8 13h10M8 17h7" strokeLinecap="round"/></svg>;
 }
 export function Shell({ right, children, publicHome = false }: { right?: ReactNode; children: ReactNode; publicHome?: boolean }) {
   const { t, locale } = useI18n();

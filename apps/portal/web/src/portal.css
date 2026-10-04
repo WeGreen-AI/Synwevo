@@ -13,7 +13,7 @@
 .pt-top { position: sticky; top: 0; z-index: 20; min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 24px;
   padding: 8px max(20px, calc((100% - var(--content-w) - 80px) / 2)); background: var(--surface); border-bottom: 1px solid var(--line); }
 .pt-nav, .pt-account { display: flex; align-items: center; justify-content: flex-end; gap: 4px 18px; flex-wrap: wrap; font-size: 13px; }
-.pt-nav a, .pt-link { color: var(--text-2); text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; min-height: 24px; }
+.pt-nav a, .pt-link { color: var(--text-2); text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; min-height: 24px; gap: var(--sp-2); }
 .pt-nav a:hover, .pt-link:hover, .pt-footer a:hover { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 4px; }
 /* a text action in the header (sign out) reads like the links beside it, on a real button */
 button.pt-link { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-weight: 500; }
@@ -157,7 +157,6 @@ button.pt-link { background: none; border: 0; padding: 0; cursor: pointer; font:
 .pt-app-card { display: flex; align-items: center; gap: 20px; padding: 24px; text-decoration: none; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow);
   transition: border-color var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease); }
 .pt-app-card:hover { border-color: var(--accent-line); box-shadow: 0 6px 18px rgba(37, 99, 235, .12); text-decoration: none; }
-.pt-doc-icon { width: 56px; height: 60px; background: var(--accent-weak); display: grid; place-items: center; border-radius: var(--radius-lg); flex: none; color: var(--accent-strong); }
 .pt-app-body { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
 .pt-app-body strong { font-size: 17px; font-weight: 600; }
 .pt-app-body > span { font-size: 12px; color: var(--muted); }

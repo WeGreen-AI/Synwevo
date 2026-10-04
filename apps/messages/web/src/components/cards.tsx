@@ -9,7 +9,7 @@
  *    duration (none when the sender declared none), a file shows its name, size and a download
  *    through the authorised address. Inline preview only for what the server marks `inline`. */
 import { useEffect, useState } from "react";
-import { useI18n } from "@synwevo/ui";
+import { AppIcon, useI18n } from "@synwevo/ui";
 import { attachmentUrl, cardFor, type LinkCardData } from "../api";
 import { fmtSize } from "../lib/thread";
 import type { AppCard, Attachment } from "../types";
@@ -42,7 +42,7 @@ export function AppCardView({ card }: { card: AppCard }) {
   const kind = card.object?.kind || "";
   const label = card.state ? (CARD_STATE[kind]?.[card.state] ? t(CARD_STATE[kind][card.state]) : card.state) : null;
   return <div className={`msg-card msg-appcard ${card.degraded ? "degraded" : ""}`} data-app={card.app} data-object-kind={kind} data-object-id={card.object?.id}>
-    <span className="msg-card-kind">{card.app_name}</span>
+    <span className="msg-card-kind app-identity"><AppIcon id={card.app} size={16} />{card.app_name}</span>
     <span className="msg-card-title">{card.title}</span>
     {card.subtitle && !card.degraded && <span className="msg-card-meta">{card.subtitle}</span>}
     {label && <span className={`badge ${STATE_TONE[card.state || ""] || "info"} msg-card-state`}>{label}</span>}

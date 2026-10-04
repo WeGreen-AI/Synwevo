@@ -1,6 +1,6 @@
 import { messagesHref, useSession } from "@synwevo/auth-client";
-import { Logo, useI18n } from "@synwevo/ui";
-import { DocumentIcon, Shell, signInUrl as signInBase } from "./Portal";
+import { AppIcon, Logo, useI18n } from "@synwevo/ui";
+import { Shell, signInUrl as signInBase } from "./Portal";
 import { publicPath } from "./publicRoutes";
 
 /** The header of every public page. `signedIn` is three-valued: undefined while the session is
@@ -15,7 +15,7 @@ export function PublicNav({ signedIn, registerUrl, home }: { signedIn: boolean |
     <a className="pt-nav-detail" href={`${base}#applications`}>{t("应用")}</a>
     <a className="pt-nav-detail" href={`${base}#together`}>{t("协作方式")}</a>
     <a className="pt-nav-detail" href={`${base}#faq`}>{t("常见问题")}</a>
-    {signedIn === undefined ? <span className="pt-nav-pending" aria-hidden="true" /> : <a className="pt-link" href={signedIn ? "/workspace" : signInUrl}>{t(signedIn ? "进入工作空间" : "登录")}</a>}
+    {signedIn === undefined ? <span className="pt-nav-pending" aria-hidden="true" /> : <a className="pt-link" href={signedIn ? "/workspace" : signInUrl}>{signedIn && <AppIcon id="platform" />}{t(signedIn ? "进入工作空间" : "登录")}</a>}
     {signedIn === false && <a className="btn primary pt-nav-register" href={registerUrl}>{t("注册账户")}</a>}
   </>;
 }
@@ -90,13 +90,13 @@ export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }:
       <div className="pt-section-intro"><p className="pt-eyebrow">{t("今天可用的应用")}</p><h2>{t("两个应用，各司其职。")}</h2><p>{t("Synwevo Docs 处理文档，Synwevo Message 负责组织内的沟通。它们共用同一个账户、同一套工作空间与授权；此外没有别的应用。")}</p></div>
       <div className="pt-app-grid">
         <article className="pt-featured-app">
-          <div className="pt-featured-heading"><span className="pt-doc-icon"><DocumentIcon/></span><div><p className="pt-eyebrow">{t("文档自动化")}</p><h3>Synwevo Docs</h3></div></div>
+          <div className="pt-featured-heading"><AppIcon id="docweave" size={48} /><div><p className="pt-eyebrow">{t("文档自动化")}</p><h3>Synwevo Docs</h3></div></div>
           <p>{t("选择来源数据，接入模板，检查后批量生成。重复的文档制作交给可复用的规则，交付前的检查留给人。")}</p>
           <div className="pt-app-formats" aria-label={t("文档格式")}>{["DOCX", "XLSX", "PDF", "PPTX", "CSV"].map(format => <span key={format}>{format}</span>)}</div>
           <div className="pt-featured-bottom"><p className="pt-hint">{t("各格式支持的能力以应用内选项为准；可用应用由工作空间授权决定。")}</p><a className="btn" href={openApp("/workspace")}>{t(signedIn ? "进入工作空间" : "登录后打开")} <span aria-hidden="true">↗</span></a></div>
         </article>
         <article className="pt-featured-app">
-          <div className="pt-featured-heading"><span className="pt-doc-icon"><MessageIcon/></span><div><p className="pt-eyebrow">{t("组织消息")}</p><h3>Synwevo Message</h3></div></div>
+          <div className="pt-featured-heading"><AppIcon id="messages" size={48} /><div><p className="pt-eyebrow">{t("组织消息")}</p><h3>Synwevo Message</h3></div></div>
           <p>{t("与同一组织的成员私聊或建群：引用回复、@提及、表情回应、附件与文档链接卡片。新成员只看到加入之后的消息，离开后即止。")}</p>
           <div className="pt-app-formats" aria-label={t("消息能力")}>{["私聊", "群组", "公告", "举报处理"].map(label => <span key={label}>{t(label)}</span>)}</div>
           <div className="pt-featured-bottom"><p className="pt-hint">{t("独立打开，也可以从工作空间顶栏的「消息」进入。")}</p><a className="btn" href={openApp(messagesUrl)}>{t(signedIn ? "打开消息" : "登录后打开")} <span aria-hidden="true">↗</span></a></div>
@@ -121,8 +121,4 @@ export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }:
       <div className="pt-next-cta"><a className="btn primary lg" href={primary}>{t(signedIn ? "进入工作空间" : "注册账户")} <span aria-hidden="true">↗</span></a>{!signedIn && <a className="pt-link" href={signInUrl}>{t("已有账户？登录")}</a>}</div>
     </section>
   </Shell>;
-}
-
-function MessageIcon() {
-  return <svg viewBox="0 0 32 36" width="32" height="36" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M5 8h22v16H14l-6 5v-5H5z" strokeLinejoin="round"/><path d="M11 14h10M11 18h6" strokeLinecap="round"/></svg>;
 }

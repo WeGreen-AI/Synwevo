@@ -6,7 +6,7 @@ import { get } from "./api";
 import { platformHandoffUrl } from "./handoff";
 import { broadcastCount, MESSAGES_UNREAD, onBroadcastCount } from "./tabSync";
 import type { AuthState } from "./session";
-import { useI18n } from "@synwevo/ui";
+import { AppIcon, useI18n } from "@synwevo/ui";
 
 const POLL_MS = 60_000;
 
@@ -66,6 +66,6 @@ export function MessagesLink({ href, current = false }: { href: string; current?
   const unread = useMessagesUnread();
   return <a className="btn ghost sm bell" href={href} aria-current={current ? "page" : undefined}
     aria-label={unread ? t("消息，{n} 条未读", { n: unread }) : t("消息")}>
-    {t("消息")}{unread > 0 && <span className="bell-count" aria-hidden="true">{unread > 99 ? "99+" : unread}</span>}
+    <AppIcon id="messages" />{t("消息")}{unread > 0 && <span className="bell-count" aria-hidden="true">{unread > 99 ? "99+" : unread}</span>}
   </a>;
 }
