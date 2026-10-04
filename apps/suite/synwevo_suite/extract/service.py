@@ -238,6 +238,9 @@ class Extract:
         self.task_file(r)
         ver = self.version(workspace_id, r["template_id"], r["template_version"])
         reviews = self.store.all("SELECT revision,kind,note,actor_id,created_at FROM extract_reviews WHERE workspace_id=? AND task_id=? ORDER BY revision", (workspace_id, identifier))
+        names: dict[str, str | None] = {}
+        for review in reviews:
+            review["actor_name"] = self.actor_name(review["actor_id"], names)
         parsed = decode(r["parse_json"]) or {}
         return {**{k: r[k] for k in ("id", "workspace_id", "template_id", "template_version", "status", "revision",
                                    "confirmed_revision", "error_code", "attempts", "created_at")},
@@ -253,6 +256,12 @@ class Extract:
         return {"items": values[i.offset:i.offset+i.limit], "total": len(values)}
 
     def review_version(self, call, i):
+        review = self._review_record(call, i)
+        return {**review, "actor_name": self.actor_name(review["actor_id"])}
+
+    def _review_record(self, call, i):
+        # The immutable record only: `result` embeds it and consumers fingerprint `result`, so a
+        # reviewer's later change of name must not read as a changed source.
         self.task_file(self.row(call.workspace_id, "task", i.task_id))
         r = self.store.one("SELECT * FROM extract_reviews WHERE workspace_id=? AND task_id=? AND revision=?",
                            (call.workspace_id, i.task_id, i.revision))
@@ -260,6 +269,17 @@ class Extract:
             fail("revision_not_found", "复核版本不存在", 404)
         return {"task_id": i.task_id, "revision": r["revision"], "kind": r["kind"], "values": decode(r["values_json"]),
                 "note": r["note"], "actor_id": r["actor_id"], "created_at": r["created_at"]}
+
+    def actor_name(self, user_id, cache=None):
+        """The name a reviewer is shown by in the history: their display name, else their email
+        (everyone who reads the task is a member of its workspace). None when the account is gone."""
+        if cache is not None and user_id in cache:
+            return cache[user_id]
+        user = self.identity.get_user(user_id) if user_id else None
+        name = (user.get("display_name") or user.get("email")) if user else None
+        if cache is not None:
+            cache[user_id] = name
+        return name
 
     def correct(self, call, i):
         r = self.row(call.workspace_id, "task", i.task_id)
@@ -331,7 +351,7 @@ class Extract:
                 "template_version": r["template_version"], "definition_digest": ver["definition_digest"],
                 "file": self.file_json(self.row(call.workspace_id, "file", r["file_id"])),
                 "values": decode(r["current_json"]), "machine": decode(r["machine_json"]),
-                "review": self.review_version(call, i)}
+                "review": self._review_record(call, i)}
 
     def cancel(self, call, i):
         r = self.row(call.workspace_id, "task", i.task_id)

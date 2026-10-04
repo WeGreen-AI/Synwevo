@@ -108,6 +108,7 @@ export const extract = {
   "复核版本 {v}": {"en": "Review revision {v}", "zh-Hant": "覆核版本 {v}"},
   "人工确认": {"en": "Human confirmation", "zh-Hant": "人工確認"},
   "人工修正": {"en": "Human correction", "zh-Hant": "人工修正"},
+  "账户已不存在的成员": {"en": "A member whose account no longer exists", "zh-Hant": "帳戶已不存在的成員"},
   "关闭历史详情": {"en": "Close history details", "zh-Hant": "關閉歷史詳情"},
   "文件解析服务未配置": {"en": "File parsing is not configured", "zh-Hant": "檔案解析服務未配置"},
   "文字识别服务未配置": {"en": "Text recognition is not configured", "zh-Hant": "文字辨識服務未配置"},

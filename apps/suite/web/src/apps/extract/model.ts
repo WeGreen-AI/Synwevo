@@ -27,7 +27,8 @@ export interface Task {
   revision: number; confirmed_revision: number | null; error_code: string | null; attempts: number;
   file: { id: string; filename: string; content_digest: string; scan: { status: string }; source?: { app?: string; submission_id?: string; workspace_id?: string } };
   definition: { fields: Field[] }; machine: Record<string, Value> | null; values: Record<string, Value> | null;
-  history: { revision: number; kind: string; note: string; actor_id: string; created_at: number }[];
+  /** `actor_name` is how the reviewer is shown; null when their account no longer exists. */
+  history: { revision: number; kind: string; note: string; actor_id: string; actor_name: string | null; created_at: number }[];
 }
 export const blankField = (): Field => ({ id: `f_${newKey().replaceAll("-", "").slice(0, 12)}`, label: "", type: "text",
   required: true, many: false, review_required: true, max_length: 2000, minimum: null, maximum: null,

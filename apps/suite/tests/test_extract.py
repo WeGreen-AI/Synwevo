@@ -416,6 +416,26 @@ def test_incomplete_and_over_limit_fields_block_confirmation_until_corrected(ex)
     assert refused["error"] == "review_unresolved"
 
 
+def test_review_history_names_the_people_not_their_ids(ex):
+    """Acceptance defect: the review history showed raw user ids (u_…) instead of names."""
+    rid = ready(ex)
+    ex.sign_in("bob")
+    op(ex, "task.correct", {"task_id": rid, "revision": 1, "values": {"amount": "7.25"}, "note": "Bob checked the fixture"})
+    ex.sign_in("alice")
+    op(ex, "task.confirm", {"task_id": rid, "revision": 2, "note": "Alice confirmed", "acknowledge_unverified": True})
+    history = get(ex, rid)["history"]
+    assert [(h["kind"], h["actor_name"]) for h in history] == [("correction", "Bob Editor"), ("confirmation", "Alice Owner")]
+    assert op(ex, "task.review_version", {"task_id": rid, "revision": 2})["output"]["actor_name"] == "Bob Editor"
+    # The confirmed result consumers fingerprint stays the immutable record: a later change of a
+    # reviewer's name must not read downstream as a changed source.
+    assert "actor_name" not in op(ex, "task.result", {"task_id": rid, "revision": 3})["output"]["review"]
+    # A person who has since left keeps their name in the record; one whose account is gone has none.
+    ex.people.store.execute("DELETE FROM memberships WHERE workspace_id=? AND user_id=?", (ex.people.a, ex.people.uid("bob")))
+    assert get(ex, rid)["history"][0]["actor_name"] == "Bob Editor"
+    ex.people.store.execute("UPDATE extract_reviews SET actor_id='u_gone00000000' WHERE task_id=? AND revision=2", (rid,))
+    assert get(ex, rid)["history"][0]["actor_name"] is None
+
+
 def test_queue_bound_pagination_review_validation_and_viewer(ex):
     tid, fid = template(ex), upload(ex)["id"]
     ids = [task(ex, tid=tid, file_id=fid) for _ in range(20)]

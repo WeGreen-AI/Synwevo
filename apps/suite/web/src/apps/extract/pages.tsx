@@ -257,7 +257,7 @@ function Review({ task, ws, canWrite, reload }: Props & { task: Task; reload: ()
     {task.confirmed_revision && <a className="btn primary" href={`/api/suite/extract/tasks/${task.id}/export?workspace_id=${encodeURIComponent(ws.id)}&revision=${task.confirmed_revision}`}>{t("导出已确认结果")}</a>}
     <section className="extract-section"><h2>{t("修正与确认历史")}</h2>{task.history.length === 0 ? <p className="muted">{t("尚无人工复核记录")}</p> : task.history.map(item => <div className="suite-row extract-history" key={item.revision}>
       <button className="btn sm" onClick={() => setHistory(item.revision)}>{t("复核版本 {v}", { v: item.revision })}</button>
-      <div className="grow"><strong>{item.kind === "confirmation" ? t("人工确认") : t("人工修正")}</strong><p>{item.note}</p><small>{item.actor_id} · <time dateTime={new Date(item.created_at * 1000).toISOString()}>{new Date(item.created_at * 1000).toLocaleString()}</time></small></div>
+      <div className="grow"><strong>{item.kind === "confirmation" ? t("人工确认") : t("人工修正")}</strong><p>{item.note}</p><small>{item.actor_name || t("账户已不存在的成员")} · <time dateTime={new Date(item.created_at * 1000).toISOString()}>{new Date(item.created_at * 1000).toLocaleString()}</time></small></div>
     </div>)}{history && <History task={task} ws={ws} revision={history} onClose={() => setHistory(undefined)} />}</section>
   </>;
 }
