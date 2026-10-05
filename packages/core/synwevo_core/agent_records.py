@@ -14,7 +14,12 @@ the reports the person filed, and the personal wallet statement.
 
 Deletion — at the end of the grace period, and again whenever the security journal replays the
 deletion after a restore: conversations, messages, turns, events, tool calls, memories, settings
-(including the sealed personal key) and the content of reports are erased. Financial records —
+(including the sealed personal key) and the content of reports are erased, and so is what the
+capability layer's run records copied of them: every Agent operation run (``op_runs``, app
+``agent``) keeps its receipt — who, which operation, when, its state, error code and object id —
+but loses its input, output and error detail (a conversation title, each message, each memory,
+a report's note, every transcript the person opened). Runs of the business applications are the
+workspaces' records, not the person's Agent content, and are kept. Financial records —
 quotes, payment consents, the ledger, usage and settlement evidence — are kept under the account's
 permanent, now nameless id, because they are the platform's accounts; consent and safety records
 carry no content and are kept the same way. Unused wallet balance is not paid out: top-ups are
@@ -22,6 +27,7 @@ final (the deletion dialog says so before the person confirms).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 
 from .store import Store
@@ -29,6 +35,12 @@ from .store import Store
 #: Tables erased with an account, each keyed by ``user_id`` (order: dependants first).
 ERASED = ("agent_events", "agent_tool_calls", "agent_turns", "agent_messages", "agent_conversations",
           "agent_memories", "agent_settings")
+
+#: The input an erased account's Agent operation runs keep in place of what was asked, in the
+#: capability layer's canonical form, and its fingerprint (``capabilities.canonical`` /
+#: ``fingerprint``; written out so the account service does not load the capability layer).
+ERASED_RUN_INPUT = '{"erased":"account_deleted"}'
+ERASED_RUN_INPUT_HASH = hashlib.sha256(ERASED_RUN_INPUT.encode("utf-8")).hexdigest()
 
 
 def _table(store: Store, name: str) -> bool:
@@ -156,4 +168,10 @@ def erase(store: Store, user_id: str) -> int:
         # The report stays as a moderation record; what the person wrote or quoted in it goes.
         n += store.execute("UPDATE agent_message_reports SET note=NULL, excerpt=NULL WHERE user_id=? "
                            "AND (note IS NOT NULL OR excerpt IS NOT NULL)", (user_id,))
+    if _table(store, "op_runs"):
+        # The run records of the Agent's operations copied all of the above. The receipt stays;
+        # the input hash is replaced so it no longer fingerprints what was said.
+        n += store.execute("UPDATE op_runs SET input=?, input_hash=?, output=NULL, error_detail=NULL "
+                           "WHERE user_id=? AND app='agent' AND (input<>? OR output IS NOT NULL OR error_detail IS NOT NULL)",
+                           (ERASED_RUN_INPUT, ERASED_RUN_INPUT_HASH, user_id, ERASED_RUN_INPUT))
     return n

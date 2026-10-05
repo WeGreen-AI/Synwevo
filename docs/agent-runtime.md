@@ -212,7 +212,9 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
 * **Terms.** A paid run records the terms / AI use / pricing versions in force once per version
   (`synwevo_core/terms.py`); the account export lists them, together with the Agent's visible
   conversation text, memories, settings, consents, quotes and the wallet statement
-  (`synwevo_core/agent_records.py`); account deletion erases the Agent's content. The export never
+  (`synwevo_core/agent_records.py`); account deletion erases the Agent's content, including the
+  copies in the capability layer's run records (`op_runs` of app `agent` keep only their receipt:
+  who, which operation, when, state, error code, object id). The export never
   carries a text the Agent may hide: the engine's hide rule re-reads sources through the business
   applications, which the account service cannot run, so an answer keeps its text only when it
   depends on no workspace or only on "reported by" sources in workspaces the person still belongs
