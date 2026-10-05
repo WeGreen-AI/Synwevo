@@ -203,16 +203,41 @@ def test_daily_reconciliation_compares_balance_change_with_ledger_cost(platform)
     poll(p)
     p.ticks[0] = DAY0 + 3600
     spend(p, "settled", input_tokens=1000, output_tokens=1000)  # 1,000,000 + 2,000,000 = 3.000000 yuan
-    spend(p, "unknown", settle=False, bound=7)                   # pending exposure, not cost
+    spend(p, "unknown", settle=False, bound=7)                   # pending exposure: 0..7 more
     p.ticks[0] = DAY0 + DAY + 60
     p.replies.append((200, balance_body("106.9990")))            # 3.0010 yuan spent upstream
     poll(p)
     p.ticks[0] = DAY0 + DAY + 700
     row = Reconciliation(p.store, environment="test", clock=p.clock).daily(DAY0)
+    # Drift is measured from the recorded range [3.000000, 3.000007]: 1000 - 7 above its top.
     assert (row["status"], row["code"], row["upstream_units"], row["ledger_cost_n"], row["ledger_cost_d"],
             row["pending_units"], row["drift_n"], row["tolerance_units"]) == (
-        "ok", "within_tolerance", 3_001_000, "3000000", "1", 7, "1000", 1000)
+        "ok", "within_tolerance", 3_001_000, "3000000", "1", 7, "993", 1000)
     assert alerts(p, "billing.risk.reconciliation") == []
+
+
+@pytest.mark.parametrize("spent,drift,status", [
+    ("4.20", "0", "ok"),               # within [cost 3, cost 3 + unknown bound 2]: the stopped call cost 1.2
+    ("5.00", "0", "ok"),               # the stopped call cost its whole bound
+    ("5.50", "500000", "drift"),        # above any bound: billed more than recorded (e.g. an error answer)
+    ("2.50", "-500000", "drift"),       # below the known cost
+])
+def test_reconciliation_treats_unknown_usage_as_a_range_not_as_drift(platform, spent, drift, status):
+    # A call stopped mid-stream has no usage on our side but may cost up to its bound upstream.
+    p = platform
+    p.ticks[0] = DAY0 - 60
+    p.replies.append((200, balance_body("110.00")))
+    poll(p)
+    p.ticks[0] = DAY0 + 3600
+    spend(p, "settled", input_tokens=1000, output_tokens=1000)  # 3.000000 yuan
+    spend(p, "stopped", settle=False, bound=2_000_000)          # unknown, at most 2.000000 yuan
+    p.ticks[0] = DAY0 + DAY + 60
+    from decimal import Decimal
+    p.replies.append((200, balance_body(str(Decimal("110.00") - Decimal(spent)))))
+    poll(p)
+    p.ticks[0] = DAY0 + DAY + 700
+    row = Reconciliation(p.store, environment="test", clock=p.clock).daily(DAY0)
+    assert (row["status"], row["pending_units"], row["drift_n"]) == (status, 2_000_000, drift)
 
 
 def test_unrecorded_topup_shows_drift_and_alerts_and_a_recorded_one_reconciles(platform):

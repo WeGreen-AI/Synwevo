@@ -49,6 +49,24 @@ BEGIN
 END;
 CREATE TRIGGER IF NOT EXISTS model_cost_usage_resolved AFTER INSERT ON billing_usage
 BEGIN DELETE FROM model_cost_pending WHERE attempt_key=NEW.attempt_key; END;
+
+-- How an admitted attempt whose usage stayed unknown ended, when the platform knows it closed the
+-- stream itself ('stopped_locally': the person's Stop, the output guard, a shutdown). Such an
+-- unknown is that payer's bounded exposure (cost windows, payer velocity), not a platform-wide
+-- unknown once its in-flight window has passed (billing/admission.py). Immutable, one per attempt.
+CREATE TABLE IF NOT EXISTS model_cost_endings (
+    attempt_key TEXT PRIMARY KEY REFERENCES model_cost_admissions(attempt_key),
+    ending TEXT NOT NULL CHECK(ending IN ('stopped_locally')),
+    recorded_at INTEGER NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS model_cost_endings_valid_insert BEFORE INSERT ON model_cost_endings
+WHEN NOT EXISTS(SELECT 1 FROM model_cost_admissions WHERE attempt_key=NEW.attempt_key)
+ OR EXISTS(SELECT 1 FROM model_cost_endings WHERE attempt_key=NEW.attempt_key)
+BEGIN SELECT RAISE(ABORT,'invalid_cost_ending'); END;
+CREATE TRIGGER IF NOT EXISTS model_cost_endings_no_update BEFORE UPDATE ON model_cost_endings
+BEGIN SELECT RAISE(ABORT,'immutable_cost_ending'); END;
+CREATE TRIGGER IF NOT EXISTS model_cost_endings_no_delete BEFORE DELETE ON model_cost_endings
+BEGIN SELECT RAISE(ABORT,'immutable_cost_ending'); END;
 """
 
 

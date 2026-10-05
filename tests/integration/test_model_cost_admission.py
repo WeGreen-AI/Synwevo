@@ -369,42 +369,112 @@ def test_week_can_start_in_previous_month_and_usage_stays_in_admitted_period(fun
     assert snapshot["unknown_count"] == snapshot["inflight"] == 0
 
 
-def test_wallet_release_and_expiry_never_clear_unknown_exposure(funded):
+def test_unknown_exposure_counts_until_the_hold_ends_then_stays_at_its_bound_in_the_windows(funded):
+    # Unknown usage limits protect against exposure that can still grow or still be settled: an
+    # attempt in flight, or one whose payer's hold is open. When the hold ends (Ledger: no later
+    # charge) the bound is final: it stays in its UTC cost periods, but it no longer holds an
+    # unknown slot for every later call on the platform (review runtime-1).
     store, ledger, _, ticks = funded
     current = [policy(unknown_budget=20)]
     admission = CostAdmission(ledger, current_policy=lambda: current[0])
-    call, first = prepare(funded, "unknown", hold=20)
-    send(admission, first, amount=20, expires_at=START+600)
+    call, first = prepare(funded, "unknown", hold=20)              # hold deadline START+500
+    send(admission, first, amount=20, expires_at=START+120)
     pending = store.one("SELECT * FROM model_cost_pending WHERE attempt_key=?", (first.attempt_key,))
     assert pending == {"attempt_key": first.attempt_key, "environment": "test", "provider": "fixture-provider",
                        "account_ref": "fixture-provider-account", "admitted_at": START}
     ledger.mark_usage_pending(first, request_id=evidence(first).request_id)
     ledger.cancel_call(call)
-    ticks[0] = START+500
-    assert ledger.expire_due() == 1 and balance(funded).held == 0
-    assert store.one("SELECT * FROM model_cost_pending WHERE attempt_key=?", (first.attempt_key,)) == pending
+    ticks[0] = START+200                                           # out of flight, hold still open
     snapshot = admission.snapshot()
-    assert (snapshot["unknown_reserved_units"], snapshot["unknown_count"], snapshot["inflight"]) == (20, 1, 1)
-    ticks[0] = START+600
-    assert admission.snapshot()["inflight"] == 0
-    assert store.one("SELECT * FROM model_cost_pending WHERE attempt_key=?", (first.attempt_key,)) == pending
-    ticks[0] = utc("2034-01-01T00:00:00")
-    snapshot = admission.snapshot()
-    assert [exact(snapshot, p) for p in ("daily", "weekly", "monthly")] == [0, 0, 0]
-    assert snapshot["unknown_reserved_units"] == 20
-    assert store.one("SELECT * FROM model_cost_pending WHERE attempt_key=?", (first.attempt_key,)) == pending
-    _, second = prepare(funded, "next-year")
+    assert (snapshot["unknown_reserved_units"], snapshot["unknown_count"], snapshot["inflight"]) == (20, 1, 0)
+    _, second = prepare(funded, "while-open")
     with pytest.raises(BillingError, match="cost_unknown_budget_exceeded"):
         send(admission, second, amount=1)
     current[0] = policy(unknown_budget=100, max_unknown=1)
     with pytest.raises(BillingError, match="cost_unknown_limit"):
         send(admission, second, amount=0)
+
+    ticks[0] = START+500                                           # the hold's deadline
+    assert ledger.expire_due() == 1 and ledger.call_status(call)["status"] == "released"
+    snapshot = admission.snapshot()
+    assert (snapshot["unknown_reserved_units"], snapshot["unknown_count"]) == (0, 0)
+    assert (snapshot["absorbed_unknown_units"], snapshot["absorbed_unknown_count"]) == (20, 1)
+    assert [exact(snapshot, p) for p in ("daily", "weekly", "monthly")] == [20, 20, 20]
+    assert store.one("SELECT * FROM model_cost_pending WHERE attempt_key=?", (first.attempt_key,)) == pending
+    _, third = prepare(funded, "after-hold")
+    send(admission, third, amount=0)                               # max_unknown=1 is free again
+    # Late trusted usage still replaces the bound with the actual cost (cost only, never sold).
     result = ledger.settle_trusted_usage(first.attempt_key, evidence(first))
     assert result.late and result.charged == 0 and result.cost == 19
     assert store.one("SELECT * FROM model_cost_pending WHERE attempt_key=?", (first.attempt_key,)) is None
-    assert admission.snapshot()["unknown_count"] == 0
-    send(admission, second, amount=1)
+    assert exact(admission.snapshot(), "daily") == 19
     assert store.one("SELECT reserved_units FROM model_cost_admissions WHERE attempt_key=?", (first.attempt_key,))["reserved_units"] == 20
+
+
+def test_a_closed_unknown_leaves_the_windows_and_is_never_scanned_again(funded):
+    store, ledger, _, ticks = funded
+    admission = CostAdmission(ledger, current_policy=lambda: policy(max_unknown=1, unknown_budget=20))
+    call, first = prepare(funded, "old-unknown", hold=20)
+    send(admission, first, amount=20)
+    ledger.mark_usage_pending(first)
+    ticks[0] = utc("2034-01-01T00:00:00")
+    ledger.expire_due()
+    snapshot = admission.snapshot()
+    assert (snapshot["records"], snapshot["unknown_count"], snapshot["absorbed_unknown_count"]) == (0, 0, 0)
+    assert [exact(snapshot, p) for p in ("daily", "weekly", "monthly")] == [0, 0, 0]
+    _, later = prepare(funded, "next-year")
+    send(admission, later, amount=20)                              # neither limit is held by history
+    assert store.one("SELECT COUNT(*) AS n FROM model_cost_pending")["n"] == 2
+
+
+def test_a_local_stop_is_the_payers_exposure_once_out_of_flight(funded):
+    # The platform closed the stream itself (the person's Stop, the output guard, a shutdown):
+    # still unknown and unsold within its hold, counted at its bound in the cost windows, but
+    # after its in-flight window it holds no platform-wide unknown slot.
+    store, ledger, _, ticks = funded
+    admission = CostAdmission(ledger, current_policy=lambda: policy(max_unknown=1, unknown_budget=20))
+    call, stopped = prepare(funded, "stopped", hold=20)            # hold deadline START+500
+    send(admission, stopped, amount=20, expires_at=START+120)
+    ledger.mark_usage_pending(stopped)
+    assert admission.record_local_stop(stopped.attempt_key) is True
+    assert admission.record_local_stop(stopped.attempt_key) is True   # idempotent
+    snapshot = admission.snapshot()
+    assert (snapshot["unknown_reserved_units"], snapshot["unknown_count"], snapshot["inflight"]) == (20, 1, 1)
+    ticks[0] = START+120
+    snapshot = admission.snapshot()
+    assert (snapshot["unknown_reserved_units"], snapshot["unknown_count"], snapshot["inflight"]) == (0, 0, 0)
+    assert (snapshot["absorbed_unknown_units"], snapshot["absorbed_unknown_count"]) == (20, 1)
+    assert exact(snapshot, "daily") == 20
+    assert ledger.call_status(call)["status"] == "reserved"         # the hold stays until its deadline
+    _, other = prepare(funded, "another-payer-call")
+    send(admission, other, amount=20)
+    # Facts are immutable and only for admitted attempts without usage.
+    for statement in ("UPDATE model_cost_endings SET recorded_at=0", "DELETE FROM model_cost_endings"):
+        with pytest.raises(sqlite3.IntegrityError, match="immutable_cost_ending"):
+            store.execute(statement)
+    with pytest.raises(sqlite3.IntegrityError, match="invalid_cost_ending"):
+        store.execute("INSERT INTO model_cost_endings VALUES ('fixture-no-admission','stopped_locally',1)")
+    assert admission.record_local_stop("fixture-no-admission") is False
+    ledger.settle_trusted_usage(other.attempt_key, evidence(other))
+    assert admission.record_local_stop(other.attempt_key) is False
+    assert [r["attempt_key"] for r in store.all("SELECT attempt_key FROM model_cost_endings")] == [stopped.attempt_key]
+
+
+def test_local_stop_schema_is_additive_on_an_existing_database(funded):
+    store = funded[0]
+    with store.tx() as t:
+        t.execute("DROP TABLE model_cost_endings")                 # A database from before this table.
+    reopened = Store(store.root)
+    assert reopened.all("SELECT * FROM model_cost_endings") == []
+    names = {r["name"] for r in reopened.all("SELECT name FROM sqlite_master WHERE type='trigger' "
+                                             "AND tbl_name='model_cost_endings'")}
+    assert names == {"model_cost_endings_valid_insert", "model_cost_endings_no_update", "model_cost_endings_no_delete"}
+
+
+def test_admission_expiry_cannot_outlive_the_longest_hold(funded):
+    _, ticket = prepare(funded, "long-expiry")
+    with pytest.raises(BillingError, match="invalid_cost_expiry"):
+        send(CostAdmission(funded[1], current_policy=policy), ticket, amount=1, expires_at=START+86_401)
 
 
 def test_expiry_releases_only_inflight_slot_at_exact_second(funded):
@@ -599,11 +669,13 @@ def seed_capacity_facts(money, *, count, admitted_at):
 
 
 @pytest.mark.parametrize("old_unknown", [False, True])
-def test_accounting_capacity_counts_current_windows_and_all_old_unknown(funded, old_unknown):
+def test_accounting_capacity_counts_current_windows_and_old_unknown_still_open(funded, old_unknown):
+    # Old: admitted before every current window with its hold still open. 2034-05-01 is a Monday,
+    # so the day, the week and the month all start then and the old rows come from the pending index.
     admission = CostAdmission(funded[1], current_policy=lambda: policy(max_unknown=10_000, max_inflight=10_000))
-    now = utc("2034-01-01T00:00:00")
+    now = utc("2034-05-01T00:00:00")
     funded[3][0] = now
-    seed_capacity_facts(funded, count=9_999, admitted_at=START if old_unknown else now)
+    seed_capacity_facts(funded, count=9_999, admitted_at=now - 60 if old_unknown else now)
     _, ticket = prepare(funded, "at-capacity")
     send(admission, ticket, amount=0)
     snapshot = admission.snapshot()
@@ -753,8 +825,9 @@ def test_reopening_store_preserves_or_rebuilds_only_unknown_pending(funded, rebu
         assert reopened.all("PRAGMA foreign_key_check") == []
         reopened_ledger = Ledger(reopened, environment="test", namespace=ledger.namespace, clock=lambda: ticks[0])
         snapshot = CostAdmission(reopened_ledger, current_policy=policy).snapshot()
-        assert snapshot["records"] == snapshot["unknown_count"] == 1
-        assert snapshot["unknown_reserved_units"] == 20 and snapshot["inflight"] == 0
+        # The unknown's hold ended in 2033: final at its bound, outside every 2034 window.
+        assert snapshot["records"] == snapshot["unknown_count"] == 0
+        assert snapshot["unknown_reserved_units"] == 0 and snapshot["inflight"] == 0
 
 
 def test_admission_insert_with_existing_usage_never_creates_pending(funded):
@@ -794,10 +867,12 @@ def test_historical_pending_query_uses_scope_index_without_scanning_settled_hist
     assert store.one("SELECT COUNT(*) AS n FROM billing_usage")["n"] == 10_000
     assert store.all("SELECT * FROM model_cost_pending") == []
     admission = CostAdmission(ledger, current_policy=policy)
-    ticks[0] = utc("2033-07-01T00:00:00")
-    _, old_unknown = prepare(funded, "old-indexed-unknown")
+    # Admitted in the previous month with its hold still open at the snapshot: found through
+    # the pending projection's index, never by scanning settled history.
+    ticks[0] = utc("2034-04-30T23:50:00")                         # 2034-05-01: a Monday and a month start
+    _, old_unknown = prepare(funded, "old-indexed-unknown", deadline_seconds=800)
     send(admission, old_unknown, amount=7)
-    ticks[0] = utc("2034-01-01T00:00:00")
+    ticks[0] = utc("2034-05-01T00:00:00")
     _, current = prepare(funded, "current-indexed-unknown")
     send(admission, current, amount=3)
     statements = []

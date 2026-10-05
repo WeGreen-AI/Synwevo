@@ -44,6 +44,9 @@ MAX_TURN_TOKENS = 120_000
 MAX_OUTPUT_CHARS = 64_000
 MAX_TOOLS_PER_STEP = 20
 FLUSH_S = 0.15
+#: Usage reliabilities that leave a turn's usage known: trusted terminal counters, a call never
+#: sent, and an HTTP error answer settled as known zero usage (gateway.provider_refused).
+KNOWN_USAGE = ("trusted_terminal", "not_dispatched", "provider_refused")
 
 SYSTEM_PROMPT = """You are the person's own Synwevo Agent. Synwevo is a workflow platform: forms, data tables, data preparation, approvals, information extraction, documents and messages, organised in workspaces. The person may belong to several workspaces; you act for them in any workspace they can use, with exactly their rights there, and never more.
 
@@ -834,8 +837,8 @@ class Agent:
                            "usage_state=CASE WHEN ? THEN 'pending' WHEN ? THEN 'known' ELSE usage_state END, updated_at=? WHERE id=?",
                            (steps, int(usage.get("input_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0)
                             + int(usage.get("cache_creation_input_tokens") or 0), int(usage.get("output_tokens") or 0),
-                            bool(previous_pending or (reliability and reliability not in ("trusted_terminal", "not_dispatched"))),
-                            reliability in ("trusted_terminal", "not_dispatched"), now(), turn_id))
+                            bool(previous_pending or (reliability and reliability not in KNOWN_USAGE)),
+                            reliability in KNOWN_USAGE, now(), turn_id))
 
     def _effort(self, user_id: str) -> str:
         row = self.store.one("SELECT effort FROM agent_settings WHERE user_id=?", (user_id,))

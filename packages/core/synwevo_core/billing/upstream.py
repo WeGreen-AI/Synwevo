@@ -9,7 +9,8 @@ hard threshold, or when the provider reports the account unavailable, it closes 
 through `trip_platform_breaker`; below the warning threshold it alerts.
 
 Daily reconciliation compares the upstream balance change (plus administrator-recorded upstream
-top-ups) with the ledger's cost for calls admitted in the same window, and Ledger.audit_balances
+top-ups) with the ledger's cost for calls admitted in the same window (a range: calls whose usage
+stayed unknown cost between nothing and their conservative bound), and Ledger.audit_balances
 runs on the same schedule. Results are stored (amounts and codes only, never conversation
 content) and shown in Admin; a difference beyond the configured tolerance alerts.
 """
@@ -256,7 +257,17 @@ class Reconciliation:
             else:
                 cost += Fraction(int(row["cost_n"]), int(row["cost_d"]))
         upstream = start["total_units"] - end["total_units"] + topups
-        drift = Fraction(upstream) - cost
+        # Calls whose usage stayed unknown (a stopped or broken stream) cost somewhere between
+        # nothing and their conservative bound, and only the provider knows where. So the
+        # recorded cost is a range, [known cost, known cost + those bounds]; drift is how far
+        # the upstream spend lies outside it. Spend above the range means the provider billed
+        # more than any bound allows (an HTTP error answer billed after all, a wrong price).
+        if upstream > cost + pending:
+            drift = Fraction(upstream) - cost - pending
+        elif upstream < cost:
+            drift = Fraction(upstream) - cost
+        else:
+            drift = Fraction(0)
         status = "drift" if abs(drift) > risk.reconcile_tolerance else "ok"
         return self._finish(self._store_result(
             **base, status=status, code="beyond_tolerance" if status == "drift" else "within_tolerance",

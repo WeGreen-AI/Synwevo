@@ -122,14 +122,22 @@ Each immutable `model_cost_admissions` row records the physical attempt, provide
 cost unit, bound, admission time, connection expiry and policy revision/limits. Trusted
 `billing_usage` replaces the bound with its exact rational actual cost, including platform
 failures, late results and amounts beyond the estimate. The service never caps known cost
-to hide an overrun. Unknown exposure remains counted across all periods until reliable usage
-arrives, including after final release of the customer's money. Connection expiry releases
-only the inflight slot; it is not proof of zero cost or permission to resend.
+to hide an overrun. An attempt without usage counts at its bound in the periods it was admitted
+in, always. It also counts against the unknown count/budget while it is open exposure: in flight
+(its connection expiry), or until the customer's hold ends, after which the ledger accepts no
+later charge and DeepSeek offers no per-request usage to recover. An attempt the platform
+stopped itself (`record_local_stop`: the person's Stop, the output guard, a shutdown) leaves
+the unknown limits when its connection expiry passes; it stays the payer's exposure in the
+cost periods and the payer's velocity window (`billing/risk.py`). An HTTP error answer is never
+unknown: the gateway settles it as known zero usage (`docs/deepseek-provider.md`, "Error
+answers"). Connection expiry is still not proof of zero cost or permission to resend; an
+admission may not expire later than one day (the longest hold) after it is admitted.
 
 The current implementation materializes at most 10,000 relevant admissions per provider
-account (current calendar periods plus all unknowns), using an overflow probe and refusing
-new work at capacity. Recent facts and historical unknowns use disjoint indexed ranges,
-bounded before joining usage. `model_cost_pending` is a derived pending projection, inserted
+account (current calendar periods plus unknowns that can still be open, i.e. admitted within
+the last day), using an overflow probe and refusing new work at capacity. Recent facts and
+older pending ones use disjoint indexed ranges, bounded before joining usage; an unknown whose
+hold ended before the current periods is final at its bound and never scanned again. `model_cost_pending` is a derived pending projection, inserted
 with admission and removed only with trusted usage in the same transaction. Store backfills
 it once under a migration marker; ordinary reopen does not rescan settled history. This is a
 declared fail-closed accounting limit, not a throughput claim.

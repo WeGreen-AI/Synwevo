@@ -252,6 +252,11 @@ def test_upstream_402_closes_paid_dispatch_says_unavailable_and_charges_nothing(
     assert turn['status'] == 'failed' and turn['error_code'] == 'provider_balance'
     assert turn['error_message'] == UNAVAILABLE and '余额不足' not in turn['error_message']
     assert len(g.seen) == 1
+    # "Not charged" is true at once: the 402 answer is settled as known zero usage, never sold,
+    # and the person's hold is released now rather than at its deadline.
+    assert turn['usage_state'] == 'known'
+    assert g.store.one('SELECT status FROM billing_calls')['status'] == 'released'
+    assert balance(g).held == 0 and balance(g).booked == before.booked
     # The operator's account is empty, not the person's: the platform breaker (billing/risk.py)
     # closes paid dispatch and admins hear of it; the provider revision itself stays published.
     breaker = RiskControls(g.store, environment=gateway.ledger.environment).breaker()
@@ -273,7 +278,7 @@ def test_upstream_402_closes_paid_dispatch_says_unavailable_and_charges_nothing(
     calls = g.store.all('SELECT status FROM billing_calls ORDER BY rowid')
     assert len(g.seen) == 1 and len(calls) == 2 and calls[1]['status'] == 'released'
 
-    # Not charged: no sale was ever posted; the uncertain hold ends at its deadline unsold.
+    # Not charged: no sale was ever posted, before or after any deadline.
     assert g.store.all('SELECT * FROM billing_settlements') == []
     gateway.ledger.clock = lambda: int(time.time()) + 100_000
     gateway.recover()

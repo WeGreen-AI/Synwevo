@@ -1,6 +1,7 @@
 """Platform exposure gates the real gateway send boundary, independently of user funds."""
 from dataclasses import replace
 
+import httpx
 import pytest
 
 from synwevo_core.billing import BillingError, Unit
@@ -8,7 +9,7 @@ from synwevo_core.billing.admission import CostAdmission, CostPolicy
 from synwevo_suite.agent.deepseek import DeepSeekError
 from synwevo_suite.agent.gateway import MeteredTurnProvider
 
-from .test_agent_metering import gateway, event, USAGE
+from .test_agent_metering import gateway, event, USAGE, Wire
 from .test_agent_run_quotes import paid, start
 
 
@@ -82,20 +83,40 @@ def test_dispatch_commit_failure_rolls_back_cost_admission_together(gateway, mon
     assert g.store.one('SELECT status FROM billing_attempts')['status'] == 'released'
 
 
-def test_final_user_release_does_not_erase_unknown_platform_exposure(gateway):
+def test_final_user_release_moves_unknown_exposure_from_the_unknown_limits_to_the_cost_windows(gateway):
+    # Unknown usage is open exposure while in flight or while the payer's hold is open. Once
+    # both have ended it is final: it stays at its bound in the cost periods, but it no longer
+    # holds the platform-wide unknown budget for every later call (review runtime-1).
     g = gateway
-    governed(g, unknown_budget=297)
+    policies = governed(g, unknown_budget=297)
     g.holder['body'] = event({'content': 'isolated incomplete stream'})
     with pytest.raises(DeepSeekError):
         g.model.step(**g.args)
+    snapshot = g.model.cost_admission.snapshot()
+    assert (snapshot['unknown_reserved_units'], snapshot['unknown_count']) == (297, 1)
     g.ticks[0] += 200  # Past both the 100s wallet deadline and 121s connection budget.
     g.model.recover()
-    assert g.balance().held == 0 and g.balance().booked == 1000
-    with pytest.raises(BillingError):
+    assert g.balance().held == 0 and g.balance().booked == 1000  # Never sold.
+    snapshot = g.model.cost_admission.snapshot()
+    assert (snapshot['unknown_reserved_units'], snapshot['unknown_count']) == (0, 0)
+    assert snapshot['absorbed_unknown_units'] == 297 and snapshot['daily'] == {'numerator': 297, 'denominator': 1}
+    # The bound still counts in the daily budget: 297 + another 297 does not fit in 338 ...
+    policies[0] = replace(policies[0], revision='cost-fixture-v2', daily_budget=338)
+    with pytest.raises(BillingError, match='cost_daily_budget_exceeded'):
         g.model.step(**{**g.args, 'logical_call_id': 'step-2'})
     assert len(g.seen) == 1
-    assert len(g.store.all('SELECT * FROM model_cost_admissions')) == 1
-    assert g.store.all('SELECT * FROM billing_usage') == []
+    # ... while the unknown budget (297) no longer stands in the way of the next call.
+    policies[0] = replace(policies[0], revision='cost-fixture-v3', daily_budget=10000)
+    body = (event({'content': 'fine'}) + event(finish='stop', usage=USAGE) + b'data: [DONE]\n\n').replace(
+        b'fixture-upstream-1', b'fixture-upstream-3')
+    async def respond(request):  # The fixture's own transport expects a single attempt row.
+        g.seen.append(request)
+        return httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=Wire(body))
+    g.model.transport = httpx.MockTransport(respond)
+    g.model.step(**{**g.args, 'logical_call_id': 'step-3'})
+    assert len(g.seen) == 2
+    assert len(g.store.all('SELECT * FROM model_cost_admissions')) == 2
+    assert g.store.one('SELECT COUNT(*) AS n FROM billing_usage')['n'] == 1
 
 
 def test_disabled_admission_does_not_block_recovery_of_incurred_cost(gateway, monkeypatch):

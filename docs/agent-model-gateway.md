@@ -24,8 +24,10 @@ One logical call has a persistent request fingerprint and one physical attempt. 
 the one-shot dispatch fence commit before network I/O. No database transaction surrounds the
 stream. Same call/changed inputs conflicts; same call/same inputs also cannot send again. Unknown
 consumption blocks further calls in that run while its hold remains active. A lease does not
-permit another send. Expired holds release with no hidden late charge. Platform-wide unknown-cost
-thresholds and periodic budgets are still required before enablement.
+permit another send. Expired holds release with no hidden late charge. An HTTP error answer is
+settled at once as known zero usage; how unknown usage counts against the platform-wide unknown
+limits (while in flight or within its hold; a locally stopped stream only while in flight) is in
+`docs/platform/agent-run-budgets.md` and `docs/platform/model-risk.md` §1.
 
 The restricted observation contains provider request ID, requested model, response label,
 independently confirmed route reference, dispatch evidence, terminal reliability, necessary usage
