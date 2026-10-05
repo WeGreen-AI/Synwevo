@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { ApiError, useSession } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 
-export type ChallengeAction = "register" | "resend" | "forgot" | "login_email" | "login";
+export type ChallengeAction = "register" | "resend" | "forgot" | "login_email" | "login" | "topup";
 
 interface TurnstileApi {
   render(container: HTMLElement, options: Record<string, unknown>): string;

@@ -24,6 +24,8 @@ import { AccountCapabilityGate, platformHomeUrl } from "./pages/org/AuthFlow";
  * entry chunk; every other page loads when its route is entered. */
 const Account = lazyRoute(() => import("./pages/Account"));
 const Wallet = lazyRoute(() => import("./pages/account/Wallet"));
+const WalletUsage = lazyRoute(() => import("./pages/account/Usage"));
+const WalletReceipt = lazyRoute(() => import("./pages/account/Receipt"));
 const AccountRecovery = lazyRoute(pick(() => import("./pages/Account"), "AccountRecovery"));
 const Invite = lazyRoute(() => import("./pages/Invite"));
 const ForgotPassword = lazyRoute(pick(() => import("./pages/Recover"), "ForgotPassword"));
@@ -121,6 +123,8 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/account/workspaces/:wid/members" element={<RequireSession><Members /></RequireSession>} />
               <Route path="/account" element={<AccountCapabilityGate><RequireSession><Account /></RequireSession></AccountCapabilityGate>} />
               <Route path="/account/wallet" element={<AccountCapabilityGate><RequireSession><Wallet /></RequireSession></AccountCapabilityGate>} />
+              <Route path="/account/wallet/usage" element={<AccountCapabilityGate><RequireSession><WalletUsage /></RequireSession></AccountCapabilityGate>} />
+              <Route path="/account/wallet/receipts/:orderId" element={<AccountCapabilityGate><RequireSession><WalletReceipt /></RequireSession></AccountCapabilityGate>} />
               <Route path="/account/recovery" element={<AccountRecovery />} />
               <Route path="/account/api-approvals" element={<RequireSession><OwnerApiApprovals /></RequireSession>} />
               <Route path="/oauth/consent" element={<RequireSession><OAuthConsent /></RequireSession>} />
