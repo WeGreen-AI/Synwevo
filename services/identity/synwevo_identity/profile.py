@@ -139,6 +139,10 @@ def finalize_deletions(store) -> int:
             # Synwevo Message blocks (CI-78): the person's own list, and blocks naming them.
             from synwevo_core.messaging import forget_blocks
             forget_blocks(store, uid)
+            # The personal Agent's content goes; financial and consent records stay under the
+            # permanent, now nameless id (synwevo_core.agent_records).
+            from synwevo_core.agent_records import erase as erase_agent
+            erase_agent(store, uid)
             # email_key remains reserved: recycling it would resurrect old address-bound invites.
             store.execute("UPDATE users SET status='deleted',deleted_at=?,updated_at=?,display_name=NULL,"
                           "email='',email_verified_at=NULL,avatar_blob=NULL,locale='zh-Hans',timezone='UTC',"

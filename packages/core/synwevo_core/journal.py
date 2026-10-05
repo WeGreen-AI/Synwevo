@@ -643,6 +643,9 @@ def apply(store: Store, entries: list[dict]) -> dict:
                         c.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
                     c.execute("UPDATE email_tokens SET used_at=COALESCE(used_at,?) WHERE user_id=?", (at, uid))
                     _end_platform_grants(c, uid, t)
+                    # The older backup still holds the person's Agent conversations and memories.
+                    from .agent_records import erase as erase_agent
+                    erase_agent(store, uid)
                 else:
                     for table in ("mfa_tickets", "webauthn_challenges", "reauth_challenges"):
                         c.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))

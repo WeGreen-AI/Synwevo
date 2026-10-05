@@ -247,6 +247,10 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
         # Synwevo Message (CI-81): what this person wrote and where — never another person's words
         # or file bytes — plus their messaging settings and notification preferences.
         result["messaging"] = messaging_export(store, uid)
+        # The personal Agent: visible conversation text, memories, settings, consents, quotes and
+        # the wallet statement — never reasoning, tool data or keys (synwevo_core.agent_records).
+        from synwevo_core.agent_records import export as agent_export
+        result["agent"] = agent_export(store, uid)
         try:
             from synwevo_core.notifications import Notifier
             result["notification_preferences"] = Notifier(store).preferences(uid)
