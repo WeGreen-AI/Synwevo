@@ -52,6 +52,23 @@ NAMESPACE = "wallet-topup"
 CREDIT_EVENTS = ("checkout.session.completed", "checkout.session.async_payment_succeeded")
 HANDLED_EVENTS = CREDIT_EVENTS + ("checkout.session.async_payment_failed", "checkout.session.expired",
                                   "charge.succeeded", "charge.dispute.created")
+#: The crash-recovery sweep (process_pending) gives a row this many tries in all (deliveries
+#: included), each failed one at least min(2^attempts minutes, a day) after the last: about the
+#: provider's own three-day retry window. Then the row stays 'failed' for an administrator.
+PENDING_MAX_ATTEMPTS = 12
+PENDING_BACKOFF_MAX_S = 86400
+#: Disputes waiting for their payment's credit; applied as soon as it is credited (_revive).
+WAITING_DISPUTE_CODES = ("payment_not_credited", "dispute_payment_unknown")
+
+
+def _alert(store, environment: str, code: str) -> None:
+    """An administrator alert for a payment event that needs a person (billing.risk). Only the
+    provider and a stable code travel; an alert that cannot be delivered never undoes the record."""
+    from synwevo_core.billing import risk
+    try:
+        risk.alert_payment_webhook_failure(store, environment=environment, provider=PROVIDER, code=code)
+    except Exception:  # noqa: BLE001 - the inbox row and the finance view still show it
+        pass
 
 
 class SignatureError(Exception):
@@ -197,6 +214,12 @@ def _facts(event: dict) -> dict | None:
                 "charge": obj.get("charge"), "amount": obj.get("amount"), "currency": obj.get("currency"),
                 "status": obj.get("status")}
     return {"object": obj.get("object") if isinstance(obj.get("object"), str) else None}
+
+
+def _inquiry(facts: dict) -> bool:
+    """Stripe reports an inquiry (the issuer asked; no funds withdrawn) as a dispute whose status
+    starts with ``warning_`` (docs.stripe.com/api/disputes/object, read 2026-10-05)."""
+    return str(facts.get("status") or "").startswith("warning_")
 
 
 def _ident(value) -> bool:
@@ -385,6 +408,7 @@ class TopupService:
         return (facts.get("id") == notice.dispute_id and facts.get("payment_intent") == notice.payment_id
                 and facts.get("amount") == notice.amount_minor
                 and str(facts.get("currency", "")).upper() == notice.currency
+                and _inquiry(facts) == notice.inquiry
                 and notice.provider == PROVIDER and notice.merchant_id == MERCHANT)
 
     # ------------------------------------------------------------------ webhook
@@ -440,21 +464,55 @@ class TopupService:
         return 200, {"received": True, "status": status}
 
     def process_pending(self, limit: int = 50) -> int:
-        """Re-run inbox rows left 'received'/'failed' (e.g. a crash after the insert). Bounded."""
-        rows = self.store.all("SELECT event_id,type,facts_json,payload_sha256 FROM payment_webhook_inbox "
-                              "WHERE environment=? AND status IN ('received','failed') ORDER BY received_at LIMIT ?",
-                              (self.environment, limit))
+        """Re-run inbox rows left 'received'/'failed' (e.g. a crash after the insert). Bounded.
+
+        Fewest attempts first, so rows that keep failing can never starve a newer crash-left row
+        (review payments-2); a failed row waits min(2^attempts minutes, a day) after its last
+        try; after PENDING_MAX_ATTEMPTS tries it stays 'failed' (the finance view counts it) and
+        administrators are alerted once, instead of it being retried forever."""
+        now = self.clock()
+        rows = self.store.all("SELECT event_id,type,facts_json,payload_sha256,attempts FROM payment_webhook_inbox "
+                              "WHERE environment=? AND status IN ('received','failed') AND attempts<? "
+                              "AND (status='received' OR processed_at IS NULL "
+                              "OR processed_at+MIN(?,60*(1<<MIN(attempts,20)))<=?) "
+                              "ORDER BY attempts,received_at LIMIT ?",
+                              (self.environment, PENDING_MAX_ATTEMPTS, PENDING_BACKOFF_MAX_S, now, limit))
         done = 0
         for row in rows:
-            try:
-                status, code = self._process(row["event_id"], row["type"], json.loads(row["facts_json"]),
-                                             row["payload_sha256"])
-            except Exception:  # noqa: BLE001
-                status, code = "failed", "processing_error"
-            self.store.execute("UPDATE payment_webhook_inbox SET status=?,result_code=?,processed_at=?,attempts=attempts+1 "
-                               "WHERE provider=? AND event_id=?", (status, code, self.clock(), PROVIDER, row["event_id"]))
+            status, code = self._replay(row, attempt=True)
+            if status == "failed" and row["attempts"] + 1 >= PENDING_MAX_ATTEMPTS:
+                _alert(self.store, self.environment, "webhook_retry_exhausted")
             done += status != "failed"
         return done
+
+    def _replay(self, row, *, attempt: bool) -> tuple[str, str | None]:
+        try:
+            status, code = self._process(row["event_id"], row["type"], json.loads(row["facts_json"]),
+                                         row["payload_sha256"])
+        except Exception:  # noqa: BLE001
+            status, code = "failed", "processing_error"
+        self.store.execute("UPDATE payment_webhook_inbox SET status=?,result_code=?,processed_at=?,attempts=attempts+? "
+                           "WHERE provider=? AND event_id=?",
+                           (status, code, self.clock(), int(attempt), PROVIDER, row["event_id"]))
+        return status, code
+
+    def _revive(self, payment_id: str) -> None:
+        """Apply disputes that arrived before this payment's credit (out of order), now that it
+        is credited: they were kept in the inbox, waiting ('failed') or rejected as unknown."""
+        rows = self.store.all("SELECT event_id,type,facts_json,payload_sha256 FROM payment_webhook_inbox "
+                              "WHERE provider=? AND environment=? AND type='charge.dispute.created' "
+                              "AND status IN ('failed','rejected') AND result_code IN (?,?) "
+                              "AND json_extract(facts_json,'$.payment_intent')=?",
+                              (PROVIDER, self.environment, *WAITING_DISPUTE_CODES, payment_id))
+        for row in rows:
+            self._replay(row, attempt=False)
+
+    def _credit_expected(self, payment_id: str) -> bool:
+        """Did one of our checkouts report this payment (not rejected), so its credit may follow?"""
+        return self.store.one("SELECT 1 AS x FROM payment_webhook_inbox WHERE provider=? AND environment=? "
+                              "AND type LIKE 'checkout.session.%' AND status<>'rejected' "
+                              "AND json_extract(facts_json,'$.payment_intent')=? LIMIT 1",
+                              (PROVIDER, self.environment, payment_id)) is not None
 
     def _process(self, event_id: str, kind: str, facts: dict, digest: str) -> tuple[str, str | None]:
         if kind not in HANDLED_EVENTS:
@@ -501,6 +559,7 @@ class TopupService:
                                     "AND json_extract(facts_json,'$.payment_intent')=? LIMIT 1", (PROVIDER, facts["payment_intent"]))
             if method:
                 self._method(facts["payment_intent"], json.loads(method["facts_json"]).get("method"))
+            self._revive(facts["payment_intent"])
             return "processed", None
         if kind == "charge.succeeded":
             if _ident(facts.get("payment_intent")):
@@ -511,13 +570,25 @@ class TopupService:
                 or type(facts.get("amount")) is not int or facts["amount"] <= 0 or not isinstance(facts.get("currency"), str)):
             return "rejected", "dispute_invalid"
         notice = DisputeNotice(self.environment, PROVIDER, MERCHANT, facts["id"], event_id, facts["payment_intent"],
-                               facts["amount"], facts["currency"].upper(), "stripe-inbox:" + event_id, digest)
+                               facts["amount"], facts["currency"].upper(), "stripe-inbox:" + event_id, digest,
+                               inquiry=_inquiry(facts))
         try:
             self.ledger.record_chargeback(notice)
         except BillingError as exc:
-            if exc.code == "payment_order_mismatch":
-                # The payment may not be credited yet (events can arrive out of order): retry later.
-                return "failed", exc.code
+            if exc.code == "payment_not_credited":
+                if self._credit_expected(facts["payment_intent"]):
+                    # Our checkout reported it and the credit is still to come: retry later
+                    # (applied at once when it is credited, _revive).
+                    return "failed", exc.code
+                # Not a payment credited here (another product on the same provider account, or
+                # a rejected top-up). Kept and alerted, never retried forever; applied if this
+                # payment is credited later after all.
+                _alert(self.store, self.environment, "dispute_payment_unknown")
+                return "rejected", "dispute_payment_unknown"
+            if exc.code == "dispute_payment_mismatch":
+                # Merchant or currency differ from the credited payment: a person must look.
+                _alert(self.store, self.environment, exc.code)
+                return "rejected", exc.code
             raise
         return "processed", None
 

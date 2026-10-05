@@ -376,13 +376,15 @@ def test_a_dispute_after_spend_freezes_the_wallet_and_closes_top_up(world):
     assert r.status_code == 409 and r.json()["error"] == "wallet_frozen"
 
 
-def test_a_dispute_before_the_credit_is_retried_not_lost(world):
+def test_a_dispute_before_the_credit_is_kept_not_lost(world):
     world["configure"]()
     c, order, session = created(world)
     dispute = {"id": "evt_dispute_early", "object": "event", "type": "charge.dispute.created", "livemode": False,
                "data": {"object": {"id": "dp_early", "object": "dispute", "payment_intent": "pi_fixture1",
                                    "amount": 1000, "currency": "cny", "status": "needs_response"}}}
-    assert deliver(world, dispute).status_code == 500, "付款尚未入账：让支付渠道稍后重试"
+    # Nothing here knows this payment yet: kept in the inbox (and alerted), not retried forever
+    # (test_wallet_disputes.py); applied the moment the payment is credited.
+    assert deliver(world, dispute).json()["status"] == "rejected"
     deliver(world, session_event(order, session_id=session))
     assert deliver(world, dispute).json()["status"] == "processed"
     assert cny_booked(world) == 0
