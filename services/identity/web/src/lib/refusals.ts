@@ -118,6 +118,7 @@ export const REFUSAL_SOURCES: Record<string, string> = {
   model_config_invalid: "模型配置字段无效，请检查路线、有效期和凭据",
   model_config_unavailable: "模型配置暂不可用，请稍后重试",
   model_bad_revision: "模型配置版本无效，请重新读取",
+  payment_revision_conflict: "充值配置已变化，请刷新后重试",
   model_revision_conflict: "模型配置已变化，请保留输入并重新读取",
   model_credential_required: "启用模型前请配置平台凭据",
   model_route_expired: "模型路线核实已过期，请重新核实",

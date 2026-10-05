@@ -335,3 +335,8 @@
 - 手机 390×844：付款设置改为可键盘展开的原生 disclosure，聊天区域由约 66px 增至 267.5px；document scrollWidth=clientWidth=390。简/繁/英切换不改变用户中文内容。英文与繁体、真实长对话均检查；无控制台 error/warn。减少动态效果尚未通过浏览器环境实测，不据 CSS 宣称验收通过。
 - 截图 `/private/tmp/synwevo-agent-live-20261006/screenshots/agent-phone-en-after.jpg`、`form-from-agent.jpg`；测试钱包充值按钮准确显示未接入支付、未创建订单。
 - 模型有时仍输出英文工具前导或内部字段名；已加强提示，但不将此宣称为语言输出完全受控。
+
+### 2026-10-06 CI 本轮修复
+
+- fbf4e9cb05eb860cf23be4ec4b7deedb38499b8c 已正常推送，实际远端引用为 main；未创建 PR。Actions 37348318532 在 Account 前端错误文案覆盖检查失败，deploy skipped，生产未变化。新增 payment_revision_conflict 在普通账户页没有三语言句子；已补全公共错误目录与代码映射，未修改测试或门槛。
+- 修复后 Account 前端 121 tests、typecheck、build 通过；日志 `/private/tmp/synwevo-account-ci-fix-tests.log`。失败原日志 `/private/tmp/synwevo-ci-37348318532-failed.log`。待新 SHA CI 后方可发布。
