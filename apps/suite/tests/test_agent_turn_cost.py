@@ -36,13 +36,37 @@ def test_settled_answer_carries_its_ledger_charge_and_settled_tokens(governed):
     assert sale > 0
     assert cost == {'charged_minor': str(sale), 'currency': 'FIXFACT', 'scale': 6,
                     'tokens': {'input_cached': 5, 'input_uncached': 8, 'output': 7, 'reasoning': 3},
-                    'model': 'fixture-model', 'band': None, 'state': 'settled', 'held_minor': '0'}
+                    'model': 'fixture-model', 'band': None, 'state': 'settled', 'held_minor': '0',
+                    'payer': {'kind': 'user', 'id': g.user['id']}}
     text = json.dumps(cost)
     for private in ('fixture-upstream', 'fixture:cost', 'fixture-route', KEY_HINT):
         assert private not in text
 
 
 KEY_HINT = 'not-real-key'
+
+
+def test_answer_names_the_payer_the_ledger_charged(governed):
+    """Who paid is the run's ledger context, never the page's current payer choice."""
+    g = governed; configure(g); fund(g)
+    turn = start(g)
+    g.agent._run(turn)
+    assert answer(g, turn)['turn']['cost']['payer'] == {'kind': 'user', 'id': g.user['id']}
+
+
+def test_organization_paid_context_names_the_organization_and_nothing_else():
+    """org-payments records payer_kind="organization" and organization_id in the run context
+    (ChargeContext); ledger runs are immutable, so the reading is checked on fixture contexts."""
+    from synwevo_suite.agent.turn_cost import _payer
+    base = {'payer_user_id': 'usr_fixture', 'actor_user_id': 'usr_fixture', 'run_id': 'turn_fixture'}
+    assert _payer(base | {'payer_kind': 'personal'}) == {'kind': 'user', 'id': 'usr_fixture'}
+    assert _payer(base) == {'kind': 'user', 'id': 'usr_fixture'}  # contexts before payer_kind existed
+    assert _payer(base | {'payer_kind': 'organization', 'organization_id': 'org_fixture'}) == {
+        'kind': 'organization', 'id': 'org_fixture'}
+    # A context that claims an organization without naming it, or an unknown kind, names nobody.
+    assert _payer(base | {'payer_kind': 'organization'}) is None
+    assert _payer(base | {'payer_kind': 'organization', 'organization_id': ''}) is None
+    assert _payer(base | {'payer_kind': 'team'}) is None
 
 
 def test_unknown_usage_is_pending_with_its_hold_and_no_guessed_charge(governed):

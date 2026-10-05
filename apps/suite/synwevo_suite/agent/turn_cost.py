@@ -39,7 +39,7 @@ def turn_costs(store, *, environment: str, namespace: str, user_id: str, turn_id
     """``{turn_id: cost}`` for the person's own turns that have a ledger run in this environment.
 
     cost = {charged_minor, currency, scale, tokens: {input_cached, input_uncached, output, reasoning},
-            model, band, state, held_minor}
+            model, band, state, held_minor, payer}
 
     * ``charged_minor`` — decimal string, the sum of this run's sale journal amounts (smallest unit).
     * ``state`` — ``pending`` while any attempt's usage is unknown and its call still reserved
@@ -47,6 +47,7 @@ def turn_costs(store, *, environment: str, namespace: str, user_id: str, turn_id
       while a call still holds funds (a request in flight for an ``active`` turn), else ``settled``.
     * ``tokens`` — settled usage facts behind the charge; reasoning is part of output, not added.
     * ``band`` — the pinned time band of the charged attempts ("mixed" when they differ), or None.
+    * ``payer`` — who the run's ledger context charges: ``{"kind": "user"|"organization", "id"}``.
     """
     turn_ids = [t for t in dict.fromkeys(turn_ids) if isinstance(t, str) and t]
     if not turn_ids:
@@ -66,7 +67,20 @@ def turn_costs(store, *, environment: str, namespace: str, user_id: str, turn_id
                 continue
             route = json.loads(run["route"]) if run["route"] else {}
             out[run["run_id"]] = _cost(store, run, route, band, in_flight=run["run_id"] in active)
+            out[run["run_id"]]["payer"] = _payer(context)
     return out
+
+
+def _payer(context: dict) -> dict | None:
+    """Who the ledger charged, in the shared contract's terms ({"kind": "user"|"organization",
+    "id"}): an organization when the run's context names one (org-payments), else the person
+    whose wallet paid. A context that names neither consistently names nobody."""
+    kind = context.get("payer_kind", "personal")
+    if kind == "organization":
+        org = context.get("organization_id")
+        return {"kind": "organization", "id": org} if isinstance(org, str) and org else None
+    payer = context.get("payer_user_id")
+    return {"kind": "user", "id": payer} if kind == "personal" and isinstance(payer, str) and payer else None
 
 
 def _cost(store, run, route, band_column, *, in_flight: bool) -> dict:
