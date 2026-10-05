@@ -51,7 +51,8 @@ export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }:
   const trust = [
     "账户数据可以随时导出，也可以申请删除；删除有 7 天缓冲期，期间可以撤回。",
     "传输经 HTTPS 加密，服务器端不做端到端加密；平台管理员读不到业务文档与对话，组织的举报处理只看到被举报的那一条消息。",
-    "没有任何 AI 处理你的内容。在线状态只给同一会话的成员看，可以关闭；已读回执默认关闭，双方都开启才显示。",
+    "只有 Synwevo Agent 会把内容发给 AI 模型：在你使用它并单独同意后，发送给模型提供方 DeepSeek；组织工作空间的内容默认不发送。其它应用不把你的内容交给 AI 模型。",
+    "在线状态只给同一会话的成员看，可以关闭；已读回执默认关闭，双方都开启才显示。",
     "只用本站自己的 Cookie 维持登录；数据保存在位于日本东京的单台服务器上，每次发布前做备份。",
   ];
   const faq: [string, string][] = [
@@ -62,7 +63,8 @@ export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }:
     ["私信会给我发邮件吗？", "不会逐条发送。私信邮件默认关闭；需要时可以在账户的通知设置里开启未读摘要，按时间窗口合并发送。"],
     ["支持哪些文件格式？", "Synwevo Docs 的模板可用 DOCX、XLSX、PDF、PPTX 以及 PNG / JPEG 图片，来源数据可以是表格、文档或扫描件。各格式支持的能力以应用内说明为准。"],
     ["可以导出或删除我的数据吗？", "可以。账户页可以随时导出你的账户数据，包括你发出的消息；也可以申请删除账户，删除有 7 天缓冲期，期间可以撤回。"],
-    ["数据保存在哪里？有 AI 处理我的内容吗？", "数据库与文件保存在位于日本东京的单台服务器上，每次发布前做备份，传输经 HTTPS 加密。没有任何 AI 处理你的内容。"],
+    ["数据保存在哪里？有 AI 处理我的内容吗？", "数据库与文件保存在位于日本东京的单台服务器上，每次发布前做备份，传输经 HTTPS 加密。只有在你使用 Synwevo Agent 并单独同意后，你的消息和允许 AI 处理的工作空间内容才会发送给模型提供方 DeepSeek，按其隐私政策存储在中国境内；Agent 是否在本部署开放，见「数据与隐私」页的当前状态。"],
+    ["Synwevo Agent 怎么收费？", "按实际用量从人民币钱包扣费，运行前显示价格并由你确认上限；充值不可退款。详见「定价」与「服务条款」。"],
   ];
   return <Shell publicHome right={<PublicNav signedIn={signedIn} registerUrl={registerUrl} home />}>
     <section className="pt-hero" aria-labelledby="pt-hero-title">
@@ -110,7 +112,7 @@ export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }:
     <section className="pt-principles pt-public-section" id="trust">
       <div className="pt-section-intro"><p className="pt-eyebrow">{t("数据与隐私")}</p><h2>{t("说清楚做了什么，也说清楚没做什么。")}</h2></div>
       <ul className="pt-trust-list">{trust.map(line => <li key={line}>{t(line)}</li>)}</ul>
-      <div className="pt-actions"><a className="pt-text-action" href={publicPath("privacy", locale)}>{t("完整的数据与隐私说明")} <span aria-hidden="true">→</span></a><a className="pt-text-action" href={publicPath("service", locale)}>{t("服务说明与限额")} <span aria-hidden="true">→</span></a></div>
+      <div className="pt-actions"><a className="pt-text-action" href={publicPath("privacy", locale)}>{t("完整的数据与隐私说明")} <span aria-hidden="true">→</span></a><a className="pt-text-action" href={publicPath("service", locale)}>{t("服务说明与限额")} <span aria-hidden="true">→</span></a><a className="pt-text-action" href={publicPath("terms", locale)}>{t("服务条款")} <span aria-hidden="true">→</span></a><a className="pt-text-action" href={publicPath("ai-use", locale)}>{t("AI 使用规范")} <span aria-hidden="true">→</span></a><a className="pt-text-action" href={publicPath("pricing", locale)}>{t("定价")} <span aria-hidden="true">→</span></a></div>
     </section>
     <section className="pt-public-section" id="faq" aria-labelledby="pt-faq-title">
       <div className="pt-section-intro"><p className="pt-eyebrow">{t("常见问题")}</p><h2 id="pt-faq-title">{t("开始之前，你可能想知道。")}</h2></div>

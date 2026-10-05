@@ -85,7 +85,11 @@ def switch(client, wid, *, csrf=True):
     ("/en/service", "en", None, None, "What this service is, and how it works."),
     ("/service", "zh-Hans", None, None, None),
     ("/zh-Hant/service", "zh-Hant", None, None, None),
-], ids=["root", "zh-Hans", "zh-Hant", "en", "privacy", "privacy-zh-Hant", "privacy-en", "service-en", "service", "service-zh-Hant"])
+    ("/terms", "zh-Hans", "服务条款 · Synwevo", None, "使用 Synwevo 的约定。"),
+    ("/zh-Hant/ai-use", "zh-Hant", "AI 使用規範 · Synwevo", None, None),
+    ("/en/pricing", "en", "Pricing · Synwevo", None, "Pay for what you use."),
+], ids=["root", "zh-Hans", "zh-Hant", "en", "privacy", "privacy-zh-Hant", "privacy-en", "service-en", "service", "service-zh-Hant",
+        "terms", "ai-use-zh-Hant", "pricing-en"])
 def test_public_documents_have_localized_content_and_only_public_canonicals(
     portal, platform_root, path, language, title, description, heading,
 ):
@@ -150,10 +154,12 @@ def test_robots_sitemap_and_private_shells(portal):
     xml = client.get("/sitemap.xml")
     locations = [node.text for node in ET.fromstring(xml.text).iter() if node.tag.endswith("loc")]
     assert locations == ["https://portal.example.test" + p for p in
-                         ("/", "/zh-Hant", "/en", "/privacy", "/zh-Hant/privacy", "/en/privacy", "/service", "/zh-Hant/service", "/en/service")]
+                         ("/", "/zh-Hant", "/en", "/privacy", "/zh-Hant/privacy", "/en/privacy", "/service", "/zh-Hant/service", "/en/service",
+                          "/terms", "/zh-Hant/terms", "/en/terms", "/ai-use", "/zh-Hant/ai-use", "/en/ai-use",
+                          "/pricing", "/zh-Hant/pricing", "/en/pricing")]
     facts = client.get("/public/deployment.json")
     assert facts.status_code == 200 and facts.headers["Cache-Control"] == "no-store"
-    assert set(facts.json()) == {"checked_at", "accounts", "docs"}, "runtime facts only: nothing about the request or a session"
+    assert set(facts.json()) == {"checked_at", "accounts", "docs", "agent"}, "runtime facts only: nothing about the request or a session"
     for path in ("/workspace", "/index.html", "/unknown", "/login", "/account", "/admin/api"):
         result = client.get(path, follow_redirects=False)
         assert result.headers["X-Robots-Tag"] == "noindex, nofollow"

@@ -224,6 +224,6 @@ export function Shell({ right, children, publicHome = false }: { right?: ReactNo
     <header className="pt-top"><Brand href={siteHref(state?.site_url, "/")} size="lg" product={publicHome ? undefined : "Workspace"} label={t("Synwevo 首页")} />
       <nav className="pt-nav" aria-label={t("主导航")}>{right}{me && <MessagesLink href={messagesHref(state, { lang: locale })} />}<NotificationBell preferencesHref={(state?.account_url || "/account") + "#notifications"} /><LanguageMenu /></nav></header>
     <main className="pt-main" id="pt-main" tabIndex={-1}>{children}</main>
-    <footer className="pt-footer"><Logo version="wordmark" height={14} /><a href={siteHref(state?.site_url, publicPath("privacy", locale))}>{t("数据与隐私")}</a><a href={siteHref(state?.site_url, publicPath("service", locale))}>{t("服务说明")}</a><span>{t("协同 · 编织 · 持续完善")}</span></footer>
+    <footer className="pt-footer"><Logo version="wordmark" height={14} /><a href={siteHref(state?.site_url, publicPath("privacy", locale))}>{t("数据与隐私")}</a><a href={siteHref(state?.site_url, publicPath("service", locale))}>{t("服务说明")}</a><a href={siteHref(state?.site_url, publicPath("terms", locale))}>{t("服务条款")}</a><a href={siteHref(state?.site_url, publicPath("ai-use", locale))}>{t("AI 使用规范")}</a><a href={siteHref(state?.site_url, publicPath("pricing", locale))}>{t("定价")}</a><span>{t("协同 · 编织 · 持续完善")}</span></footer>
   </div>;
 }
