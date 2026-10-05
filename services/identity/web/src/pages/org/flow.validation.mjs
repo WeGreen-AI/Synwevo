@@ -21,13 +21,15 @@ try {
   const ui = await server.ssrLoadModule('@synwevo/ui');
   const auth = await server.ssrLoadModule('/src/auth-flow.messages.ts');
   const org = await server.ssrLoadModule('/src/organization.messages.ts');
+  const orgBilling = await server.ssrLoadModule('/src/org-billing.messages.ts');
+  const billingView = await server.ssrLoadModule('/src/pages/org/OrganizationBilling.tsx');
   const flow = await server.ssrLoadModule('/src/pages/org/AuthFlow.tsx');
   const creation = await server.ssrLoadModule('/src/pages/org/OrganizationCreate.tsx');
   const verify = await server.ssrLoadModule('/src/pages/VerifyEmail.tsx');
   const workspaceView = await server.ssrLoadModule('/src/pages/org/OrganizationWorkspaces.tsx');
   const avatarView = await server.ssrLoadModule('/src/pages/org/OrganizationAvatar.tsx');
   const client = await server.ssrLoadModule('@synwevo/auth-client');
-  const catalogs = { ...auth.messages, ...org.messages };
+  const catalogs = { ...auth.messages, ...org.messages, ...orgBilling.messages };
   check('catalogs contain both translations and preserve every parameter', () => assert.deepEqual(ui.validateMessages(catalogs), []));
   check('all three locales interpolate user data without interpreting markup', () => {
     for (const locale of ['zh-Hans', 'zh-Hant', 'en']) {
@@ -140,6 +142,14 @@ try {
     assert.match(member, /<img/); assert.ok(!member.includes('type="file"')); assert.ok(!member.includes('移除组织头像'));
     assert.match(render({ ...organization, role: 'admin' }), /type="file"/);
     assert.ok(!render({ ...organization, role: 'owner', status: 'frozen' }).includes('type="file"'));
+  });
+  check('organization payments are shown only to holders of org.billing.manage', () => {
+    const organization = { id: 'fixture-org', name: 'Fixture organization', role: 'admin', status: 'active' };
+    const render = mine => renderToStaticMarkup(React.createElement(billingView.default, { organization, mine }));
+    assert.equal(render(['org.members.view', 'org.settings.manage']), '');
+    const manager = render(['org.billing.manage']);
+    assert.match(manager, /<section[^>]*aria-labelledby=/); assert.ok(manager.includes('组织付费'));
+    assert.ok(!manager.includes('前往支付')); // no checkout control before the server has priced the options
   });
   check('MFA errors preserve remaining attempts in all three languages', () => {
     const error = new client.ApiError(401, 'bad_code', '验证码不正确，还可尝试 2 次');

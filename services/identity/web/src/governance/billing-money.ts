@@ -22,7 +22,7 @@ export const fenText = (fen: number, locale: string) => cnyText(fen, 2, locale);
 /** A yuan amount typed by an administrator ("10", "10.5", "10.50") to whole fen; null when invalid. */
 export function parseYuan(text: string, max = 100000): number | null {
   const value = text.trim();
-  if (!/^(0|[1-9]\d{0,5})(\.\d{1,2})?$/.test(value)) return null;
+  if (!/^(0|[1-9]\d{0,7})(\.\d{1,2})?$/.test(value)) return null;
   const [whole, fraction = ""] = value.split(".");
   const fen = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
   return fen >= 1 && fen <= max * 100 ? fen : null;

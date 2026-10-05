@@ -83,7 +83,15 @@ Stripe 重试，入账后再处理，不会丢失。解除冻结是财务管理�
 
 成员在对话中选择付款方（`GET /api/suite/agent/payers`，个人默认在第一位）。额度按 UTC 自然月计算，已结算消费加进行中
 预留不得超过成员额度与工作空间额度；撤回授权、成员离开、组织冻结或删除都会在下一次预留与下一次发送前生效。所有变更
-写审计（`org.billing.member_grant`、`org.billing.workspace_limit`）。组织付费的管理页面尚未实现（本期提供接口）。
+写审计（`org.billing.member_grant`、`org.billing.workspace_limit`）。
+
+**页面**：组织详情页的「组织付费」区（`services/identity/web/src/pages/org/OrganizationBilling.tsx`）只对持有
+`org.billing.manage` 的人显示：组织钱包可用/冻结金额与拒付冻结标记；为组织钱包充值（与个人充值同一套服务端定价、
+Turnstile 与限频，`payer_kind=organization`，只跳转到 Stripe 托管收银台，返回同一账户页 `/account/wallet?topup=…`
+轮询订单）；每位成员的授权开关与每月额度（显示本月已用与冻结）；工作空间每月额度（留空为不限）；组织账单（按页加载，
+每笔消费注明成员邮箱）。未配置计费环境时只显示“组织付费尚未开放”，充值未开放时显示原因，不出现假入口。金额以整数
+单位用 BigInt 精确格式化；额度输入与服务端上限一致（每月最多 1,000,000 元）。三语言文案在 `org-billing.messages.ts`，
+由 `pages/org/flow.validation.mjs` 检查完整性与权限门槛。
 
 ## 6. 验证
 
@@ -105,4 +113,3 @@ Stripe 重试，入账后再处理，不会丢失。解除冻结是财务管理�
 - 发票/税务、Stripe 对 CNY 结算与各支付方式最低金额的账户级核实。
 - 争议结案后的自动处理；欠款的自动追收（目前冻结 + 人工处理）。
 - 3-D Secure 由 Stripe Checkout 按其风控自动触发；本平台不另行配置。
-- 组织付费的账户页界面（授权成员、设置额度、组织账单）；目前只有接口与测试。

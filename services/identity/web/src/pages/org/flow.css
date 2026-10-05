@@ -43,3 +43,10 @@
 .import-review-email { flex: 2 1 280px; min-width: 0; }
 .import-review-name { flex: 1 1 160px; min-width: 0; }
 .import-unsure { color: var(--warn); font-weight: 600; }
+/* Organization payments (OrganizationBilling.tsx): names wrap, amounts align, inputs fit 390px */
+.org-billing h3 { margin: 0; font-size: 15px; }
+.org-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.org-billing-who { min-width: 0; flex: 1 1 220px; }
+.org-billing-who strong, .org-billing-wrap { overflow-wrap: anywhere; }
+.org-billing-amount { width: 9em; max-width: 100%; }
+.org-billing-money { font-variant-numeric: tabular-nums; white-space: nowrap; }
