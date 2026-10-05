@@ -201,6 +201,38 @@ def test_blocked_output_is_withheld_from_the_message_and_the_stream(agent):
     assert answer["error"]["code"] == "content_blocked_output"
 
 
+def test_a_blocked_phrase_in_tool_arguments_stops_the_step_before_any_tool_runs(agent):
+    # The model puts the phrase into a tool call's arguments (a memory, a document) instead of
+    # its visible answer: those arguments become confirmation cards and stored data, so the
+    # output rules apply to them before any tool handler or confirmation card exists.
+    agent.sign_in("alice")
+    _consent(agent)
+    _rules(agent, [{"kind": "keyword", "pattern": "leaked-fixture-term", "applies_to": "output"}])
+    store, uid = agent.people.store, agent.people.uid("alice")
+    hidden = call("run_operation", {"operation": "agent.memory.add",
+                                    "input": {"body": "Remember: LEAKED-fixture-term"}}, text="Saving that for you.")
+    conv, r = _start(agent, [hidden, say("never requested")])
+    tid = r.json()["output"]["turn_id"]
+    assert wait_turn(store, tid) == "failed"
+    row = store.one("SELECT t.error_code, m.body, m.api_json FROM agent_turns t JOIN agent_messages m "
+                    "ON m.id=t.assistant_message_id WHERE t.id=?", (tid,))
+    assert row["error_code"] == "content_blocked_output" and row["body"] == ""
+    assert "leaked" not in (row["api_json"] or "").lower()
+    assert store.all("SELECT * FROM agent_tool_calls WHERE turn_id=?", (tid,)) == []   # no card, no run
+    assert store.all("SELECT * FROM agent_memories WHERE user_id=?", (uid,)) == []
+    assert len(agent.agent.provider.requests) == 1
+    event = store.one("SELECT direction, rule_id FROM agent_safety_events")
+    assert event == {"direction": "output", "rule_id": "r1"}
+    assert "leaked" not in json.dumps(agent.agent.events_after(uid, conv, 0)).lower()
+
+    # Clean arguments still reach the confirmation card as before.
+    clean = call("run_operation", {"operation": "agent.memory.add", "input": {"body": "Prefers short answers"}})
+    _, r = _start(agent, [clean, say("done")])
+    tid = r.json()["output"]["turn_id"]
+    assert wait_turn(store, tid) == "waiting_confirmation"
+    assert len(store.all("SELECT * FROM agent_tool_calls WHERE turn_id=?", (tid,))) == 1
+
+
 class StreamingModel(DisclosedModel):
     """TEST DOUBLE: streams its pieces slower than the engine's flush interval and honours
     should_stop between pieces, the way the DeepSeek adapter does."""
@@ -381,6 +413,33 @@ def test_the_first_paid_run_records_the_published_terms_versions_once(paid):  # 
     assert {(r["document"], r["version"]) for r in rows} == {(d, v) for d, (v, _) in DOCUMENTS.items()}
     assert {r["context"] for r in rows} == {"paid_run:" + turn["output"]["turn_id"]}
     assert accepted.record_paid_use(uid, context="paid_run:later") == []      # once per version
+
+
+from .test_agent_governed_factory import configure, fund, governed, start as start_paid  # noqa: E402,F401
+
+
+def test_blocked_tool_arguments_on_the_paid_deepseek_path_are_never_run_or_sold(governed):  # noqa: F811
+    from .test_agent_metering import USAGE, event
+    g = governed; configure(g); fund(g)
+    _rules(SimpleNamespaceStore(g), [{"kind": "keyword", "pattern": "leaked-fixture-term", "applies_to": "output"}])
+    arguments = {"operation": "agent.memory.add", "input": {"body": "note LEAKED-fixture-term"}}
+    g.replies = [event({"tool_calls": [{"index": 0, "id": "fixture-tool", "type": "function",
+                                        "function": {"name": "run_operation", "arguments": json.dumps(arguments)}}]})
+                 + event(finish="tool_calls", usage=USAGE) + b"data: [DONE]\n\n"]
+    tid = start_paid(g); g.agent._run(tid)
+    turn = g.store.one("SELECT * FROM agent_turns WHERE id=?", (tid,))
+    assert turn["status"] == "failed" and turn["error_code"] == "content_blocked_output"
+    assert g.store.all("SELECT * FROM agent_tool_calls WHERE turn_id=?", (tid,)) == []
+    # Rejected before acceptance: the consumed tokens are recorded as platform cost, never sold.
+    assert g.store.all("SELECT * FROM billing_settlements") == []
+    assert g.store.one("SELECT outcome FROM billing_usage")["outcome"] == "platform_fault"
+
+
+class SimpleNamespaceStore:
+    """Adapter so _rules() can publish on the governed fixture's store."""
+
+    def __init__(self, g):
+        self.people = type("People", (), {"store": g.store, "uid": staticmethod(lambda _name: g.user["id"])})()
 
 
 def test_an_unpaid_run_records_no_terms(agent):

@@ -190,7 +190,11 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
   the event stream, the step is not kept for replay, and the turn fails `content_blocked_output`.
   DeepSeek `finish_reason: content_filter` carries `stop_details.category = content_filter` and
   fails `content_filtered_output` (withheld the same way); other refusals stay `provider_refused`.
-  Whether a stopped call is charged is the gateway's incomplete-call policy.
+  Whether a stopped call is charged is the gateway's incomplete-call policy. Before a step is
+  accepted the rules also read every tool call's arguments (each string key and value), so text
+  the model puts into a confirmation card, a memory or workspace data instead of its visible
+  answer stops the step the same way: no tool handler runs, no card is created, and on the paid
+  path the step is recorded as platform cost, never sold.
 * **Records.** A stop is stored as rule id/version, direction and length — never text.
   `agent.message.report` files a report on an answer; its text is attached only when the person
   sets `include_excerpt`. Administrators (`platform.users.*`) close reports and suspend or
