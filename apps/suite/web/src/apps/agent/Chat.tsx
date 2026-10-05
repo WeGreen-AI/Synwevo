@@ -1,9 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ClipboardEvent, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Modal, useI18n } from "@synwevo/ui";
 import { Loading, RunBadge } from "../../shared/states";
+import { withAiLabel } from "./aiLabel";
+import { AiLabel, RefusalNotice, ThinkingStatus, TurnCostLine, useChatText } from "./ChatParts";
+import { shouldSubmit } from "./composer";
 import { AgentFailure as Failure, agentErrorText } from "./errors";
 import { Markdown } from "./Markdown";
+import { refusalOf } from "./refusals";
 import { activeTurn, branchMessages, type Conversation, type Message, type ToolCall, type Workspace } from "./types";
 
 export type Act = (operation: string, input: Record<string, unknown>) => Promise<unknown>;
@@ -43,8 +47,8 @@ function ActionCard({ call, act, busy }: { call: ToolCall; act: Act; busy: boole
     {call.hidden ? <p>{t("内容因权限变化已隐藏")}</p> : <>
       <details open={pending ? true : undefined}>
         <summary>{pending ? t("拟执行的变更") : t("执行详情")}</summary>
-        <Values value={call.input} />
-        {call.result != null && <><h4>{t("执行结果")}</h4><Values value={call.result} /></>}
+        <div className="ag-expand"><Values value={call.input} />
+          {call.result != null && <><h4>{t("执行结果")}</h4><Values value={call.result} /></>}</div>
       </details>
       {call.error && <p className="err" role="alert">{agentErrorText(call.error, t)}</p>}
       {pending && <div className="ag-action-buttons">
@@ -77,28 +81,46 @@ function Scope({ scope, spaces, change, close }: { scope: string[] | null; space
   </Modal>;
 }
 
-export default function Chat({ conversation, loading, error, connection, configured, spaces, act, send, refresh, sentDraft = 0, aside }: {
+/** Copy feedback for one answer: "copied", "failed", or nothing. */
+type CopyState = { id: string; ok: boolean } | null;
+
+export default function Chat({ conversation, loading, error, connection, configured, spaces, act, send, refresh, sentDraft = 0, aside,
+  status, maximum, hint, walletUrl }: {
   conversation?: Conversation; loading: boolean; error: unknown; connection: string; configured: boolean | undefined;
   spaces: Workspace[]; act: Act; send: (text: string) => Promise<unknown>; refresh: () => Promise<void>; sentDraft?: number;
   /** Payment state for this conversation, shown above the composer. */
   aside?: ReactNode;
+  /** Payer, balance, limit and model, shown just above the message box. */
+  status?: ReactNode;
+  /** The most this turn can cost, shown beside the send button. */
+  maximum?: ReactNode;
+  /** An extra line under the composer (how funds are held). */
+  hint?: string;
+  /** The account service's wallet page, for a top-up next step. */
+  walletUrl?: string;
 }) {
   const { t } = useI18n();
+  const { c } = useChatText();
+  const id = useId();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<unknown>();
   const [scopeOpen, setScopeOpen] = useState(false);
   const [newContent, setNewContent] = useState(false);
+  const [copied, setCopied] = useState<CopyState>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const composing = useRef(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const input = useRef<HTMLTextAreaElement>(null);
   const branch = branchMessages(conversation?.messages ?? [], conversation?.head_id ?? null);
   const running = (conversation?.messages ?? []).find(activeTurn);
   const blocked = busy || !!running || !!conversation?.sealed || conversation?.status === "archived" || configured === false;
   useEffect(() => { if (sentDraft) { setText(""); stick.current = true; input.current?.focus(); } }, [sentDraft]);
   useEffect(() => { setFailure(undefined); stick.current = true; setNewContent(false); }, [conversation?.id]);
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
   useEffect(() => {
+    // Follow the stream only while the reader is at the bottom; never pull them back from reading.
     const box = scroller.current;
     if (!box) return;
     if (stick.current) box.scrollTop = box.scrollHeight;
@@ -115,57 +137,113 @@ export default function Chat({ conversation, loading, error, connection, configu
     try { if (await send(text) !== false) { setText(""); stick.current = true; input.current?.focus(); } }
     catch (e) { setFailure(e); } finally { setBusy(false); }
   }
+  function flash(state: CopyState) {
+    setCopied(state);
+    clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopied(null), 2500);
+  }
+  async function copyAnswer(m: Message) {
+    try { await navigator.clipboard.writeText(withAiLabel(m.body, c("aiLabel"))); flash({ id: m.id, ok: true }); }
+    catch { flash({ id: m.id, ok: false }); }
+  }
+  /** A selection that touches any answer leaves the page with the AI label (DeepSeek terms 8.1). */
+  function copySelection(event: ClipboardEvent<HTMLDivElement>) {
+    const selection = typeof window !== "undefined" ? window.getSelection() : null;
+    const selected = selection?.toString() ?? "";
+    if (!selection || !selected.trim()) return;
+    const answers = scroller.current?.querySelectorAll(".ag-message.assistant .ag-markdown") ?? [];
+    if (![...answers].some((node) => selection.containsNode(node, true))) return;
+    event.clipboardData.setData("text/plain", withAiLabel(selected, c("aiLabel")));
+    event.preventDefault();
+  }
   function answer(m: Message) {
     const siblings = (conversation?.messages ?? []).filter((s) => s.parent_id === m.parent_id && s.role === m.role);
+    const position = siblings.findIndex((s) => s.id === m.id);
+    const assistant = m.role === "assistant";
+    const active = !!m.turn && activeTurn(m);
+    const thinking = assistant && active && m.turn!.status === "running" && !m.body;
+    const refusal = m.error ? refusalOf(m.error) : null;
+    const failed = m.turn?.status === "failed";
     return <article key={m.id} className={`ag-message ${m.role}`}>
       <div className="ag-message-label">{m.role === "user" ? t("你") : "Synwevo Agent"}</div>
-      {m.hidden ? <p className="notice">{t("内容因权限变化已隐藏")}</p> : <div className="ag-markdown"><Markdown text={m.body} /></div>}
+      {m.hidden ? <p className="notice">{t("内容因权限变化已隐藏")}</p> : !thinking && (m.body || !assistant) &&
+        <div className={`ag-markdown${assistant && active && m.body ? " streaming" : ""}`}><Markdown text={m.body} /></div>}
+      {thinking && <ThinkingStatus />}
+      {assistant && active && !!m.body && m.turn!.status === "running" && <span className="sr-only" role="status">{c("writing")}</span>}
       {m.tool_calls.map((call) => <ActionCard key={call.id} call={call} act={action} busy={busy} />)}
-      {m.turn && activeTurn(m) && <p role="status"><Status status={m.turn.status} /></p>}
-      {m.error && <p className="err" role="alert">{agentErrorText(m.error, t)}</p>}
+      {m.turn && active && m.turn.status !== "running" && <p role="status"><Status status={m.turn.status} /></p>}
+      {m.error && (refusal ? <RefusalNotice refusal={refusal} walletUrl={walletUrl} busy={blocked}
+        onRequote={refusal.next === "requote" ? () => void action("agent.turn.start", { conversation_id: conversation!.id, regenerate_of: m.id }) : undefined} />
+        : <p className="err">{agentErrorText(m.error, t)}</p>)}
       {m.turn?.status === "cancelled" && <p className="muted">{t("已取消，不再启动后续操作。已完成的结果保留。")}</p>}
-      {m.role === "assistant" && !m.hidden && <div className="ag-message-tools">
-        <button className="btn ghost sm" disabled={blocked} onClick={() => void action("agent.turn.start", { conversation_id: conversation!.id, regenerate_of: m.id })}>{t("重新生成回答")}</button>
-        {siblings.length > 1 && <select className="input sm" aria-label={t("查看回答分支")} value={m.id} disabled={busy || !!running}
-          onChange={(e) => void action("agent.conversation.update", { conversation_id: conversation!.id, head_id: e.target.value })}>
-          {siblings.map((s, n) => <option key={s.id} value={s.id}>{t("分支 {n}", { n: n + 1 })}</option>)}
-        </select>}
-      </div>}
+      {assistant && !m.hidden && <footer className="ag-answer-foot">
+        {!!m.body && <AiLabel />}
+        <TurnCostLine cost={m.turn?.cost} />
+        <div className="ag-message-tools">
+          {!!m.body && <button type="button" className="btn ghost sm" onClick={() => void copyAnswer(m)}>
+            {copied?.id === m.id && copied.ok ? <span className="ag-done">{c("copied")}</span> : c("copy")}
+          </button>}
+          {copied?.id === m.id && !copied.ok && <span className="err small" role="alert">{c("copyFailed")}</span>}
+          <span className="sr-only" role="status">{copied?.id === m.id && copied.ok ? c("copied") : ""}</span>
+          <button type="button" className="btn ghost sm" disabled={blocked}
+            onClick={() => void action("agent.turn.start", { conversation_id: conversation!.id, regenerate_of: m.id })}>
+            {failed ? c("retry") : t("重新生成回答")}
+          </button>
+          {siblings.length > 1 && <div className="ag-branch" role="group" aria-label={c("branchGroup")}>
+            <button type="button" className="btn ghost sm" aria-label={c("branchPrev")} disabled={busy || !!running || position <= 0}
+              onClick={() => void action("agent.conversation.update", { conversation_id: conversation!.id, head_id: siblings[position - 1].id })}>
+              <span aria-hidden="true">‹</span></button>
+            <span className="ag-branch-pos">{c("branchPosition", { n: position + 1, total: siblings.length })}</span>
+            <button type="button" className="btn ghost sm" aria-label={c("branchNext")} disabled={busy || !!running || position >= siblings.length - 1}
+              onClick={() => void action("agent.conversation.update", { conversation_id: conversation!.id, head_id: siblings[position + 1].id })}>
+              <span aria-hidden="true">›</span></button>
+          </div>}
+        </div>
+      </footer>}
     </article>;
   }
+  const failureRefusal = failure != null ? refusalOf(failure) : null;
   return <div className="ag-chat">
-    <div className="ag-transcript" ref={scroller} tabIndex={0} aria-label={t("当前会话")}
-      onScroll={() => { const el = scroller.current!; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; if (stick.current) setNewContent(false); }}>
-      <div className="ag-content">
-        {loading ? <Loading /> : error != null ? <Failure error={error} onRetry={() => void refresh()} /> : <>
-          {!branch.length && <div className="ag-welcome"><h2>{t("今天想完成什么？")}</h2><p>{t("在一次会话中使用你获授权的工作空间。每次写入都展示实际目标和变更。")}</p></div>}
-          {branch.map(answer)}
-        </>}
+    <div className="ag-transcript-wrap">
+      <div className="ag-transcript" ref={scroller} tabIndex={0} aria-label={t("当前会话")} onCopy={copySelection}
+        onScroll={() => { const el = scroller.current!; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; if (stick.current) setNewContent(false); }}>
+        <div className="ag-content">
+          {loading ? <Loading /> : error != null ? <Failure error={error} onRetry={() => void refresh()} /> : <>
+            {!branch.length && <div className="ag-welcome"><h2>{t("今天想完成什么？")}</h2><p>{t("在一次会话中使用你获授权的工作空间。每次写入都展示实际目标和变更。")}</p></div>}
+            {branch.map(answer)}
+          </>}
+        </div>
       </div>
+      {newContent && <button type="button" className="btn ag-new-content" onClick={() => {
+        stick.current = true; const el = scroller.current; if (el) el.scrollTop = el.scrollHeight; setNewContent(false);
+      }}>{c("newContent")} <span aria-hidden="true">↓</span></button>}
     </div>
-    {newContent && <button className="btn ag-new-content" onClick={() => { stick.current = true; const el = scroller.current; if (el) el.scrollTop = el.scrollHeight; setNewContent(false); }}>{t("查看新内容")}</button>}
     <div className="ag-composer-area">
       {aside}
       {conversation?.sealed && <p className="notice" role="alert">{t("访问权限已改变，相关内容已隐藏。请新建会话继续。")}</p>}
       {conversation?.status === "archived" && <p className="notice">{t("这个会话已归档。恢复后可继续。")}</p>}
       {configured === false && <p className="notice"><Link to="/agent/settings">{t("模型服务未配置。请先打开 Agent 设置。")}</Link></p>}
       {conversation && connection !== "connected" && <p className="muted small" role="status">{t(connection === "offline" ? "连接中断，正在恢复；已完成的操作不会重复执行。" : "正在连接实时更新…")}</p>}
-      {failure != null && <Failure error={failure} />}
+      {failure != null && (failureRefusal ? <RefusalNotice refusal={failureRefusal} walletUrl={walletUrl} live busy={blocked}
+        onRequote={failureRefusal.next === "requote" ? () => void submit() : undefined} /> : <Failure error={failure} />)}
+      {status}
       <form className="ag-composer" onSubmit={(e) => void submit(e)}>
         <label className="sr-only" htmlFor="agent-message">{t("输入消息")}</label>
         <textarea id="agent-message" ref={input} rows={3} maxLength={20000} value={text} placeholder={t("输入消息")} disabled={!!conversation?.sealed}
+          enterKeyHint="send" aria-describedby={`${id}-hint`}
           onChange={(e) => setText(e.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !composing.current && !e.nativeEvent.isComposing && e.keyCode !== 229) { e.preventDefault(); void submit(); } }} />
+          onKeyDown={(e) => { if (shouldSubmit({ key: e.key, shiftKey: e.shiftKey, altKey: e.altKey, isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode }, composing.current)) { e.preventDefault(); void submit(); } }} />
         <div className="ag-compose-tools">
           {conversation && <button type="button" className="btn ghost sm" disabled={busy || !!running} onClick={() => setScopeOpen(true)}>
             {conversation.scope === null ? t("全部获授权空间") : t("选择 {n} 个空间", { n: conversation.scope.length })}
           </button>}
           <span className="spacer" />
+          {!running && maximum}
           {running?.turn ? <button className="btn" type="button" disabled={busy} onClick={() => void action("agent.turn.cancel", { turn_id: running.turn!.id })}>{t("停止回答")}</button>
             : <button className="btn primary" type="submit" disabled={blocked || !text.trim()}>{t("发送消息")}</button>}
         </div>
       </form>
-      <p className="ag-composer-hint">{t("Enter 发送 · Shift+Enter 换行")}</p>
+      <p className="ag-composer-hint" id={`${id}-hint`}>{t("Enter 发送 · Shift+Enter 换行")}{hint ? ` · ${hint}` : ""}</p>
     </div>
     {scopeOpen && conversation && <Scope scope={conversation.scope} spaces={spaces} close={() => setScopeOpen(false)}
       change={(scope) => act("agent.conversation.update", { conversation_id: conversation.id, ...(scope === null ? { clear_scope: true } : { scope }) })} />}

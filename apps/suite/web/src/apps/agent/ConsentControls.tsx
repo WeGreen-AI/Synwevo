@@ -4,7 +4,8 @@ import { Modal, useI18n, type Params } from '@synwevo/ui';
 import { read } from '../../shared/ops';
 import { Failure, Loading } from '../../shared/states';
 import { budgetCopy } from './budget.messages';
-import { formatAmount, formatRate } from './budget';
+import { formatAmount, formatRate, type Pricing } from './budget';
+import { PriceChangeList, useChatText } from './ChatParts';
 import { consentCode, effectiveConsentStatus, validateConsentList, type Consent, type ConsentWriter } from './consent';
 import { consentCopy, type ConsentText } from './consent.messages';
 import type { Workspace } from './types';
@@ -120,11 +121,14 @@ export function ConsentRecovery({ writer, retry }: { writer: ConsentWriter; retr
   </div>;
 }
 
-export function ConsentPanel({ consents, loading, error, refresh, scope, spaces, payer, writer, single, setSingle, revoke }: {
+export function ConsentPanel({ consents, loading, error, refresh, scope, spaces, payer, writer, single, setSingle, revoke, offer = null }: {
   consents?: Consent[]; loading: boolean; error?: unknown; refresh: () => void; scope: string[] | null; spaces: Workspace[]; payer: string;
   writer: ConsentWriter; single: boolean; setSingle: (value: boolean) => void; revoke: (consent: Consent) => Promise<unknown>;
+  /** The governed terms on offer now, to say what changed when a consent's price no longer applies. */
+  offer?: Pricing | null;
 }) {
   const { m } = useConsentText();
+  const { c } = useChatText();
   const id = useId();
   const state = useSyncExternalStore(writer.subscribe, writer.getSnapshot, writer.getSnapshot);
   const [detail, setDetail] = useState<{ consent: Consent; revoke: boolean } | null>(null);
@@ -145,6 +149,10 @@ export function ConsentPanel({ consents, loading, error, refresh, scope, spaces,
           {selected.status !== 'revoked' && <button className="btn" style={consentButton} type="button" disabled={pending}
             onClick={() => { setLocalError(undefined); setDetail({ consent: selected, revoke: true }); }}>{m('revoke')}</button>}
         </div>
+        {selected.status === 'model_changed' && <div className="notice warn ag-stale" style={consentStack}>
+          <p>{c('consentStale')}</p>
+          {offer && <PriceChangeList before={selected} after={offer} />}
+        </div>}
         <details><summary style={consentButton}>{m('history')}</summary><ul>{consents.map((consent) => <li key={consent.id}>
           <button className="btn ghost" type="button" style={consentButton} onClick={() => { setLocalError(undefined); setDetail({ consent, revoke: false }); }}>
             {m(effectiveConsentStatus(consent, scope))} · {consent.id}

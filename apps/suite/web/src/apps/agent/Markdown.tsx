@@ -1,7 +1,34 @@
 /** A small, safe Markdown renderer for the Agent's answers: headings, paragraphs, emphasis, inline
  *  and fenced code, lists, tables and http(s) links. It builds React elements — never HTML strings —
  *  so nothing in an answer (or in business data quoted by it) can inject markup or script. */
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { useI18n } from "@synwevo/ui";
+import { chatCopy } from "./chat.messages";
+
+/** A fenced code block: keyboard-scrollable, labelled with its language, and copyable on its own
+ *  (the code only, so it pastes cleanly; copying the whole answer carries the AI label). */
+function CodeBlock({ lang, code }: { lang: string; code: string }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const label = lang ? t(chatCopy.codeBlockLang[0], { lang }) : t(chatCopy.codeBlock[0]);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 2000);
+    } catch { setCopied(false); }
+  }
+  return <figure className="ag-code-block">
+    <figcaption className="ag-code-head"><span>{lang || t(chatCopy.codeBlock[0])}</span>
+      <button type="button" className="btn ghost sm" onClick={() => void copy()}>{t(chatCopy[copied ? "codeCopied" : "copyCode"][0])}</button>
+      <span className="sr-only" role="status" aria-live="polite">{copied ? t(chatCopy.codeCopied[0]) : ""}</span>
+    </figcaption>
+    <pre className="ag-code" data-lang={lang || undefined} tabIndex={0} role="region" aria-label={label}><code>{code}</code></pre>
+  </figure>;
+}
 
 function inline(text: string, key: string): ReactNode[] {
   const out: ReactNode[] = [];
@@ -39,6 +66,7 @@ function cells(line: string): string[] {
 }
 
 export function Markdown({ text }: { text: string }) {
+  const { t } = useI18n();
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let i = 0;
@@ -52,7 +80,7 @@ export function Markdown({ text }: { text: string }) {
       i++;
       while (i < lines.length && !/^```/.test(lines[i])) body.push(lines[i++]);
       i++;
-      blocks.push(<pre key={key} className="ag-code" data-lang={lang || undefined}><code>{body.join("\n")}</code></pre>);
+      blocks.push(<CodeBlock key={key} lang={lang.slice(0, 40)} code={body.join("\n")} />);
       continue;
     }
     const h = /^(#{1,3})\s+(.*)$/.exec(line);
@@ -68,8 +96,8 @@ export function Markdown({ text }: { text: string }) {
       const rows: string[][] = [];
       i += 2;
       while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(cells(lines[i++]));
-      blocks.push(<div key={key} className="ag-table-wrap"><table className="ag-table">
-        <thead><tr>{head.map((c, j) => <th key={j}>{inline(c, `${key}-h${j}`)}</th>)}</tr></thead>
+      blocks.push(<div key={key} className="ag-table-wrap" tabIndex={0} role="region" aria-label={t(chatCopy.tableRegion[0])}><table className="ag-table">
+        <thead><tr>{head.map((c, j) => <th key={j} scope="col">{inline(c, `${key}-h${j}`)}</th>)}</tr></thead>
         <tbody>{rows.map((r, ri) => <tr key={ri}>{head.map((_, j) => <td key={j}>{inline(r[j] ?? "", `${key}-${ri}-${j}`)}</td>)}</tr>)}</tbody>
       </table></div>);
       continue;

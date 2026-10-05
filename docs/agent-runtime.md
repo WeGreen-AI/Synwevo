@@ -71,6 +71,41 @@ offer or wallet cannot be read, `reason: "unavailable"`. `agent.billing.offer` a
 documented capabilities of the two governed DeepSeek models (`vision` only for
 `deepseek-flash`); an unregistered model ID is shown without capability claims.
 
+In the page (`apps/suite/web/src/apps/agent/`): each answer shows its settled cost with an
+expandable breakdown (cache hit/miss, output with reasoning, model, band, state); the composer
+shows the payer (personal wallet first; organizations only as listed by
+`GET /api/suite/agent/payers`, whose absence means personal only), the balance, the tightest
+remaining limit, the most this turn can cost (an active consent's per-run budget, else the
+per-call hold) and a low-balance prompt linking to the account service's `/account/wallet`.
+Amounts are formatted with `Intl` from decimal strings, never through a float. The model picker
+lists the governed model(s) the server offers with their exact price per million tokens and
+capabilities; there is no client-side model switch.
+
+Every assistant answer carries the label "由 AI 生成，可能有误，仅供参考" (zh-Hant / en
+translated; DeepSeek Open Platform terms 8.1, owner decision: global). "Copy answer" and any
+selection copied from an answer append it once; the per-code-block copy button copies only the
+code so it pastes cleanly.
+
+### Refusals in the chat
+
+A refused send, or a model call refused later in a running answer, is put into one sentence and
+one next step (`refusals.ts`), never shown as a code: insufficient funds (top up), a personal
+limit reached, paused or missing (Agent settings), an automatic spending brake, a suspension, the
+paid-dispatch breaker or platform cost admission (`billing_cost_*`), the staged-rollout allowlist,
+the paid service not configured, the separate DeepSeek data-sharing consent
+(`provider_consent_*`, Agent settings) and a changed model or price (re-confirm). The risk and
+consent families are also recognised by their stems (`risk_*allowlist*`, `*breaker*`, `*brake*`,
+`*suspend*`). An upstream 402 is the operator's DeepSeek balance and is shown as the service
+being unavailable, never as the person's balance. Each sentence says that nothing was called or
+charged for the refused step.
+
+When a continuing consent's model or price no longer applies (`model_changed`), the consent
+panel and the quote dialog list what changed (model, route, price version, unit, each rate per
+million tokens, per-call hold). The dialog offers "confirm the new price and send" in one step:
+it quotes the previous per-run budget, call count and time limit at the new terms, and sends only
+when the quote equals the terms shown; otherwise it stops at the review and says the quote
+differs. The same applies after a confirmation is refused because the terms changed.
+
 ## Verification and remaining gates
 
 Use isolated test identities/data and the worktree's import paths, never the real `data/`.

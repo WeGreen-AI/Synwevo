@@ -1,6 +1,6 @@
 import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Route, useLocation, useMatch, useNavigate } from "react-router-dom";
-import { PlatformNav, RequireSession, useSession } from "@synwevo/auth-client";
+import { ApiError, PlatformNav, RequireSession, get, useSession } from "@synwevo/auth-client";
 import { Brand, useDialog, useI18n } from "@synwevo/ui";
 import { useApp } from "../../shared/catalog";
 import { Empty, Loading } from "../../shared/states";
@@ -12,7 +12,11 @@ import { useConversation } from "./useConversation";
 import { ConsentPanel, ConsentRecovery, useConversationConsents } from "./ConsentControls";
 import { ConsentStateError, PendingConsentOperation, createConsentWriter, effectiveConsentStatus, validateConsent,
   validateCreatedConsent, type Consent, type ConsentWriter } from "./consent";
-import type { BudgetIntent } from "./budget";
+import { validateOffer, type BudgetIntent } from "./budget";
+import { chatCopy } from "./chat.messages";
+import { ComposerStatus, TurnMaximum, type ModelOffer } from "./ComposerStatus";
+import { turnMaximum, walletHref, type BillingStatus } from "./composer";
+import { choosePayer, parsePayers, payerInput, personal, recallPayer, rememberPayer, type Payer } from "./payers";
 import "./messages";
 import { automationCopy } from "./automations.messages";
 import "./agent.css";
@@ -51,8 +55,20 @@ function AgentApp() {
   const intents = useRef(new Map<string, string>());
   const retryCreate = useRef<string | undefined>(undefined);
   const generation = useRef(0);
-  const { me } = useSession();
-  const payer = me?.display_name || me?.email || "";
+  const { me, state: auth } = useSession();
+  const payerName = me?.display_name || me?.email || "";
+  const userId = me?.id ?? "";
+  // Money facts beside the composer; read-only, refreshed when an answer finishes.
+  const [status, setStatus] = useState<BillingStatus | null>();
+  const [offer, setOffer] = useState<ModelOffer | null>();
+  const [payerList, setPayerList] = useState<unknown>();
+  const [payersError, setPayersError] = useState(false);
+  const [payerRef, setPayerRef] = useState(() => (userId ? recallPayer(userId) : null));
+  const payers = parsePayers(payerList, { id: userId, name: payerName });
+  const payer: Payer = userId ? choosePayer(payers, payerRef) : personal(userId, payerName);
+  const organizationPayer = payer.kind !== "user";
+  const payerLabel = organizationPayer ? payer.name : payerName;
+  const walletUrl = walletHref(auth?.account_url, auth?.app_id);
   // One payment writer per conversation: an uncertain outcome stays locked across navigation.
   const writers = useRef(new Map<string, ConsentWriter>());
   const writerFor = useCallback((cid: string) => {
@@ -64,6 +80,36 @@ function AgentApp() {
     return writer;
   }, []);
   const consents = useConversationConsents(id, conversation?.scope, connection, billingRequired && !!id);
+  const answering = !!conversation?.messages?.some(activeTurn);
+  useEffect(() => {
+    if (!billingRequired) { setStatus(undefined); setOffer(undefined); return; }
+    const abort = new AbortController();
+    void Promise.allSettled([
+      read<BillingStatus>("agent.billing.status", {}, null, abort.signal),
+      read<ModelOffer>("agent.billing.offer", {}, null, abort.signal),
+    ]).then(([money, terms]) => {
+      if (abort.signal.aborted) return;
+      setStatus(money.status === "fulfilled" && money.value && typeof money.value === "object" ? money.value : null);
+      let valid: ModelOffer | null = null;
+      if (terms.status === "fulfilled") { try { validateOffer(terms.value); valid = terms.value; } catch { valid = null; } }
+      setOffer(valid);
+    });
+    return () => abort.abort();
+  }, [billingRequired, tick, answering]);
+  useEffect(() => {
+    if (!billingRequired || !userId) return;
+    const abort = new AbortController();
+    // Organization payment (shared contract "Payer") lists who may pay; before it exists the
+    // endpoint is absent and only the personal wallet is offered.
+    get<unknown>("/api/suite/agent/payers", abort.signal)
+      .then((value) => { if (!abort.signal.aborted) { setPayerList(value); setPayersError(false); } })
+      .catch((e) => { if (!abort.signal.aborted) { setPayerList(undefined); setPayersError(!(e instanceof ApiError && e.status === 404)); } });
+    return () => abort.abort();
+  }, [billingRequired, userId]);
+  function choose(next: Payer) {
+    setPayerRef({ kind: next.kind, id: next.id });
+    if (userId) rememberPayer(userId, next);
+  }
   const [single, setSingle] = useState(false);
   useEffect(() => setSingle(false), [id]);
 
@@ -102,6 +148,7 @@ function AgentApp() {
   function consentFor(cid: string): Consent | null {
     if (writers.current.get(cid)?.pending()) throw new PendingConsentOperation();
     if (cid !== id) return null;  // A conversation created by this send has no consent yet.
+    if (organizationPayer) return null;  // A personal consent never pays for an organization's run.
     if (!conversation || conversation.id !== cid || consents.error != null || !consents.data) throw new ConsentStateError("consent_state_unavailable");
     if (single) return null;
     return consents.data.find((c) => effectiveConsentStatus(c, conversation.scope) === "active") ?? null;
@@ -205,6 +252,10 @@ function AgentApp() {
   const blocking = consents.data?.some((c) => !["revoked", "expired"].includes(effectiveConsentStatus(c, conversation?.scope ?? null)));
   const dialogScope = budgetIntent?.conversation_id === id ? conversation?.scope ?? null : null;
   const title = conversation?.title === "新会话" ? t("新会话") : conversation?.title;
+  const activeConsent = !organizationPayer && conversation ? consents.data?.find((c) => effectiveConsentStatus(c, conversation.scope) === "active") ?? null : null;
+  // The newest consent whose model or price no longer applies: what the person last confirmed.
+  const staleConsent = consents.data?.filter((c) => c.status === "model_changed").sort((a, b) => b.created_at - a.created_at)[0] ?? null;
+  const money = billingRequired ? { status, offer, payers, payersError, payer, setPayer: choose, walletUrl } : null;
   return <div className="ag-app">
     <header className="topbar">
       <button className="btn ghost ag-mobile-menu" aria-label={t(sidebar ? "关闭会话列表" : "打开会话列表")} aria-expanded={sidebar} aria-controls="agent-sidebar" onClick={() => setSidebar(!sidebar)}>☰</button>
@@ -238,9 +289,14 @@ function AgentApp() {
           {actionError != null && <Failure error={actionError} />}
           <Chat key={id ?? "new"} conversation={conversation} loading={!!id && !conversation && !error} error={error} connection={connection}
             spaces={spaces} configured={configured} act={act} send={send} refresh={refresh} sentDraft={sentDraft}
+            walletUrl={walletUrl}
+            status={money && <ComposerStatus money={money} disabled={running} />}
+            maximum={money && <TurnMaximum maximum={turnMaximum(single ? null : activeConsent, offer)} />}
+            hint={money ? t(chatCopy.turnMaximumHint[0]) : undefined}
             aside={writer && id && <>
               <ConsentPanel consents={consents.data} loading={consents.loading} error={consents.error} refresh={consents.refresh}
-                scope={conversation?.scope ?? null} spaces={spaces} payer={payer} writer={writer} single={single} setSingle={setSingle} revoke={revoke} />
+                scope={conversation?.scope ?? null} spaces={spaces} payer={payerName} writer={writer} single={single} setSingle={setSingle} revoke={revoke}
+                offer={offer ?? null} />
               <ConsentRecovery writer={writer} retry={async () => {
                 try { await writer.retry(); } finally { consents.refresh(); setTick((n) => n + 1); await refresh(); }
               }} />
@@ -248,7 +304,10 @@ function AgentApp() {
         </>}
       </main>
       {budgetIntent && <BudgetDialog intent={budgetIntent} onClose={() => setBudgetIntent(undefined)}
-        onQuote={(params) => write("agent.turn.quote", { ...budgetIntent, ...params })}
+        onQuote={(params) => write("agent.turn.quote", { ...budgetIntent, ...params, ...payerInput(payer, userId) })}
+        payerLabel={organizationPayer ? t(chatCopy.payerOrganization[0], { name: payer.name }) : undefined}
+        previous={budgetIntent.conversation_id === id && staleConsent && !organizationPayer ? { terms: staleConsent, budget: staleConsent.budget,
+          max_calls: staleConsent.max_calls, run_seconds: staleConsent.run_seconds } : undefined}
         onConfirm={async (quote) => {
           const acceptedIntent = budgetIntent;
           if (writers.current.get(acceptedIntent.conversation_id)?.pending()) throw new PendingConsentOperation();
@@ -256,8 +315,8 @@ function AgentApp() {
           finishDialogSend(acceptedIntent);
           await refresh();
         }}
-        consent={budgetIntent.conversation_id === id && (!consents.data || blocking) ? undefined : {
-          scope: dialogScope, spaces, payer, writer: writerFor(budgetIntent.conversation_id),
+        consent={organizationPayer || (budgetIntent.conversation_id === id && (!consents.data || blocking)) ? undefined : {
+          scope: dialogScope, spaces, payer: payerName, writer: writerFor(budgetIntent.conversation_id),
           create: async (quote, input, params, retry) => {
             const scope = dialogScope ?? [];
             const target = writerFor(input.conversation_id);

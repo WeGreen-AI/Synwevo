@@ -11,7 +11,9 @@ export interface ToolCall {
 export interface Message {
   id: string; parent_id: string | null; role: string; status: string; body: string; hidden: boolean;
   error: { code: string; message: string } | null;
-  turn: { id: string; status: string; model: string; credential: string } | null;
+  /** `cost` is the ledger's settled figure for this answer (synwevo_suite.agent.turn_cost), or null
+   *  when the turn has no ledger run; validate it with `validTurnCost` before showing it. */
+  turn: { id: string; status: string; model: string; credential: string; cost?: unknown } | null;
   tool_calls: ToolCall[]; created_at: number;
 }
 export interface Conversation {
