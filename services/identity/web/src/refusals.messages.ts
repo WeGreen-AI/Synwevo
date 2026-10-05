@@ -90,6 +90,7 @@ registerMessages({
   "模型价格记录暂不可用，请联系管理员检查": { en: "Model price records are temporarily unavailable. Contact an administrator to investigate.", "zh-Hant": "模型價格記錄暫不可用，請聯絡管理員檢查" },
   "请先发布同一环境的销售价格与成本价格": { en: "First publish sale and cost prices in the same environment.", "zh-Hant": "請先發佈同一環境的銷售價格與成本價格" },
   "模型路线与已生效价格不匹配，请重新选择": { en: "The model route does not match the effective prices. Select matching prices.", "zh-Hant": "模型路線與已生效價格不匹配，請重新選擇" },
+  "销售价由另一成本价加价生成，请选择与之对应的成本价": { en: "This sale price was derived from a different cost price. Select the cost price it was marked up from.", "zh-Hant": "銷售價由另一成本價加價產生，請選擇與之對應的成本價" },
   "模型配置版本无效，请重新读取": { en: "Invalid model configuration version. Read the latest configuration again.", "zh-Hant": "模型設定版本無效，請重新讀取" },
   "模型配置已变化，请保留输入并重新读取": { en: "The model configuration has changed. Keep your input and read the latest version.", "zh-Hant": "模型設定已變更，請保留輸入並重新讀取" },
   "启用模型前请配置平台凭据": { en: "Configure the platform credential before enabling the model.", "zh-Hant": "啟用模型前請設定平台憑據" },
