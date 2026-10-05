@@ -23,7 +23,8 @@ from .cost_settings import CostSettings
 from .ledger import Ledger
 from .models import BillingError
 from .risk import notify_admins
-from .upstream import DAY, SETTLE_DELAY_S, Reconciliation, UpstreamBalance, day_label, units_to_decimal, utc_day
+from .upstream import (DAY, SETTLE_DELAY_S, Reconciliation, UpstreamBalance, day_label, units_to_decimal,
+                       upstream_base, utc_day)
 
 log = logging.getLogger("synwevo.billing.risk")
 LEASE_S = 120
@@ -38,12 +39,15 @@ class MonitorRound:
 
 
 class RiskMonitor:
-    def __init__(self, store, *, environment: str, transport=None, clock=None, interval_s: float = 60.0):
+    def __init__(self, store, *, environment: str, transport=None, clock=None, interval_s: float = 60.0,
+                 base_url: str | None = None):
         if environment not in ("test", "live"):
             raise BillingError("invalid_environment")
         if not 1 <= interval_s <= 3600:
             raise ValueError("invalid_risk_monitor_interval")
         self.store, self.environment = store, environment
+        # The composition passes the gateway's origin; checked here, at start, by the same rule.
+        self.base_url = upstream_base(environment, base_url)
         self.clock = clock or (lambda: int(time.time()))
         self.transport, self.interval_s = transport, interval_s
         self.owner = uuid4().hex
@@ -87,7 +91,8 @@ class RiskMonitor:
                                   (self.environment,))["at"]
             if last is None or now - last >= risk.balance_poll_s:
                 step("balance", lambda: UpstreamBalance(self.store, environment=self.environment,
-                                                        transport=self.transport, clock=self.clock).poll())
+                                                        transport=self.transport, clock=self.clock,
+                                                        base_url=self.base_url).poll())
             if risk.pending_alert is not None:
                 step("pending_exposure", lambda: self._pending(policy))
             yesterday = utc_day(now) - DAY

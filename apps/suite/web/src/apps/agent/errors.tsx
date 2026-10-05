@@ -113,6 +113,8 @@ const errors: Record<string, string> = {
   provider_redirect: "暂时无法完成模型调用，回答已停止。请稍后重试。",
   provider_invalid_request: "暂时无法完成模型调用，回答已停止。请稍后重试。",
   provider_async_context: "暂时无法完成模型调用，回答已停止。请稍后重试。",
+  // A memory the model proposed and the person confirmed, refused by an input rule (agent/safety.py).
+  content_blocked_memory: "这条记忆触发了内容安全规则，没有保存。请修改后再保存。",
 };
 
 export function agentErrorText(error: unknown, t: (key: string) => string): string {

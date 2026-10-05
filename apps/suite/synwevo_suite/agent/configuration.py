@@ -61,8 +61,14 @@ class GovernedDeepSeek(MeteredTurnProvider):
         super().__init__(gateway, quotes=quotes, credential_resolver=self.credential)
 
     def route_open(self, route):
-        """Refuse paid dispatch on a provider revision that a 402 or a model check closed."""
-        closure = self.settings.closure(self.settings.route_revision(route.version) or 0)
+        """Refuse paid dispatch on a provider revision that a 402 or a model check closed.
+
+        Flat and banded route versions both name their provider revision; a version that names
+        none was not resolved from the governed configuration and is refused, never read as open."""
+        revision = self.settings.route_revision(route.version)
+        if revision is None:
+            raise BillingError("model_configuration_changed")
+        closure = self.settings.closure(revision)
         if closure is not None:
             raise BillingError(CLOSURE_CODES[closure["state"]])
 

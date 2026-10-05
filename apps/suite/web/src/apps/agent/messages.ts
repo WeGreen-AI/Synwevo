@@ -91,6 +91,7 @@ export const agentMessages = {
   "永久删除此会话及其消息？已创建的业务记录仍保留在各自的工作空间。": { en: "Permanently delete this conversation and its messages? Business records it created remain in their workspaces.", "zh-Hant": "永久刪除此會話及其訊息？已建立的業務記錄仍保留在各自的工作空間。" },
   "这个会话已归档。恢复后可继续。": { en: "This conversation is archived. Restore it to continue.", "zh-Hant": "此會話已封存。還原後可繼續。" },
   "访问权限已改变，相关内容已隐藏。请新建会话继续。": { en: "Access has changed and affected content is hidden. Start a new conversation to continue.", "zh-Hant": "存取權限已變更，相關內容已隱藏。請建立新會話繼續。" },
+  "这条记忆触发了内容安全规则，没有保存。请修改后再保存。": { en: "This memory matched a content safety rule, so it was not saved. Edit it and save again.", "zh-Hant": "這條記憶觸發了內容安全規則，沒有儲存。請修改後再儲存。" },
   "内容因权限变化已隐藏": { en: "Content hidden because access changed", "zh-Hant": "內容因權限變更已隱藏" },
   "今天想完成什么？": { en: "What would you like to get done?", "zh-Hant": "今天想完成甚麼？" },
   "在一次会话中使用你获授权的工作空间。每次写入都展示实际目标和变更。": { en: "Work across your authorized workspaces in one conversation. Every proposed change shows its destination and details.", "zh-Hant": "在一次會話中使用你獲授權的工作空間。每次寫入都顯示實際目標和變更。" },

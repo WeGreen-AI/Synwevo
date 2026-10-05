@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from synwevo_core.billing import Ledger, PaymentReceipt, Unit
+from synwevo_core.billing.bands import BandSchedules, published_defaults
 from synwevo_core.billing.catalogue import PriceCatalogue
 from synwevo_core.billing.cost_settings import CostSettings
 from synwevo_core.billing.provider_settings import ProviderSettings
@@ -52,14 +53,21 @@ def governed(request, monkeypatch):
     return g
 
 
-def configure(g, *, payer_budget=True):
+def configure(g, *, payer_budget=True, banded=False):
+    """banded: FIXTURE peak/off-peak prices over a published fixture calendar, so the resolved
+    route version carries ':bands:<schedule revision>' as production banded routes do."""
     cat = PriceCatalogue(g.store, environment='test')
     ids = {}
     with g.store.tx():
+        if banded:
+            BandSchedules(g.store, environment='test').append(
+                {**published_defaults(), 'source_ref': 'fixture-calendar:factory'}, expected_revision=0,
+                actor_id=g.user['id'], reason='Fixture calendar publication', operation_id=uuid.uuid4().hex)
         for purpose in ('sale', 'cost'):
+            off_peak = {'off_peak': {'input_uncached': '0.5', 'input_cached': '0.05', 'output': '1'}} if banded else {}
             draft, _ = cat.create(spec={'name': 'Factory fixture', 'purpose': purpose, 'provider': 'deepseek',
                 'model': 'fixture-route', 'unit': asdict(UNIT), 'input_uncached': '1', 'input_cached': '0.1',
-                'output': '2', 'terms_ref': 'fixture:factory', 'effective_from': 0},
+                'output': '2', 'terms_ref': 'fixture:factory', 'effective_from': 0, **off_peak},
                 actor_id=g.user['id'], idempotency_key=uuid.uuid4().hex)
             published = cat.publish(draft['id'], expected_revision=1, actor_id=g.user['id'],
                 operation_id=uuid.uuid4().hex, reason='Fixture price publication')

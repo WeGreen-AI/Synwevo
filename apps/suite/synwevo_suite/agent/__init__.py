@@ -63,7 +63,10 @@ def install(ctx) -> None:
         # Upstream balance, breaker thresholds, reconciliation and ledger audit (billing/risk_monitor.py):
         # one round at a time across processes; nothing runs before a cost policy is published.
         from synwevo_core.billing.risk_monitor import RiskMonitor
-        monitor = RiskMonitor(ctx.store, environment=agent.provider.gateway.ledger.environment)
+        # The balance poll carries the platform key as well: it uses the gateway's own origin
+        # (official, or the loopback FIXTURE double of an isolated test instance).
+        monitor = RiskMonitor(ctx.store, environment=agent.provider.gateway.ledger.environment,
+                              base_url=agent.provider.gateway.base_url)
         ctx.api.state.model_risk_monitor = monitor
         if hooks is not None:
             hooks.append(monitor.close)

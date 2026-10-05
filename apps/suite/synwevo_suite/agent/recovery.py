@@ -25,7 +25,7 @@ from synwevo_core.billing import BillingError, ChargeContext, Ledger, Usage
 from synwevo_core.billing.models import integer
 from synwevo_core.store import now
 
-from .gateway import MeteredDeepSeek
+from .gateway import MeteredDeepSeek, settleable
 
 
 @dataclass(frozen=True)
@@ -236,7 +236,7 @@ class MeteringRecovery:
                                          (row["id"],))
             if observation:
                 evidence = json.loads(observation["evidence"])
-                if evidence.get("usage_reliability") == "trusted_terminal":
+                if settleable(evidence):  # Trusted terminal usage, or an HTTP error answer (zero).
                     attempt = self.store.one("SELECT call_key FROM billing_attempts WHERE id=?", (observation["attempt_key"],))
                     if (observation["attempt_key"] != row["attempt_key"] or not attempt
                             or attempt["call_key"] != row["call_key"]):

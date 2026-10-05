@@ -53,8 +53,12 @@ def test_a_throttled_attempt_is_not_resent_and_the_next_call_waits_unsent(govern
     first = turn(g)
     assert first['status'] == 'failed' and first['error_code'] == code
     assert len(g.seen) == 1  # The refused attempt reached the provider once and is never resent.
-    attempt = g.store.one('SELECT status FROM billing_attempts')
-    assert attempt['status'] == 'usage_pending'  # The ledger's dispatch fence still holds it.
+    # The refusal consumed nothing billable: settled as known zero usage, its call released, so
+    # it can never be prepared or sent again, and it leaves no unknown exposure behind.
+    attempt = g.store.one('SELECT a.status, c.status AS call, u.outcome, u.cost_n FROM billing_attempts a '
+                          'JOIN billing_calls c ON c.id=a.call_key JOIN billing_usage u ON u.attempt_key=a.id')
+    assert attempt == {'status': 'settled', 'call': 'released', 'outcome': 'platform_fault', 'cost_n': '0'}
+    assert first['usage_state'] == 'known'
     assert clock['slept'] == []
 
     second = turn(g)

@@ -2,10 +2,14 @@
 
 * **Input** — a message matching a governed rule (administrators' keyword/pattern lists,
   `synwevo_core.agent_safety.SafetyRules`) is refused before anything is stored or sent:
-  ``content_blocked_input`` (422). The text stays with the person to edit.
+  ``content_blocked_input`` (422). The text stays with the person to edit. Memories reach the
+  model in every request's system prompt, so the same rules refuse saving or editing one
+  (``content_blocked_memory``) and leave out of the prompt any saved before a rule matched it.
 * **Output** — the streamed answer is checked as it arrives. On a match no further text is
   shown, the model call is stopped, what was already shown of that answer is withheld and the
-  turn ends ``content_blocked_output``. The provider's own filter (DeepSeek ``finish_reason:
+  turn ends ``content_blocked_output``. A tool call's arguments are checked against the same
+  rules before the step is accepted, so nothing blocked reaches a confirmation card, a memory or
+  workspace data. The provider's own filter (DeepSeek ``finish_reason:
   content_filter``) ends it ``content_filtered_output``. Whether a stopped call is charged is the
   administrators' incomplete-call policy, decided in the gateway, not here.
 
@@ -21,6 +25,23 @@ from .provider import ProviderError, StepResult
 #: How much already-seen text is re-checked with each new piece, so a keyword split across two
 #: streamed pieces is still found without re-reading the whole answer every time.
 WINDOW = 512
+
+
+def _strings(value) -> list[str]:
+    """Every string in a tool call's arguments (keys and values, depth first), each matched on
+    its own line so a phrase is not hidden by JSON escaping or split across two fields' joint."""
+    out, stack = [], [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            out.append(item)
+        elif isinstance(item, dict):
+            for key, child in item.items():
+                out.append(str(key))
+                stack.append(child)
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+    return out
 
 
 def refused(step: StepResult) -> ProviderError:
@@ -42,6 +63,27 @@ def check_input(store, user_id: str, text: str, *, conversation_id: str | None) 
                                conversation_id=conversation_id, characters=len(text or ""))
     raise ServiceError(422, "content_blocked_input", "这条消息触发了内容安全规则，没有发送给模型，请修改后再发送",
                        {"category": rule["category"]})
+
+
+def check_memory(store, user_id: str, text: str) -> None:
+    """A memory goes into the system prompt of every request, so the input rules apply to it as
+    to a message: refused before it is stored (added, edited, or proposed by the model and then
+    confirmed), recording only which rule and how long."""
+    rules = SafetyRules(store).compiled()
+    rule = rules.match(text or "", "input")
+    if rule is None:
+        return
+    SafetyEvents(store).record(user_id, "input", rule=rule, version=rules.version, conversation_id=None,
+                               characters=len(text or ""))
+    raise ServiceError(422, "content_blocked_memory", "这条记忆触发了内容安全规则，没有保存，请修改后再保存",
+                       {"category": rule["category"]})
+
+
+def allowed_memories(store, bodies: list[str]) -> list[str]:
+    """The memories that may go into a request: one saved before an input rule was published
+    that matches it now is left out (it stays visible to the person in Agent settings)."""
+    rules = SafetyRules(store).compiled()
+    return [body for body in bodies if rules.match(body, "input") is None]
 
 
 class OutputGuard:
@@ -71,11 +113,19 @@ class OutputGuard:
         return True
 
     def check_result(self, step: StepResult) -> None:
-        """A last look at the whole step (text that reached no callback is checked too)."""
+        """A last look at the whole step before anything of it is accepted: its visible text (also
+        what reached no callback) and every tool call's arguments, which would otherwise become
+        a confirmation card, a stored memory or workspace data. Runs before any tool handler."""
         if self.rule is not None:
             return
-        text = "".join(b.get("text") or "" for b in step.content or [] if b.get("type") == "text")
+        blocks = step.content or []
+        text = "".join(b.get("text") or "" for b in blocks if b.get("type") == "text")
         rule = self.rules.match(text, "output")
+        for block in blocks:
+            if rule is not None:
+                break
+            if block.get("type") == "tool_use":
+                rule = self.rules.match("\n".join(_strings(block.get("input"))), "output")
         if rule is not None:
             self.rule = rule
 

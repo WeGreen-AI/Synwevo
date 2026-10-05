@@ -16,9 +16,11 @@ from typing import Callable, Literal
 
 import httpx
 
+from synwevo_core.billing.upstream import OFFICIAL_ORIGIN, loopback_origin, upstream_base  # noqa: F401 - re-exported
+
 from .provider import Cancelled, Credential, ProviderError, StepResult
 
-BASE_URL = "https://api.deepseek.com"
+BASE_URL = OFFICIAL_ORIGIN
 ENDPOINT = BASE_URL + "/chat/completions"
 _STATUS = {400: "provider_bad_request", 401: "provider_auth", 402: "provider_balance",
            403: "provider_forbidden", 404: "provider_model_missing", 422: "provider_bad_request",
@@ -36,6 +38,14 @@ _EFFORT = {"none": "none", "low": "low", "medium": "high", "high": "high", "xhig
 def deepseek_effort(effort: object) -> str | None:
     """The DeepSeek reasoning_effort for an Agent effort setting, or None when unknown."""
     return _EFFORT.get(effort) if isinstance(effort, str) else None
+
+
+def route_effort(wanted: str, allowed) -> str:
+    """The level a governed route serves for a wanted DeepSeek effort: the allowed level nearest
+    to it in EFFORTS order, the lower (cheaper) one on a tie; "none" when that is all the route
+    offers. The person's setting is a preference; the route decides which levels exist."""
+    order = EFFORTS.index(wanted)
+    return min(allowed_efforts(allowed), key=lambda value: (abs(EFFORTS.index(value) - order), EFFORTS.index(value)))
 
 
 def allowed_efforts(values) -> tuple[str, ...]:
@@ -476,33 +486,9 @@ class _Assembly:
                                          stop_details=details), replay, a)
 
 
-_LOOPBACK = ("127.0.0.1", "::1", "localhost")
-
-
-def _loopback(value: object) -> bool:
-    try:
-        url = httpx.URL(value) if isinstance(value, str) else None
-    except Exception:  # noqa: BLE001 - any unparsable value is simply not loopback
-        return False
-    return bool(url) and url.scheme in ("http", "https") and url.host in _LOOPBACK and url.port is not None \
-        and not url.userinfo and url.path in ("", "/") and not url.query and not url.fragment
-
-
-def upstream_base(environment: str | None, override: str | None) -> str:
-    """The upstream origin the platform key may be sent to.
-
-    Always the official origin, except that end-to-end tests may point at a labelled FIXTURE
-    double (apps/suite/scripts/deepseek_test_double.py) when the billing environment is
-    ``test`` AND the target is a loopback host. Anything else is refused at startup, so a
-    configuration mistake can never send the platform key to another host.
-    """
-    if override in (None, ""):
-        return BASE_URL
-    if environment != "test":
-        raise ValueError("DeepSeek upstream override is refused outside SYNWEVO_BILLING_ENVIRONMENT=test")
-    if not _loopback(override):
-        raise ValueError("DeepSeek upstream override must be a loopback origin: http(s)://127.0.0.1|[::1]|localhost:<port>")
-    return override.rstrip("/")
+#: One origin rule for every request carrying the platform key (chat, GET /models, and the risk
+#: monitor's GET /user/balance in synwevo_core): synwevo_core.billing.upstream.upstream_base.
+_loopback = loopback_origin
 
 
 def _base(value: str) -> str:

@@ -30,7 +30,7 @@ from synwevo_core.terms import TermsAcceptances
 from synwevo_core.agent_safety import AgentAccess, ProviderConsents, SafetyEvents
 
 from .provider import Cancelled, Credential, Provider, ProviderError, replayable, resolve_credential
-from .safety import OutputGuard, check_input, refused
+from .safety import OutputGuard, allowed_memories, check_input, refused
 from .tools import TOOLS, ToolContext, policy_allows, resource_reads, snapshot_read, tool_result_text, validate_tool
 
 log = logging.getLogger("synwevo.agent")
@@ -44,6 +44,9 @@ MAX_TURN_TOKENS = 120_000
 MAX_OUTPUT_CHARS = 64_000
 MAX_TOOLS_PER_STEP = 20
 FLUSH_S = 0.15
+#: Usage reliabilities that leave a turn's usage known: trusted terminal counters, a call never
+#: sent, and an HTTP error answer settled as known zero usage (gateway.provider_refused).
+KNOWN_USAGE = ("trusted_terminal", "not_dispatched", "provider_refused")
 
 SYSTEM_PROMPT = """You are the person's own Synwevo Agent. Synwevo is a workflow platform: forms, data tables, data preparation, approvals, information extraction, documents and messages, organised in workspaces. The person may belong to several workspaces; you act for them in any workspace they can use, with exactly their rights there, and never more.
 
@@ -617,9 +620,11 @@ class Agent:
         settings = self.store.one("SELECT memory_enabled FROM agent_settings WHERE user_id=?", (user["id"],))
         if not settings or settings["memory_enabled"]:
             mems = self.store.all("SELECT body FROM agent_memories WHERE user_id=? ORDER BY created_at LIMIT 50", (user["id"],))
-            if mems:
+            # The input rules in force now: a memory saved before a rule matched it is not sent.
+            bodies = allowed_memories(self.store, [m["body"] for m in mems])
+            if bodies:
                 memory = "\n\nWhat the person asked you to remember about them (personal preferences, not business facts):\n" + \
-                         "\n".join(f"- {m['body']}" for m in mems)
+                         "\n".join(f"- {body}" for body in bodies)
         return [{"type": "text", "text": SYSTEM_PROMPT},
                 {"type": "text", "text": f"Operations available to this person (use find_operations for input schemas):\n{ops}"
                                          f"\n\nThe person's interface language: {locale}. Their time zone: {tz}. Today (UTC): {today}.{memory}"}]
@@ -832,8 +837,8 @@ class Agent:
                            "usage_state=CASE WHEN ? THEN 'pending' WHEN ? THEN 'known' ELSE usage_state END, updated_at=? WHERE id=?",
                            (steps, int(usage.get("input_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0)
                             + int(usage.get("cache_creation_input_tokens") or 0), int(usage.get("output_tokens") or 0),
-                            bool(previous_pending or (reliability and reliability not in ("trusted_terminal", "not_dispatched"))),
-                            reliability in ("trusted_terminal", "not_dispatched"), now(), turn_id))
+                            bool(previous_pending or (reliability and reliability not in KNOWN_USAGE)),
+                            reliability in KNOWN_USAGE, now(), turn_id))
 
     def _effort(self, user_id: str) -> str:
         row = self.store.one("SELECT effort FROM agent_settings WHERE user_id=?", (user_id,))

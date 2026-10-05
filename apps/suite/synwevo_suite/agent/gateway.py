@@ -27,7 +27,8 @@ from synwevo_core.billing.provider_settings import INCOMPLETE_KINDS
 from synwevo_core.billing.traffic import TrafficCancelled
 
 from .deepseek import (BASE_URL, EFFORTS, Attempt, DeepSeekCancelled, DeepSeekError, DeepSeekProvider,
-                       DeepSeekResult, Limits, allowed_efforts, deepseek_effort, normalize_usage, upstream_base)
+                       DeepSeekResult, Limits, allowed_efforts, deepseek_effort, normalize_usage, route_effort,
+                       upstream_base)
 from .provider import Credential, ProviderError
 
 log = logging.getLogger("synwevo.agent.gateway")
@@ -131,6 +132,20 @@ class Route:
                 or any(kind not in INCOMPLETE_KINDS for kind in kinds)):
             raise BillingError("invalid_route")
         object.__setattr__(self, "charge_incomplete", tuple(k for k in INCOMPLETE_KINDS if k in kinds))
+
+
+def provider_refused(attempt) -> bool:
+    """The provider answered this attempt with an HTTP error status (anything but 200), which
+    the transport receives before any stream and never reads further. Such an answer carries no
+    completion and reports no tokens, and DeepSeek charges tokens x price; we assume it is not
+    billed (docs/deepseek-provider.md "Error answers", checked by daily reconciliation) and settle
+    it as known zero usage instead of leaving it unknown."""
+    return attempt.dispatch == "observed" and type(attempt.http_status) is int and attempt.http_status != 200
+
+
+def settleable(evidence: dict) -> bool:
+    """Saved evidence that settles an attempt: trusted terminal usage, or an HTTP error answer."""
+    return evidence.get("usage_reliability") == "trusted_terminal" or evidence.get("provider_refused") is True
 
 
 def _raw_counters(raw):
@@ -381,12 +396,16 @@ class MeteredDeepSeek:
         except BillingError as exc:
             exc.not_dispatched = True
             raise
-        if deepseek_effort(effort) not in route.reasoning_efforts:
-            # Refused before any reservation or send: the route does not offer this level.
+        wanted = deepseek_effort(effort)
+        if wanted is None:
+            # Refused before any reservation or send: not a level any setting can name.
             error = ProviderError("model_effort_unavailable",
                                   "当前模型路线不支持所选的推理投入，请在 Agent 设置中更换。本次没有发送，也不扣费。")
             error.metered_usage, error.usage_reliability = {"input_tokens": 0, "output_tokens": 0}, "not_dispatched"
             raise error
+        # The route's nearest offered level (docs/deepseek-provider.md "Reasoning effort"): a
+        # thinking-off route ("none" only) serves every setting instead of refusing them all.
+        effort = route_effort(wanted, route.reasoning_efforts)
         identifier(logical_call_id)
         self._require_send_window(run)  # No point waiting for a call that could not finish.
         self._await_upstream(should_stop, run["deadline"])  # Provably unsent while waiting.
@@ -487,7 +506,10 @@ class MeteredDeepSeek:
             except (DeepSeekError, DeepSeekCancelled) as exc:
                 ending = ("client_cancelled" if isinstance(exc, DeepSeekCancelled)
                           else "provider_interrupted" if exc.code == "provider_interrupted" else None)
-                self._observe(key, ticket, route, exc.attempt, completed=False, claim=claim, ending=ending, input_bound=bound)
+                if self._observe(key, ticket, route, exc.attempt, completed=False, claim=claim, ending=ending,
+                                 input_bound=bound):
+                    # An HTTP error answer, settled as known zero usage and released: never sold.
+                    exc.provider_refused = True
                 if isinstance(exc, DeepSeekError) and exc.code == "provider_balance":
                     self._closed(route, exc)
                 if isinstance(exc, DeepSeekError) and exc.attempt.http_status in THROTTLED:
@@ -541,10 +563,15 @@ class MeteredDeepSeek:
             raise
 
     def _observe(self, key, ticket, route, attempt, *, completed, claim=None, ending=None, input_bound=None):
+        """Record what this attempt's exchange proved, then settle, park or release it.
+
+        Returns True when the provider answered with an HTTP error before any stream: that
+        answer consumed nothing billable and is settled at once as known zero usage."""
+        refused = provider_refused(attempt)
         payload = {k: getattr(attempt,k) for k in ("requested_model", "dispatch", "provider_request_id", "returned_model",
                    "capability_version", "http_status", "finish_reason", "stream_complete", "usage_reliability", "usage_reason")}
         payload.update(raw_usage=_raw_counters(attempt.raw_usage), completed=completed, ending=ending,
-                       input_bound=input_bound,
+                       input_bound=input_bound, provider_refused=refused,
                        confirmed_route=route.confirmed_route, confirmation_ref=route.confirmation_ref,
                        metered_at=self.ledger._now())
         with self.store.tx() as t:
@@ -552,15 +579,27 @@ class MeteredDeepSeek:
                       (key, ticket.attempt_key, _json(payload), payload["metered_at"]))
         if claim is not None:
             usage = attempt.usage if attempt.usage_reliability == "trusted_terminal" else None
-            self.traffic.finish(claim, tokens=(usage.prompt_tokens + usage.completion_tokens) if usage else None)
-        if attempt.usage_reliability == "trusted_terminal" and attempt.provider_request_id:
+            self.traffic.finish(claim, tokens=0 if refused else
+                                (usage.prompt_tokens + usage.completion_tokens) if usage else None)
+        if refused or (attempt.usage_reliability == "trusted_terminal" and attempt.provider_request_id):
             self._settle(key)
-        elif attempt.dispatch != "definitely_not_requested":
+            return refused
+        if attempt.dispatch != "definitely_not_requested":
             self.ledger.mark_usage_pending(ticket, request_id=attempt.provider_request_id, reason=attempt.usage_reason)
         else:
             # A committed dispatch fence can still exist if cancellation landed between the
             # hook and network handoff. Ledger conservatively retains that unknown window.
             self.ledger.cancel_call(self.store.one("SELECT call_key FROM billing_attempts WHERE id=?", (ticket.attempt_key,))["call_key"])
+        record_local_stop = getattr(self.cost_admission, "record_local_stop", None)
+        if ending == "client_cancelled" and record_local_stop is not None:
+            # The platform closed the stream itself (Stop, output guard, shutdown): the unknown
+            # is this payer's bounded exposure, not a platform-wide one (billing/admission.py).
+            # Failing to record it only keeps the conservative platform-wide count until the hold ends.
+            try:
+                record_local_stop(ticket.attempt_key)
+            except Exception as error:  # noqa: BLE001 - the person's stop must still complete
+                log.warning("recording a local stop failed: %s", type(error).__name__)
+        return False
 
     def _settle(self, call_id):
         row = self.store.one("SELECT o.*,m.route FROM agent_model_observations o JOIN agent_metered_calls c ON c.id=o.call_id "
@@ -568,6 +607,8 @@ class MeteredDeepSeek:
         if not row:
             raise BillingError("usage_evidence_missing")
         evidence, route = json.loads(row["evidence"]), Route(**json.loads(row["route"]))
+        if evidence.get("provider_refused") is True:
+            return self._settle_refused(call_id, row, evidence, route)
         usage = normalize_usage(evidence["raw_usage"])
         if evidence["usage_reliability"] != "trusted_terminal" or usage is None or not evidence["provider_request_id"]:
             raise BillingError("usage_evidence_untrusted")
@@ -585,6 +626,22 @@ class MeteredDeepSeek:
         self.store.execute("UPDATE agent_metered_calls SET metering_state='settled' WHERE id=?", (call_id,))
         return result
 
+    def _settle_refused(self, call_id, row, evidence, route):
+        """An HTTP error answer: known zero usage, recorded as platform cost (zero) and never
+        sold; the hold is released at once instead of waiting for its deadline. The request id
+        names the refusal (the provider gives none before a completion) and is unique per attempt."""
+        status = evidence.get("http_status")
+        if (evidence.get("dispatch") != "observed" or type(status) is not int or status == 200
+                or evidence.get("usage_reliability") == "trusted_terminal"):
+            raise BillingError("usage_evidence_untrusted")
+        proof = UsageEvidence("deepseek", f"refused:http-{status}:{row['attempt_key']}", "model-observation:" + call_id,
+                              Usage(0, 0, 0, 0), route.confirmed_route, evidence["capability_version"],
+                              evidence["metered_at"])
+        result = self.ledger.settle_trusted_usage(row["attempt_key"], proof, outcome="platform_fault")
+        self.ledger.cancel_call(result.call_key)
+        self.store.execute("UPDATE agent_metered_calls SET metering_state='settled' WHERE id=?", (call_id,))
+        return result
+
     def recover(self, *, limit=100) -> int:
         """Bounded local reconciliation; never calls a provider or replays a business tool."""
         integer(limit, positive=True, maximum=500)
@@ -595,11 +652,12 @@ class MeteredDeepSeek:
                            (self.ledger.environment, self.ledger.namespace))
         rows = self.store.all("SELECT o.call_id,o.evidence FROM agent_model_observations o "
             "JOIN agent_metered_calls c ON c.id=o.call_id JOIN billing_runs r ON r.id=c.run_key "
-            "WHERE r.environment=? AND r.namespace=? AND c.metering_state<>'settled' AND json_extract(o.evidence,'$.usage_reliability')='trusted_terminal' ORDER BY o.created_at LIMIT ?",
+            "WHERE r.environment=? AND r.namespace=? AND c.metering_state<>'settled' AND (json_extract(o.evidence,'$.usage_reliability')='trusted_terminal' "
+            "OR json_extract(o.evidence,'$.provider_refused')=1) ORDER BY o.created_at LIMIT ?",
             (self.ledger.environment,self.ledger.namespace,limit))
         settled=0
         for row in rows:
-            if json.loads(row["evidence"])["usage_reliability"] == "trusted_terminal":
+            if settleable(json.loads(row["evidence"])):
                 self._settle(row["call_id"])
                 settled+=1
         return settled
@@ -647,6 +705,10 @@ class MeteredTurnProvider:
         except (DeepSeekError, DeepSeekCancelled) as exc:
             if getattr(exc, "not_dispatched", False):
                 exc.metered_usage, exc.usage_reliability = {"input_tokens": 0, "output_tokens": 0}, "not_dispatched"
+                raise
+            if getattr(exc, "provider_refused", False):
+                # Known zero usage (an HTTP error answer), already settled and released.
+                exc.metered_usage, exc.usage_reliability = {"input_tokens": 0, "output_tokens": 0}, "provider_refused"
                 raise
             usage = exc.attempt.usage
             exc.metered_usage = ({"input_tokens": usage.prompt_tokens, "output_tokens": usage.completion_tokens}

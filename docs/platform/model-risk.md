@@ -35,6 +35,15 @@
 | 6 | 付款方、模型路线没有生效中的暂停 | `risk_payer_suspended` / `risk_route_suspended` |
 | 7 | 付款方、模型路线的滚动窗口成本加上本次上界不超过阈值 | `risk_payer_brake` / `risk_route_brake` |
 
+**用量未知的调用怎样计入（第 3 行的“未知用量金额、未知数量”）。** 已发送但没有可信用量的调用，按准入时的保守上界计入它所在的
+日/周/月成本窗口与付款方、路线的滚动窗口（本节第 7 行），这一点始终不变。它只在仍是“敞口”时计入平台级的未知数量与未知金额：
+在途期间（准入的连接到期，即超时 + 1 秒），以及付款方冻结仍在期间（冻结到期后账本不再接受任何追加扣费，DeepSeek 也没有按请求
+查询用量的接口，未知即成定局）。平台自己关闭的流（用户点“停止”、输出内容规则、进程关闭，`CostAdmission.record_local_stop`
+记为 `stopped_locally`）只在在途期间计入平台级未知：之后它是该付款方的敞口（成本窗口与付款方滚动窗口按上界计），不会因为许多人
+点了停止而拒绝所有人的付费调用。其他原因的未知（超时、流中断、传输错误）在冻结到期（即运行截止，最长 1 小时）前计入平台级
+未知，到期后只按上界留在成本窗口里。上游返回的 HTTP 错误（429、402、400、500 等）不是未知：网关立即按“已知零用量”结算、
+不售出、立即释放冻结（`docs/deepseek-provider.md`“Error answers”，含依据与假设）。因此未知数量不会无限累积。
+
 `risk_accounting_capacity`：窗口内记录超过 10,000 条时拒绝（不在发送路径上读无界历史）。策略、计数或状态不可读时拒绝，不放行。
 Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成 `billing_<code>`）。这些代码是稳定契约，界面文字归对话界面：
 `apps/suite/web/src/apps/agent/refusals.ts`（chat-ux 工作包）按代码与词干分类——`billing_cost_call_limit_exceeded` → 单次上限；
@@ -90,8 +99,10 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 
 ## 6. 上游余额监控
 
-- `UpstreamBalance.poll` 用 `ProviderSettings.resolve()` 取得的密封平台密钥请求 `GET https://api.deepseek.com/user/balance`：
-  地址固定、不跟随重定向、不读代理环境变量、响应上限 64 KB；密钥只在请求头里，请求后立即丢弃。异常一律化为代码
+- `UpstreamBalance.poll` 用 `ProviderSettings.resolve()` 取得的密封平台密钥请求 `GET <上游地址>/user/balance`：
+  上游地址与聊天网关同一条规则（`synwevo_core.billing.upstream.upstream_base`）——正式与默认都是 `https://api.deepseek.com`，
+  只有 `SYNWEVO_BILLING_ENVIRONMENT=test` 且是回环地址时才是带标记的测试替身（Agent 组合用网关自己的地址启动 `RiskMonitor`；
+  其他地址在启动时拒绝）；不跟随重定向、不读代理环境变量、响应上限 64 KB；密钥只在请求头里，请求后立即丢弃。异常一律化为代码
   （`upstream_timeout`、`upstream_unreachable`、`upstream_http_<状态码>`、`upstream_bad_response`、`currency_mismatch`），
   因为异常文本可能回显请求头；日志与读数里从不出现密钥（有测试断言）。
 - 读数（`model_risk_balance_readings`）只存状态、代码、可用标志、单位与余额（按单位精度**向下取整**，不让余额看起来更多）。
@@ -102,10 +113,12 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 
 - **每日对账**（`Reconciliation.daily`）：UTC 日结束 10 分钟后，取最接近两个边界、且在 `max(900 秒, 2 × 读取间隔)` 以内的成功读数，
   上游支出 = 起点余额 − 终点余额 + 管理员登记的上游充值；账本成本 = 读数区间内准入的调用的精确结算成本之和（分数，不取整）；
-  用量待确认的调用的预留成本单独列出，不计入。差额 = 上游支出 − 账本成本，超出容差为 `drift` 并提醒；缺少读数为 `incomplete`
+  用量未知的调用的预留成本单独列出（`pending_units`）：它们的真实成本在 0 与上界之间，只有上游知道，所以账本成本是一个区间
+  [已知成本, 已知成本 + 未知上界]。差额 = 上游支出落在区间之外的部分（在区间内为 0；高于上限为正，说明上游扣费超过了任何上界，
+  例如 HTTP 错误其实被计费或价格不对；低于已知成本为负），超出容差为 `drift` 并提醒；缺少读数为 `incomplete`
   （不是“一致”）并提醒；结果只追加保存，管理员可对任一已结束的 UTC 日重算（新结果追加，不覆盖）。
 - 已知的合理差异来源，容差要覆盖它们：DeepSeek 未说明按请求开始还是完成定档（成本价按派发时刻定档）；中途断开或被取消的流
-  是否计费未说明；读数不在精确的午夜；边界前后准入、跨边界结算的调用。
+  的实际计费（落在上面的区间内，不算漂移）；读数不在精确的午夜；边界前后准入、跨边界结算的调用。
 - **账本审计**：每个 UTC 日运行一次 `Ledger.audit_balances(rebuild=False)`，只比较缓存余额/余数与不可变分录，只报告差异，
   从不自动修复（修复是另行决定的维护操作）。
 - **上游充值登记**：管理员登记已经完成的上游账户充值（金额、时间、理由），只用于对账，不改变任何用户余额。

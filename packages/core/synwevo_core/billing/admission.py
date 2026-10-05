@@ -20,6 +20,9 @@ from .traffic import TrafficLimits
 
 _MAX_RECORDS = 10_000
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+#: The longest a customer hold can outlive its dispatch (Ledger.max_hold_seconds' ceiling), and so
+#: the longest an admission can stay an open unknown or in flight. Older ones are never scanned.
+_OPEN_S = 86_400
 
 
 @dataclass(frozen=True)
@@ -100,21 +103,26 @@ class CostAdmission:
         unit = t.execute("SELECT scale FROM billing_units WHERE code=?", (policy.unit.code,)).fetchone()
         if unit is not None and unit[0] != policy.unit.scale:
             raise BillingError("cost_unit_mismatch")
-        # Do not scope by namespace, policy revision, payer, key, wallet status, or unit.
-        # A differing unit is a conflict, never permission to hide existing exposure.
-        # Two disjoint indexed ranges: recent admissions and older pending ones. A join
-        # predicate 'usage IS NULL' over all admissions would scan all settled history.
+        # Do not scope by namespace, policy revision, payer, key, or unit. A differing unit is a
+        # conflict, never permission to hide existing exposure.
+        # Two disjoint indexed ranges: admissions in the cost windows, and pending ones before
+        # them that can still be open (admitted within _OPEN_S). A join predicate 'usage IS NULL'
+        # over all admissions would scan all settled history; an unknown whose hold ended before
+        # the windows is final at its bound and never scanned again.
         # Bound candidate lookup itself before joining immutable cost facts.
         candidates = (
             "SELECT attempt_key FROM model_cost_admissions INDEXED BY model_cost_admissions_scope"
             " WHERE environment=? AND provider=? AND account_ref=? AND admitted_at>=?"
             " UNION ALL SELECT attempt_key FROM model_cost_pending INDEXED BY model_cost_pending_scope"
-            " WHERE environment=? AND provider=? AND account_ref=? AND admitted_at<? LIMIT ?"
+            " WHERE environment=? AND provider=? AND account_ref=? AND admitted_at<? AND admitted_at>=? LIMIT ?"
         )
-        scope = (self.ledger.environment, policy.provider, policy.account_ref, min(windows.values()))
-        args = (*scope, *scope, _MAX_RECORDS + 1)
+        earliest = min(windows.values())
+        scope = (self.ledger.environment, policy.provider, policy.account_ref, earliest)
+        args = (*scope, *scope, now - _OPEN_S, _MAX_RECORDS + 1)
         source = (" FROM (" + candidates + ") selected"
                   " JOIN model_cost_admissions a ON a.attempt_key=selected.attempt_key"
+                  " JOIN billing_attempts att ON att.id=a.attempt_key JOIN billing_calls c ON c.id=att.call_key"
+                  " LEFT JOIN model_cost_endings e ON e.attempt_key=a.attempt_key"
                   " LEFT JOIN billing_usage u ON u.attempt_key=a.attempt_key")
         # A capped cardinality probe detects overflow BEFORE materializing/summing facts.
         # At most 10,000 records enter Python; the extra SQL count is only an overflow sentinel.
@@ -124,9 +132,10 @@ class CostAdmission:
         if count + adding > _MAX_RECORDS:
             raise BillingError("cost_accounting_capacity")
         totals = {name: Fraction(0) for name in windows}
-        unknown = unknown_count = inflight = 0
+        unknown = unknown_count = inflight = absorbed = absorbed_count = 0
         rows = t.execute(
-            "SELECT a.unit,a.reserved_units,a.admitted_at,a.expires_at,"
+            "SELECT a.unit,a.reserved_units,a.admitted_at,a.expires_at,c.status AS call_status,"
+            "c.deadline AS call_deadline,e.ending,"
             "u.attempt_key AS usage_key,u.cost_n,u.cost_d,u.cost_unit" + source + " LIMIT ?",
             (*args, _MAX_RECORDS),
         )
@@ -137,9 +146,20 @@ class CostAdmission:
                 raise BillingError("cost_clock_regressed")
             if row["usage_key"] is None:
                 cost = integer(row["reserved_units"])
-                unknown += cost
-                unknown_count += 1
-                inflight += int(row["expires_at"] > now)
+                # Unknown usage is open exposure while the upstream may still be working (its
+                # in-flight window) and, unless the platform stopped the stream itself, while the
+                # payer's hold is open and evidence could still settle it. After that it is final:
+                # its conservative bound stays in the cost windows below (and in the payer's and
+                # route's velocity windows, billing/risk.py), but no longer in the unknown limits.
+                in_flight = row["expires_at"] > now
+                hold_open = row["call_status"] == "reserved" and row["call_deadline"] > now
+                if in_flight or (hold_open and row["ending"] is None):
+                    unknown += cost
+                    unknown_count += 1
+                elif row["admitted_at"] >= earliest:
+                    absorbed += cost
+                    absorbed_count += 1
+                inflight += int(in_flight)
             else:
                 if row["cost_unit"] != policy.unit.code:
                     raise BillingError("cost_unit_mismatch")
@@ -154,14 +174,17 @@ class CostAdmission:
                 if row["admitted_at"] >= start:
                     totals[name] += cost
         return {"windows": windows, "totals": totals, "unknown_reserved_units": unknown,
-                "unknown_count": unknown_count, "inflight": inflight, "records": count}
+                "unknown_count": unknown_count, "inflight": inflight, "records": count,
+                "absorbed_unknown_units": absorbed, "absorbed_unknown_count": absorbed_count}
 
     def admit(self, transaction, ticket: AttemptTicket, *, amount: int, expires_at: int) -> None:
         """Reserve a conservative cost bound atomically with Ledger's one-shot send fence.
 
-        Expiry only releases the concurrency slot. Unknown count/amount survive indefinitely
-        until trusted usage exists, including after wallet release. Actual costs replace the
-        bound without capping, even for late/platform_fault usage, in the ORIGINAL UTC periods.
+        Expiry releases the concurrency slot. Without usage, the bound counts as unknown while in
+        flight and, unless the platform stopped the stream itself (record_local_stop), until the
+        payer's hold ends; after that it is final at its bound, which stays in its UTC periods
+        (docs/platform/model-risk.md §1). Actual costs replace the bound without capping, even
+        for late/platform_fault usage, in the ORIGINAL UTC periods.
         Raise through dispatch so that any refusal or subsequent dispatch failure rolls back.
         """
         self._transaction(transaction)
@@ -173,7 +196,7 @@ class CostAdmission:
             identifier(value)
         t, ledger = transaction, self.ledger
         now = ledger._now()
-        if expires_at <= now:
+        if expires_at <= now or expires_at > now + _OPEN_S:
             raise BillingError("invalid_cost_expiry")
         policy = self._policy()
         if not policy.enabled:
@@ -217,6 +240,27 @@ class CostAdmission:
             (ticket.attempt_key, ledger.environment, policy.provider, policy.account_ref, policy.unit.code,
              amount, policy.revision, json.dumps(asdict(policy), sort_keys=True, separators=(",", ":")), now, expires_at),
         )
+
+    def record_local_stop(self, attempt_key: str) -> bool:
+        """The platform closed this admitted call's stream itself after dispatch (the person's
+        Stop, the output guard, a shutdown), so its usage stays unknown for a known reason.
+
+        Its conservative bound still counts in the cost windows and in the payer's and route's
+        velocity windows, and as unknown while in flight; it no longer counts against the
+        platform-wide unknown limits for the rest of its hold. One person's stops are their own
+        exposure, not a reason to refuse everybody's next call. Idempotent; returns whether
+        the attempt is (now) recorded. Nothing is recorded for an attempt with usage."""
+        identifier(attempt_key)
+        with self.ledger.store.tx() as t:
+            if not t.execute("SELECT 1 FROM model_cost_admissions WHERE attempt_key=?", (attempt_key,)).fetchone():
+                return False
+            if t.execute("SELECT 1 FROM model_cost_endings WHERE attempt_key=?", (attempt_key,)).fetchone():
+                return True
+            if t.execute("SELECT 1 FROM billing_usage WHERE attempt_key=?", (attempt_key,)).fetchone():
+                return False
+            t.execute("INSERT INTO model_cost_endings(attempt_key,ending,recorded_at) VALUES (?,?,?)",
+                      (attempt_key, "stopped_locally", self.ledger._now()))
+        return True
 
     def after_refusal(self, exc: BaseException) -> None:
         """After the refusing dispatch transaction rolled back: latch a velocity breach.

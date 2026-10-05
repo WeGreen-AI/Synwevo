@@ -3,6 +3,7 @@
 FIXTURE transports only (httpx.MockTransport); synthetic prices, funds and keys. No real
 DeepSeek endpoint is contacted and no real key exists anywhere in these tests.
 """
+import dataclasses
 import json
 import sys
 import time
@@ -132,6 +133,44 @@ def test_missing_model_id_closes_the_route_alerts_admins_and_refuses_unsent_unti
     assert getattr(err.value, 'code', None) == 'model_no_change'
 
 
+def test_a_missing_model_id_also_closes_a_route_with_time_banded_prices(governed):
+    # Production routes carry peak/off-peak cost prices, so their version names the calendar
+    # revision too ('deepseek:<env>:<revision>:bands:<n>'). The closure is recorded against the
+    # provider revision and must stop those routes exactly like flat ones.
+    g = governed; configure(g, banded=True); fund(g)
+    route = g.provider.route()
+    revision = g.provider.settings.read()['revision']
+    assert route.version == f'deepseek:test:{revision}:bands:1'
+    settings = g.provider.settings
+    assert settings.route_revision(route.version) == revision
+    assert settings.route_revision(f'deepseek:test:{revision}') == revision
+    for malformed in (f'deepseek:test:{revision}:bands:', f'deepseek:test:{revision}:other:1',
+                      f'deepseek:live:{revision}:bands:1', 'deepseek:test:²', f'deepseek:test:{revision}:bands:1:x'):
+        assert settings.route_revision(malformed) is None
+
+    tid = start(g); g.agent._run(tid)
+    assert g.store.one('SELECT status FROM agent_turns WHERE id=?', (tid,))['status'] == 'succeeded'
+    calls = len(g.store.all('SELECT * FROM billing_calls'))
+
+    assert check(g, lambda r: listing('other-model'))['closure']['state'] == 'model_missing'
+    tid = start(g); g.agent._run(tid)
+    turn = g.store.one('SELECT * FROM agent_turns WHERE id=?', (tid,))
+    assert turn['status'] == 'failed' and turn['error_code'] == 'billing_provider_model_missing'
+    assert turn['error_message'] == UNAVAILABLE
+    assert len(g.seen) == 1 and len(g.store.all('SELECT * FROM billing_calls')) == calls  # Unsent, unreserved.
+
+
+def test_a_route_version_this_service_did_not_resolve_is_refused_unsent(governed):
+    # Fail closed: a version whose provider revision cannot be read is never treated as open.
+    g = governed; configure(g)
+    route = g.provider.route()
+    for version in ('deepseek:test:x', route.version + ':bands:', 'fixture-unknown-version'):
+        with pytest.raises(Exception) as err:
+            g.provider.route_open(dataclasses.replace(route, version=version))
+        assert getattr(err.value, 'code', None) == 'model_configuration_changed'
+    g.provider.route_open(route)  # The resolved version itself is open.
+
+
 def test_a_failed_check_closes_nothing_and_a_stale_revision_is_ignored(governed):
     g = governed; configure(g); fund(g)
     observed = check(g, lambda r: httpx.Response(500, json={'error': {'message': 'fixture'}}))
@@ -213,6 +252,11 @@ def test_upstream_402_closes_paid_dispatch_says_unavailable_and_charges_nothing(
     assert turn['status'] == 'failed' and turn['error_code'] == 'provider_balance'
     assert turn['error_message'] == UNAVAILABLE and '余额不足' not in turn['error_message']
     assert len(g.seen) == 1
+    # "Not charged" is true at once: the 402 answer is settled as known zero usage, never sold,
+    # and the person's hold is released now rather than at its deadline.
+    assert turn['usage_state'] == 'known'
+    assert g.store.one('SELECT status FROM billing_calls')['status'] == 'released'
+    assert balance(g).held == 0 and balance(g).booked == before.booked
     # The operator's account is empty, not the person's: the platform breaker (billing/risk.py)
     # closes paid dispatch and admins hear of it; the provider revision itself stays published.
     breaker = RiskControls(g.store, environment=gateway.ledger.environment).breaker()
@@ -234,7 +278,7 @@ def test_upstream_402_closes_paid_dispatch_says_unavailable_and_charges_nothing(
     calls = g.store.all('SELECT status FROM billing_calls ORDER BY rowid')
     assert len(g.seen) == 1 and len(calls) == 2 and calls[1]['status'] == 'released'
 
-    # Not charged: no sale was ever posted; the uncertain hold ends at its deadline unsold.
+    # Not charged: no sale was ever posted, before or after any deadline.
     assert g.store.all('SELECT * FROM billing_settlements') == []
     gateway.ledger.clock = lambda: int(time.time()) + 100_000
     gateway.recover()

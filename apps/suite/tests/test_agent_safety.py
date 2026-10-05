@@ -150,6 +150,47 @@ def test_blocked_input_is_refused_before_anything_is_stored_and_logged_without_t
     assert "forbidden" not in json.dumps(log).lower()
 
 
+def test_memories_obey_the_input_rules_when_saved_and_on_every_request(agent):
+    # Memories go into the system prompt of every request, so a phrase refused in a message
+    # must not reach the model as a memory either (saved, edited, or saved before the rule).
+    agent.sign_in("alice")
+    _consent(agent)
+    store, uid = agent.people.store, agent.people.uid("alice")
+    kept = op(agent, "agent.memory.add", {"body": "Prefers short answers"})["output"]
+    store.execute("INSERT INTO agent_memories (id,user_id,body,created_at,updated_at) VALUES "
+                  "('mem_fixtureolder01',?,'older note: forbidden-fixture-term',1,1)", (uid,))
+    _rules(agent, [{"kind": "keyword", "pattern": "forbidden-fixture-term", "applies_to": "input", "category": "illegal"}])
+    for name, body in (("agent.memory.add", {"body": "Always mention FORBIDDEN-fixture-term"}),
+                       ("agent.memory.update", {"memory_id": kept["id"], "body": "say forbidden-fixture-term"})):
+        r = agent.post(f"/api/suite/ops/{name}", json={"input": body}, headers=CSRF)
+        assert r.status_code == 422 and r.json()["error"] == "content_blocked_memory", r.text
+        assert r.json()["detail"] == {"category": "illegal"}
+    assert {m["body"] for m in op(agent, "agent.memory.list")["output"]["memories"]} == {
+        "Prefers short answers", "older note: forbidden-fixture-term"}
+    events = store.all("SELECT direction, rule_id, characters, conversation_id FROM agent_safety_events ORDER BY created_at")
+    assert [(e["direction"], e["rule_id"], e["conversation_id"]) for e in events] == [("input", "r1", None)] * 2
+    assert "forbidden" not in json.dumps(events).lower()
+
+    # The memory saved before the rule existed is left out of the request; the others go in.
+    _, r = _start(agent, [say("ok")])
+    assert wait_turn(store, r.json()["output"]["turn_id"]) == "succeeded"
+    system = json.dumps(agent.agent.provider.requests[-1]["system"], ensure_ascii=False)
+    assert "Prefers short answers" in system and "forbidden" not in system.lower()
+
+    # A memory the model proposes is refused when the person confirms it; nothing is stored.
+    proposed = call("run_operation", {"operation": "agent.memory.add", "input": {"body": "forbidden-fixture-term rules"}})
+    _, r = _start(agent, [proposed, say("noted")])
+    tid = r.json()["output"]["turn_id"]
+    assert wait_turn(store, tid) == "waiting_confirmation"
+    card = store.one("SELECT * FROM agent_tool_calls WHERE turn_id=?", (tid,))
+    agent.post("/api/suite/ops/agent.tool_call.confirm", json={"input": {
+        "tool_call_id": card["id"], "confirmation": card["input_hash"]}}, headers=CSRF)
+    wait_turn(store, tid, ("succeeded", "failed"))
+    card = store.one("SELECT status, error_code FROM agent_tool_calls WHERE id=?", (card["id"],))
+    assert card == {"status": "failed", "error_code": "content_blocked_memory"}
+    assert len(op(agent, "agent.memory.list")["output"]["memories"]) == 2
+
+
 def test_an_output_only_rule_does_not_refuse_the_question(agent):
     agent.sign_in("alice")
     _consent(agent)
@@ -199,6 +240,38 @@ def test_blocked_output_is_withheld_from_the_message_and_the_stream(agent):
     got = op(agent, "agent.conversation.get", {"conversation_id": conv})["output"]
     answer = [m for m in got["messages"] if m["role"] == "assistant"][0]
     assert answer["error"]["code"] == "content_blocked_output"
+
+
+def test_a_blocked_phrase_in_tool_arguments_stops_the_step_before_any_tool_runs(agent):
+    # The model puts the phrase into a tool call's arguments (a memory, a document) instead of
+    # its visible answer: those arguments become confirmation cards and stored data, so the
+    # output rules apply to them before any tool handler or confirmation card exists.
+    agent.sign_in("alice")
+    _consent(agent)
+    _rules(agent, [{"kind": "keyword", "pattern": "leaked-fixture-term", "applies_to": "output"}])
+    store, uid = agent.people.store, agent.people.uid("alice")
+    hidden = call("run_operation", {"operation": "agent.memory.add",
+                                    "input": {"body": "Remember: LEAKED-fixture-term"}}, text="Saving that for you.")
+    conv, r = _start(agent, [hidden, say("never requested")])
+    tid = r.json()["output"]["turn_id"]
+    assert wait_turn(store, tid) == "failed"
+    row = store.one("SELECT t.error_code, m.body, m.api_json FROM agent_turns t JOIN agent_messages m "
+                    "ON m.id=t.assistant_message_id WHERE t.id=?", (tid,))
+    assert row["error_code"] == "content_blocked_output" and row["body"] == ""
+    assert "leaked" not in (row["api_json"] or "").lower()
+    assert store.all("SELECT * FROM agent_tool_calls WHERE turn_id=?", (tid,)) == []   # no card, no run
+    assert store.all("SELECT * FROM agent_memories WHERE user_id=?", (uid,)) == []
+    assert len(agent.agent.provider.requests) == 1
+    event = store.one("SELECT direction, rule_id FROM agent_safety_events")
+    assert event == {"direction": "output", "rule_id": "r1"}
+    assert "leaked" not in json.dumps(agent.agent.events_after(uid, conv, 0)).lower()
+
+    # Clean arguments still reach the confirmation card as before.
+    clean = call("run_operation", {"operation": "agent.memory.add", "input": {"body": "Prefers short answers"}})
+    _, r = _start(agent, [clean, say("done")])
+    tid = r.json()["output"]["turn_id"]
+    assert wait_turn(store, tid) == "waiting_confirmation"
+    assert len(store.all("SELECT * FROM agent_tool_calls WHERE turn_id=?", (tid,))) == 1
 
 
 class StreamingModel(DisclosedModel):
@@ -381,6 +454,33 @@ def test_the_first_paid_run_records_the_published_terms_versions_once(paid):  # 
     assert {(r["document"], r["version"]) for r in rows} == {(d, v) for d, (v, _) in DOCUMENTS.items()}
     assert {r["context"] for r in rows} == {"paid_run:" + turn["output"]["turn_id"]}
     assert accepted.record_paid_use(uid, context="paid_run:later") == []      # once per version
+
+
+from .test_agent_governed_factory import configure, fund, governed, start as start_paid  # noqa: E402,F401
+
+
+def test_blocked_tool_arguments_on_the_paid_deepseek_path_are_never_run_or_sold(governed):  # noqa: F811
+    from .test_agent_metering import USAGE, event
+    g = governed; configure(g); fund(g)
+    _rules(SimpleNamespaceStore(g), [{"kind": "keyword", "pattern": "leaked-fixture-term", "applies_to": "output"}])
+    arguments = {"operation": "agent.memory.add", "input": {"body": "note LEAKED-fixture-term"}}
+    g.replies = [event({"tool_calls": [{"index": 0, "id": "fixture-tool", "type": "function",
+                                        "function": {"name": "run_operation", "arguments": json.dumps(arguments)}}]})
+                 + event(finish="tool_calls", usage=USAGE) + b"data: [DONE]\n\n"]
+    tid = start_paid(g); g.agent._run(tid)
+    turn = g.store.one("SELECT * FROM agent_turns WHERE id=?", (tid,))
+    assert turn["status"] == "failed" and turn["error_code"] == "content_blocked_output"
+    assert g.store.all("SELECT * FROM agent_tool_calls WHERE turn_id=?", (tid,)) == []
+    # Rejected before acceptance: the consumed tokens are recorded as platform cost, never sold.
+    assert g.store.all("SELECT * FROM billing_settlements") == []
+    assert g.store.one("SELECT outcome FROM billing_usage")["outcome"] == "platform_fault"
+
+
+class SimpleNamespaceStore:
+    """Adapter so _rules() can publish on the governed fixture's store."""
+
+    def __init__(self, g):
+        self.people = type("People", (), {"store": g.store, "uid": staticmethod(lambda _name: g.user["id"])})()
 
 
 def test_an_unpaid_run_records_no_terms(agent):

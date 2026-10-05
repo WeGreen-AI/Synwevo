@@ -199,12 +199,25 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
 * **Input rules.** Administrators publish keyword/pattern lists as immutable versions
   (`/api/admin/agent-safety/rules`, `platform.config.manage`, audited). A matching message is
   refused before anything is stored or sent: 422 `content_blocked_input` `{category}`.
+  Memories reach the model in every request's system prompt, so the same rules apply to them:
+  adding or editing one (Agent settings, or a memory the model proposed and the person confirmed)
+  is refused with 422 `content_blocked_memory` `{category}` and a safety record (rule, direction
+  `input`, length — no text), shown as "This memory matched a content safety rule, so it was not
+  saved" (three languages, Settings and the chat's action card). `agent.memory.add/update` own
+  their transaction so that record survives the refused write. A memory saved before a rule
+  matched it stays visible to the person but is left out of the prompt. Other person-authored
+  text does not reach the model: conversation titles and settings are never sent. Workspace
+  content read by tools is governed by the workspaces' AI-processing policies, not these rules.
 * **Output rules.** Streamed pieces are checked with a carried window; the completing piece is
   never shown, `should_stop` ends the model call, what was shown is withdrawn from the message and
   the event stream, the step is not kept for replay, and the turn fails `content_blocked_output`.
   DeepSeek `finish_reason: content_filter` carries `stop_details.category = content_filter` and
   fails `content_filtered_output` (withheld the same way); other refusals stay `provider_refused`.
-  Whether a stopped call is charged is the gateway's incomplete-call policy.
+  Whether a stopped call is charged is the gateway's incomplete-call policy. Before a step is
+  accepted the rules also read every tool call's arguments (each string key and value), so text
+  the model puts into a confirmation card, a memory or workspace data instead of its visible
+  answer stops the step the same way: no tool handler runs, no card is created, and on the paid
+  path the step is recorded as platform cost, never sold.
 * **Records.** A stop is stored as rule id/version, direction and length — never text.
   `agent.message.report` files a report on an answer; its text is attached only when the person
   sets `include_excerpt`. In the chat every finished answer with text has a "Report" control

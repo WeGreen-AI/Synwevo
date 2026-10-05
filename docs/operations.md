@@ -538,7 +538,7 @@ DeepSeek 不公布 RPM/TPM，只有按模型的账户并发上限：`deepseek-fl
 | # | 规则 | 不满足时 |
 |---|---|---|
 | 1 | `max_inflight` ≤ 0.8 × 已启用路线中**最小**的账户并发（启用 v4-pro 时 ≤ 400；只有 flash 时 ≤ 2000） | 上游 429；用量未知的调用在过期前仍计入在途，留 20% 余量 |
-| 2 | `max_unknown` ≥ `max_inflight` | 进行中的调用也计入“用量未知”，`max_unknown` 会成为真正的并发上限 |
+| 2 | `max_unknown` ≥ `max_inflight` | 进行中的调用也计入“用量未知”，`max_unknown` 会成为真正的并发上限。此外只有冻结期内（运行截止，最长 1 小时）因超时、断流等原因用量未知的调用计入；HTTP 错误按已知零用量立即结算，用户“停止”的调用在途结束后只计入该付款方（model-risk.md §1），所以留出的余量只需覆盖一小时内的异常断流 |
 | 3 | `max_call_cost` ≥ 每条已启用路线在**高峰价**下的单次保守上界：⌈输入上限 × max(命中价, 未命中价) + 输出上限 × 输出价⌉ + 1（网关 `upper_bound`，成本单位） | 该路线的每一次调用都被拒绝（`cost_call_limit_exceeded`） |
 | 4 | `unknown_budget` ≥ `max_unknown` × `max_call_cost` | 未知用量金额先于数量上限触顶 |
 | 5 | `traffic.payer_tpm` ≥ 每条已启用路线的 输入上限 + 输出上限（发送前的 token 估算） | 每一次调用都被拒绝（`traffic_request_too_large`） |

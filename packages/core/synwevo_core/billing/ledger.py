@@ -760,7 +760,9 @@ class Ledger:
 
         `platform_fault` records cost and keeps the original hold for a bounded retry; it
         never sells that attempt to the user. No authorization recheck blocks recording facts
-        after revocation. Missing/estimated usage must not enter this method.
+        after revocation. Missing/estimated usage must not enter this method. An adapter may
+        record zero usage only for a documented no-consumption answer (the DeepSeek gateway's
+        HTTP error answers, docs/deepseek-provider.md "Error answers"), never as an estimate.
         """
         if not isinstance(evidence, UsageEvidence) or outcome not in ("completed", "platform_fault"):
             raise BillingError("invalid_usage_evidence")
