@@ -91,13 +91,19 @@ code so it pastes cleanly.
 A refused send, or a model call refused later in a running answer, is put into one sentence and
 one next step (`refusals.ts`), never shown as a code: insufficient funds (top up), a personal
 limit reached, paused or missing (Agent settings), an automatic spending brake, a suspension, the
-paid-dispatch breaker or platform cost admission (`billing_cost_*`), the staged-rollout allowlist,
-the paid service not configured, the separate DeepSeek data-sharing consent
-(`provider_consent_*`, Agent settings) and a changed model or price (re-confirm). The risk and
-consent families are also recognised by their stems (`risk_*allowlist*`, `*breaker*`, `*brake*`,
-`*suspend*`). An upstream 402 is the operator's DeepSeek balance and is shown as the service
-being unavailable, never as the person's balance. Each sentence says that nothing was called or
-charged for the refused step.
+paid-dispatch breaker or platform cost admission (`billing_cost_*`), the platform's per-call
+maximum cost (`cost_call_limit_exceeded`, its own sentence: a policy limit, not an outage), the
+staged-rollout allowlist, the paid service not configured, the separate DeepSeek data-sharing
+consent (`provider_consent_*`, Agent settings; `provider_consent_version_changed` asks to agree to
+the new version), a changed model or price (re-confirm), and content safety: a message blocked
+by an input rule (`content_blocked_input`, never sent, nothing charged, the text stays in the
+composer to edit) or an answer stopped by an output rule or the provider's filter
+(`content_*_output`, whose charge is whatever the answer's ledger line shows, because the
+admin's incomplete-call policy decides it). The risk, consent and content families are also
+recognised by their stems (`risk_*allowlist*`, `*breaker*`, `*brake*`, `*suspend*`,
+`content_(blocked|filtered)_(input|output)*`). An upstream 402 is the operator's DeepSeek
+balance and is shown as the service being unavailable, never as the person's balance. Every
+refusal before dispatch says that nothing was called or charged for the refused step.
 
 When a continuing consent's model or price no longer applies (`model_changed`), the consent
 panel and the quote dialog list what changed (model, route, price version, unit, each rate per

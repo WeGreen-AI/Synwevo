@@ -3,14 +3,16 @@
  *
  *  Codes come from the ledger/gateway ("billing_*"), the risk controls ("risk_*": suspension,
  *  automatic brake, paid-dispatch breaker, staged-rollout allowlist), the platform cost admission
- *  ("cost_*") and the separate data-sharing consent ("provider_consent_*"). Known codes are listed
- *  exactly; the risk and consent families are also recognised by their documented stems so a new
- *  code of the same kind is never shown as a generic failure (docs/agent-runtime.md, "Refusals in
- *  the chat"). An upstream 402 is the operator's DeepSeek balance, never the person's wallet. */
+ *  ("cost_*", including the per-call maximum cost), the separate data-sharing consent
+ *  ("provider_consent_*") and content safety ("content_blocked_*" / "content_filtered_*"). Known
+ *  codes are listed exactly; the risk, consent and content families are also recognised by their
+ *  documented stems so a new code of the same kind is never shown as a generic failure
+ *  (docs/agent-runtime.md, "Refusals in the chat"). An upstream 402 is the operator's DeepSeek
+ *  balance, never the person's wallet. */
 import type { ChatText } from './chat.messages';
 
 export type RefusalKind = 'funds' | 'limit' | 'no_limit' | 'brake' | 'suspended' | 'breaker' | 'allowlist'
-  | 'not_configured' | 'consent' | 'price_changed';
+  | 'call_cap' | 'not_configured' | 'consent' | 'consent_changed' | 'price_changed' | 'content_input' | 'content_output';
 export type NextStep = 'topup' | 'settings' | 'consent' | 'requote' | null;
 export interface Refusal { kind: RefusalKind; code: string; text: ChatText; next: NextStep }
 
@@ -22,10 +24,18 @@ const TEXT: Record<RefusalKind, [ChatText, NextStep]> = {
   suspended: ['refusedSuspended', null],
   breaker: ['refusedBreaker', null],
   allowlist: ['refusedAllowlist', null],
+  call_cap: ['refusedCallCap', null],
   not_configured: ['refusedNotConfigured', null],
   consent: ['refusedConsent', 'consent'],
+  consent_changed: ['refusedConsentChanged', 'consent'],
   price_changed: ['refusedPriceChanged', 'requote'],
+  // The message stays in the composer to be edited; a stopped answer can be retried below it.
+  content_input: ['refusedContentInput', null],
+  content_output: ['refusedContentOutput', null],
 };
+/** The sentence for each kind (for tests and documentation). */
+export const REFUSAL_TEXT: Record<RefusalKind, ChatText> = Object.fromEntries(
+  Object.entries(TEXT).map(([kind, [text]]) => [kind, text])) as Record<RefusalKind, ChatText>;
 
 const EXACT: Record<string, RefusalKind> = {
   billing_insufficient_funds: 'funds', insufficient_funds: 'funds',
@@ -39,6 +49,9 @@ const EXACT: Record<string, RefusalKind> = {
   // The engine's own model_configuration_changed is a credential or model binding change, not a price.
   billing_consent_model_changed: 'price_changed',
   billing_model_configuration_changed: 'price_changed', billing_route_confirmation_expired: 'price_changed',
+  // The platform's per-call maximum cost (cost policy): a policy limit on this call, not an outage.
+  billing_cost_call_limit_exceeded: 'call_cap', cost_call_limit_exceeded: 'call_cap',
+  provider_consent_version_changed: 'consent_changed',
 };
 
 /** The code an error carries, unwrapping an idempotent replay of a refused request. A failure the
@@ -67,6 +80,10 @@ export function refusalKind(code: string): RefusalKind | null {
   if (/^cost_/.test(bare)) return 'breaker';
   // Payment consents are "billing_consent_*"; the data-sharing consent is "provider_consent_*".
   if (/^provider_consent_/.test(code)) return 'consent';
+  // Content safety: an input rule refuses before anything is sent; an output rule or the
+  // provider's own filter stops the answer (whether that is charged is the admin's policy).
+  if (/^content_(blocked|filtered)_input/.test(code)) return 'content_input';
+  if (/^content_(blocked|filtered)_output/.test(code)) return 'content_output';
   return null;
 }
 

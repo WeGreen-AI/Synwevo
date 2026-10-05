@@ -136,9 +136,16 @@ test('each refusal maps to a translated sentence and its one next step', () => {
     ['billing_not_configured', 'not_configured', null],
     ['billing_model_route_unavailable', 'not_configured', null],
     ['provider_consent_required', 'consent', 'consent'],
-    ['provider_consent_version_changed', 'consent', 'consent'],
+    // A newer version of the data-sharing terms is its own sentence: "agree again", not "agree first".
+    ['provider_consent_version_changed', 'consent_changed', 'consent'],
     ['billing_model_configuration_changed', 'price_changed', 'requote'],
     ['billing_consent_model_changed', 'price_changed', 'requote'],
+    // The platform's per-call maximum cost is a policy limit, not an outage.
+    ['billing_cost_call_limit_exceeded', 'call_cap', null],
+    // Content safety: a blocked message was never sent; a filtered answer stopped.
+    ['content_blocked_input', 'content_input', null],
+    ['content_filtered_output', 'content_output', null],
+    ['content_blocked_output', 'content_output', null],
   ];
   for (const [code, kind, next] of cases) {
     const refusal = refusals.refusalOf({ code });
@@ -173,6 +180,17 @@ test('a refusal notice states what happened and offers the next step', () => {
   assert.ok(limit.includes('href="/agent/settings"') && limit.includes('開啟 Agent 設定') && !limit.includes('role="alert"'), limit);
   const breaker = render('zh-Hans', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_risk_breaker_open' }) }));
   assert.ok(breaker.includes('没有为此扣费') && !breaker.includes('<a') && !breaker.includes('<button'), breaker);
+  // Each refusal kind has its own sentence: no two kinds read alike.
+  const sentences = new Set(Object.values(refusals.REFUSAL_TEXT));
+  assert.equal(sentences.size, Object.keys(refusals.REFUSAL_TEXT).length);
+  const cap = render('en', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_cost_call_limit_exceeded' }) }));
+  assert.ok(cap.includes('per-call maximum') && cap.includes('nothing was charged') && !cap.includes('temporarily unavailable'), cap);
+  const blocked = render('zh-Hant', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'content_blocked_input' }) }));
+  assert.ok(blocked.includes('內容安全') && blocked.includes('沒有傳送給模型'), blocked);
+  // A filtered answer does not promise "no charge": the admin's charging policy decides, and the
+  // answer's own ledger line says what was charged.
+  const filtered = render('en', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'content_filtered_output' }) }));
+  assert.ok(filtered.includes('content safety') && !filtered.includes('nothing was charged'), filtered);
   const requote = render('en', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_consent_model_changed' }), onRequote() {} }));
   assert.ok(requote.includes('>Confirm at the new price</button>'), requote);
   // Without a handler the action is not offered (never an empty button).
