@@ -162,6 +162,20 @@ recognised by their stems (`risk_*allowlist*`, `*breaker*`, `*brake*`, `*suspend
 balance and is shown as the service being unavailable, never as the person's balance. Every
 refusal before dispatch says that nothing was called or charged for the refused step.
 
+An administrator's suspension of the person's Agent access (`agent_access_suspended`, 403 on a
+send and the check before every model call of a running answer) has its own sentence: Agent
+access is suspended, nothing new was called or charged, and the next step is to contact the
+platform administrator (no top-up, settings or re-confirmation is offered). The same mapping
+also words a reasoning effort the route does not offer (`model_effort_unavailable`, Agent
+settings), a request above the per-call size bound (`billing_model_request_too_large`), and a
+confirmed quote that no longer opens the run (`billing_quote_*`: get a new quote). A send under a
+continuing consent that is refused for one of these reasons shows the same sentence in the
+consent panel. The chat test (`apps/suite/web/tests/agent-chat.test.ts`) reads every error code
+the agent, ledger, admission, risk, traffic, budget, organization-payer and safety modules raise
+and requires each to be a refusal, a specific sentence (`errors.tsx`), or listed with the reason no
+chat shows it; and no platform-side code (an upstream 402 or 429, a breaker) may mention a
+balance or a used-up quota.
+
 When a continuing consent's model or price no longer applies (`model_changed`), the consent
 panel and the quote dialog list what changed (model, route, price version, unit, each rate per
 million tokens, per-call hold). The dialog offers "confirm the new price and send" in one step:

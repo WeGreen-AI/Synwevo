@@ -326,10 +326,11 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
   };
 
   /** A payment refusal the chat explains in its own words (organization payer, frozen wallet,
-   *  risk controls, consent); price changes and expired quotes keep the dialog's own wording. */
+   *  risk controls, consent, a suspended Agent access); price changes and expired or used quotes
+   *  keep the dialog's own wording, next to its own "get a new quote". */
   const paymentRefusal = (failure: unknown): string | null => {
     const known = refusalOf(failure, { organization: payerLabel !== undefined });
-    return known && !['price_changed', 'funds'].includes(known.kind) ? ct(known.text) : null;
+    return known && !['price_changed', 'funds', 'quote'].includes(known.kind) ? ct(known.text) : null;
   };
   const pricing = quote ?? offer;
   const reuse = prior && offer ? renewalParams(prior, offer, prior.terms.unit) : null;

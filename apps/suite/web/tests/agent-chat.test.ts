@@ -3,6 +3,7 @@
  *  claim is made here, and the amounts are arithmetic examples, not the governed prices. */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import React from 'react';
@@ -12,7 +13,7 @@ import { MemoryRouter } from 'react-router-dom';
 globalThis.window ??= { location: new URL('http://127.0.0.1/agent/c/conv_fixture'), history: { state: null, replaceState() {} },
   addEventListener() {}, removeEventListener() {}, setInterval: () => 0, clearInterval() {} } as any;
 let server: any, cost: any, refusals: any, payers: any, composer: any, label: any, copy: any, parts: any, status: any,
-  ui: any, core: any;
+  ui: any, core: any, errors: any;
 before(async () => {
   server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
     logLevel: 'error', appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null },
@@ -30,6 +31,8 @@ before(async () => {
     server.ssrLoadModule('/src/apps/agent/aiLabel.ts'), server.ssrLoadModule('/src/apps/agent/chat.messages.ts'),
     server.ssrLoadModule('/src/apps/agent/ChatParts.tsx'), server.ssrLoadModule('/src/apps/agent/ComposerStatus.tsx'),
   ]);
+  // The chat's error wording and its catalogue, as the Agent page loads them (index.tsx).
+  [errors] = await Promise.all([server.ssrLoadModule('/src/apps/agent/errors.tsx'), server.ssrLoadModule('/src/apps/agent/messages.ts')]);
 });
 after(async () => { ui?.setLocale('zh-Hans'); await server?.close(); });
 
@@ -198,6 +201,129 @@ test('each refusal maps to a translated sentence and its one next step', () => {
   assert.deepEqual([refusals.refusalOf({ code: 'billing_wallet_frozen' }, { organization: true }).kind,
     refusals.refusalOf({ code: 'billing_wallet_frozen' }, { organization: true }).next], ['org_frozen', 'personal']);
   assert.equal(refusals.refusalOf({ code: 'billing_risk_breaker_open' }, { organization: true }).kind, 'breaker');
+});
+
+test('a suspended Agent access says so, without a payment next step, and tells the person whom to ask', async () => {
+  const refusal = refusals.refusalOf({ code: 'agent_access_suspended' });
+  assert.equal(refusal?.kind, 'access_suspended');
+  assert.equal(refusal.next, null);
+  // The same refusal replayed, and the same code ending a running answer, read the same.
+  assert.equal(refusals.refusalOf({ code: 'idempotent_failure', detail: { code: 'agent_access_suspended' } }).kind, 'access_suspended');
+  const words = { 'zh-Hans': ['管理员已暂停你的 Agent 使用权限', '联系平台管理员'],
+    en: ['An administrator has suspended your Agent access', 'contact the platform administrator'],
+    'zh-Hant': ['管理員已暫停你的 Agent 使用權限', '聯絡平台管理員'] } as const;
+  for (const locale of LOCALES) {
+    const html = render(locale, React.createElement(parts.RefusalNotice, { refusal, walletUrl: '/account/wallet', live: true, onRequote() {}, onPersonal() {} }));
+    for (const text of words[locale]) assert.ok(html.includes(text), `${locale}: ${text} in ${html}`);
+    // Not a wallet, limit or price problem: no top-up, settings or re-confirmation is offered.
+    assert.ok(!html.includes('<a') && !html.includes('<button') && html.includes('role="alert"'), html);
+    assert.ok(!/余额|餘額|balance/i.test(html), html);
+  }
+  // A send under a continuing consent that the server refuses for this reason says it too, not
+  // the consent panel's generic "refused".
+  const controls = await server.ssrLoadModule('/src/apps/agent/ConsentControls.tsx');
+  const failure = render('en', React.createElement(controls.ConsentFailure, { error: { code: 'agent_access_suspended' } }));
+  assert.ok(failure.includes('An administrator has suspended your Agent access'), failure);
+  const own = render('en', React.createElement(controls.ConsentFailure, { error: { code: 'consent_revoked' } }));
+  assert.ok(!own.includes('suspended'), own);
+});
+
+/** Every error code the merged backend can hand the chat (a refused send, a refused quote or
+ *  confirmation, or the error a running answer ends with), read from the Python sources, must be
+ *  either a refusal with its own sentence and next step (refusals.ts) or a specific sentence of
+ *  the chat (errors.tsx) — never the generic "could not finish" — unless it is listed below with
+ *  the reason no chat ever shows it. Billing errors reach the chat as "billing_" + code. */
+const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+const AGENT_DIR = 'apps/suite/synwevo_suite/agent/';
+const SOURCES = [...readdirSync(ROOT + AGENT_DIR).filter((f) => f.endsWith('.py')).map((f) => AGENT_DIR + f),
+  'packages/core/synwevo_core/agent_safety.py',
+  ...['ledger', 'admission', 'risk', 'traffic', 'payer_budgets', 'org_payers', 'models'].map((n) => `packages/core/synwevo_core/billing/${n}.py`)];
+/** Codes built at run time (an HTTP status table, a period name), spelled out. */
+const COMPUTED = ['provider_balance', 'provider_error', 'provider_overloaded', 'provider_rate_limited',
+  ...['daily', 'weekly', 'monthly'].flatMap((p) => [`billing_payer_${p}_budget_exceeded`, `billing_cost_${p}_budget_exceeded`])];
+function serverCodes(): Set<string> {
+  const codes = new Set<string>(COMPUTED);
+  for (const file of SOURCES) {
+    const source = readFileSync(ROOT + file, 'utf8');
+    for (const [, kind, code] of source.matchAll(/\b(ServiceError|ProviderError|BillingError|DeepSeekError)\(\s*(?:\d+\s*,\s*)?"([a-z_]+)"/g)) {
+      if (code.endsWith('_')) continue;  // a prefix joined at run time ("billing_" + exc.code)
+      codes.add(kind === 'BillingError' ? `billing_${code}` : code);
+    }
+  }
+  return codes;
+}
+const NOT_IN_CHAT: [string, string][] = [
+  ['agent_suspension_not_found missing_reason report_closed report_decision_invalid report_not_found safety_rule_invalid safety_rules_changed safety_rules_invalid '
+    + 'billing_invalid_risk_policy billing_invalid_risk_scope billing_invalid_breaker_source',
+    // The Admin risk tab's own codes (risk_allowlist_*, risk_suspension_*) need no entry: the
+    // chat words any "risk_" code as a stop before dispatch.
+    'administrators govern these in the Admin shell, which words them'],
+  ['report_exists report_category_invalid', 'met only in the report dialog, which words them (ReportDialog)'],
+  ['provider_consent_not_needed', 'answers the consent page itself; the consent dialog words it'],
+  ['bad_key model_personal_key_unsupported memory_not_found too_many_memories transfer_policy_changed',
+    'met on the Agent settings page (personal key, memories, transfer policy), which words them'],
+  ['wallet_unavailable', 'the payer list (GET /api/suite/agent/payers); the composer says the organization payers cannot be loaded'],
+  ['billing_quote_limit_exceeded billing_quote_requires_turn_transaction',
+    'met only while asking for a quote: the budget dialog words a refused quote'],
+  ['empty_message', 'the composer never sends an empty message'],
+  ['unauthorized', 'an expired session: the shared client catalogue asks the person to sign in again on every page'],
+  ['billing_grant_reason_required billing_invalid_grant billing_welcome_already_granted billing_freeze_not_found billing_order_already_funded '
+    + 'billing_payment_authority_denied billing_payment_delegation_required billing_payment_environment_mismatch billing_payment_event_conflict '
+    + 'billing_payment_evidence_untrusted billing_payment_not_succeeded billing_payment_order_mismatch billing_payment_transaction_conflict '
+    + 'billing_wallet_forbidden billing_invalid_org_payer billing_org_payer_conflict billing_org_workspace_unknown billing_price_version_conflict',
+    'wallet, payment, grant and organization-payer management on the account service, never on the chat path'],
+  ['billing_model_authority_required billing_model_configuration_required billing_model_cost_admission_required billing_model_traffic_required '
+    + 'billing_invalid_price_bands billing_invalid_price_basis billing_invalid_price_purpose '
+    + 'billing_invalid_route billing_invalid_traffic_policy billing_invalid_cost_policy billing_invalid_payer_budget billing_price_band_required',
+    'composition and configuration checks: the service refuses to start or an administrator\'s change is refused'],
+  ['billing_attempt_not_claimable billing_attempt_not_found billing_attempt_not_pending billing_balance_cache_inconsistent billing_balance_cache_missing '
+    + 'billing_billing_requires_own_transaction billing_call_not_dispatchable billing_call_not_found billing_dispatch_fenced billing_idempotency_conflict '
+    + 'billing_inconsistent_usage billing_invalid_attempt_ticket billing_invalid_context billing_invalid_cost_admission billing_invalid_cost_expiry '
+    + 'billing_invalid_cost_fact billing_invalid_cost_time billing_invalid_dispatch_admission billing_invalid_environment billing_invalid_evidence_digest '
+    + 'billing_invalid_hold_deadline billing_invalid_identifier billing_invalid_integer billing_invalid_payer billing_invalid_price billing_invalid_rebuild '
+    + 'billing_invalid_unit billing_invalid_usage billing_invalid_usage_evidence billing_journal_hold_invariant_broken billing_missing_cache_classification '
+    + 'billing_missing_usage billing_model_call_already_recorded billing_payer_budget_conflict billing_payer_budget_requires_transaction '
+    + 'billing_provider_request_conflict billing_retry_requires_known_platform_fault billing_run_context_conflict billing_run_not_found '
+    + 'billing_run_route_conflict billing_unconfirmed_price_route billing_unexpected_retry_reason billing_unit_mismatch billing_unit_scale_conflict '
+    + 'billing_unknown_sale_unit billing_usage_conflict billing_usage_evidence_mismatch billing_usage_evidence_missing billing_usage_evidence_untrusted '
+    + 'billing_usage_owner_mismatch billing_usage_without_dispatch',
+    'ledger invariants and recovery internals: a broken invariant is an internal fault, worded by the generic billing sentence and logged'],
+];
+const GENERIC = ['费用或授权状态暂不允许继续，请核对后重试。', '未能完成此操作，请核对结果后重试。'];
+
+test('every refusal the backend can send to the chat has its own honest sentence', () => {
+  const codes = serverCodes();
+  // Families the scan must find, or it is reading the wrong files.
+  for (const code of ['agent_access_suspended', 'billing_insufficient_funds', 'billing_risk_breaker_open', 'content_blocked_input',
+    'provider_consent_required', 'model_effort_unavailable', 'billing_org_payer_not_granted']) assert.ok(codes.has(code), code);
+  const elsewhere = new Map<string, string>();
+  for (const [names, why] of NOT_IN_CHAT) for (const code of names.split(' ')) {
+    assert.ok(codes.has(code), `${code} is listed as not shown in the chat but no longer raised (${why})`);
+    elsewhere.set(code, why);
+  }
+  const t = (source: string) => source;
+  const unworded: string[] = [], misfiled: string[] = [];
+  for (const code of [...codes].sort()) {
+    const refusal = refusals.refusalOf({ code });
+    const source = refusal ? copy.chatCopy[refusal.text][0] : errors.agentErrorText({ code }, t);
+    if (!refusal && GENERIC.includes(source)) {
+      if (!elsewhere.has(code)) unworded.push(code);
+      continue;
+    }
+    if (elsewhere.has(code)) misfiled.push(code);
+    for (const locale of ['en', 'zh-Hant'] as const) assert.notEqual(core.translate(locale, source), source, `${code} in ${locale}`);
+    // An empty wallet is the person's only when the ledger says so; everything else the platform
+    // or provider causes (an upstream 402 or 429, a breaker) never reads as "your balance" or
+    // "your quota ran out".
+    if (code !== 'billing_insufficient_funds') {
+      assert.ok(!/余额|餘額|额度不足|額度不足/.test(source)
+        && !/\b(balance|insufficient|top up|quota)\b/i.test(core.translate('en', source)), `${code}: ${source}`);
+    }
+  }
+  assert.deepEqual(unworded, [], 'raised to the chat with only a generic sentence');
+  assert.deepEqual(misfiled, [], 'worded in the chat but listed as never shown there');
+  // A data-sharing consent page's own answer is never a send refusal.
+  assert.equal(refusals.refusalOf({ code: 'provider_consent_not_needed' }), null);
 });
 
 test('a refusal notice states what happened and offers the next step', () => {

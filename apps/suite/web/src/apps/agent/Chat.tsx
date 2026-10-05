@@ -181,7 +181,7 @@ export default function Chat({ conversation, loading, error, connection, configu
       {m.tool_calls.map((call) => <ActionCard key={call.id} call={call} act={action} busy={busy} />)}
       {m.turn && active && m.turn.status !== "running" && <p role="status"><Status status={m.turn.status} /></p>}
       {m.error && (refusal ? <RefusalNotice refusal={refusal} walletUrl={walletUrl} busy={blocked} onPersonal={organizationPayer ? onPersonal : undefined}
-        onRequote={refusal.next === "requote" ? () => void action("agent.turn.start", { conversation_id: conversation!.id, regenerate_of: m.id }) : undefined} />
+        onRequote={refusal.next === "requote" || refusal.next === "reconfirm" ? () => void action("agent.turn.start", { conversation_id: conversation!.id, regenerate_of: m.id }) : undefined} />
         : <p className="err">{agentErrorText(m.error, t)}</p>)}
       {m.turn?.status === "cancelled" && <p className="muted">{t("已取消，不再启动后续操作。已完成的结果保留。")}</p>}
       {assistant && !m.hidden && <footer className="ag-answer-foot">
@@ -234,7 +234,7 @@ export default function Chat({ conversation, loading, error, connection, configu
       {configured === false && <p className="notice"><Link to="/agent/settings">{t("模型服务未配置。请先打开 Agent 设置。")}</Link></p>}
       {conversation && connection !== "connected" && <p className="muted small" role="status">{t(connection === "offline" ? "连接中断，正在恢复；已完成的操作不会重复执行。" : "正在连接实时更新…")}</p>}
       {failure != null && (failureRefusal ? <RefusalNotice refusal={failureRefusal} walletUrl={walletUrl} live busy={blocked} onPersonal={onPersonal}
-        onRequote={failureRefusal.next === "requote" ? () => void submit() : undefined} /> : <Failure error={failure} />)}
+        onRequote={failureRefusal.next === "requote" || failureRefusal.next === "reconfirm" ? () => void submit() : undefined} /> : <Failure error={failure} />)}
       {status}
       <form className="ag-composer" onSubmit={(e) => void submit(e)}>
         <label className="sr-only" htmlFor="agent-message">{t("输入消息")}</label>
