@@ -13,6 +13,7 @@ import time
 from uuid import uuid4
 
 from ..store import Store
+from .bands import pin_band
 from .models import (AttemptTicket, Balance, BillingError, ChargeContext, PaymentReceipt,
                      PriceSnapshot, Settlement, Unit, UsageEvidence, identifier, integer)
 
@@ -124,7 +125,7 @@ class Ledger:
         """
         if not isinstance(snapshot, PriceSnapshot):
             raise BillingError("invalid_price")
-        encoded = _json(asdict(snapshot))
+        encoded = _json(snapshot.to_dict())
         with self._tx() as t:
             self._unit(t, snapshot.unit)
             row = t.execute("SELECT snapshot FROM billing_prices WHERE environment=? AND price_id=?",
@@ -443,8 +444,11 @@ class Ledger:
                 raise BillingError("usage_pending")
             if admission is not None:
                 admission(t, ticket)
-            t.execute("UPDATE billing_attempts SET status='dispatch_unknown',dispatched_at=? WHERE id=?",
-                      (self._now(), ticket.attempt_key))
+            # One instant decides both the stored dispatch time and the pinned tariff band.
+            dispatched_at = self._now()
+            band, schedule = pin_band(t, self.environment, attempt["cost_price_id"], call["price_id"], dispatched_at)
+            t.execute("UPDATE billing_attempts SET status='dispatch_unknown',dispatched_at=?,band=?,"
+                      "band_schedule_revision=? WHERE id=?", (dispatched_at, band, schedule, ticket.attempt_key))
             self._event(t, call["id"], "dispatch_unknown", "committed_before_network", ticket.attempt_key)
 
     def mark_usage_pending(self, ticket: AttemptTicket, *, request_id: str | None = None,
@@ -462,8 +466,8 @@ class Ledger:
                 raise BillingError("provider_request_conflict")
             if attempt["status"] == "usage_pending" and (request_id is None or request_id == attempt["request_id"]):
                 return
-            t.execute("UPDATE billing_attempts SET status='usage_pending',request_id=COALESCE(request_id,?) WHERE id=?",
-                      (request_id, ticket.attempt_key))
+            t.execute("UPDATE billing_attempts SET status='usage_pending',request_id=COALESCE(request_id,?),"
+                      "completed_at=COALESCE(completed_at,?) WHERE id=?", (request_id, self._now(), ticket.attempt_key))
             self._event(t, attempt["call_key"], "usage_pending", reason, ticket.attempt_key)
 
     def cancel_call(self, call_key: str) -> str:
@@ -510,8 +514,9 @@ class Ledger:
             sale = self._price(t, call["price_id"], "sale")
             if evidence.effective_model != cost_price.model:
                 raise BillingError("unconfirmed_price_route")
-            cost = cost_price.exact(evidence.usage)
-            exact = sale.exact(evidence.usage)
+            # The band pinned at dispatch prices both sides; never the settlement instant.
+            cost = cost_price.exact(evidence.usage, attempt["band"])
+            exact = sale.exact(evidence.usage, attempt["band"])
             late = call["status"] != "reserved"
             before, after, charged, absorbed = Fraction(0), Fraction(0), 0, exact
             if not late and outcome == "completed":
@@ -532,7 +537,8 @@ class Ledger:
                 t.execute("INSERT INTO billing_remainders VALUES (?,?,?,?) ON CONFLICT(account_id,price_id) "
                           "DO UPDATE SET numerator=excluded.numerator,denominator=excluded.denominator",
                           (call["account_id"], call["price_id"], str(after.numerator), str(after.denominator)))
-            t.execute("UPDATE billing_attempts SET request_id=?,status='settled' WHERE id=?", (evidence.request_id, attempt_key))
+            t.execute("UPDATE billing_attempts SET request_id=?,status='settled',completed_at=COALESCE(completed_at,?) "
+                      "WHERE id=?", (evidence.request_id, evidence.metered_at, attempt_key))
             t.execute("INSERT INTO billing_usage VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                       (attempt_key, facts, outcome, str(cost.numerator), str(cost.denominator), cost_price.unit.code,
                        charged, str(absorbed.numerator), str(absorbed.denominator), int(late), self._now()))

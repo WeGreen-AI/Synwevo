@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, m
 
 from .. import sealed
 from ..errors import ServiceError
+from .bands import schedule_revision_for
 from .cost_settings import ACCOUNT_REF, PROVIDER, CostSettings
 from .models import BillingError, PriceSnapshot, identifier
 
@@ -133,6 +134,9 @@ class ProviderSettings:
                     or price.effective_from > self.clock()):
                 raise ServiceError(409, "model_price_mismatch", "模型路线与已生效价格不匹配，请重新选择")
             prices.append(price)
+        # A sale price published as cost x markup is only that for its own cost basis.
+        if prices[0].basis is not None and prices[0].basis.cost_price_id != route.cost_price_id:
+            raise ServiceError(409, "model_price_markup_basis", "销售价由另一成本价加价生成，请选择与之对应的成本价")
         return prices
 
     def preview(self, spec, credential, *, expected_revision):
@@ -192,7 +196,7 @@ class ProviderSettings:
             spec = _valid(ProviderSpec, state["spec"])
             if spec.route.valid_until <= self.clock():
                 raise BillingError("route_confirmation_expired")
-            self._prices(spec.route)
+            prices = self._prices(spec.route)
             row = self.store.one("SELECT revision,secret_enc FROM model_provider_credentials WHERE environment=?",
                                  (self.environment,))
             if not row or row["revision"] != state["credential_revision"] or not row["secret_enc"]:
@@ -203,6 +207,11 @@ class ProviderSettings:
                 raise BillingError("model_credential_unavailable") from None
             route = spec.route.model_dump(exclude={"account_confirmation_ref"})
             route["version"] = f"deepseek:{self.environment}:{state['revision']}"
+            # Quotes and consents bind this version. A banded price's effective rate also
+            # depends on the governed calendar, so its revision invalidates them as well.
+            schedule = schedule_revision_for(self.store, self.environment, prices)
+            if schedule is not None:
+                route["version"] += f":bands:{schedule}"
             return ResolvedProvider(state["revision"], state["credential_revision"], route, secret)
 
     def history(self, *, before_revision=None, limit=20):

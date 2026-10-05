@@ -111,8 +111,48 @@ def normalize_usage(raw: Mapping) -> Usage:
     return Usage(miss, hit, output, reasoning)
 
 
+#: Time bands of a time-banded tariff. "flat" is what a single-rate snapshot pins.
+BANDS = ("peak", "off_peak")
+RATE_KEYS = ("input_uncached", "input_cached", "output")
+
+
+@dataclass(frozen=True)
+class BandRates:
+    """Off-peak rates of a time-banded tariff, per ``PriceSnapshot.per_tokens`` tokens."""
+
+    input_uncached: Rate
+    input_cached: Rate
+    output: Rate
+
+    def __post_init__(self):
+        if not all(isinstance(getattr(self, key), Rate) for key in RATE_KEYS):
+            raise BillingError("invalid_price")
+
+
+@dataclass(frozen=True)
+class MarkupBasis:
+    """Provenance of a sale snapshot derived as cost price x markup (decimal strings)."""
+
+    cost_price_id: str
+    markup: str
+    off_peak_markup: str | None = None
+
+    def __post_init__(self):
+        identifier(self.cost_price_id)
+        for value in (self.markup, self.off_peak_markup):
+            if value is not None:
+                identifier(value)
+
+
 @dataclass(frozen=True)
 class PriceSnapshot:
+    """An immutable tariff. A flat snapshot has one rate per token class.
+
+    A time-banded snapshot keeps its PEAK rates in the base fields and its off-peak rates in
+    ``off_peak`` (never higher than peak), and names the governed band schedule that decides
+    the band at dispatch. Readers that predate bands (holds, cost admission) therefore stay
+    conservative: the base rates are the highest a call can cost.
+    """
     price_id: str
     purpose: str
     unit: Unit
@@ -124,31 +164,69 @@ class PriceSnapshot:
     terms_ref: str
     effective_from: int
     per_tokens: int = 1_000_000
+    off_peak: BandRates | None = None
+    band_schedule: str | None = None
+    basis: MarkupBasis | None = None
 
     def __post_init__(self):
         for value in (self.price_id, self.provider, self.model, self.terms_ref):
             identifier(value)
         if self.purpose not in ("sale", "cost"):
             raise BillingError("invalid_price_purpose")
-        if not isinstance(self.unit, Unit) or not all(isinstance(r, Rate) for r in
-                                                     (self.input_uncached, self.input_cached, self.output)):
+        if not isinstance(self.unit, Unit) or not all(isinstance(getattr(self, key), Rate) for key in RATE_KEYS):
             raise BillingError("invalid_price")
         integer(self.effective_from)
         integer(self.per_tokens, positive=True, maximum=10**9)
+        if (self.off_peak is None) != (self.band_schedule is None):
+            raise BillingError("invalid_price_bands")
+        if self.off_peak is not None:
+            identifier(self.band_schedule)
+            if not isinstance(self.off_peak, BandRates) or any(
+                    getattr(self.off_peak, key).fraction > getattr(self, key).fraction for key in RATE_KEYS):
+                raise BillingError("invalid_price_bands")
+        if self.basis is not None and (not isinstance(self.basis, MarkupBasis) or self.purpose != "sale"):
+            raise BillingError("invalid_price_basis")
 
-    def exact(self, usage: Usage) -> Fraction:
+    @property
+    def banded(self) -> bool:
+        return self.off_peak is not None
+
+    def rates(self, band: str | None = None) -> dict:
+        """Rates that apply in ``band``. A banded tariff refuses to guess its band."""
+        if self.off_peak is None:
+            return {key: getattr(self, key) for key in RATE_KEYS}
+        if band not in BANDS:
+            raise BillingError("price_band_required")
+        source = self if band == "peak" else self.off_peak
+        return {key: getattr(source, key) for key in RATE_KEYS}
+
+    def exact(self, usage: Usage, band: str | None = None) -> Fraction:
         if not isinstance(usage, Usage):
             raise BillingError("invalid_usage")
-        return (usage.input_uncached * self.input_uncached.fraction
-                + usage.input_cached * self.input_cached.fraction
-                + usage.output * self.output.fraction) / self.per_tokens
+        rates = self.rates(band)
+        return (usage.input_uncached * rates["input_uncached"].fraction
+                + usage.input_cached * rates["input_cached"].fraction
+                + usage.output * rates["output"].fraction) / self.per_tokens
+
+    def to_dict(self) -> dict:
+        """Stored form. A flat snapshot keeps exactly the pre-band keys, so a release without
+        bands can still read it and quote/consent terms of flat prices keep their shape."""
+        data = asdict(self)
+        for key in ("off_peak", "band_schedule", "basis"):
+            if data[key] is None:
+                del data[key]
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> PriceSnapshot:
         data = dict(data)
         data["unit"] = Unit(**data["unit"])
-        for key in ("input_uncached", "input_cached", "output"):
+        for key in RATE_KEYS:
             data[key] = Rate(**data[key])
+        if data.get("off_peak") is not None:
+            data["off_peak"] = BandRates(**{key: Rate(**data["off_peak"][key]) for key in RATE_KEYS})
+        if data.get("basis") is not None:
+            data["basis"] = MarkupBasis(**data["basis"])
         return cls(**data)
 
 
