@@ -124,3 +124,54 @@ def test_a_restore_from_before_the_deletion_erases_the_agent_content_again(world
     assert _content(c)["agent_messages"] == 2
     journal.apply(c.store, entries)
     assert set(_content(c).values()) == {0}
+
+
+def test_the_export_leaves_out_answers_the_agent_would_hide_or_this_service_cannot_recheck(world):
+    """The Agent hides an answer once the person lost access to a workspace it depends on
+    (engine `_source_workspaces & _lost_workspaces`). The account export must never carry such a
+    text. Where the Agent's rule needs a re-read through the business applications (which the
+    account service cannot run), the export leaves the text out rather than guess."""
+    c = world
+    store, uid = c.store, c.uid
+    from synwevo_core.identity import Identity
+    member_ws = Identity(store).create_workspace("Fixture member space", owner_id=uid)["id"]
+    snapshot = lambda wid: {"workspace_id": wid, "app": "forms", "operation": "forms.form.list",  # noqa: E731
+                            "input": {}, "snapshot_hash": "fixture-hash"}
+    answers = {
+        "msg_0000000000c1": ("FIXTURE-LOST-WORKSPACE-TEXT", [snapshot("ws_gone_fixture")]),
+        "msg_0000000000c2": ("fixture text reported from a space the person is in",
+                             [{"workspace_id": member_ws, "reported_by": "forms.form.list"}]),
+        "msg_0000000000c3": ("FIXTURE-UNVERIFIABLE-TEXT", [snapshot(member_ws)]),
+        "msg_0000000000c4": ("FIXTURE-LEGACY-SOURCE-TEXT", [member_ws]),
+        "msg_0000000000c5": ("fixture text whose only source is a copy it made",
+                             [{"workspace_id": "ws_gone_fixture", "carried_into": member_ws}]),
+    }
+    t = now()
+    store.execute("INSERT INTO agent_conversations (id,user_id,title,status,created_at,updated_at) VALUES "
+                  "('conv_00000000000c',?,'Workspace chat','active',?,?)", (uid, t, t))
+    for n, (mid, (body, sources)) in enumerate(answers.items()):
+        store.execute("INSERT INTO agent_messages (id,conversation_id,user_id,parent_id,role,status,body,error_code,sources_json,"
+                      "created_at,updated_at) VALUES (?,'conv_00000000000c',?,NULL,'assistant','done',?,?,?,?,?)",
+                      (mid, uid, body, "fixture_error", json.dumps(sources), t + n, t + n))
+    # Quoted into a report while the person could still see it: the quote follows the answer.
+    AgentReports(store).create(uid, conversation_id="conv_00000000000c", message_id="msg_0000000000c1",
+                               category="wrong", note=None, excerpt="FIXTURE-LOST-WORKSPACE-TEXT")
+    assert c.post("/api/auth/login", json={"email": "agent-person@example.test", "password": PW}).status_code == 200
+    r = c.post("/api/auth/export", json={"password": PW}, headers={"X-Synwevo-CSRF": c.cookies.get("dw_csrf")})
+    assert r.status_code == 200, r.text
+    agent = r.json()["agent"]
+    conv = next(x for x in agent["conversations"] if x["id"] == "conv_00000000000c")
+    got = {m["id"]: (m["body"], m["hidden"], m["error_code"]) for m in conv["messages"]}
+    assert got == {
+        "msg_0000000000c1": ("", True, None),
+        "msg_0000000000c2": ("fixture text reported from a space the person is in", False, "fixture_error"),
+        "msg_0000000000c3": ("", True, None),
+        "msg_0000000000c4": ("", True, None),
+        "msg_0000000000c5": ("fixture text whose only source is a copy it made", False, "fixture_error"),
+    }
+    for secret in ("FIXTURE-LOST-WORKSPACE-TEXT", "FIXTURE-UNVERIFIABLE-TEXT", "FIXTURE-LEGACY-SOURCE-TEXT"):
+        assert secret not in r.text
+    assert "hidden" in agent["hidden_notice"]
+    assert [r["excerpt"] for r in agent["reports"] if r["message_id"] == "msg_0000000000c1"] == [None]
+    first = next(x for x in agent["conversations"] if x["id"] == "conv_00000000000a")
+    assert [m["hidden"] for m in first["messages"]] == [False, False], "answers without workspace sources are kept"

@@ -193,7 +193,9 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
   Whether a stopped call is charged is the gateway's incomplete-call policy.
 * **Records.** A stop is stored as rule id/version, direction and length — never text.
   `agent.message.report` files a report on an answer; its text is attached only when the person
-  sets `include_excerpt`. Administrators (`platform.users.*`) close reports and suspend or
+  sets `include_excerpt`, and only while the answer is visible to them: an answer hidden after an
+  access change can be reported bare, never quoted (409 `report_excerpt_hidden`, the engine's
+  `message_hidden`). Administrators (`platform.users.*`) close reports and suspend or
   restore a person's Agent access with a reason: 403 `agent_access_suspended`, running turns are
   cancelled, journalled `agent_access_suspended`.
 * **Withdrawals survive a restore.** The consent withdrawal, the suspension, a workspace AI-policy
@@ -210,7 +212,12 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
 * **Terms.** A paid run records the terms / AI use / pricing versions in force once per version
   (`synwevo_core/terms.py`); the account export lists them, together with the Agent's visible
   conversation text, memories, settings, consents, quotes and the wallet statement
-  (`synwevo_core/agent_records.py`); account deletion erases the Agent's content.
+  (`synwevo_core/agent_records.py`); account deletion erases the Agent's content. The export never
+  carries a text the Agent may hide: the engine's hide rule re-reads sources through the business
+  applications, which the account service cannot run, so an answer keeps its text only when it
+  depends on no workspace or only on "reported by" sources in workspaces the person still belongs
+  to; any other answer is exported `hidden` with an empty body (`hidden_notice` says why and points
+  to the conversation), and a report's quote follows its answer.
 
 ## Verification and remaining gates
 
