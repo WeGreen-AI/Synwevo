@@ -81,6 +81,10 @@ KINDS = {
     PLATFORM_GRANT_KIND,       # {event_id, user_id, grant_id, role, granted_at, granted_by}
     UNCLAIM_KIND,               # {workspace_id, label_restored} — the assignment of legacy data undone
     "consent_withdrawn",        # {user_id, client_id, workspace_id?} — the consent and that client's tokens
+    # The personal Agent (agent_safety.py): a person's withdrawn consent to send content to a
+    # model provider, and an administrator's suspension of a person's Agent access.
+    "agent_provider_consent_withdrawn",  # {user_id, provider}
+    "agent_access_suspended",   # {suspension_id, user_id}
 } | ORGANIZATION_KINDS
 
 _REQUIRED = {
@@ -99,6 +103,8 @@ _REQUIRED = {
     PLATFORM_GRANT_KIND: ("event_id", "user_id", "grant_id", "role", "granted_by"),
     UNCLAIM_KIND: ("workspace_id",),
     "consent_withdrawn": ("user_id", "client_id"),
+    "agent_provider_consent_withdrawn": ("user_id", "provider"),
+    "agent_access_suspended": ("suspension_id", "user_id"),
     **{kind: ("event_id", "organization_id") for kind in ORGANIZATION_KINDS},
     "organization_member_removed": ("event_id", "organization_id", "user_id"),
     "organization_role_changed": ("event_id", "organization_id", "user_id", "role"),
@@ -510,6 +516,17 @@ def apply(store: Store, entries: list[dict]) -> dict:
                               (t, t, e["user_id"], e["client_id"], ws, e["at"])).rowcount
                 c.execute("UPDATE oauth_tokens SET revoked_at=?, revoked_reason='journal_replay' WHERE user_id=? AND client_id=? "
                           "AND COALESCE(workspace_id,'')=? AND revoked_at IS NULL", (t, e["user_id"], e["client_id"], ws))
+            elif k == "agent_provider_consent_withdrawn":
+                # Only a consent given before the withdrawal is withdrawn again; one the person
+                # gave afterwards (and that the restored database holds) stands.
+                n = c.execute("UPDATE agent_provider_consents SET withdrawn_at=? WHERE user_id=? AND provider=? "
+                              "AND withdrawn_at IS NULL AND accepted_at<=?",
+                              (e["at"], e["user_id"], e["provider"], e["at"])).rowcount
+            elif k == "agent_access_suspended":
+                # By id: a suspension the backup already holds (lifted or not) is left as it is.
+                n = c.execute("INSERT OR IGNORE INTO agent_access_suspensions (id,user_id,reason,created_by,created_at) "
+                              "VALUES (?,?,'journal_replay','journal',?)",
+                              (e["suspension_id"], e["user_id"], e["at"])).rowcount
             elif k == "client_secret_rotated":
                 n = c.execute("UPDATE oauth_clients SET secret_hash=? WHERE client_id=?",
                               (e.get("secret_hash"), e.get("client_id"))).rowcount

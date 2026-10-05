@@ -32,6 +32,15 @@ def make_client(tmp_path, monkeypatch, *, released: str = "all"):
     return create_app(str(tmp_path / "d"), start_jobs=False)
 
 
+def accept_provider_consents(store, user_id: str) -> None:
+    """FIXTURE: the person accepted the current data consent of every named model provider
+    (DeepSeek), as they would in the Agent's consent dialog before their first message. Tests of
+    other behaviour start from there; test_agent_safety.py removes it to test the gate itself."""
+    from synwevo_core.agent_safety import PROVIDER_TERMS, ProviderConsents
+    for provider, terms in PROVIDER_TERMS.items():
+        ProviderConsents(store).accept(user_id, provider, terms.version)
+
+
 class People:
     """Two workspaces, A and B, and the people in them (fixture accounts, isolated data).
 
@@ -51,6 +60,7 @@ class People:
                           ("oscar", "Oscar Other"), ("out", "Oz Outsider")):
             u = self.ident.create_user(f"{key}@example.test", PW, status="active", display_name=name)
             self.store.execute("UPDATE users SET email_verified_at=1 WHERE id=?", (u["id"],))
+            accept_provider_consents(self.store, u["id"])
             self.users[key] = u
         self.a = self.ident.create_workspace("Workspace A", owner_id=self.users["alice"]["id"])["id"]
         self.b = self.ident.create_workspace("Workspace B", owner_id=self.users["oscar"]["id"])["id"]

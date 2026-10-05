@@ -278,7 +278,9 @@ class MeteredDeepSeek:
             # invalid continuation of this Agent turn. Accept it before selling usage.
             try:
                 if result.step.stop_reason == "refusal":
-                    raise ProviderError("provider_refused", "模型拒绝回答这个请求")
+                    # The provider's content filter has its own code (agent/safety.py).
+                    from .safety import refused
+                    raise refused(result.step)
                 if result.step.stop_reason == "max_tokens":
                     raise ProviderError("provider_truncated", "回答过长被截断，请把任务拆小一些")
                 if validate_result:

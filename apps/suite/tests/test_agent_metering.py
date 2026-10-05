@@ -49,6 +49,9 @@ def gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(httpx.AsyncHTTPTransport, 'handle_async_request', no_network)
     store = Store(tmp_path/'metered-fixture')
     user = Identity(store).create_user('metering@example.test', None, status='active', with_personal_workspace=False)['id']
+    # FIXTURE: the person accepted the current DeepSeek data consent (agent_safety.py) before using the Agent.
+    from synwevo_core.agent_safety import PROVIDER_TERMS, ProviderConsents
+    ProviderConsents(store).accept(user, 'deepseek', PROVIDER_TERMS['deepseek'].version)
     ticks, authority, stopped, seen = [STAMP], [True], [False], []
     store.execute('CREATE TABLE fixture_verified_payments(event_id TEXT PRIMARY KEY,receipt TEXT NOT NULL)')
     def verify(t, receipt):

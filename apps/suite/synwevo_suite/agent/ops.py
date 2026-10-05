@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field as F, SecretStr, field_serializer, field_validator
 
 from synwevo_core import data_flow, sealed
+from synwevo_core.agent_safety import AgentReports, ProviderConsents
 from synwevo_core.billing import BillingError
 from synwevo_core.capabilities import Operation, canonical, fingerprint
 from synwevo_core.errors import ServiceError
@@ -30,6 +31,23 @@ def T(zh, hant, en):
 
 class _In(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+
+class ProviderConsentRef(_In):
+    provider: Literal["deepseek"] = "deepseek"
+
+
+class ProviderConsentAccept(_In):
+    provider: Literal["deepseek"] = "deepseek"
+    version: str = F(min_length=1, max_length=40)
+
+
+class MessageReport(_In):
+    conversation_id: str = F(pattern=CONV)
+    message_id: str = F(pattern=MSG)
+    category: Literal["harmful", "illegal", "privacy", "wrong", "other"]
+    note: str | None = F(default=None, max_length=1000)
+    include_excerpt: bool = False
 
 
 class ListConversations(_In):
@@ -350,7 +368,8 @@ def register(registry, agent: Agent, store, identity) -> None:
             cid = out.get("id")
         if c.op.id in ("agent.conversation.delete", "agent.memory.delete", "agent.settings.update",
                        "agent.workspace_policy.set", "agent.transfer_policy.set", "agent.billing.budget.set",
-                       "agent.consent.create", "agent.consent.revoke"):
+                       "agent.consent.create", "agent.consent.revoke", "agent.provider_consent.accept",
+                       "agent.provider_consent.withdraw", "agent.message.report"):
             # Only a deletion receipt, masked key state or policy enum; no business body.
             return
         if c.op.id.startswith("agent.memory."):
@@ -520,6 +539,54 @@ def register(registry, agent: Agent, store, identity) -> None:
             person_only(c)
         return agent.start_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
             regenerate_of=i.regenerate_of, quote_id=i.quote_id, consent_id=i.consent_id)
+
+    consents = ProviderConsents(store)
+
+    def provider_consent(c, i, *, action):
+        if action != "get":
+            person_only(c)
+        if action == "accept":
+            result = consents.accept(c.user_id, i.provider, i.version)
+        elif action == "withdraw":
+            result = consents.withdraw(c.user_id, i.provider)
+        else:
+            result = consents.status(c.user_id, i.provider)
+        credential = agent._credential(c.user_id)
+        # Whether the model the person would use right now is this provider (so the page knows
+        # to ask before the first message), and their history of decisions.
+        return {**result, "required": bool(credential and credential.provider == i.provider),
+                "history": [h for h in consents.history(c.user_id) if h["provider"] == i.provider][-20:]}
+
+    op(id="agent.provider_consent.get", title=T("查看模型提供方数据同意", "查看模型提供方資料同意", "Model provider data consent"),
+       summary="Whether the person agreed to the current version of sending their messages to the named model provider.",
+       input=ProviderConsentRef, agent="never", handler=lambda c, i: provider_consent(c, i, action="get"))
+    op(id="agent.provider_consent.accept", title=T("同意向模型提供方发送内容", "同意向模型提供方傳送內容", "Agree to send content to the model provider"),
+       summary="Record the person's separate consent to this version; nothing is sent to the provider until then.",
+       input=ProviderConsentAccept, side_effect="write", agent="never", unattended=False,
+       handler=lambda c, i: provider_consent(c, i, action="accept"))
+    op(id="agent.provider_consent.withdraw", title=T("撤回模型提供方数据同意", "撤回模型提供方資料同意", "Withdraw model provider data consent"),
+       summary="Stop every further model call to this provider for the person.",
+       input=ProviderConsentRef, side_effect="write", agent="never", unattended=False,
+       handler=lambda c, i: provider_consent(c, i, action="withdraw"))
+
+    reports = AgentReports(store)
+
+    def report_message(c, i):
+        person_only(c)
+        agent.conversation(c.user_id, i.conversation_id)            # 404 for anyone but the owner
+        msg = store.one("SELECT body FROM agent_messages WHERE id=? AND conversation_id=? AND role='assistant'",
+                        (i.message_id, i.conversation_id))
+        if not msg:
+            raise ServiceError(404, "message_not_found", "消息不存在")
+        # The answer's text reaches the platform's reviewers only when the person chose to send it.
+        out = reports.create(c.user_id, conversation_id=i.conversation_id, message_id=i.message_id,
+                             category=i.category, note=i.note, excerpt=msg["body"] if i.include_excerpt else None)
+        return {"id": out["id"], "status": out["status"], "category": out["category"],
+                "included_excerpt": out["excerpt"] is not None, "created_at": out["created_at"]}
+
+    op(id="agent.message.report", title=T("举报回答", "檢舉回答", "Report an answer"),
+       summary="Report an assistant answer to the platform's reviewers; the answer's text is included only if the person chooses.",
+       input=MessageReport, side_effect="write", agent="never", unattended=False, handler=report_message)
 
     op(id="agent.turn.start", title=T("发送消息", "傳送訊息", "Send a message"),
        summary="Send a message (or regenerate an answer) and start the answer.", input=StartTurn,
