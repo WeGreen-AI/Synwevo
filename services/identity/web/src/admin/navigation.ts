@@ -2,6 +2,7 @@ import "../governance/settings.messages";
 import "../governance/model-prices.messages";
 import "../governance/model-costs.messages";
 import "../governance/model-provider.messages";
+import "../governance/model-risk.messages";
 import "../governance/runs.messages";
 import { TAB_PERMISSION, type Held, type Tab } from "../governance/access";
 export type AdminPage = Tab | "api-platform";
@@ -15,7 +16,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
   ] },
   { label: "应用与业务", items: [{ id: "mail", label: "邮件投递" }, { id: "api-platform", label: "API 管理" }] },
   { label: "运行与数据", items: [{ id: "app-runs", label: "应用运行" }, { id: "flow-runs", label: "流程运行" }] },
-  { label: "配置与治理", items: [{ id: "registration", label: "平台配置" }, { id: "model-provider", label: "模型提供方" }, { id: "model-prices", label: "模型价格" }, { id: "model-costs", label: "模型成本" }, { id: "audit", label: "审计" }] },
+  { label: "配置与治理", items: [{ id: "registration", label: "平台配置" }, { id: "model-provider", label: "模型提供方" }, { id: "model-prices", label: "模型价格" }, { id: "model-costs", label: "模型成本" }, { id: "model-risk", label: "付费风险控制" }, { id: "audit", label: "审计" }] },
 ];
 export function adminGroups(held: Held): AdminGroup[] {
   return ADMIN_GROUPS.map(group => ({ ...group, items: group.items.filter(item => held.has(

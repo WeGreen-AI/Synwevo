@@ -109,3 +109,38 @@ test('traffic inputs are bounded integers and payers never exceed the platform',
     assert.equal(validCostSpec({ ...trafficSpec, traffic }), false);
   }
 });
+
+const riskSpec = { ...trafficSpec, max_call_cost: '150', risk: { allowlist_only: true, payer_window_s: 3600, payer_window_cost: '5000',
+  route_window_s: 600, route_window_cost: null, balance_warn: '20000', balance_close: '5000', balance_poll_s: 300,
+  reconcile_tolerance: '100', pending_alert: null } };
+
+test('the per-call cap and risk section round-trip exactly; switched-off checks stay explicit nulls', () => {
+  const form = costForm(riskSpec);
+  assert.equal(form.risk, 'yes');
+  assert.equal(form.route_window_cost, '');
+  assert.deepEqual(validateCostForm(form, [riskSpec.unit]).spec, riskSpec);
+  assert.ok(validCostSpec(riskSpec));
+  // An older policy without them shows an explicit "not set" and publishes without them.
+  const legacy = { ...trafficSpec };
+  assert.equal(costForm(legacy).risk, 'no');
+  assert.equal(costForm(legacy).max_call_cost, '');
+  assert.deepEqual(validateCostForm(costForm(legacy), [trafficSpec.unit]).spec, legacy);
+  assert.equal(sameCostSpec(legacy, riskSpec), false);
+  assert.equal(sameCostSpec({ ...riskSpec, risk: { ...riskSpec.risk, payer_window_cost: null } }, riskSpec), false);
+});
+
+test('risk thresholds are validated before preview', () => {
+  const form = costForm(riskSpec);
+  for (const [change, field] of [[{ payer_window_s: '59' }, 'payer_window_s'], [{ balance_poll_s: '86401' }, 'balance_poll_s'],
+    [{ balance_close: '200.01' }, 'balance_close'], [{ reconcile_tolerance: '' }, 'reconcile_tolerance'],
+    [{ max_call_cost: '1.001' }, 'max_call_cost'], [{ allowlist_only: '' }, 'allowlist_only'], [{ risk: '' }, 'risk']]) {
+    const result = validateCostForm({ ...form, ...change }, [riskSpec.unit]);
+    assert.equal(result.spec, null, field);
+    assert.ok(result.errors[field], field);
+  }
+  for (const risk of [{ ...riskSpec.risk, payer_window_s: '3600' }, { ...riskSpec.risk, balance_close: '30000' },
+    { ...riskSpec.risk, allowlist_only: 'true' }, { ...riskSpec.risk, pending_alert: 5 }]) {
+    assert.equal(validCostSpec({ ...riskSpec, risk }), false);
+  }
+  assert.equal(validCostSpec({ ...riskSpec, max_call_cost: 150 }), false);
+});
