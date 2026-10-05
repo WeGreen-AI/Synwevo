@@ -441,6 +441,33 @@ def test_statement_reads_newest_first_for_recent_activity(env):
     assert both.status_code == 400
 
 
+def test_statement_passes_through_an_entry_kind_this_release_does_not_know(env, monkeypatch):
+    """Other billing packages add journal kinds (a welcome grant, a chargeback). Recent activity
+    must keep listing them, named by the ledger, instead of failing the whole statement. The
+    widened rule is still an allowlist of shape: a lowercase identifier, never free text."""
+    from synwevo_core.billing.usage import PayerUsage
+    fund(env, "alice", 100)
+    env.login("alice")
+    real = PayerUsage.statement
+
+    def with_unseen_kind(self, *args, **kwargs):
+        # Fixture: the real rows, plus one row of a kind this schema cannot store yet.
+        rows = real(self, *args, **kwargs)
+        return [{**rows[0], "id": "fixture-grant-entry", "kind": "grant"}, *rows]
+
+    monkeypatch.setattr(PayerUsage, "statement", with_unseen_kind)
+    newest = get(env, ROOT + "/statement", before_seq="9223372036854775807", limit="5")
+    assert [row["kind"] for row in newest["items"]][:2] == ["grant", "test_payment"]
+
+    def with_unsafe_kind(self, *args, **kwargs):
+        rows = real(self, *args, **kwargs)
+        return [{**rows[0], "kind": "<b>Grant</b>"}]
+
+    monkeypatch.setattr(PayerUsage, "statement", with_unsafe_kind)
+    refused = env.client.get(ROOT + "/statement", params={"before_seq": "9223372036854775807"})
+    assert refused.status_code == 503 and "<b>" not in refused.text
+
+
 def test_wallet_usage_schema_is_additive_and_idempotent(tmp_path):
     from synwevo_core import suite_schema
     assert suite_schema.MODULES.index("wallet_usage") > suite_schema.MODULES.index("billing")

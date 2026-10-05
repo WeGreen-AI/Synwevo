@@ -91,7 +91,10 @@ class WalletBalance(WalletModel):
 class WalletEntry(WalletUnit):
     seq: str
     id: str
-    kind: Literal["paid", "test_payment", "sale"]
+    #: The ledger's kind (today paid / test_payment / sale; billing packages add grant and
+    #: chargeback kinds). A shape allowlist, so a new kind is listed instead of failing the page
+    #: and nothing but a lowercase identifier can reach it.
+    kind: str = Field(pattern=r"^[a-z][a-z_]{0,39}$")
     delta: str
     created_at: int
 
