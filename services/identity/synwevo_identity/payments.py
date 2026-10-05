@@ -281,9 +281,21 @@ class TopupService:
             amount = amount_minor
         if self.frozen(payer_kind, payer_id):
             raise ServiceError(409, "wallet_frozen", "该钱包因支付争议已被冻结，暂不能充值")
-        self._velocity(initiator["id"], amount, spec["velocity"])
         order_id = new_id("top")
         credit = fen_to_units(amount, self.unit)
+        now = self.clock()
+        expires = now + CHECKOUT_TTL_S
+        # The limits and the order they admit are one write transaction, so two requests at once
+        # (a burst of card tests, a double click) cannot both pass the open-order, hourly, daily
+        # or amount limit. The ledger order follows in the ledger's own transaction.
+        with self.store.tx():
+            self._velocity(initiator["id"], amount, spec["velocity"])
+            self.store.execute(
+                "INSERT INTO payment_topups(order_id,environment,provider,payer_kind,payer_id,initiator_id,package_id,"
+                "amount_minor,currency,unit,credit_units,settings_revision,status,created_at,expires_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'creating',?,?)",
+                (order_id, self.environment, PROVIDER, payer_kind, payer_id, initiator["id"], package_id, amount,
+                 CURRENCY, self.unit.code, credit, resolved.revision, now, expires))
         try:
             self.ledger.create_payment_order(
                 order_id=order_id, payer_user_id=initiator["id"], provider=PROVIDER, merchant_id=MERCHANT,
@@ -291,17 +303,11 @@ class TopupService:
                 exchange_version=EXCHANGE_VERSION, payer_kind=payer_kind,
                 payer_org_id=payer_id if payer_kind == "organization" else None)
         except BillingError as exc:
+            self.store.execute("UPDATE payment_topups SET status='failed',failure_code='order_refused' "
+                               "WHERE order_id=? AND status='creating'", (order_id,))
             if exc.code in ("organization_unavailable", "account_unavailable"):
                 raise ServiceError(409, "topup_payer_unavailable", "该付款方当前不能充值") from None
             raise ServiceError(503, "topup_unavailable", "充值暂不可用，请稍后再试") from None
-        now = self.clock()
-        expires = now + CHECKOUT_TTL_S
-        self.store.execute(
-            "INSERT INTO payment_topups(order_id,environment,provider,payer_kind,payer_id,initiator_id,package_id,"
-            "amount_minor,currency,unit,credit_units,settings_revision,status,created_at,expires_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'creating',?,?)",
-            (order_id, self.environment, PROVIDER, payer_kind, payer_id, initiator["id"], package_id, amount,
-             CURRENCY, self.unit.code, credit, resolved.revision, now, expires))
         # Back to where the payment was started: a person's wallet, or the organization's
         # payments section for an organization top-up. Both pages poll the order status.
         base = (self.return_base or "").rstrip("/")

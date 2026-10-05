@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import threading
 import time
 from urllib.parse import parse_qs
 
@@ -211,6 +212,35 @@ def test_velocity_limits_bound_open_orders(world):
     world["configure"]({**SPEC, "velocity": {**SPEC["velocity"], "max_amount_per_day_minor": 1500}})
     r = post(c, "/api/auth/wallet/topups", {"package_id": "cny-10"})
     assert r.status_code == 409 and r.json()["error"] == "topup_daily_amount"
+
+
+def test_two_top_ups_at_once_cannot_both_pass_the_open_order_limit(world, monkeypatch):
+    """A burst (card testing, a double click) must not slip two orders past ``max_pending``: the
+    limit check and the order it admits are one write, so the second request sees the first."""
+    world["configure"]({**SPEC, "velocity": {**SPEC["velocity"], "max_pending": 1}})
+    service = world["api"].state.topups
+    checked = service._velocity
+    barrier = threading.Barrier(2, timeout=1.5)
+
+    def check_then_wait(*args, **kwargs):
+        checked(*args, **kwargs)
+        try:
+            barrier.wait()      # both requests have passed the check before either records its order
+        except threading.BrokenBarrierError:
+            pass                # the other request is still waiting to be checked: it must see this one
+
+    monkeypatch.setattr(service, "_velocity", check_then_wait)
+    clients, codes = [world["login"]("alice"), world["login"]("alice")], []
+    threads = [threading.Thread(target=lambda c=c: codes.append(post(c, "/api/auth/wallet/topups",
+                                                                        {"package_id": "cny-10"}).status_code))
+               for c in clients]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(20)
+    assert sorted(codes) == [201, 409]
+    assert world["store"].one("SELECT COUNT(*) AS n FROM payment_topups")["n"] == 1
+    assert len(world["stripe"].requests) == 1
 
 
 def test_turnstile_is_required_when_configured(world):

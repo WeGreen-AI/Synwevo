@@ -26,6 +26,7 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
 1. 账户页请求 `GET /api/auth/wallet/topup-options` 得到服务端定价的套餐与上下限；`POST /api/auth/wallet/topups`
    只接受 `package_id` 或上下限内的 `amount_minor`（分），浏览器不能指定入账额度。要求已验证邮箱；配置 Turnstile 时
    要求 `challenge_token`（动作 `topup`）；每个账户的每小时/每天订单数、同时未完成订单数、每天金额上限由支付设置给出。
+   限额检查与它放行的订单行在同一个写事务里：同时到达的两个请求（连点、批量试卡）不能一起越过限额。
 2. 服务端写入不可变的 `billing_orders`（`exchange_version=cny-fen-identity-v1`：入账单位 = 分 × 10^(scale−2)，精确）
    与 `payment_topups` 生命周期行，再向 Stripe 创建 Checkout Session：`mode=payment`、`currency=cny`、
    `payment_method_types=[card,wechat_pay,alipay]`、`payment_method_options[wechat_pay][client]=web`、
@@ -98,8 +99,8 @@ Turnstile 与限频，`payer_kind=organization`，只跳转到 Stripe 托管收�
 ## 6. 验证
 
 - `tests/integration/test_billing_grants_chargebacks.py`、`test_billing_welcome.py`：账本赠送、拒付、冻结、组织钱包、迁移。
-- `services/identity/tests/test_wallet_topups.py`：16 项端到端（Stripe 以 `httpx.MockTransport` 测试替身，Webhook 用夹具
-  签名密钥按官方算法签名）：未配置诚实关闭、服务端定价、Checkout 参数、限频、Turnstile、签名/时效/多签名、只在已付时入账、
+- `services/identity/tests/test_wallet_topups.py`：17 项端到端（Stripe 以 `httpx.MockTransport` 测试替身，Webhook 用夹具
+  签名密钥按官方算法签名）：未配置诚实关闭、服务端定价、Checkout 参数、限频（含并发请求不能同时越过）、Turnstile、签名/时效/多签名、只在已付时入账、
   重放与乱序、错配拒绝、收据、拒付冻结、组织充值。
 - `tests/integration/test_billing_org_payers.py`、`apps/suite/tests/test_agent_payers.py`、
   `services/identity/tests/test_org_billing_routes.py`：组织授权、成员与工作空间月额度（含跨月）、撤回授权阻止发送、
