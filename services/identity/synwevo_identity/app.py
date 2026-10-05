@@ -36,6 +36,7 @@ class Sweeper:
     def __init__(self, store, sessions, tickets, passkeys, *, start: bool = True):
         import threading
         self.store, self.sessions, self.tickets, self.passkeys = store, sessions, tickets, passkeys
+        self.topups = None   # payments.TopupService: replays webhook events a crash left unprocessed
         self._stop = threading.Event()
         self._thread = None
         if start:
@@ -52,7 +53,8 @@ class Sweeper:
                 "webauthn_challenges": self.passkeys.sweep(),
                 "rp_auth_requests": Rp(self.store).sweep(),
                 "account_deletions": finalize_deletions(self.store),
-                "member_imports": self._member_imports()}
+                "member_imports": self._member_imports(),
+                "payment_events": self.topups.process_pending() if self.topups and self.topups.environment else 0}
 
     def _member_imports(self) -> dict:
         from synwevo_core.identity import Identity
@@ -201,6 +203,14 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     wallet_ledger, wallet_units = wallet_from_host(store)
     api.include_router(build_wallet_router(identity, sessions, mailer, audit,
                                           ledger=wallet_ledger, units=wallet_units))
+    # Wallet top-ups and the payment provider's webhook (org-payments). Off until Admin publishes
+    # payment settings with sealed credentials; topup-options then says available:false.
+    from synwevo_core.oidc import issuer as _issuer
+    from .payment_routes import build_router as build_payment_router
+    from .payments import TopupService
+    api.state.topups = TopupService.from_host(store, return_base=_issuer())
+    api.state.auth_sweeper.topups = api.state.topups
+    api.include_router(build_payment_router(identity, sessions, audit, api.state.topups))
     from .admin_handover import build_router as build_handover_router
     api.include_router(build_handover_router(identity, sessions, passkeys, audit))
 

@@ -41,6 +41,8 @@ PURPOSES = {
     # A person's own AI provider key for their Agent: used server-side only, never returned.
     "agent-provider-key": (b"synwevo/agent-provider-key/v1", b"agent-provider-key"),
     "platform-model-key": (b"synwevo/platform-model-key/v1", b"platform-model-key"),
+    # The payment provider's secret API key and webhook signing secret (billing.payment_settings).
+    "platform-payment-key": (b"synwevo/platform-payment-key/v1", b"platform-payment-key"),
 }
 
 # Every sealed column in the schema: (table, primary key, column, purpose). `rekey` walks exactly
@@ -56,6 +58,8 @@ SEALED_COLUMNS = (
     ("form_requests", "id", "token_sealed", "forms-fill-link"),
     ("agent_settings", "user_id", "personal_key_sealed", "agent-provider-key"),
     ("model_provider_credentials", "environment", "secret_enc", "platform-model-key"),
+    ("payment_credentials", "environment", "secret_enc", "platform-payment-key"),
+    ("payment_credentials", "environment", "webhook_secret_enc", "platform-payment-key"),
 )
 
 
