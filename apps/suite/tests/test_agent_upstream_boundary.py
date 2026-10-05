@@ -90,6 +90,20 @@ def test_the_factory_refuses_a_non_loopback_upstream_at_startup(tmp_path, monkey
         DeepSeekProvider(base_url='http://example.test:31790')
 
 
+def test_the_risk_monitor_polls_the_same_upstream_as_the_gateway(request, monkeypatch):
+    # The balance poll sends the platform key too: it follows the same governed origin, so an
+    # isolated test instance reads the loopback double's balance and never api.deepseek.com.
+    monkeypatch.setenv('SYNWEVO_AGENT_PROVIDER', 'deepseek')
+    monkeypatch.setenv('SYNWEVO_BILLING_ENVIRONMENT', 'test')
+    monkeypatch.setenv(UPSTREAM_ENV, 'http://127.0.0.1:31790')
+    async def no_network(*args, **kwargs):
+        pytest.fail('Factory regression attempted real network access')
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, 'handle_async_request', no_network)
+    suite = request.getfixturevalue('suite')
+    gateway = suite.api.state.agent.provider.gateway
+    assert gateway.base_url == suite.api.state.model_risk_monitor.base_url == 'http://127.0.0.1:31790'
+
+
 def test_the_fixture_double_streams_the_provider_contract_over_real_http(double):
     credential = Credential('platform', FIXTURE_KEY, 'fixture-model', provider='deepseek')
     assert list_models(credential, base_url=double.base_url) == frozenset({'fixture-model', 'fixture-other'})

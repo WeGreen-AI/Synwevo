@@ -1,7 +1,9 @@
 """Upstream balance monitor and reconciliation for the platform model-provider account.
 
 docs/platform/model-risk.md. The monitor reads DeepSeek's `GET /user/balance` with the sealed
-platform key (ProviderSettings.resolve), keeps the key inside the request header and records
+platform key (ProviderSettings.resolve) from the same governed origin as the chat gateway
+(`upstream_base`: official, or a loopback FIXTURE double in the test environment only), keeps
+the key inside the request header and records
 only status codes, the availability flag and the balance in the cost policy's unit. Below the
 hard threshold, or when the provider reports the account unavailable, it closes paid dispatch
 through `trip_platform_breaker`; below the warning threshold it alerts.
@@ -29,7 +31,12 @@ from .ledger import Ledger
 from .models import BillingError, identifier, integer
 from .risk import _reason, notify_admins, trip_platform_breaker
 
-BALANCE_URL = "https://api.deepseek.com/user/balance"
+#: The provider's official API origin. The platform key is only ever sent here, or, in the test
+#: billing environment only, to a loopback FIXTURE double (``upstream_base``).
+OFFICIAL_ORIGIN = "https://api.deepseek.com"
+BALANCE_PATH = "/user/balance"
+BALANCE_URL = OFFICIAL_ORIGIN + BALANCE_PATH
+_LOOPBACK = ("127.0.0.1", "::1", "localhost")
 MAX_BODY = 64 * 1024
 _DECIMAL = re.compile(r"^-?(0|[1-9][0-9]{0,14})(\.[0-9]{1,12})?$")
 DAY = 86_400
@@ -38,6 +45,34 @@ MIN_READING_GAP_S = 900
 # Daily reconciliation waits this long after midnight UTC for the boundary reading to exist.
 SETTLE_DELAY_S = 600
 MAX_LEDGER_ROWS = 100_000
+
+
+def loopback_origin(value: object) -> bool:
+    """An ``http(s)://127.0.0.1|[::1]|localhost:<port>`` origin: no credentials, path or query."""
+    try:
+        url = httpx.URL(value) if isinstance(value, str) else None
+    except Exception:  # noqa: BLE001 - any unparsable value is simply not loopback
+        return False
+    return bool(url) and url.scheme in ("http", "https") and url.host in _LOOPBACK and url.port is not None \
+        and not url.userinfo and url.path in ("", "/") and not url.query and not url.fragment
+
+
+def upstream_base(environment: str | None, override: str | None) -> str:
+    """The upstream origin the platform key may be sent to, for every request that carries it
+    (chat, GET /models in the Suite gateway, GET /user/balance here).
+
+    Always the official origin, except that end-to-end tests may point at a labelled FIXTURE
+    double (apps/suite/scripts/deepseek_test_double.py) when the billing environment is
+    ``test`` AND the target is a loopback host. Anything else is refused at startup, so a
+    configuration mistake can never send the platform key to another host.
+    """
+    if override in (None, "", OFFICIAL_ORIGIN):
+        return OFFICIAL_ORIGIN
+    if environment != "test":
+        raise ValueError("DeepSeek upstream override is refused outside SYNWEVO_BILLING_ENVIRONMENT=test")
+    if not loopback_origin(override):
+        raise ValueError("DeepSeek upstream override must be a loopback origin: http(s)://127.0.0.1|[::1]|localhost:<port>")
+    return override.rstrip("/")
 
 
 def utc_day(at: int) -> int:
@@ -55,11 +90,13 @@ def units_to_decimal(units: int, scale: int) -> str:
 
 class UpstreamBalance:
     def __init__(self, store, *, environment: str, transport: httpx.BaseTransport | None = None,
-                 clock=None, timeout_s: float = 10.0):
+                 clock=None, timeout_s: float = 10.0, base_url: str | None = None):
         if environment not in ("test", "live"):
             raise BillingError("invalid_environment")
         self.store, self.environment = store, environment
         self.transport = transport  # Trusted Python fixture injection only; never a configurable URL.
+        # The gateway's origin rule (official, or a loopback FIXTURE double in test); raises otherwise.
+        self.base_url = upstream_base(environment, base_url)
         self.clock = clock or (lambda: int(time.time()))
         self.timeout_s = timeout_s
 
@@ -83,7 +120,7 @@ class UpstreamBalance:
         try:
             with httpx.Client(transport=transport, timeout=self.timeout_s, trust_env=False,
                               follow_redirects=False) as client:
-                with client.stream("GET", BALANCE_URL, headers={"Authorization": "Bearer " + api_key,
+                with client.stream("GET", self.base_url + BALANCE_PATH, headers={"Authorization": "Bearer " + api_key,
                                                                  "Accept": "application/json"}) as response:
                     if response.status_code != 200:
                         return f"upstream_http_{response.status_code}", None

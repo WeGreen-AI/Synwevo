@@ -90,8 +90,10 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 
 ## 6. 上游余额监控
 
-- `UpstreamBalance.poll` 用 `ProviderSettings.resolve()` 取得的密封平台密钥请求 `GET https://api.deepseek.com/user/balance`：
-  地址固定、不跟随重定向、不读代理环境变量、响应上限 64 KB；密钥只在请求头里，请求后立即丢弃。异常一律化为代码
+- `UpstreamBalance.poll` 用 `ProviderSettings.resolve()` 取得的密封平台密钥请求 `GET <上游地址>/user/balance`：
+  上游地址与聊天网关同一条规则（`synwevo_core.billing.upstream.upstream_base`）——正式与默认都是 `https://api.deepseek.com`，
+  只有 `SYNWEVO_BILLING_ENVIRONMENT=test` 且是回环地址时才是带标记的测试替身（Agent 组合用网关自己的地址启动 `RiskMonitor`；
+  其他地址在启动时拒绝）；不跟随重定向、不读代理环境变量、响应上限 64 KB；密钥只在请求头里，请求后立即丢弃。异常一律化为代码
   （`upstream_timeout`、`upstream_unreachable`、`upstream_http_<状态码>`、`upstream_bad_response`、`currency_mismatch`），
   因为异常文本可能回显请求头；日志与读数里从不出现密钥（有测试断言）。
 - 读数（`model_risk_balance_readings`）只存状态、代码、可用标志、单位与余额（按单位精度**向下取整**，不让余额看起来更多）。

@@ -129,6 +129,26 @@ def test_balance_poll_sends_the_sealed_key_only_in_the_header_and_records_amount
     assert alerts(p, "billing.risk.low_balance") == []
 
 
+def test_balance_poll_follows_the_governed_test_upstream_and_refuses_any_other(platform):
+    # The same origin rule as the chat gateway: the official origin, or (test environment only)
+    # a loopback FIXTURE double. The monitor started with the gateway's origin polls that double.
+    p = platform
+    double = "http://127.0.0.1:31791"
+    monitor = RiskMonitor(p.store, environment="test", transport=p.transport, clock=p.clock, base_url=double + "/")
+    assert monitor.base_url == double
+    assert UpstreamBalance(p.store, environment="test", base_url=BALANCE_URL[:-len("/user/balance")]).base_url == \
+        BALANCE_URL[:-len("/user/balance")]
+    assert monitor.run_once().ran[0] == "balance"
+    assert [str(r.url) for r in p.seen] == [double + "/user/balance"]
+    for environment, origin in (("live", double), ("test", "http://example.test:31791"),
+                                ("test", "http://127.0.0.1:31791/proxy"), ("test", "http://127.0.0.1")):
+        with pytest.raises(ValueError):
+            UpstreamBalance(p.store, environment=environment, base_url=origin)
+        with pytest.raises(ValueError):
+            RiskMonitor(p.store, environment=environment, base_url=origin)
+    assert len(p.seen) == 1
+
+
 def test_upstream_errors_are_recorded_as_codes_without_the_key(platform, caplog):
     p = platform
     caplog.set_level(logging.DEBUG)
