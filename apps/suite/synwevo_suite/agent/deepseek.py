@@ -470,7 +470,10 @@ class _Assembly:
         if a.finish_reason in ("aborted", "insufficient_system_resource"):
             raise DeepSeekError("provider_interrupted", a)
         # This intentionally does not translate absent usage into the engine's zero defaults.
-        return DeepSeekResult(StepResult(content, _FINISH[a.finish_reason], model=a.returned_model), replay, a)
+        # A content-filter stop stays a refusal, named so the Agent can tell it apart (safety.py).
+        details = {"category": "content_filter"} if a.finish_reason == "content_filter" else None
+        return DeepSeekResult(StepResult(content, _FINISH[a.finish_reason], model=a.returned_model,
+                                         stop_details=details), replay, a)
 
 
 _LOOPBACK = ("127.0.0.1", "::1", "localhost")

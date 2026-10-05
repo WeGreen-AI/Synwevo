@@ -123,6 +123,16 @@ ROUTES = [
     ("POST", "/api/admin/users/{uid}/platform-grants", "platform.roles.assign", True),
     ("POST", "/api/admin/platform-grants/{gid}/revoke", "platform.roles.assign", True),
     ("POST", "/api/admin/users/{uid}/platform-role", "platform.roles.assign", True),
+    # Agent content safety (admin_agent_safety.py): rule lists are configuration, reports and
+    # suspensions account governance. Suspend precedes lift so the lift has one to end.
+    ("GET", "/api/admin/agent-safety/rules", "platform.config.view", False),
+    ("PUT", "/api/admin/agent-safety/rules", "platform.config.manage", False),
+    ("GET", "/api/admin/agent-safety/reports", "platform.users.view", False),
+    ("POST", "/api/admin/agent-safety/reports/{report_id}/decide", "platform.users.manage", False),
+    ("GET", "/api/admin/agent-safety/stops", "platform.users.view", False),
+    ("GET", "/api/admin/agent-safety/suspensions", "platform.users.view", False),
+    ("POST", "/api/admin/agent-safety/users/{user_id}/suspend", "platform.users.manage", False),
+    ("POST", "/api/admin/agent-safety/users/{user_id}/lift", "platform.users.manage", False),
 ]
 CONSOLE_GET = "/api/admin/api-platform/overview"
 CONSOLE_POST = "/api/admin/api-platform/approvals"
@@ -177,6 +187,10 @@ def world(tmp_path, monkeypatch):
     # One run of each kind, so the run routes have a row to answer about (admin_runs).
     op_run_fixture(store, "run_matrix_fixture", user=plain, workspace=ident.workspaces_for(plain["id"])[0]["id"])
     flow_run_fixture(store, "fr_matrix_fixture", user=plain)
+    # FIXTURE: one Agent report by the plain account, so the decide route has one to settle.
+    from synwevo_core.agent_safety import AgentReports
+    report = AgentReports(store).create(plain["id"], conversation_id="conv_000000000fix", message_id="msg_000000000fix",
+                                        category="wrong", note=None, excerpt=None)
     clients: list[TestClient] = []
 
     def login(user, *, remember=False):
@@ -187,7 +201,7 @@ def world(tmp_path, monkeypatch):
         return c
 
     w = {"api": api, "store": store, "ident": ident, "root": root, "plain": plain, "login": login,
-         "draft_id": draft["id"], "cost_price_id": cost_price_id,
+         "draft_id": draft["id"], "cost_price_id": cost_price_id, "report_id": report["id"],
          "wid": ident.workspaces_for(plain["id"])[0]["id"]}
     yield w
     for c in clients:
@@ -226,7 +240,8 @@ def _path(template, w, *, legacy: str | None = None):
                            draft_id=w["draft_id"], run_id="run_matrix_fixture", flow_run_id="fr_matrix_fixture",
                            oid="org_fixture_missing", action="freeze", gid="pg_fixture_missing",
                            freeze_id="freeze_fixture_missing",
-                           suspension_id="rsus_fixture_missing", entry_id="rallow_fixture_missing")
+                           suspension_id="rsus_fixture_missing", entry_id="rallow_fixture_missing",
+                           report_id=w.get("report_id", "arp_fixture_missing"), user_id=w["plain"]["id"])
 
 
 #: Risk changes the matrix reaches with valid bodies but no matching state: past the permission
@@ -280,6 +295,11 @@ def _call(client, method, path, w):
                         reason=REASON)
         return client.request(method, path, json=body,
                               headers={CSRF_HEADER: client.cookies.get(CSRF_COOKIE) or ""})
+    if path.startswith("/api/admin/agent-safety/"):
+        if method == "PUT":
+            return client.put(path, json={"rules": [], "reason": REASON, "expected_version": 0},
+                              headers={CSRF_HEADER: client.cookies.get(CSRF_COOKIE) or ""})
+        return post(client, path, {"decision": "dismissed"} if path.endswith("/decide") else {"reason": REASON})
     if path == "/api/admin/settings/preview":
         return post(client, path, {"expected_revision": 0, "changes": {"notifications.conversation_digest_daily_cap": 9}})
     return post(client, path, {"reason": REASON, "status": "suspended", "mode": "open", "role": "auditor",

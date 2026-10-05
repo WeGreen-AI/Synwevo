@@ -1,10 +1,11 @@
-/** The portal's public addresses: the home, 数据与隐私 and 服务说明, each in three languages.
+/** The portal's public addresses: the home, 数据与隐私, 服务说明, and the versioned 服务条款,
+ *  AI 使用规范 and 定价 (synwevo_core.terms), each in three languages.
  *  Mirrors `PUBLIC_PATHS` in synwevo_portal/public.py, which server-renders the same pages. */
-export type PublicPage = "home" | "privacy" | "service";
+export type PublicPage = "home" | "privacy" | "service" | "terms" | "ai-use" | "pricing";
 export type PublicLocale = "zh-Hans" | "zh-Hant" | "en";
 
 const LOCALES: readonly PublicLocale[] = ["zh-Hans", "zh-Hant", "en"];
-const PAGES: readonly PublicPage[] = ["home", "privacy", "service"];
+const PAGES: readonly PublicPage[] = ["home", "privacy", "service", "terms", "ai-use", "pricing"];
 
 /** `/`, `/en`, `/zh-Hant/privacy`, `/en/service` … — zh-Hans is the unprefixed canonical form. */
 export function publicPath(page: PublicPage, locale: string): string {
@@ -29,6 +30,17 @@ export const PUBLIC_META: Record<PublicPage, { title: string; description: strin
   home: { title: "Synwevo · 工作流程自动化平台", description: "文档自动化、团队协作与消息沟通，汇聚于同一个工作空间。" },
   privacy: { title: "数据与隐私 · Synwevo", description: "Synwevo 如何处理你的账户、文档与消息数据：存储位置、Cookie、保留期限、导出与删除。" },
   service: { title: "服务说明 · Synwevo", description: "Synwevo 是什么、有哪些应用与角色、如何注册、有哪些限制、遇到问题找谁。" },
+  terms: { title: "服务条款 · Synwevo", description: "使用 Synwevo 的条款：账户、钱包与充值（不可退款）、按量计费、免费额度、组织付费与 AI 输出。" },
+  "ai-use": { title: "AI 使用规范 · Synwevo", description: "使用 Synwevo Agent 时不允许的内容与行为、内容安全如何执行，以及 AI 生成内容的标识。" },
+  pricing: { title: "定价 · Synwevo", description: "Synwevo Agent 如何计费：人民币钱包、按实际用量扣费、运行前确认价格与上限、免费额度与组织付费。" },
+};
+
+/** Version and effective date of the versioned documents — the same values as
+ *  synwevo_core.terms.DOCUMENTS (tests/integration/test_portal_public.py keeps them equal). */
+export const DOCUMENT_VERSIONS: Record<"terms" | "ai-use" | "pricing", { version: string; effective: string }> = {
+  terms: { version: "2026-10-05", effective: "2026-10-05" },
+  "ai-use": { version: "2026-10-05", effective: "2026-10-05" },
+  pricing: { version: "2026-10-05", effective: "2026-10-05" },
 };
 
 /** True on the workspace host (production: workplace.synwevo.com), where the server marks the

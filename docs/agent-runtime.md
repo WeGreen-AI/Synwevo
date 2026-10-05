@@ -169,6 +169,38 @@ it quotes the previous per-run budget, call count and time limit at the new term
 when the quote equals the terms shown; otherwise it stops at the review and says the quote
 differs. The same applies after a confirmation is refused because the terms changed.
 
+## Data-sharing consent and content safety
+
+`synwevo_core/agent_safety.py` (shared: the workplace origin enforces, the account service
+governs) and `apps/suite/synwevo_suite/agent/safety.py`.
+
+* **Separate consent.** When the credential's provider is a named processor (today DeepSeek,
+  `PROVIDER_TERMS`), no message is admitted and no model call is made until the person accepted
+  that provider's current version (`agent.provider_consent.get/accept/withdraw`, Agent settings
+  "Sending content to the model provider DeepSeek"). Missing or withdrawn: 409
+  `provider_consent_required` `{provider, version}`; an older accepted version or a stale accept:
+  409 `provider_consent_version_changed`. Checked at admission and in `_check_context`, i.e.
+  before every model call, so a withdrawal stops a running answer's next call. A withdrawal is
+  journalled (`agent_provider_consent_withdrawn`).
+* **Input rules.** Administrators publish keyword/pattern lists as immutable versions
+  (`/api/admin/agent-safety/rules`, `platform.config.manage`, audited). A matching message is
+  refused before anything is stored or sent: 422 `content_blocked_input` `{category}`.
+* **Output rules.** Streamed pieces are checked with a carried window; the completing piece is
+  never shown, `should_stop` ends the model call, what was shown is withdrawn from the message and
+  the event stream, the step is not kept for replay, and the turn fails `content_blocked_output`.
+  DeepSeek `finish_reason: content_filter` carries `stop_details.category = content_filter` and
+  fails `content_filtered_output` (withheld the same way); other refusals stay `provider_refused`.
+  Whether a stopped call is charged is the gateway's incomplete-call policy.
+* **Records.** A stop is stored as rule id/version, direction and length — never text.
+  `agent.message.report` files a report on an answer; its text is attached only when the person
+  sets `include_excerpt`. Administrators (`platform.users.*`) close reports and suspend or
+  restore a person's Agent access with a reason: 403 `agent_access_suspended`, running turns are
+  cancelled, journalled `agent_access_suspended`.
+* **Terms.** A paid run records the terms / AI use / pricing versions in force once per version
+  (`synwevo_core/terms.py`); the account export lists them, together with the Agent's visible
+  conversation text, memories, settings, consents, quotes and the wallet statement
+  (`synwevo_core/agent_records.py`); account deletion erases the Agent's content.
+
 ## Verification and remaining gates
 
 Use isolated test identities/data and the worktree's import paths, never the real `data/`.
@@ -178,7 +210,8 @@ to the verified commit. Provider test doubles validate engine contracts only.
 
 Before enabling production, verify an actual model/tool/artifact run, compatible model options,
 legal cross-workspace transfer, attachments, personal automations, recovery and resource limits.
-Update public privacy/data-processing descriptions before sending business content to a model.
+The public privacy page now describes the model provider (docs/platform/public-pages.md §2.9);
+keep it in step with `PROVIDER_TERMS` before sending business content to a model.
 CI and deployment must use `.github/workflows/production.yml`; missing billing or environment
 approval is not permission to deploy through another route.
 

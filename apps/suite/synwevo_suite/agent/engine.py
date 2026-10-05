@@ -25,8 +25,12 @@ from synwevo_core.billing import BillingError
 from synwevo_core.capabilities import Capabilities, canonical, fingerprint
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import Store, new_id, now
+from synwevo_core.terms import TermsAcceptances
+
+from synwevo_core.agent_safety import AgentAccess, ProviderConsents, SafetyEvents
 
 from .provider import Cancelled, Credential, Provider, ProviderError, replayable, resolve_credential
+from .safety import OutputGuard, check_input, refused
 from .tools import TOOLS, ToolContext, policy_allows, resource_reads, snapshot_read, tool_result_text, validate_tool
 
 log = logging.getLogger("synwevo.agent")
@@ -385,6 +389,13 @@ class Agent:
     # ================================================================ turns
     def start_turn(self, user: dict, cid: str, text: str | None, *, parent_id: str | None,
                    regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None) -> dict:
+        # Who may use the Agent at all, the separate consent for the provider this message would
+        # go to, and the content rules come first: a refused message is never stored or sent.
+        # The input refusal is recorded outside the admission transaction (that rolls back).
+        self.conversation(user["id"], cid)                  # 404 for anyone but the owner
+        self._check_person(user["id"], self._credential(user["id"]))
+        if not regenerate_of:
+            check_input(self.store, user["id"], (text or "").strip(), conversation_id=cid)
         # The active-turn check, quota and every message insert form one admission decision.
         with self.store.tx():
             return self._start_turn(user, cid, text, parent_id=parent_id, regenerate_of=regenerate_of, quote_id=quote_id, consent_id=consent_id)
@@ -466,6 +477,9 @@ class Agent:
                             parent_id=parent_id, regenerate_of=regenerate_of)
             except BillingError as exc:
                 raise ServiceError(409, "billing_" + exc.code, "本次预算授权已变化，请重新获取报价") from None
+            # A confirmed paid run is the person's first paid use of the published terms, AI use
+            # rules and pricing versions in force (synwevo_core.terms); recorded once per version.
+            TermsAcceptances(self.store).record_paid_use(user["id"], context=f"paid_run:{turn_id}")
         elif quote_id is not None or consent_id is not None:
             raise ServiceError(409, "billing_not_configured", "付费模型服务尚未配置")
         with self.store.tx() as t:
@@ -655,6 +669,7 @@ class Agent:
         base = self._api_history(t["conversation_id"], t["user_message_id"])
         system = self._system(user, ctx)
         steps = t["steps"]
+        guard = OutputGuard(self.store)      # the output rules in force when this answer started
         while True:
             t = self.store.one("SELECT * FROM agent_turns WHERE id=?", (turn_id,))
             if t["cancel_requested"] or self._closed:
@@ -675,12 +690,16 @@ class Agent:
             last = [time.monotonic()]
 
             def on_text(chunk: str) -> None:
+                if not guard.admit(chunk):
+                    return                   # nothing of a blocked answer is shown from here on
                 buf.append(chunk)
                 if time.monotonic() - last[0] >= FLUSH_S:
                     self._flush(t, buf)
                     last[0] = time.monotonic()
 
             def should_stop() -> bool:
+                if guard.blocked:
+                    return True              # stop the model call; nothing more will be shown
                 row = self.store.one("SELECT cancel_requested FROM agent_turns WHERE id=?", (turn_id,))
                 return self._closed or not row or bool(row["cancel_requested"])
 
@@ -695,13 +714,16 @@ class Agent:
                     self.store.execute("UPDATE agent_turns SET usage_state='pending',updated_at=? WHERE id=?",
                                        (now(), turn_id))
                     result = metered(turn=t, logical_call_id=f"step:{steps}",
-                                     validate_result=lambda step: self._validate_result(turn_id, step), **arguments)
+                                     validate_result=lambda step: self._validate_result(turn_id, step, guard), **arguments)
                 else:
                     result = self.provider.step(**arguments)
             except Cancelled as err:
                 if hasattr(err, "metered_usage"):
                     self._record_usage(turn_id, steps, err.metered_usage, err.usage_reliability,
                                        previous_pending=t["usage_state"] == "pending")
+                if guard.blocked:
+                    self._withhold(t, buf, guard.record(t, self._shown(t)), api=turn_msgs)
+                    return
                 self._flush(t, buf)
                 self._keep_partial(t, turn_msgs, err)
                 self._finish(t, "cancelled", None, api=turn_msgs)
@@ -710,13 +732,33 @@ class Agent:
                 if hasattr(err, "metered_usage"):
                     self._record_usage(turn_id, steps, err.metered_usage, err.usage_reliability,
                                        previous_pending=t["usage_state"] == "pending")
+                if guard.blocked:
+                    self._withhold(t, buf, guard.record(t, self._shown(t)), api=turn_msgs)
+                    return
+                if err.code == "content_filtered_output":
+                    SafetyEvents(self.store).record(t["user_id"], "provider", rule=None, version=None,
+                        conversation_id=t["conversation_id"], turn_id=turn_id, characters=self._shown(t),
+                        category="content_filter")
+                    self._withhold(t, buf, err, api=turn_msgs)
+                    return
                 self._flush(t, buf)
                 self._keep_partial(t, turn_msgs, err)
                 self._finish(t, "failed", err, api=turn_msgs)
                 return
-            self._flush(t, buf)
             self._record_usage(turn_id, steps, result.usage or {}, result.usage_reliability,
                                previous_pending=t["usage_state"] == "pending")
+            guard.check_result(result)
+            if guard.blocked:
+                # The blocked step is not kept for replay either: the model never sees it again.
+                self._withhold(t, buf, guard.record(t, self._shown(t)), api=turn_msgs)
+                return
+            if result.stop_reason == "refusal" and refused(result).code == "content_filtered_output":
+                SafetyEvents(self.store).record(t["user_id"], "provider", rule=None, version=None,
+                    conversation_id=t["conversation_id"], turn_id=turn_id, characters=self._shown(t),
+                    category="content_filter")
+                self._withhold(t, buf, refused(result), api=turn_msgs)
+                return
+            self._flush(t, buf)
             if should_stop():
                 self._finish(t, "cancelled", None, api=turn_msgs)
                 return
@@ -751,11 +793,14 @@ class Agent:
             turn_msgs.append(self._tool_results(turn_id, steps, tool_uses))
             self._save_api(t, turn_msgs)
 
-    def _validate_result(self, turn_id, result):
+    def _validate_result(self, turn_id, result, guard: OutputGuard | None = None):
         """Pure acceptance check reused before metered settlement and before tool execution."""
         if result.stop_reason == "refusal":
-            cat = (result.stop_details or {}).get("category")
-            raise ProviderError("provider_refused", "模型拒绝回答这个请求" + (f"（{cat}）" if cat else ""))
+            raise refused(result)
+        if guard is not None:
+            guard.check_result(result)
+            if guard.blocked:
+                raise ProviderError("content_blocked_output", "回答触发了内容安全规则，已停止生成")
         tool_uses = [b for b in replayable(result.content) if b.get("type") == "tool_use"]
         if (len(tool_uses) > MAX_TOOLS_PER_STEP
                 or any(not isinstance(b.get("id"), str) or not b["id"] or not isinstance(b.get("name"), str) for b in tool_uses)
@@ -766,6 +811,19 @@ class Agent:
         if result.stop_reason == "max_tokens":
             raise ProviderError("provider_truncated", "回答过长被截断，请把任务拆小一些")
         return tool_uses
+
+    def _shown(self, t: dict) -> int:
+        row = self.store.one("SELECT LENGTH(body) AS n FROM agent_messages WHERE id=?", (t["assistant_message_id"],))
+        return row["n"] if row else 0
+
+    def _withhold(self, t: dict, buf: list[str], err: ProviderError, *, api: list[dict]) -> None:
+        """End a turn whose answer was stopped by content safety: nothing more is shown, what was
+        already shown of it is withdrawn from the message and the stream, and the turn fails with
+        the safety code. Usage already recorded stays; charging is the gateway's policy."""
+        buf.clear()
+        self.store.execute("UPDATE agent_messages SET body='', updated_at=? WHERE id=?", (now(), t["assistant_message_id"]))
+        self.store.execute("DELETE FROM agent_events WHERE turn_id=? AND type='text'", (t["id"],))
+        self._finish(t, "failed", err, api=api)
 
     def _record_usage(self, turn_id: str, steps: int, usage: dict, reliability: str | None, *, previous_pending=False) -> None:
         # Counters summarize trusted observations. A missing terminal count is never a zero
@@ -809,10 +867,23 @@ class Agent:
                 or self.provider.name != t["provider"]):
             raise ProviderError("model_configuration_changed", "模型配置已变化，请重新发起回答")
 
+    def _check_person(self, user_id: str, credential: Credential | None) -> None:
+        """The person's Agent access is not suspended and, when the model provider is a named
+        processor (DeepSeek), their consent covers its current version. Raises ServiceError."""
+        AgentAccess(self.store).require(user_id)
+        if credential is not None:
+            ProviderConsents(self.store).require(user_id, credential.provider)
+
     def _check_context(self, t: dict, credential: Credential) -> None:
         self._check_credential_binding(t, credential)
         current = self._credential(t["user_id"])
         self._check_credential_binding(t, current)
+        try:
+            # Before *every* model call: a withdrawn consent or a suspension stops the next call
+            # of a running answer too, including one resumed after a confirmation.
+            self._check_person(t["user_id"], current)
+        except ServiceError as exc:
+            raise ProviderError(exc.code, exc.message) from None
         try:
             self.conversation(t["user_id"], t["conversation_id"])
         except ServiceError:

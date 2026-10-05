@@ -1,4 +1,4 @@
-# 门户公开页：首页、数据与隐私、服务说明
+# 门户公开页：首页、数据与隐私、服务说明、服务条款、AI 使用规范、定价
 
 > 状态：2026-09-28 实现（round 9 · 公开页批次）。本文写的是**当前代码的行为与页面上每一句话的出处**；
 > 页面文案改动必须同时改这里的表，三种语言一起改。运营方尚未决定的事项在 §5，页面上一律不写、不留占位。
@@ -10,6 +10,9 @@
 | 首页 | `/`、`/zh-Hant`、`/en`（别名 `/zh-Hans`） | `apps/portal/web/src/PublicHome.tsx` | `apps/portal/synwevo_portal/public.py` `COPY[locale]["pages"]["home"]` |
 | 数据与隐私 | `/privacy`、`/zh-Hant/privacy`、`/en/privacy` | `apps/portal/web/src/PublicPages.tsx` `privacyContent()` | 同上 `"privacy"` |
 | 服务说明 | `/service`、`/zh-Hant/service`、`/en/service` | `PublicPages.tsx` `serviceContent()` | 同上 `"service"` |
+| 服务条款 | `/terms`、`/zh-Hant/terms`、`/en/terms` | `PublicPages.tsx` `termsContent()` | 同上 `"terms"` |
+| AI 使用规范 | `/ai-use`、`/zh-Hant/ai-use`、`/en/ai-use` | `PublicPages.tsx` `aiUseContent()` | 同上 `"ai-use"` |
+| 定价 | `/pricing`、`/zh-Hant/pricing`、`/en/pricing` | `PublicPages.tsx` `pricingContent()` | 同上 `"pricing"` |
 | 运行时事实 | `/public/deployment.json` | `PublicPages.tsx` `useDeploymentFacts()` | `public.py` `deployment_facts()` |
 
 * 路径表在两处各写一份并保持一致：`public.py` 的 `PUBLIC_PATHS` / `PUBLIC_PAGES` / `public_path()` 与
@@ -20,7 +23,11 @@
 * 分享摘要（CI-80）：公开页的服务端 `<head>` 带 `og:site_name/type/title/description/locale`（zh_CN / zh_HK / en_US 及另两种为 alternate）与
   `twitter:card=summary_large_image`；`og:url`、`og:image`（`/share-card.png`，1200×630，由确认 Logo 生成）只在配置了合法公开源时出现，从不取自 Host；
   私有页（工作空间、登录等）没有任何 `og:` 标签。
-* `robots.txt` 对全部 12 个公开路径 `Allow: <path>$`；`sitemap.xml` 列 9 个规范路径（3 页 × 3 语言，`/zh-Hans/...` 别名不列）。
+* `robots.txt` 对全部公开路径（6 页 × 3 语言 + `/zh-Hans/...` 别名）`Allow: <path>$`；`sitemap.xml` 列 18 个规范路径（6 页 × 3 语言，别名不列）。
+* 带版本的文档（服务条款、AI 使用规范、定价，2026-10-05 起）：版本与生效日期只在 `packages/core/synwevo_core/terms.py`
+  `DOCUMENTS` 定义；`public.py` 把它印进三语言首段（`_versioned`），外壳的 `publicRoutes.ts` `DOCUMENT_VERSIONS` 写同样的值，
+  `tests/integration/test_public_ai_facts.py` 保持三者一致。这三页的页首写「版本 …，自 … 起生效」，不写「不是正式的法律条款」。
+  改措辞即发新版本；新版本生效后，下一次付费运行记录新版本（`agent_terms_acceptances`）。
 * 首页叙事顺序：它是什么（主视觉 + 品牌卡）→ 今天可用的应用（Synwevo Docs、Synwevo Message，没有第三张卡）→
   一起怎样完成工作（工作空间 / 组织 / 角色与授权 / 通知）→ 为什么可以信任（数据与隐私摘要，链接到全文）→ 下一步。
 * 数据与隐私 / 服务说明的分层：页首（眉标、标题、导语、「不是正式法律条款」提示）→ 摘要卡 → 「本部署的当前状态」
@@ -45,7 +52,8 @@
 | Synwevo Message：私聊与群组、引用回复、@提及、表情回应、附件与语音、文档链接卡片、群公告、举报处理；独立打开，也可以从工作空间顶栏「消息」进入 | H S | `docs/platform/messaging.md` §7；`apps/messages`（CI-66，2026-09-28 起在 message.synwevo.com）；`packages/auth-client/web/src/MessagesLink.tsx`（CI-88 改写；此前写「目前从平台栏进入、正在成为独立应用」，CI-66/CI-82 上线后失实） |
 | 新成员只看到加入之后的消息；退出或被移除后不再可见；重新加入不恢复 | H P | `docs/platform/messaging.md:28`；`packages/core/synwevo_core/messaging.py`（`joined_seq`、`left_seq`） |
 | 在线状态与正在输入只给同一会话的成员看、不保存、可关闭；已读回执默认关闭，双方都开启才显示 | H P | `docs/platform/messaging.md` §7.2–7.4；`packages/core/synwevo_core/messaging.py`（`messaging_settings` 缺省 `show_presence=1`、`read_receipts=0`，互惠）、`messaging_presence.py`（只在内存）。CI-88 前页面写「没有在线状态、他人已读回执或正在输入提示」——CI-74/CI-73 上线后失实 |
-| 没有任何 AI 处理用户内容 | H P | 仓库内无任何模型调用（`grep -ri "openai\|anthropic\|llm" packages apps services` 只命中文档 / 组件名守卫的说明） |
+| 只有 Synwevo Agent 会把内容发给 AI 模型：在你使用它并单独同意后，发送给模型提供方 DeepSeek；组织工作空间的内容默认不发送；其它应用不把内容交给 AI 模型（2026-10-05 取代「没有任何 AI 处理你的内容」——Agent 存在后该句失实；所有者决定公开点名 DeepSeek，不用其 Logo、不暗示合作） | H P | 模型调用只在 `apps/suite/synwevo_suite/agent/`（`engine.py` → `provider.py` / `deepseek.py` / `gateway.py`）；单独同意 `synwevo_core/agent_safety.py` `ProviderConsents.require`（`engine._check_person`，入列与每次模型调用前）；空间策略 `agent/tools.py` `workspace_policy`（组织空间无策略 = `none`） |
+| Synwevo Agent 是否在本部署开放（实时） | P S（当前状态） | §3 `agent` |
 
 ### 2.2 角色与授权
 
@@ -130,6 +138,10 @@
 | 组织所有者可冻结 / 删除 / 7 天内恢复组织 | S | `organizations.py:484-500` `transition`（`require(owner=True)`） |
 | 平台管理员可停用账户，停用即刻结束全部登录 | S | `services/identity/synwevo_identity/admin_routes.py:424-445` |
 
+| 导出另含 Agent：对话的可见文字、执行的操作（名称、空间、状态）、记忆、设置（只说明是否设置了个人密钥）、数据同意及其历史、报价与持续付款授权、接受的条款版本、举报、个人钱包流水；不含模型的思考过程 / 私有回放、工具输入与结果、任何密钥 | P | `synwevo_core/agent_records.py` `export`；`account_routes.py` `export`（`result["agent"]`）；`services/identity/tests/test_agent_records.py` |
+| 删除到期后清除 Agent 对话、消息、轮次、事件、工具调用、记忆、设置（含密封的个人密钥），以及举报里的备注与摘录；报价、付款授权、账本、同意与内容安全记录以永久、已无姓名的账户标识保留；备份恢复后由 `user_deleted` 重放再次清除 | P | `agent_records.erase`；`profile.py` `finalize_deletions`；`journal.py` `user_deleted` |
+| 删除时钱包未用余额作废，不退还（充值不可退款）；删除前在账户页明示 | P T | 所有者决定 2026-10-05（不退款）；`services/identity/web/src/pages/account/PrivacySection.tsx` |
+
 ### 2.8 限额（服务说明表）
 
 | 项目 | 数值 | 出处 |
@@ -145,6 +157,39 @@
 | 注册 | 每来源 15 分钟 10 次；每邮箱每小时 3 次 | `registration.py:56, 61` |
 | 成员导入文件 | 20 MB | `member_import.py:71` |
 
+### 2.9 AI 与模型提供方（数据与隐私 `privacy-ai`）
+
+| 陈述 | 页面 | 出处 |
+|---|---|---|
+| 第一次发消息前单独同意（带版本，记录）；版本更新再问；撤回后不再发起任何模型调用（含进行中回答的下一次调用） | P | `agent_safety.py` `PROVIDER_TERMS["deepseek"].version`、`ProviderConsents.accept/withdraw/require`；`engine._check_context`；撤回写入安全日志 `agent_provider_consent_withdrawn`；`apps/suite/tests/test_agent_safety.py` |
+| 发送：本对话消息、同一对话较早消息、记住的偏好、AI 处理政策允许的工作空间内容；组织空间默认不允许，个人空间由本人决定 | P | `engine._api_history`、`_system`；`tools.py` `policy_allows` / `workspace_policy` |
+| 受托处理方：杭州深度求索人工智能基础技术研究有限公司（DeepSeek）；以开放平台用户身份调用，无合作或背书 | P | `agent_safety.py` `PROVIDER_TERMS`（名称须与 DeepSeek 隐私政策逐字复核，见 §5） |
+| 跨境：服务器在东京；内容传给 DeepSeek，按其隐私政策存储在中国境内 | P | 所有者决定 2026-10-05；DeepSeek 隐私政策（cdn.deepseek.com，2026-10-05 读取） |
+| 可能用于改进模型；正在取得书面确认 | P | 所有者决定 2026-10-05：书面确认前如实写 DeepSeek 隐私政策允许的范围（§5 待办） |
+| 个人密钥：以本人账户发给该密钥的服务商 | P | `provider.py` `resolve_credential`（`personal`） |
+| 内容安全：管理员规则（带版本、审计）+ 提供方过滤；被拦只记规则、方向、长度；举报只在本人选择时附原文 | P A | `agent_safety.py` `SafetyRules` / `SafetyEvents` / `AgentReports`；`agent/safety.py`；`admin_agent_safety.py` |
+| 每条回答与导出注明「由 AI 生成，可能有误，仅供参考」 | P A | 对话界面（chat-ux 包，`aiLabel.ts`、`exportChat.ts`）；账户导出 `agent_records.export` 的 `notice` |
+| Agent 对话与记忆保留到本人删除或账户删除；内容安全记录长期保留（无内容）；计费记录删除后去名、按法定期限保留 | P | `agent_records.py`；`suite_schema/agent_safety.py` |
+
+### 2.10 服务条款、AI 使用规范、定价
+
+| 陈述 | 页面 | 出处 |
+|---|---|---|
+| 充值一经完成不可退款，未用余额不退（适用法律强制要求的除外）；没有退款流程 | T R | 所有者决定 2026-10-05「不退款」；org-payments 包没有退款路径（拒付另行处理） |
+| 余额闭环：只用于 Synwevo 服务，不能转让、提现、兑换现金，不计利息 | T R | 所有者决定（Credits 闭环）；账本只有钱包 → 销售分录（`billing/ledger.py`） |
+| 拒付 / 争议：冻结钱包、记账，余额不为负 | T | org-payments 包（`billing_account_freezes`、chargeback 分录；`billing_journal_apply` 触发器 `wallet_negative`） |
+| 按实际用量扣费；运行前显示单价、价格版本、最高预算，确认后才扣；价格 / 模型变化需重新确认 | T R | `agent/quotes.py`、`consents.py`（`model_changed`）；`gateway.py` 结算可信用量 |
+| 未完成调用（截断 / 过滤 / 中断 / 停止）是否计费按管理员公布的策略，默认平台承担 | T R | 共享契约 incomplete-call policy（gateway 包，默认全部 false） |
+| 免费额度：本部署开放时，验证邮箱后一次 1 元，同一邮箱一次 | T R | 所有者决定 2026-10-05；org-payments 包 `billing/welcome.py`（验证地址、每账户一次、每规范化地址一次、每日上限） |
+| 组织付费：所有者 / 获授权管理员充值组织钱包、设成员额度；成员选付款方；组织只看按成员的用量与金额 | T R | 所有者决定；org-payments 包 `agent/payers.py`、`org_payers.py`；usage-pages 包 group=member |
+| 目前只有 Synwevo Agent 按用量收费，以人民币计价 | R | 账本只有 `agent` 命名空间（`configuration.py` `Ledger(..., namespace="agent")`） |
+| 本页不列具体单价：单价按版本发布，运行前显示 | R | `billing/catalogue.py`（版本化售价）；`agent.billing.offer` |
+| 不允许的内容 / 行为与执行方式（规则检查、提供方过滤、只记必要信息、举报、暂停） | U | `agent_safety.py`；`agent/safety.py`；`admin_agent_safety.py`（暂停 `platform.users.manage`，写入安全日志 `agent_access_suspended`） |
+| 不转售 / 不提供可直接调用模型的接口 | U | 需求 §1（本期不对外开放 OpenAI 兼容端点） |
+| 首次付费使用记录接受的版本 | T | `synwevo_core/terms.py` `TermsAcceptances.record_paid_use`（`engine._start_turn`，付费运行入列事务内） |
+
+「页面」列另加：T = 服务条款，U = AI 使用规范，R = 定价，A = 产品内（Agent / 账户）。
+
 ## 3. 运行时读取的事实（`/public/deployment.json`）
 
 `public.py` `deployment_facts()` 在服务端读取（浏览器只访问同源文档，CSP `connect-src 'self'` 不变）：
@@ -157,6 +202,7 @@
 | `accounts.external_providers` | 同上 → `external_providers[].label`（`external.py:171`） | 提供商名列表 / 未启用 |
 | `accounts.registration` | 同上 → `registration`（`open` / `invite` / `closed`） | 开放注册：邮箱验证后即可使用 / 仅凭邀请注册 / 已关闭 |
 | `accounts.mail_sender` | 同上 → `mail_sender`（`null` = 未配置） | `Name <address>` / 未配置 |
+| `agent.released` / `agent.provider` / `agent.model_configured` | 门户进程自己的库与配置（`public.py` `agent_fact`）：注册表 `apps` 行 `agent` 是否 `active`；`SYNWEVO_AGENT_PROVIDER`；DeepSeek = `ProviderSettings(SYNWEVO_BILLING_ENVIRONMENT).read()` 已启用，旧提供方 = 只读平台密钥是否存在 | 未开放：不会向 AI 模型发送任何内容 / 已上线，模型服务尚未开放 / 已开放：经你单独同意后，发送给模型提供方 DeepSeek / 暂时无法读取 |
 
 规则：只访问配置好的源站（`SYNWEVO_ISSUER` 与应用注册表），不用请求里的任何值；结果缓存 60 s、单次超时 3 s；
 任何读不到的项为 `null`，页面显示「暂时无法读取」而不是默认值；文档不进索引（非公开路径自动带 `X-Robots-Tag: noindex`）。
@@ -187,9 +233,13 @@
 2. **联系渠道**：数据保护 / 隐私联系邮箱或表单；目前产品里只有账户页请求与「联系组织管理员」。
    邮件发件域（`hikosphere.com`）与产品域（`wegreen.ltd` → `synwevo.com`）不一致，也待决定。
 3. **管辖与适用法**：香港 PDPO / GDPR / PIPL 的适用性、法律依据、跨境传输措辞（用户含香港机构；数据在东京；边缘网络全球）。
-4. **正式条款**：服务条款 / 可接受使用政策的版本号、生效日期、同意机制（注册时勾选或继续即同意）；现在没有任何条款文本，页面明确写「不是正式法律条款」。
+4. **正式条款**：2026-10-05 起有带版本与生效日期的服务条款、AI 使用规范与定价页，首次付费运行记录接受的版本；
+   数据与隐私、服务说明两页仍写「不是正式法律条款」。注册时是否另行勾选同意、条款的法律审阅，仍待运营方决定。
 5. **年龄与资格限制**：目前注册不做年龄或身份检查。
-6. **费用、退款、可用性承诺（SLA）**：目前没有收费，也没有可用性指标；页面不写。
+6. **费用、退款、可用性承诺（SLA）**：收费与不退款已由所有者决定（2026-10-05，见 §2.10）；可用性指标仍没有，页面不写。
+11. **DeepSeek 书面确认**（所有者负责）：API 数据是否用于训练、保留期限；取得前隐私页写「依 DeepSeek 隐私政策，可能用于改进模型，境内存储」。
+    受托处理方的法定名称在发布前须与 DeepSeek 隐私政策逐字复核。
+12. **中国大陆网信登记**（所有者法务事项，记录为待办）：面向全球市场；页面不写备案号。
 7. **是否在页面上点名第三方处理方**（边缘网络与分析：Cloudflare；主机：Vultr 东京；邮件：mailcow → SMTP2GO；推送：各浏览器厂商）：
    `scripts/check_component_names.py` 不允许自有界面文字出现 Cloudflare 等组件名，页面因此写「边缘网络服务商」等能力名并在本文列出名称；
    若要点名，需在该守卫 `STABLE` 里登记例外并写理由（法律披露），或改为运营方另行公布的处理方清单。

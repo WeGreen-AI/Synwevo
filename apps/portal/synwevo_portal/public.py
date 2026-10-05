@@ -27,9 +27,12 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from synwevo_core import env
+from synwevo_core.terms import DOCUMENTS as TERMS_DOCUMENTS
 
 LOCALES = ("zh-Hans", "zh-Hant", "en")
-PAGES = ("home", "privacy", "service")
+#: The public documents. terms, ai-use and pricing carry a version and an effective date
+#: (synwevo_core.terms.DOCUMENTS), printed in their first paragraph.
+PAGES = ("home", "privacy", "service", "terms", "ai-use", "pricing")
 
 
 def public_path(page: str, locale: str) -> str:
@@ -78,7 +81,7 @@ COPY: dict[str, dict] = {
                 "paragraphs": [
                     "账户数据可以随时导出，也可以申请删除；删除有 7 天缓冲期，期间可以撤回。",
                     "数据保存在位于日本东京的单台服务器上；传输经 HTTPS 加密，服务器端不做端到端加密。",
-                    "只用本站自己的 Cookie 维持登录；平台管理员读不到业务文档与对话；没有任何 AI 处理你的内容。",
+                    "只用本站自己的 Cookie 维持登录；平台管理员读不到业务文档与对话。只有 Synwevo Agent 会把内容发给 AI 模型：在你使用它并单独同意后，发送给模型提供方 DeepSeek；组织工作空间的内容默认不发送。",
                 ],
                 "label": "数据与隐私",
             },
@@ -91,6 +94,36 @@ COPY: dict[str, dict] = {
                     "注册后经邮箱验证即可使用；机构邮箱同样可用。限额、角色与删除规则都写在这一页。",
                 ],
                 "label": "服务说明",
+            },
+            "terms": {
+                "title": "服务条款 · Synwevo",
+                "description": "使用 Synwevo 的条款：账户、钱包与充值（不可退款）、按量计费、免费额度、组织付费与 AI 输出。",
+                "heading": "使用 Synwevo 的约定。",
+                "paragraphs": [
+                    "版本 {terms}，自 {terms_effective} 起生效。首次付费使用 Synwevo Agent 时，记录你接受的版本。",
+                    "充值一经完成不可退款；钱包余额只能用于 Synwevo 的服务，不能转让、提现或兑换现金。AI 生成的内容可能有误，仅供参考。",
+                ],
+                "label": "服务条款",
+            },
+            "ai-use": {
+                "title": "AI 使用规范 · Synwevo",
+                "description": "使用 Synwevo Agent 时不允许的内容与行为、内容安全如何执行，以及 AI 生成内容的标识。",
+                "heading": "负责任地使用 AI。",
+                "paragraphs": [
+                    "版本 {ai-use}，自 {ai-use_effective} 起生效。",
+                    "消息与回答都经过内容安全规则检查；命中规则的消息不会发送，命中的回答会停止并不再显示。违规可能导致 Agent 使用权限被暂停。",
+                ],
+                "label": "AI 使用规范",
+            },
+            "pricing": {
+                "title": "定价 · Synwevo",
+                "description": "Synwevo Agent 如何计费：人民币钱包、按实际用量扣费、运行前确认价格与上限、免费额度与组织付费。",
+                "heading": "用多少，付多少。",
+                "paragraphs": [
+                    "版本 {pricing}，自 {pricing_effective} 起生效。目前只有 Synwevo Agent 按用量收费，以人民币计价。",
+                    "每次运行前显示当前单价与价格版本，并由你确认最高预算；充值不可退款。",
+                ],
+                "label": "定价",
             },
         },
     },
@@ -115,7 +148,7 @@ COPY: dict[str, dict] = {
                 "paragraphs": [
                     "帳戶資料可以隨時匯出，也可以申請刪除；刪除有 7 天緩衝期，期間可以撤回。",
                     "資料保存在位於日本東京的單一伺服器上；傳輸經 HTTPS 加密，伺服器端不做端對端加密。",
-                    "只用本站自己的 Cookie 維持登入；平台管理員讀不到業務文件與對話；沒有任何 AI 處理你的內容。",
+                    "只用本站自己的 Cookie 維持登入；平台管理員讀不到業務文件與對話。只有 Synwevo Agent 會把內容傳給 AI 模型：在你使用它並單獨同意後，傳送給模型提供方 DeepSeek；組織工作空間的內容預設不傳送。",
                 ],
                 "label": "資料與私隱",
             },
@@ -128,6 +161,36 @@ COPY: dict[str, dict] = {
                     "註冊後經電郵驗證即可使用；機構電郵同樣可用。限額、角色與刪除規則都寫在這一頁。",
                 ],
                 "label": "服務說明",
+            },
+            "terms": {
+                "title": "服務條款 · Synwevo",
+                "description": "使用 Synwevo 的條款：帳戶、錢包與儲值（不可退款）、按量計費、免費額度、組織付費與 AI 輸出。",
+                "heading": "使用 Synwevo 的約定。",
+                "paragraphs": [
+                    "版本 {terms}，自 {terms_effective} 起生效。首次付費使用 Synwevo Agent 時，記錄你接受的版本。",
+                    "儲值一經完成不可退款；錢包餘額只能用於 Synwevo 的服務，不能轉讓、提現或兌換現金。AI 產生的內容可能有誤，僅供參考。",
+                ],
+                "label": "服務條款",
+            },
+            "ai-use": {
+                "title": "AI 使用規範 · Synwevo",
+                "description": "使用 Synwevo Agent 時不允許的內容與行為、內容安全如何執行，以及 AI 產生內容的標識。",
+                "heading": "負責任地使用 AI。",
+                "paragraphs": [
+                    "版本 {ai-use}，自 {ai-use_effective} 起生效。",
+                    "訊息與回答都經過內容安全規則檢查；命中規則的訊息不會傳送，命中的回答會停止並不再顯示。違規可能導致 Agent 使用權限被暫停。",
+                ],
+                "label": "AI 使用規範",
+            },
+            "pricing": {
+                "title": "定價 · Synwevo",
+                "description": "Synwevo Agent 如何計費：人民幣錢包、按實際用量扣費、執行前確認價格與上限、免費額度與組織付費。",
+                "heading": "用多少，付多少。",
+                "paragraphs": [
+                    "版本 {pricing}，自 {pricing_effective} 起生效。目前只有 Synwevo Agent 按用量收費，以人民幣計價。",
+                    "每次執行前顯示當前單價與價格版本，並由你確認最高預算；儲值不可退款。",
+                ],
+                "label": "定價",
             },
         },
     },
@@ -152,7 +215,7 @@ COPY: dict[str, dict] = {
                 "paragraphs": [
                     "You can export your account data at any time and request deletion; deletion has a 7-day grace period during which it can be cancelled.",
                     "Data is stored on a single server in Tokyo, Japan; transport is encrypted with HTTPS, and there is no end-to-end encryption on the server.",
-                    "Only this site’s own cookies keep you signed in; platform administrators cannot read business documents or conversations; no AI processes your content.",
+                    "Only this site’s own cookies keep you signed in; platform administrators cannot read business documents or conversations. Only Synwevo Agent sends content to an AI model: when you use it and after your separate consent, to the model provider DeepSeek; content of organisation workspaces is not sent by default.",
                 ],
                 "label": "Data & privacy",
             },
@@ -166,9 +229,55 @@ COPY: dict[str, dict] = {
                 ],
                 "label": "About this service",
             },
+            "terms": {
+                "title": "Terms of service · Synwevo",
+                "description": "The terms for using Synwevo: account, wallet and top-ups (non-refundable), usage-based charges, the free allowance, organisation payment and AI output.",
+                "heading": "The terms of using Synwevo.",
+                "paragraphs": [
+                    "Version {terms}, in effect from {terms_effective}. Your first paid use of Synwevo Agent records the version you accepted.",
+                    "Top-ups are final and non-refundable; wallet balance can be used only for Synwevo services and cannot be transferred, withdrawn or exchanged for cash. AI-generated content may be wrong and is for reference only.",
+                ],
+                "label": "Terms of service",
+            },
+            "ai-use": {
+                "title": "AI use rules · Synwevo",
+                "description": "What is not allowed when using Synwevo Agent, how content safety is enforced, and how AI-generated content is labelled.",
+                "heading": "Using AI responsibly.",
+                "paragraphs": [
+                    "Version {ai-use}, in effect from {ai-use_effective}.",
+                    "Messages and answers are checked against content safety rules; a message that matches is not sent, and an answer that matches is stopped and no longer shown. Violations can lead to your Agent access being suspended.",
+                ],
+                "label": "AI use rules",
+            },
+            "pricing": {
+                "title": "Pricing · Synwevo",
+                "description": "How Synwevo Agent is charged: a CNY wallet, charges for actual usage, the price and maximum confirmed before each run, the free allowance and organisation payment.",
+                "heading": "Pay for what you use.",
+                "paragraphs": [
+                    "Version {pricing}, in effect from {pricing_effective}. Today only Synwevo Agent is charged by usage, priced in Chinese yuan (CNY).",
+                    "Before each run you see the current unit prices and price version and confirm a maximum budget; top-ups are non-refundable.",
+                ],
+                "label": "Pricing",
+            },
         },
     },
 }
+
+
+def _versioned(copy: dict) -> None:
+    """Print each document's version and effective date (synwevo_core.terms) into its copy."""
+    values = {}
+    for document, (version, effective) in TERMS_DOCUMENTS.items():
+        values["{" + document + "}"], values["{" + document + "_effective}"] = version, effective
+    for words in copy.values():
+        for page in words["pages"].values():
+            for i, paragraph in enumerate(page["paragraphs"]):
+                for key, value in values.items():
+                    paragraph = paragraph.replace(key, value)
+                page["paragraphs"][i] = paragraph
+
+
+_versioned(COPY)
 
 
 def public_origin() -> str | None:
@@ -343,6 +452,39 @@ def _docs_origin(store, ident) -> str | None:
     return _origin_of((app or {}).get("launch_url"))
 
 
+def agent_fact(store, ident) -> dict:
+    """Synwevo Agent on this deployment, from the application registry and the model settings —
+    so the public pages say whether content can reach an AI model instead of asserting it.
+
+    ``released``: the registry row ``agent`` is active (the deployment released it).
+    ``provider``: the configured model provider (``SYNWEVO_AGENT_PROVIDER``; deepseek | anthropic).
+    ``model_configured``: that provider has a platform model ready — for DeepSeek an enabled,
+    governed route; for the legacy provider a configured platform key (only its presence is read).
+    Unreadable parts are ``None``; the pages then say "could not be read"."""
+    out = {"released": None, "provider": None, "model_configured": None}
+    if store is None or ident is None:
+        return out
+    try:
+        from synwevo_core.apps import Apps
+        row = Apps(store, ident).get("agent")
+        out["released"] = bool(row and row.get("status") == "active")
+    except Exception:  # noqa: BLE001 - an unreadable registry is "unknown"; a missing row is "not released"
+        out["released"] = None
+    provider = (env.get("AGENT_PROVIDER") or "anthropic").strip().lower()
+    out["provider"] = provider if provider in ("deepseek", "anthropic") else None
+    try:
+        if provider == "deepseek":
+            from synwevo_core.billing.provider_settings import ProviderSettings
+            environment = env.get("BILLING_ENVIRONMENT")
+            spec = ProviderSettings(store, environment=environment).read()["spec"] if environment in ("test", "live") else None
+            out["model_configured"] = bool(spec and spec.get("enabled"))
+        elif provider == "anthropic":
+            out["model_configured"] = bool((env.get("AGENT_ANTHROPIC_API_KEY") or "").strip())
+    except Exception:  # noqa: BLE001
+        out["model_configured"] = None
+    return out
+
+
 #: No ambient proxy: these requests carry nothing secret, but a `HTTP_PROXY` nobody chose must
 #: not decide what "this deployment" answers (the relying party makes the same choice).
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -392,6 +534,7 @@ def deployment_facts(store=None, ident=None, *, force: bool = False) -> dict:
             "accounts": {"malware_scanner": None, "human_verification": None, "external_providers": None,
                          "registration": None, "mail_sender": None, "member_import_cleanup": None},
             "docs": {"malware_scanner": None},
+            "agent": agent_fact(store, ident),
         }
         try:
             from synwevo_auth_client.rp import issuer

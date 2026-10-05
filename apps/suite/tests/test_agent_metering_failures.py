@@ -34,7 +34,8 @@ def worker(gateway, monkeypatch):
     agent.close()
 
 
-@pytest.mark.parametrize("finish,code", [("content_filter", "provider_refused"), ("length", "provider_truncated")])
+# DeepSeek's own content filter has its own code (agent/safety.py); the platform still absorbs it.
+@pytest.mark.parametrize("finish,code", [("content_filter", "content_filtered_output"), ("length", "provider_truncated")])
 def test_refused_or_truncated_final_usage_is_cost_only(gateway, worker, finish, code):
     g, (agent, turn, _) = gateway, worker
     g.holder["body"] = event(finish=finish, usage=USAGE) + b"data: [DONE]\n\n"

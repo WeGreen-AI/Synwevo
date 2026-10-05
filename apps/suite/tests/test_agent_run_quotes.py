@@ -199,6 +199,9 @@ def test_http_session_csrf_privacy_and_exact_large_budget(paid):
         quote=result.json()['output'];assert quote['budget']=='9007199254740993'
         assert 'cost_price' not in result.text and 'fixture-only' not in result.text
         other=g.api.state.identity.create_user('other-budget@example.test',None,status='active',with_personal_workspace=False)
+        # FIXTURE: the second person also accepted the current DeepSeek data consent.
+        from synwevo_core.agent_safety import PROVIDER_TERMS, ProviderConsents
+        ProviderConsents(g.api.state.identity.store).accept(other['id'], 'deepseek', PROVIDER_TERMS['deepseek'].version)
         g.store.execute('UPDATE users SET email_verified_at=1 WHERE id=?',(other['id'],))
         raw,_=g.api.state.sessions.create(other['id'],workspace_id=None,amr='password')
         client.cookies.set(COOKIE_NAME,raw)

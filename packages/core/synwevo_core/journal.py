@@ -88,7 +88,21 @@ KINDS = {
     "consent_withdrawn",        # {user_id, client_id, workspace_id?} — the consent and that client's tokens
     "model_dispatch_suspended", # {suspension_id, environment, scope_kind, scope_id} — paid model calls of a payer/route
     "model_breaker_opened",     # {event_id, environment} — paid model calls stopped platform-wide
+    # The personal Agent (agent_safety.py): a person's withdrawn consent to send content to a
+    # model provider, and an administrator's suspension of a person's Agent access.
+    "agent_provider_consent_withdrawn",  # {user_id, provider}
+    "agent_access_suspended",   # {suspension_id, user_id}
+    # Model governance: a workspace's AI processing policy made narrower, the platform model
+    # credential withdrawn (revoked or replaced) and the platform model provider switched off.
+    "ai_policy_narrowed",       # {workspace_id, processing, providers}
+    "model_credential_withdrawn",  # {environment, credential_revision} — that revision and older
+    "model_provider_disabled",  # {event_id, environment}
 } | ORGANIZATION_KINDS
+
+#: A workspace's AI processing policy, narrowest first (suite agent tools.workspace_policy).
+AI_PROCESSING = ("none", "platform", "any")
+#: The providers a workspace may name (suite agent tools.MODEL_PROVIDERS).
+AI_PROVIDERS = ("anthropic", "deepseek")
 
 _REQUIRED = {
     "api_platform_approval_revoked": ("approval_id",),
@@ -108,6 +122,11 @@ _REQUIRED = {
     "consent_withdrawn": ("user_id", "client_id"),
     "model_dispatch_suspended": ("suspension_id", "environment", "scope_kind", "scope_id"),
     "model_breaker_opened": ("event_id", "environment"),
+    "agent_provider_consent_withdrawn": ("user_id", "provider"),
+    "agent_access_suspended": ("suspension_id", "user_id"),
+    "ai_policy_narrowed": ("workspace_id", "processing"),
+    "model_credential_withdrawn": ("environment",),
+    "model_provider_disabled": ("event_id", "environment"),
     **{kind: ("event_id", "organization_id") for kind in ORGANIZATION_KINDS},
     "organization_member_removed": ("event_id", "organization_id", "user_id"),
     "organization_role_changed": ("event_id", "organization_id", "user_id", "role"),
@@ -145,6 +164,16 @@ def _validate(entry, line: int) -> None:
         bad()
     if kind in RISK_KINDS and (entry["environment"] not in ("test", "live") or (
             kind == "model_dispatch_suspended" and entry["scope_kind"] not in ("user", "organization", "route"))):
+        bad()
+    if kind == "ai_policy_narrowed":
+        providers = entry.get("providers")
+        if (entry["processing"] not in AI_PROCESSING or not isinstance(providers, list)
+                or any(not isinstance(p, str) or not p.strip() for p in providers)):
+            bad()
+    if kind in ("model_credential_withdrawn", "model_provider_disabled") and entry["environment"] not in ("test", "live"):
+        bad()
+    if kind == "model_credential_withdrawn" and (type(entry.get("credential_revision")) is not int
+                                                 or entry["credential_revision"] < 1):
         bad()
     if kind in ORGANIZATION_KINDS:
         scope = entry.get("workspace_ids")
@@ -490,6 +519,61 @@ def _apply_risk(c, e) -> int:
     return 1
 
 
+def _apply_ai_policy(c, e, t: float) -> int:
+    """Make the workspace's policy at most as open as the journalled one: the narrower
+    processing and the intersection of providers. A restored row (or its absence, which means
+    the default) that is already as narrow is left alone, so a replay changes nothing twice."""
+    wid = e["workspace_id"]
+    ws = c.execute("SELECT kind FROM workspaces WHERE id=?", (wid,)).fetchone()
+    if not ws:
+        return 0
+    row = c.execute("SELECT processing FROM agent_workspace_policies WHERE workspace_id=?", (wid,)).fetchone()
+    prov = c.execute("SELECT providers_json FROM agent_workspace_model_providers WHERE workspace_id=?", (wid,)).fetchone()
+    # The defaults of tools.workspace_policy: a personal workspace without a policy is open to
+    # every provider; any other is closed, with the legacy provider list.
+    personal_default = row is None and ws["kind"] == "personal"
+    processing = row["processing"] if row else ("any" if personal_default else "none")
+    try:
+        providers = json.loads(prov["providers_json"]) if prov else (list(AI_PROVIDERS) if personal_default else ["anthropic"])
+        providers = [p for p in providers if isinstance(p, str)] if isinstance(providers, list) else []
+    except ValueError:
+        providers = []
+    narrowed = min(processing, e["processing"], key=AI_PROCESSING.index) if processing in AI_PROCESSING else "none"
+    allowed = sorted(set(providers) & set(e["providers"]))
+    if narrowed == processing and row is not None and allowed == sorted(providers) and prov is not None:
+        return 0
+    c.execute("INSERT INTO agent_workspace_policies (workspace_id, processing, updated_by, updated_at) VALUES (?,?,'journal',?) "
+              "ON CONFLICT(workspace_id) DO UPDATE SET processing=excluded.processing, updated_by='journal', "
+              "updated_at=excluded.updated_at", (wid, narrowed, t))
+    c.execute("INSERT INTO agent_workspace_model_providers (workspace_id, providers_json, updated_by, updated_at) "
+              "VALUES (?,?,'journal',?) ON CONFLICT(workspace_id) DO UPDATE SET providers_json=excluded.providers_json, "
+              "updated_by='journal', updated_at=excluded.updated_at", (wid, json.dumps(allowed), t))
+    return 1
+
+
+def _apply_provider_disabled(c, e) -> int:
+    """Append, if the restored history's newest version is enabled, an immutable version that
+    switches the platform model provider off — keyed by the journal event, so it happens once.
+    It reuses the newest version's author (who exists in that database) and says why."""
+    op = "journal_" + e["event_id"]
+    if c.execute("SELECT 1 FROM model_provider_versions WHERE operation_id=?", (op,)).fetchone():
+        return 0
+    latest = c.execute("SELECT * FROM model_provider_versions WHERE environment=? ORDER BY revision DESC LIMIT 1",
+                       (e["environment"],)).fetchone()
+    if latest is None:
+        return 0
+    spec = json.loads(latest["spec_json"])
+    if not spec.get("enabled"):
+        return 0
+    spec["enabled"] = False
+    c.execute("INSERT INTO model_provider_versions(environment,revision,spec_json,credential_revision,credential_configured,"
+              "actor_id,reason,operation_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+              (e["environment"], latest["revision"] + 1, json.dumps(spec, sort_keys=True, separators=(",", ":")),
+               latest["credential_revision"], latest["credential_configured"], latest["actor_id"],
+               "Journal replay: the model provider was switched off after this backup", op, int(e["at"])))
+    return 1
+
+
 def apply(store: Store, entries: list[dict]) -> dict:
     """Make every withdrawal in `entries` true in `store`. Returns counts per kind.
 
@@ -543,6 +627,27 @@ def apply(store: Store, entries: list[dict]) -> dict:
                               (t, t, e["user_id"], e["client_id"], ws, e["at"])).rowcount
                 c.execute("UPDATE oauth_tokens SET revoked_at=?, revoked_reason='journal_replay' WHERE user_id=? AND client_id=? "
                           "AND COALESCE(workspace_id,'')=? AND revoked_at IS NULL", (t, e["user_id"], e["client_id"], ws))
+            elif k == "agent_provider_consent_withdrawn":
+                # Only a consent given before the withdrawal is withdrawn again; one the person
+                # gave afterwards (and that the restored database holds) stands.
+                n = c.execute("UPDATE agent_provider_consents SET withdrawn_at=? WHERE user_id=? AND provider=? "
+                              "AND withdrawn_at IS NULL AND accepted_at<=?",
+                              (e["at"], e["user_id"], e["provider"], e["at"])).rowcount
+            elif k == "agent_access_suspended":
+                # By id: a suspension the backup already holds (lifted or not) is left as it is.
+                n = c.execute("INSERT OR IGNORE INTO agent_access_suspensions (id,user_id,reason,created_by,created_at) "
+                              "VALUES (?,?,'journal_replay','journal',?)",
+                              (e["suspension_id"], e["user_id"], e["at"])).rowcount
+            elif k == "ai_policy_narrowed":
+                n = _apply_ai_policy(c, e, t)
+            elif k == "model_credential_withdrawn":
+                # The withdrawn revision and anything older loses its sealed secret; a newer
+                # credential the restored database already holds is left alone.
+                n = c.execute("UPDATE model_provider_credentials SET secret_enc=NULL WHERE environment=? "
+                              "AND revision<=? AND secret_enc IS NOT NULL",
+                              (e["environment"], e["credential_revision"])).rowcount
+            elif k == "model_provider_disabled":
+                n = _apply_provider_disabled(c, e)
             elif k == "client_secret_rotated":
                 n = c.execute("UPDATE oauth_clients SET secret_hash=? WHERE client_id=?",
                               (e.get("secret_hash"), e.get("client_id"))).rowcount
@@ -571,6 +676,9 @@ def apply(store: Store, entries: list[dict]) -> dict:
                         c.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
                     c.execute("UPDATE email_tokens SET used_at=COALESCE(used_at,?) WHERE user_id=?", (at, uid))
                     _end_platform_grants(c, uid, t)
+                    # The older backup still holds the person's Agent conversations and memories.
+                    from .agent_records import erase as erase_agent
+                    erase_agent(store, uid)
                 else:
                     for table in ("mfa_tickets", "webauthn_challenges", "reauth_challenges"):
                         c.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))

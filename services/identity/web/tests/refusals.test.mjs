@@ -55,6 +55,12 @@ const SERVER = [
   { file: ID + "admin_model_provider.py", surfaces: ["admin"] },
   { file: ID + "admin_model_risk.py", surfaces: ["admin"] },
   { file: ID + "admin_runs.py", surfaces: ["admin"] },
+  { file: ID + "admin_agent_safety.py", surfaces: ["admin"] },
+  // The personal Agent's content safety: what administrators govern is met on the admin page;
+  // the consent gate, the person's reports and a suspension's refusal are met in the Agent.
+  { file: CORE + "agent_safety.py", fns: ["validate_rules", "publish", "get", "resolve", "suspend", "lift"],
+    surfaces: ["admin"] },
+  { file: CORE + "agent_safety.py", surfaces: [], why: "the consent gate, a person's report and a suspended person's refusal are met in the Agent (workplace origin), which words them" },
   { file: ID + "wallet_routes.py", surfaces: ["account"] },
   { file: ID + "payment_routes.py", surfaces: ["account"] },
   { file: ID + "payments.py", surfaces: ["account"] },
