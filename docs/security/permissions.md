@@ -370,10 +370,12 @@ Webhook 是本服务**主动向外发起**的请求，因此它的风险方向�
 | `support` 支持 | 概览；账户查看；找回邮件与结束会话；空间、组织、邮件、应用运行记录查看 | 停用账户；任何修改配置或空间状态的操作 |
 | `auditor` 审计查看 | 概览、账户、空间、组织、配置、邮件、应用运行记录、审计、管理员名册的只读 | 任何写操作 |
 | `api_platform_admin` API 平台管理员 | 概览；`api_platform.manage` | 账户、空间与配置管理 |
+| `finance` 财务 | 概览；`platform.billing.view`（充值、赠送、拒付、未用余额，只含金额与元数据）；`platform.billing.manage`（支付设置与密钥、带理由赠送、解除拒付冻结） | 账户、空间、组织、模型配置管理；任何业务内容 |
 
 权限 ID：`platform.overview.view`、`platform.users.view|manage|support`、`platform.workspaces.view|manage|claim`、
 `platform.orgs.view|manage`、`platform.config.view|manage`、`platform.mail.view|manage`、`platform.apps.view`、
-`platform.audit.view`、`platform.roles.view|assign|assign_super`、`api_platform.manage`。与草案（admin-coverage.md §3.1）相比新增
+`platform.audit.view`、`platform.roles.view|assign|assign_super`、`api_platform.manage`、
+`platform.billing.view|manage`（org-payments：资金只属于最高管理员与财务角色，见 docs/platform/wallet-payments.md §4）。与草案（admin-coverage.md §3.1）相比新增
 `platform.orgs.manage`（组织生命周期路由是写操作，不能挂在只读权限上）和 `platform.workspaces.claim`
 （指派历史数据是业务内容的交付，只属于最高管理员；`.manage` 只剩冻结与解冻），理由写在模块文档里。
 
