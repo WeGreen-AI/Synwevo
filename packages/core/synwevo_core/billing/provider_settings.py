@@ -63,10 +63,34 @@ class RouteSpec(BaseModel):
         return [effort for effort in REASONING_EFFORTS if effort in value]
 
 
+#: Kinds of incomplete call a charging policy can decide on (shared contract, docs/deepseek-provider.md).
+INCOMPLETE_KINDS = ("length", "content_filter", "provider_interrupted", "client_cancelled")
+
+
+class ChargingPolicy(BaseModel):
+    """Whether a payer is charged for the tokens an incomplete call consumed, per kind of ending.
+
+    true charges the trusted terminal usage (never beyond the call's hold); false keeps the
+    platform absorbing it as recorded cost, which is what every version before this field
+    meant. Anything else that fails (invalid tool output, a rejected step, untrusted or missing
+    usage) is never charged. Part of the published revision, so a change is versioned, needs a
+    reason, is audited, and invalidates existing quotes and consents through the route version.
+    """
+    model_config = ConfigDict(extra="forbid", strict=True)
+    length: bool = False                # finish_reason=length (output limit reached)
+    content_filter: bool = False        # finish_reason=content_filter
+    provider_interrupted: bool = False  # finish_reason=aborted / insufficient_system_resource
+    client_cancelled: bool = False      # the person stopped after the final usage had arrived
+
+    def charged(self) -> list[str]:
+        return [kind for kind in INCOMPLETE_KINDS if getattr(self, kind)]
+
+
 class ProviderSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     enabled: bool
     route: RouteSpec | None
+    incomplete_charging: ChargingPolicy = Field(default_factory=ChargingPolicy)
 
     @model_validator(mode="after")
     def enabled_route(self):
@@ -332,6 +356,7 @@ class ProviderSettings:
                 raise BillingError("model_credential_unavailable") from None
             route = spec.route.model_dump(exclude={"account_confirmation_ref"})
             route["version"] = f"deepseek:{self.environment}:{state['revision']}"
+            route["charge_incomplete"] = spec.incomplete_charging.charged()
             return ResolvedProvider(state["revision"], state["credential_revision"], route, secret)
 
     def history(self, *, before_revision=None, limit=20):

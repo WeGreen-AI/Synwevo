@@ -35,7 +35,8 @@ ACTION = "admin.model_provider.publish"
 REASON = "Fixture: confirm bounded platform model configuration"
 KEY = "fixture-provider-credential-never-used-on-network"
 REPLACEMENT = {"action": "replace", "api_key": KEY}
-DISABLED = {"enabled": False, "route": None}
+NO_CHARGING = {"length": False, "content_filter": False, "provider_interrupted": False, "client_cancelled": False}
+DISABLED = {"enabled": False, "route": None, "incomplete_charging": NO_CHARGING}
 COST = {"enabled": True, "unit": {"code": "FIX_COST", "scale": 6},
         "daily_budget": "1000", "weekly_budget": "1000", "monthly_budget": "1000",
         "unknown_budget": "10", "max_inflight": 1, "max_unknown": 1}
@@ -74,7 +75,8 @@ def spec_for(prices):
         "confirmation_ref": "fixture-route-confirmation", "cost_basis_ref": "fixture-cost-evidence",
         "account_confirmation_ref": "fixture-account-confirmation", "sale_price_id": prices["sale"],
         "cost_price_id": prices["cost"], "input_token_ceiling": 1000, "output_token_ceiling": 32,
-        "valid_until": int(time.time()) + 3600, "reasoning_efforts": ["none", "low", "high", "max"]}}
+        "valid_until": int(time.time()) + 3600, "reasoning_efforts": ["none", "low", "high", "max"]},
+        "incomplete_charging": NO_CHARGING}
 
 
 @pytest.fixture()
@@ -319,6 +321,25 @@ def test_route_semantics_reject_expired_or_mismatched_prices(provider_world, cha
     r = post(w["admin"], BASE + "/preview", preview_request(w, spec=spec))
     assert r.status_code == 409 and r.json()["error"] == code
     assert_no_public_secret(w, r.json())
+
+
+def test_the_incomplete_call_charging_policy_is_published_versioned_and_audited(provider_world):
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    charging = {**NO_CHARGING, "length": True, "client_cancelled": True}
+    spec = {**w["spec"], "incomplete_charging": charging}
+    plan = preview(w, revision=1, spec=spec, credential={"action": "keep"})
+    assert plan["before"]["spec"]["incomplete_charging"] == NO_CHARGING and plan["after"]["incomplete_charging"] == charging
+    r = publish(w, command(plan, {"action": "keep"}))
+    assert r.status_code == 200, r.text
+    assert r.json()["state"]["revision"] == 2 and r.json()["state"]["spec"]["incomplete_charging"] == charging
+    assert [json.loads(a["meta"])["revision"] for a in audits(w, "ok")] == [1, 2]
+    history = w["admin"].get(BASE + "/history").json()["items"]
+    assert [item["spec"]["incomplete_charging"]["length"] for item in history] == [True, False]
+    for invalid in ({**charging, "everything": True}, {**charging, "length": "yes"}, {"length": 1}):
+        r = post(w["admin"], BASE + "/preview", preview_request(w, revision=2, spec={**spec, "incomplete_charging": invalid},
+                                                                credential={"action": "keep"}))
+        assert r.status_code == 400 and r.json()["error"] == "model_config_invalid"
 
 
 def test_stale_revision_and_keep_no_change_require_new_input(provider_world):

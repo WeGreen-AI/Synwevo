@@ -23,6 +23,7 @@ from uuid import uuid4
 from synwevo_core.auth import Auth
 from synwevo_core.billing import BillingError, ChargeContext, Ledger, PriceSnapshot, Usage, UsageEvidence
 from synwevo_core.billing.models import identifier, integer
+from synwevo_core.billing.provider_settings import INCOMPLETE_KINDS
 from synwevo_core.billing.traffic import TrafficCancelled
 
 from .deepseek import (BASE_URL, EFFORTS, Attempt, DeepSeekCancelled, DeepSeekError, DeepSeekProvider,
@@ -99,6 +100,9 @@ class Route:
     output_token_ceiling: int
     valid_until: int
     reasoning_efforts: tuple = EFFORTS  # Governed per route; older snapshots allowed every value.
+    # Incomplete endings the payer is charged for (provider_settings.ChargingPolicy); pinned on
+    # the run with the quote. Older snapshots charged none: the platform absorbed them.
+    charge_incomplete: tuple = ()
 
     def __post_init__(self):
         for value in (self.version, self.requested_model, self.confirmed_route, self.confirmation_ref,
@@ -112,6 +116,11 @@ class Route:
             object.__setattr__(self, "reasoning_efforts", allowed_efforts(self.reasoning_efforts))
         except ValueError:
             raise BillingError("invalid_route") from None
+        kinds = self.charge_incomplete
+        if (not isinstance(kinds, (list, tuple)) or len(set(kinds)) != len(kinds)
+                or any(kind not in INCOMPLETE_KINDS for kind in kinds)):
+            raise BillingError("invalid_route")
+        object.__setattr__(self, "charge_incomplete", tuple(k for k in INCOMPLETE_KINDS if k in kinds))
 
 
 def _raw_counters(raw):
@@ -420,7 +429,9 @@ class MeteredDeepSeek:
                     effort=effort, on_text=on_text, should_stop=should_stop,
                     user_id=self.pseudonym(context.payer_user_id), before_dispatch=before_dispatch)
             except (DeepSeekError, DeepSeekCancelled) as exc:
-                self._observe(key, ticket, route, exc.attempt, completed=False, claim=claim)
+                ending = ("client_cancelled" if isinstance(exc, DeepSeekCancelled)
+                          else "provider_interrupted" if exc.code == "provider_interrupted" else None)
+                self._observe(key, ticket, route, exc.attempt, completed=False, claim=claim, ending=ending)
                 if isinstance(exc, DeepSeekError) and exc.code == "provider_balance":
                     self._closed(route, exc)
                 if isinstance(exc, DeepSeekError) and exc.attempt.http_status in THROTTLED:
@@ -443,7 +454,10 @@ class MeteredDeepSeek:
                 if validate_result:
                     validate_result(result.step)
             except ProviderError as exc:
-                self._observe(key, ticket, route, result.attempt, completed=False, claim=claim)
+                # A refusal/truncation raised above is the provider's ending; a rejected step
+                # (validate_result) has none and is never charged.
+                ending = {"refusal": "content_filter", "max_tokens": "length"}.get(result.step.stop_reason)
+                self._observe(key, ticket, route, result.attempt, completed=False, claim=claim, ending=ending)
                 # Keep the step's private reasoning for later thinking-mode requests; its tool
                 # calls were not accepted, so they never run and get no tool result.
                 replay = {k: v for k, v in result.replay_message.items() if k != "tool_calls"}
@@ -464,10 +478,10 @@ class MeteredDeepSeek:
                 self.ledger.cancel_call(call_key)
             raise
 
-    def _observe(self, key, ticket, route, attempt, *, completed, claim=None):
+    def _observe(self, key, ticket, route, attempt, *, completed, claim=None, ending=None):
         payload = {k: getattr(attempt,k) for k in ("requested_model", "dispatch", "provider_request_id", "returned_model",
                    "capability_version", "http_status", "finish_reason", "stream_complete", "usage_reliability", "usage_reason")}
-        payload.update(raw_usage=_raw_counters(attempt.raw_usage), completed=completed,
+        payload.update(raw_usage=_raw_counters(attempt.raw_usage), completed=completed, ending=ending,
                        confirmed_route=route.confirmed_route, confirmation_ref=route.confirmation_ref,
                        metered_at=self.ledger._now())
         with self.store.tx() as t:
@@ -498,9 +512,12 @@ class MeteredDeepSeek:
         proof = UsageEvidence("deepseek", evidence["provider_request_id"], "model-observation:"+call_id,
             Usage(usage.prompt_cache_miss_tokens, usage.prompt_cache_hit_tokens, usage.completion_tokens,
                   usage.reasoning_tokens or 0), route.confirmed_route, evidence["capability_version"], evidence["metered_at"])
+        # An incomplete call is sold only when the route's pinned policy charges its ending
+        # (never beyond the hold); otherwise the platform absorbs it as recorded cost.
+        charged = evidence["completed"] or evidence.get("ending") in route.charge_incomplete
         result = self.ledger.settle_trusted_usage(row["attempt_key"], proof,
-            outcome="completed" if evidence["completed"] else "platform_fault")
-        if not evidence["completed"]:
+            outcome="completed" if charged else "platform_fault")
+        if not charged:
             self.ledger.cancel_call(result.call_key)
         self.store.execute("UPDATE agent_metered_calls SET metering_state='settled' WHERE id=?", (call_id,))
         return result

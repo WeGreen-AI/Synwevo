@@ -137,6 +137,8 @@ def _with_partial(exc, state: dict):
     assembly = state.get("assembly")
     if assembly is not None and getattr(exc, "replay_message", None) is None:
         exc.replay_message = assembly.partial()
+    if assembly is not None and isinstance(exc, DeepSeekCancelled):
+        assembly.usage_before_cancel()
     return exc
 
 
@@ -367,6 +369,18 @@ class _Assembly:
         if not text and not reasoning:
             return None
         return {"role": "assistant", "content": text, "reasoning_content": reasoning}
+
+    def usage_before_cancel(self) -> None:
+        """The person stopped after the final chunk (finish_reason + usage) arrived and before
+        [DONE]: that chunk is the provider's last word on usage, so it is kept as trusted
+        evidence. Stopping any earlier leaves usage unknown, exactly as before."""
+        a = self.attempt
+        if a.finish_reason is None or self.terminal_usage is None or self.early_usage or a.usage_reliability != "pending":
+            return
+        usage = normalize_usage(self.terminal_usage)
+        if usage is not None:
+            a.usage, a.raw_usage = usage, self.terminal_usage
+            a.usage_reliability, a.usage_reason = "trusted_terminal", "terminal_usage_before_cancel"
 
     def chunk(self, chunk: dict, on_text: Callable[[str], None]):
         a = self.attempt

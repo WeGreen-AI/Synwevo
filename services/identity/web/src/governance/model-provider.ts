@@ -4,14 +4,27 @@ export type ProviderEnvironment = 'test' | 'live' | null;
 export const routeTextKeys = ['requested_model', 'confirmed_route', 'confirmation_ref', 'cost_basis_ref',
   'account_confirmation_ref', 'sale_price_id', 'cost_price_id'] as const;
 export type RouteTextKey = typeof routeTextKeys[number];
+/** DeepSeek reasoning_effort values in canonical order; 'none' turns thinking off. */
+export const efforts = ['none', 'low', 'high', 'max'] as const;
+export type Effort = typeof efforts[number];
+/** Incomplete endings an administrator may charge the payer for (shared contract). */
+export const chargingKinds = ['length', 'content_filter', 'provider_interrupted', 'client_cancelled'] as const;
+export type ChargingKind = typeof chargingKinds[number];
+export type ChargingPolicy = Record<ChargingKind, boolean>;
 export type ProviderRoute = Record<RouteTextKey, string> & {
-  input_token_ceiling: number; output_token_ceiling: number; valid_until: number;
+  input_token_ceiling: number; output_token_ceiling: number; valid_until: number; reasoning_efforts?: Effort[];
 };
-export type ProviderSpec = { enabled: boolean; route: ProviderRoute | null };
+/** Versions published before a field existed are read with the server's defaults. */
+export type ProviderSpec = { enabled: boolean; route: ProviderRoute | null; incomplete_charging?: ChargingPolicy };
 export type ProviderState = {
   environment: ProviderEnvironment; provider: 'deepseek'; account_ref: 'platform-deepseek'; revision: number;
   spec: ProviderSpec | null; credential_revision: number; credential_configured: boolean;
   actor_id: string | null; created_at: number | null; reason: string | null; operation_id: string | null;
+};
+/** Automatic closure of paid dispatch on the current revision (upstream 402, missing model id). */
+export type ProviderHealth = {
+  closure: { state: 'model_missing' | 'upstream_balance'; reason_code: string; requested_model: string; since: number } | null;
+  last_models_check: { state: 'model_listed' | 'model_missing' | 'models_check_failed'; at: number } | null;
 };
 export type ProviderHistory = { items: ProviderState[]; next_before_revision: number | null };
 export type CredentialAction = 'keep' | 'replace' | 'revoke';
@@ -30,13 +43,21 @@ export type ProviderAttempt = {
 };
 export type ProviderForm = Record<RouteTextKey | 'input_token_ceiling' | 'output_token_ceiling' | 'valid_until', string> & {
   enabled: boolean; route_mode: 'none' | 'route'; credential_action: CredentialAction;
+} & Record<`effort_${Effort}` | `charge_${ChargingKind}`, boolean>;
+export type ProviderErrors = Partial<Record<keyof ProviderForm | 'api_key' | 'reasoning_efforts', string>>;
+export const effortLabels: Record<Effort, string> = { none: '不思考（关闭思考模式）', low: '低', high: '高（默认）', max: '最高' };
+export const chargingLabels: Record<ChargingKind, string> = {
+  length: '输出达到长度上限而截断', content_filter: '被提供方内容过滤终止',
+  provider_interrupted: '提供方中断（资源不足或中止）', client_cancelled: '用户在最终用量返回后停止',
 };
-export type ProviderErrors = Partial<Record<keyof ProviderForm | 'api_key', string>>;
+export const noCharging = (): ChargingPolicy => ({ length: false, content_filter: false, provider_interrupted: false, client_cancelled: false });
+export const routeEfforts = (route: ProviderRoute): Effort[] => route.reasoning_efforts ?? [...efforts];
+export const specCharging = (spec: ProviderSpec): ChargingPolicy => spec.incomplete_charging ?? noCharging();
 export const routeLabels: Record<keyof ProviderRoute, string> = {
   requested_model: '请求模型标识', confirmed_route: '已核实的实际路线', confirmation_ref: '模型与路线核实证据',
   cost_basis_ref: '成本依据引用', account_confirmation_ref: '账户核实证据', sale_price_id: '销售价格版本 ID',
   cost_price_id: '成本价格版本 ID', input_token_ceiling: '输入 token 上限', output_token_ceiling: '输出 token 上限',
-  valid_until: '路线有效期（UTC）',
+  valid_until: '路线有效期（UTC）', reasoning_efforts: '允许的推理投入',
 };
 const MAX_SECONDS = 253402300799;
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -60,12 +81,18 @@ export function providerTimestamp(value: unknown): number | null {
 }
 export const emptyProviderForm = (): ProviderForm => ({ enabled: false, route_mode: 'none', credential_action: 'keep',
   requested_model: '', confirmed_route: '', confirmation_ref: '', cost_basis_ref: '', account_confirmation_ref: '',
-  sale_price_id: '', cost_price_id: '', input_token_ceiling: '', output_token_ceiling: '', valid_until: '' });
+  sale_price_id: '', cost_price_id: '', input_token_ceiling: '', output_token_ceiling: '', valid_until: '',
+  effort_none: true, effort_low: true, effort_high: true, effort_max: true,
+  charge_length: false, charge_content_filter: false, charge_provider_interrupted: false, charge_client_cancelled: false });
 export function providerForm(spec: ProviderSpec | null): ProviderForm {
   const form = emptyProviderForm();
   if (!spec) return form;
   form.enabled = spec.enabled;
+  const charging = specCharging(spec);
+  for (const kind of chargingKinds) form[`charge_${kind}`] = charging[kind];
   if (spec.route) {
+    const allowed = routeEfforts(spec.route);
+    for (const effort of efforts) form[`effort_${effort}`] = allowed.includes(effort);
     form.route_mode = 'route';
     for (const key of routeTextKeys) form[key] = spec.route[key];
     form.input_token_ceiling = String(spec.route.input_token_ceiling);
@@ -95,9 +122,17 @@ export function validateProviderForm(form: ProviderForm, apiKey: string): {
     if (input === null) errors.input_token_ceiling = '输入上限须为 1–2000000 的整数，不接受小数或指数。';
     if (output === null) errors.output_token_ceiling = '输出上限须为 1–32768 的整数，不接受小数或指数。';
     if (until === null) errors.valid_until = '请输入有效的 UTC 日期时间，精确到秒，范围为 1970–9999 年。';
+    const allowed = efforts.filter(effort => form[`effort_${effort}`] === true);
+    if (!allowed.length) errors.reasoning_efforts = '请至少允许一种推理投入。';
     if (!Object.keys(errors).length) route = { requested_model: form.requested_model, confirmed_route: form.confirmed_route,
       confirmation_ref: form.confirmation_ref, cost_basis_ref: form.cost_basis_ref, account_confirmation_ref: form.account_confirmation_ref,
-      sale_price_id: form.sale_price_id, cost_price_id: form.cost_price_id, input_token_ceiling: input!, output_token_ceiling: output!, valid_until: until! };
+      sale_price_id: form.sale_price_id, cost_price_id: form.cost_price_id, input_token_ceiling: input!, output_token_ceiling: output!,
+      valid_until: until!, reasoning_efforts: allowed };
+  }
+  const incomplete_charging = noCharging();
+  for (const kind of chargingKinds) {
+    if (typeof form[`charge_${kind}`] !== 'boolean') errors[`charge_${kind}`] = '请选择是否收费。';
+    else incomplete_charging[kind] = form[`charge_${kind}`];
   }
   let credential: ProviderCredential | null = null;
   if (form.credential_action === 'replace') {
@@ -105,14 +140,30 @@ export function validateProviderForm(form: ProviderForm, apiKey: string): {
     else credential = { action: 'replace', api_key: apiKey };
   } else if (form.credential_action === 'keep' || form.credential_action === 'revoke') credential = { action: form.credential_action };
   else errors.credential_action = '请选择凭据操作。';
-  return { errors, spec: Object.keys(errors).length ? null : { enabled: form.enabled, route }, credential };
+  return { errors, spec: Object.keys(errors).length ? null : { enabled: form.enabled, route, incomplete_charging }, credential };
 }
+const validEfforts = (value: unknown) => value === undefined || (Array.isArray(value) && value.length > 0 &&
+  value.every(v => (efforts as readonly unknown[]).includes(v)) && new Set(value).size === value.length);
+const validCharging = (value: unknown) => value === undefined || (record(value) &&
+  Object.keys(value).every(key => (chargingKinds as readonly string[]).includes(key)) &&
+  chargingKinds.every(kind => typeof value[kind] === 'boolean'));
 export function validProviderRoute(value: unknown): value is ProviderRoute {
   return record(value) && routeTextKeys.every(key => text(value[key])) && integer(value.input_token_ceiling, 1, 2000000) &&
-    integer(value.output_token_ceiling, 1, 32768) && integer(value.valid_until, 0, MAX_SECONDS);
+    integer(value.output_token_ceiling, 1, 32768) && integer(value.valid_until, 0, MAX_SECONDS) && validEfforts(value.reasoning_efforts);
 }
 export function validProviderSpec(value: unknown): value is ProviderSpec {
-  return record(value) && typeof value.enabled === 'boolean' && (value.route === null ? !value.enabled : validProviderRoute(value.route));
+  return record(value) && typeof value.enabled === 'boolean' && (value.route === null ? !value.enabled : validProviderRoute(value.route)) &&
+    validCharging(value.incomplete_charging);
+}
+/** The health of the current revision, or null when the payload carries none (or an invalid one). */
+export function providerHealth(value: unknown): ProviderHealth | null {
+  if (!record(value) || !record(value.health)) return null;
+  const { closure, last_models_check: check } = value.health;
+  const closureOk = closure === null || (record(closure) && ['model_missing', 'upstream_balance'].includes(closure.state as string) &&
+    text(closure.reason_code) && text(closure.requested_model) && integer(closure.since, 0, MAX_SECONDS));
+  const checkOk = check === null || (record(check) && ['model_listed', 'model_missing', 'models_check_failed'].includes(check.state as string) &&
+    integer(check.at, 0, MAX_SECONDS));
+  return closureOk && checkOk ? value.health as ProviderHealth : null;
 }
 export function validProviderState(value: unknown): value is ProviderState {
   return record(value) && [null, 'test', 'live'].includes(value.environment as ProviderEnvironment) &&
@@ -124,9 +175,12 @@ export function validProviderState(value: unknown): value is ProviderState {
 export function sameProviderSpec(a: ProviderSpec | null, b: ProviderSpec | null): boolean {
   if (a === null || b === null) return a === b;
   if (a.enabled !== b.enabled) return false;
+  const ac = specCharging(a), bc = specCharging(b);
+  if (chargingKinds.some(kind => ac[kind] !== bc[kind])) return false;
   if (a.route === null || b.route === null) return a.route === b.route;
   return [...routeTextKeys, 'input_token_ceiling', 'output_token_ceiling', 'valid_until']
-    .every(key => a.route![key as keyof ProviderRoute] === b.route![key as keyof ProviderRoute]);
+    .every(key => a.route![key as keyof ProviderRoute] === b.route![key as keyof ProviderRoute]) &&
+    routeEfforts(a.route).join() === routeEfforts(b.route).join();
 }
 export function sameProviderVersion(a: ProviderState, b: ProviderState): boolean {
   return a.environment === b.environment && a.revision === b.revision && a.credential_revision === b.credential_revision &&
@@ -163,7 +217,9 @@ export function createProviderAttempt(plan: ProviderPreview, request: ProviderRe
   }
   // Own the exact payload so later edits cannot alter an uncertain retry.
   return { environment: plan.environment, credential_revision: plan.credential_revision, credential_configured: plan.credential_configured,
-    body: { expected_revision: request.expected_revision, spec: { enabled: request.spec.enabled, route: request.spec.route ? { ...request.spec.route } : null },
+    body: { expected_revision: request.expected_revision, spec: { enabled: request.spec.enabled,
+      route: request.spec.route ? { ...request.spec.route, ...(request.spec.route.reasoning_efforts ? { reasoning_efforts: [...request.spec.route.reasoning_efforts] } : {}) } : null,
+      ...(request.spec.incomplete_charging ? { incomplete_charging: { ...request.spec.incomplete_charging } } : {}) },
       credential: { ...request.credential }, preview_token: plan.preview_token, idempotency_key: id, reason: reason.trim() } };
 }
 export function validProviderPublication(value: unknown, attempt: ProviderAttempt): value is ProviderPublication {

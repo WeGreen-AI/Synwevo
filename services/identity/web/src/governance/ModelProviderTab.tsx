@@ -6,6 +6,7 @@ import { useAdminData } from './data';
 import { errText } from './labels';
 import { useUnsavedChanges } from '../lib/hooks';
 import { MODEL_PROVIDER_API as API, routeTextKeys, routeLabels, emptyProviderForm, providerForm, copyProviderRoute,
+  efforts, effortLabels, chargingKinds, chargingLabels, routeEfforts, specCharging, providerHealth, type ProviderHealth,
   validateProviderForm, validProviderState, sameProviderVersion, sameProviderSpec, validProviderHistory,
   readProviderPreview, createProviderAttempt, validProviderPublication, clearProviderCredential, providerFailureMode,
   type ProviderSpec, type ProviderState, type ProviderHistory, type ProviderForm, type ProviderRequest,
@@ -22,6 +23,7 @@ const credentialLabels = { keep: '保留当前凭据', replace: '设置或轮换
 function ProviderDetails({ spec }: { spec: ProviderSpec | null }) {
   const { t, locale } = useI18n();
   if (!spec) return <p className="muted">{t('尚未配置模型提供方。')}</p>;
+  const list = (items: string[]) => new Intl.ListFormat(locale, { style: 'long', type: 'unit' }).format(items);
   return <dl className="col gap8 small" style={{ margin: 0 }}>
     <div><dt>{t('路线启用状态')}</dt><dd style={{ margin: 0 }}>{t(spec.enabled ? '启用（调用仍受其他条件限制）' : '停用')}</dd></div>
     {!spec.route ? <div><dt>{t('路线')}</dt><dd style={{ margin: 0 }}>{t('未配置')}</dd></div> : <>
@@ -30,8 +32,30 @@ function ProviderDetails({ spec }: { spec: ProviderSpec | null }) {
       <div><dt>{t(routeLabels.valid_until)}</dt><dd style={{ margin: 0 }}>{new Intl.DateTimeFormat(locale, {
         dateStyle: 'medium', timeStyle: 'long', timeZone: 'UTC',
       }).format(new Date(spec.route.valid_until * 1000))}</dd><dd style={{ margin: 0 }}>{t('UNIX 秒：{seconds}', { seconds: spec.route.valid_until })}</dd></div>
+      <div><dt>{t('允许的推理投入')}</dt><dd style={{ margin: 0 }}>{list(routeEfforts(spec.route).map(effort => t(effortLabels[effort])))}</dd></div>
     </>}
+    <div><dt>{t('未完成调用向付款人收费')}</dt><dd style={{ margin: 0 }}>{(() => {
+      const charged = chargingKinds.filter(kind => specCharging(spec)[kind]);
+      return charged.length ? list(charged.map(kind => t(chargingLabels[kind]))) : t('均不收费（平台承担成本）');
+    })()}</dd></div>
   </dl>;
+}
+
+/** Automatic closure of paid dispatch and the last model-id check; publishing again reopens. */
+function ProviderHealthNotice({ health, time }: { health: ProviderHealth | null; time: (seconds: number) => string }) {
+  const { t } = useI18n();
+  if (!health) return null;
+  const check = health.last_models_check;
+  return <div className="col gap8">
+    {health.closure && <div className="notice warn col gap8" role="status">
+      <p><b>{t(health.closure.state === 'upstream_balance' ? '付费调用已自动停止：上游报告平台账户余额不足（HTTP 402）。'
+        : '付费调用已自动停止：模型列表中已没有 {model}。', { model: health.closure.requested_model })}</b></p>
+      <p className="small">{t('停止于 {time}。用户看到“服务暂时不可用，未扣费”。处理后，重新发布提供方配置（可原样发布）即可恢复。', { time: time(health.closure.since) })}</p>
+    </div>}
+    <p className="small muted">{check ? t({ model_listed: '最近一次模型标识核对：已列出 · {time}', model_missing: '最近一次模型标识核对：未列出 · {time}',
+      models_check_failed: '最近一次模型标识核对：未能完成（不会停止路线） · {time}' }[check.state], { time: time(check.at) })
+      : t('当前版本尚未核对模型标识。')}</p>
+  </div>;
 }
 
 /** The coordinator supplies effective grants. A denied reader mounts no HTTP hooks. */
@@ -49,6 +73,7 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
   const cursor = cursors[cursors.length - 1];
   const history = useAdminData<ProviderHistory>(`${API}/history?limit=20${cursor === null ? '' : `&before_revision=${cursor}`}`, onDenied);
   const state = validProviderState(current.data) ? current.data : null;
+  const health = providerHealth(current.data);
   const environment = state?.environment;
   const [base, setBase] = useState<ProviderState | null>(null);
   const [form, setForm] = useState<ProviderForm>(emptyProviderForm);
@@ -231,7 +256,8 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
     </section>
     <section className="card card-b col gap12" aria-labelledby={`${id}-current`} aria-busy={current.loading}>
       <h3 id={`${id}-current`}>{t('当前服务器版本')}</h3>
-      {current.loading ? <p role="status">{t('正在读取提供方配置…')}</p> : !current.err && state && details(state)}
+      {current.loading ? <p role="status">{t('正在读取提供方配置…')}</p> : !current.err && state && <>
+        <ProviderHealthNotice health={health} time={time} />{details(state)}</>}
     </section>
     {canManage && base && <section className="card card-b col gap12" aria-labelledby={`${id}-editor`}>
       <h3 id={`${id}-editor`} ref={heading} tabIndex={-1}>{t('编辑下一版本')}</h3>
@@ -270,7 +296,22 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
           </label>
           <p className="small muted" id={`${id}-route-help`}>{t('填写真实模型、路线、证据及已发布价格的版本 ID；本页不提供默认批准项。有效期按 UTC 输入，精确到秒。')}</p>
           {form.route_mode === 'route' && <div style={grid}>{routeTextKeys.map(field)}{field('input_token_ceiling')}{field('output_token_ceiling')}{field('valid_until')}</div>}
+          {form.route_mode === 'route' && <fieldset className="col gap8" style={fieldset} aria-describedby={`${id}-efforts-help${tried && validation.errors.reasoning_efforts ? ` ${id}-efforts-error` : ''}`}>
+            <legend>{t('允许的推理投入')}</legend>
+            <p className="small muted" id={`${id}-efforts-help`}>{t('用户只能选择这里允许的级别；选择“不思考”时请求关闭思考模式。')}</p>
+            <div className="row wrap gap12">{efforts.map(effort => <label key={effort} className="row gap8">
+              <input id={`${id}-effort_${effort}`} type="checkbox" checked={form[`effort_${effort}`]} onChange={event => edit(`effort_${effort}`, event.target.checked)} />
+              <span>{t(effortLabels[effort])}</span></label>)}</div>
+            {tried && validation.errors.reasoning_efforts && <span className="small" id={`${id}-efforts-error`}>{t(validation.errors.reasoning_efforts)}</span>}
+          </fieldset>}
           <p className="small muted">{t('启用仍须满足凭据、核实有效期、价格、成本策略及业务授权条件；停用不撤销已发送的调用或既有费用。')}</p>
+        </fieldset>
+        <fieldset className="col gap8" style={fieldset} disabled={!canWrite || frozen} aria-describedby={`${id}-charging-help`}>
+          <legend>{t('未完成调用的计费')}</legend>
+          <p className="small muted" id={`${id}-charging-help`}>{t('勾选的情形按提供方返回的最终用量向付款人收费，不超过该次调用的预留；未勾选时由平台承担成本。无法核实用量或输出无效的调用一律不收费。变更会形成新版本，已有报价与持续授权需要用户重新确认。')}</p>
+          {chargingKinds.map(kind => <label key={kind} className="row gap8">
+            <input id={`${id}-charge_${kind}`} type="checkbox" checked={form[`charge_${kind}`]} onChange={event => edit(`charge_${kind}`, event.target.checked)} />
+            <span>{t(chargingLabels[kind])}</span></label>)}
         </fieldset>
         {tried && !validation.spec && <p className="notice err" role="alert">{t('请修正已标出的提供方字段，再预览变更。')}</p>}
         <div><button type="submit" className="btn primary" disabled={!canWrite || frozen || changedBase || conflict ||

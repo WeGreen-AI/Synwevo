@@ -18,8 +18,10 @@ const helperURL = moduleURL(await compile('model-provider.ts'));
 const m = await import(helperURL);
 const route = { requested_model: 'fixture-requested', confirmed_route: 'fixture-confirmed', confirmation_ref: 'fixture-model-evidence',
   cost_basis_ref: 'fixture-cost-basis', account_confirmation_ref: 'fixture-account-evidence', sale_price_id: '9007199254740993123',
-  cost_price_id: 'fixture-cost-price', input_token_ceiling: 2000000, output_token_ceiling: 32768, valid_until: 1798761607 };
-const spec = { enabled: true, route };
+  cost_price_id: 'fixture-cost-price', input_token_ceiling: 2000000, output_token_ceiling: 32768, valid_until: 1798761607,
+  reasoning_efforts: ['none', 'low', 'high', 'max'] };
+const NO_CHARGING = { length: false, content_filter: false, provider_interrupted: false, client_cancelled: false };
+const spec = { enabled: true, route, incomplete_charging: NO_CHARGING };
 const initial = { environment: 'test', provider: 'deepseek', account_ref: 'platform-deepseek', revision: 0, spec: null,
   credential_revision: 0, credential_configured: false, actor_id: null, created_at: null, reason: null, operation_id: null };
 const requestFixture = () => ({ expected_revision: 0, spec: structuredClone(spec), credential: { action: 'replace', api_key: 'fixture-key-not-a-real-credential' } });
@@ -48,7 +50,7 @@ test('unconfigured input invents no approval, model, account evidence, price or 
   assert.equal(empty.credential_action, 'keep');
   for (const key of [...m.routeTextKeys, 'input_token_ceiling', 'output_token_ceiling', 'valid_until']) assert.equal(empty[key], '');
   assert.deepEqual(m.providerForm(null), empty);
-  assert.deepEqual(m.validateProviderForm(empty, '').spec, { enabled: false, route: null });
+  assert.deepEqual(m.validateProviderForm(empty, '').spec, { enabled: false, route: null, incomplete_charging: NO_CHARGING });
   assert.ok(m.validProviderState(initial));
   assert.equal(m.validateProviderForm({ ...empty, enabled: true }, '').spec, null);
 });
@@ -100,6 +102,48 @@ test('route form round-trips string price IDs and preserves all independent evid
   assert.equal(m.validateProviderForm({ ...form, enabled: false }, '').spec.enabled, false);
   // Expired evidence may be retained when stopping a route; the server governs activation.
   assert.ok(m.validateProviderForm({ ...form, enabled: false, valid_until: '2000-01-01T00:00:01' }, '').spec);
+});
+
+test('reasoning efforts and the incomplete-call charging policy round-trip and are never silently reset', () => {
+  const form = m.providerForm(spec);
+  const narrowed = m.validateProviderForm({ ...form, effort_max: false, effort_low: false }, '').spec;
+  assert.deepEqual(narrowed.route.reasoning_efforts, ['none', 'high']);
+  const none = m.validateProviderForm({ ...form, effort_none: false, effort_low: false, effort_high: false, effort_max: false }, '');
+  assert.equal(none.spec, null);
+  assert.ok(none.errors.reasoning_efforts);
+  const charged = m.validateProviderForm({ ...form, charge_length: true, charge_client_cancelled: true }, '').spec;
+  assert.deepEqual(charged.incomplete_charging, { ...NO_CHARGING, length: true, client_cancelled: true });
+  assert.ok(m.validateProviderForm({ ...form, charge_length: 'yes' }, '').errors.charge_length);
+  // A change to only the policy or only the efforts is a change (the preview button stays enabled).
+  assert.equal(m.sameProviderSpec(charged, spec), false);
+  assert.equal(m.sameProviderSpec(narrowed, spec), false);
+  assert.equal(m.sameProviderSpec(m.validateProviderForm(form, '').spec, spec), true);
+  // A version published before the fields existed reads with the server's defaults.
+  const older = { enabled: true, route: Object.fromEntries(Object.entries(route).filter(([key]) => key !== 'reasoning_efforts')) };
+  assert.ok(m.validProviderSpec(older));
+  assert.deepEqual(m.validateProviderForm(m.providerForm(older), '').spec, spec);
+  assert.equal(m.sameProviderSpec(older, spec), true);
+  for (const bad of [{ ...spec, incomplete_charging: { ...NO_CHARGING, everything: true } }, { ...spec, incomplete_charging: { length: true } },
+    { ...spec, incomplete_charging: { ...NO_CHARGING, length: 1 } }, { ...spec, route: { ...route, reasoning_efforts: [] } },
+    { ...spec, route: { ...route, reasoning_efforts: ['medium'] } }, { ...spec, route: { ...route, reasoning_efforts: ['high', 'high'] } }]) {
+    assert.equal(m.validProviderSpec(bad), false, JSON.stringify(bad));
+  }
+  const request = { expected_revision: 0, spec: structuredClone(charged), credential: { action: 'keep' } };
+  const plan = m.readProviderPreview(rawPreview(request), initial, request, NOW);
+  const attempt = m.createProviderAttempt(plan, request, 'fixture publication reason', 'fixture-idempotency-key');
+  assert.deepEqual(attempt.body.spec, charged);
+  request.spec.incomplete_charging.length = false;
+  request.spec.route.reasoning_efforts.push('max');
+  assert.deepEqual(attempt.body.spec, charged);  // The owned payload cannot change under a retry.
+});
+
+test('route health is read strictly', () => {
+  const health = { closure: { state: 'upstream_balance', reason_code: 'http_402', requested_model: 'fixture-requested', since: 1780000000 },
+    last_models_check: { state: 'model_listed', at: 1780000001 } };
+  assert.deepEqual(m.providerHealth({ ...initial, health }), health);
+  assert.deepEqual(m.providerHealth({ ...initial, health: { closure: null, last_models_check: null } }), { closure: null, last_models_check: null });
+  for (const bad of [undefined, null, { closure: { ...health.closure, state: 'reopened' }, last_models_check: null },
+    { closure: null, last_models_check: { state: 'model_listed', at: 'now' } }]) assert.equal(m.providerHealth({ ...initial, health: bad }), null);
 });
 
 test('credential actions never include an old key, and replacing requires explicit secret input', () => {
@@ -295,6 +339,27 @@ test('current and immutable historical routes show concrete fields and credentia
   assert.match(html, /<details/);
   assert.doesNotMatch(html, /fixture-server-secret|fixture-server-digest|fixture-key-not-a-real-credential/);
   assert.match(html, /1798761607/);
+});
+
+test('an automatic closure, the last model-id check and the charging policy are shown to administrators', () => {
+  support.fixture.loading = false;
+  const published = publishedFixture().state;
+  support.fixture.current = { ...published, spec: { ...published.spec, incomplete_charging: { ...NO_CHARGING, length: true } },
+    health: { closure: { state: 'upstream_balance', reason_code: 'http_402', requested_model: 'fixture-requested', since: 1780000000 },
+      last_models_check: { state: 'models_check_failed', at: 1780000001 } } };
+  support.fixture.history = { items: [], next_before_revision: null };
+  let html = render();
+  assert.match(html, /上游报告平台账户余额不足（HTTP 402）/);
+  assert.match(html, /重新发布提供方配置/);
+  assert.match(html, /未能完成（不会停止路线）/);
+  assert.match(html, /输出达到长度上限而截断/);
+  assert.match(html, /不思考（关闭思考模式）/);
+  support.fixture.current = { ...published, health: { closure: { state: 'model_missing', reason_code: 'models_listing',
+    requested_model: 'fixture-requested', since: 1780000000 }, last_models_check: null } };
+  html = render();
+  assert.match(html, /模型列表中已没有 fixture-requested/);
+  assert.match(html, /均不收费（平台承担成本）/);
+  assert.match(html, /尚未核对模型标识/);
 });
 
 test('loading, null environment and invalid server state are explicit in the rendered page', () => {
