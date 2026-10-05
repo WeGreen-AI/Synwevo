@@ -13,6 +13,13 @@ from synwevo_core.store import new_id
 from .gateway import Route, _json
 
 
+def off_peak_rates(sale):
+    """Off-peak rates of a stored time-banded sale tariff as decimal strings; None when flat."""
+    band = sale.get("off_peak")
+    return None if band is None else {key: {"numerator": str(band[key]["numerator"]), "denominator": str(band[key]["denominator"])}
+                                      for key in ("input_uncached", "input_cached", "output")}
+
+
 class ModelConsents:
     def __init__(self, quotes):
         self.quotes, self.store, self.ledger = quotes, quotes.store, quotes.ledger
@@ -119,7 +126,7 @@ class ModelConsents:
             'price_id': sale['price_id'], 'unit': sale['unit'], 'terms_ref': sale['terms_ref'],
             'rates': {key: {name: str(sale[key][name]) for name in ('numerator', 'denominator')}
                       for key in ('input_uncached', 'input_cached', 'output')},
-            'per_tokens': sale['per_tokens'], 'per_call_hold': str(terms['per_call_hold']),
+            'off_peak_rates': off_peak_rates(sale), 'per_tokens': sale['per_tokens'], 'per_call_hold': str(terms['per_call_hold']),
             'budget': str(terms['budget']), 'total_maximum': str(terms['budget'] * row['max_runs']),
             'max_calls': terms['max_calls'], 'run_seconds': terms['run_seconds']}
 
