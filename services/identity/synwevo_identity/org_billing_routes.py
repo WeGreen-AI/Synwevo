@@ -24,14 +24,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Query, Request, Response
 
 from synwevo_core.billing import BillingError, Ledger
-from synwevo_core.billing.org_payers import OrgPayers
+from synwevo_core.billing.org_payers import OrgPayers, manages_billing
 from synwevo_core.billing.wallet_config import cny_unit, environment_from_env, fen_to_units, units_from_env
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
-from synwevo_core.org_roles import OrgRoles
 from synwevo_core.sessions import Sessions
 
-PERMISSION = "org.billing.manage"
 MAX_LIMIT_MINOR = 100_000_000      # CNY 1,000,000 a month
 
 
@@ -42,7 +40,6 @@ def _units(value: int) -> str:
 def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
     router = APIRouter(prefix="/api/auth/organizations/{oid}/billing", tags=["organization"])
     store = ident.store
-    roles = OrgRoles(store)
     environment = environment_from_env()
     unit = cny_unit(units_from_env())
     ledger = Ledger(store, environment=environment, namespace="org-billing") if environment else None
@@ -53,9 +50,11 @@ def build_router(ident: Identity, sessions: Sessions, audit) -> APIRouter:
         user = ident.get_user(live["user_id"]) if live else None
         if not user or user["status"] != "active" or user.get("deleted_at") is not None:
             raise ServiceError(401, "unauthorized", "请先登录可用账户")
-        org = store.one("SELECT status,deleted_at FROM organizations WHERE id=?", (oid,))
-        if not org or org["deleted_at"] is not None or not roles.has(oid, user["id"], PERMISSION):
+        # One rule for who manages an organization's money (org_payers.manages_billing); a frozen
+        # organization's manager is told it is unavailable rather than that they lack the right.
+        if not manages_billing(store, oid, user["id"], require_active=False):
             raise ServiceError(403, "org_billing_forbidden", "你没有管理该组织付费的权限")
+        org = store.one("SELECT status FROM organizations WHERE id=?", (oid,))
         if org["status"] != "active":
             raise ServiceError(409, "organization_unavailable", "该组织当前不可用")
         if payers is None or unit is None:

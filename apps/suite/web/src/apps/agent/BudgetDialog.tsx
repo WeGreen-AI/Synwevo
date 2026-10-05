@@ -8,7 +8,7 @@ import {
   type BudgetIntent, type Offer, type Pricing, type Quote, type QuoteParams,
 } from './budget';
 import { PriceChangeList, useChatText } from './ChatParts';
-import { renewalParams, samePricing } from './composer';
+import { publicHref, renewalParams, samePricing } from './composer';
 import { majorDecimal } from './cost';
 import { refusalOf } from './refusals';
 import { budgetCopy, type BudgetText } from './budget.messages';
@@ -32,6 +32,8 @@ export interface BudgetDialogProps {
   /** The terms and limits the person last confirmed, when they no longer apply (a consent whose
    *  model or price changed): the dialog says what changed and offers to re-confirm in one step. */
   previous?: Previous;
+  /** The public site's origin (auth state `site_url`), where the terms, AI use rules and pricing live. */
+  siteUrl?: string;
 }
 export interface Previous { terms: Pricing; budget: string; max_calls: number; run_seconds: number }
 export interface ConsentOption {
@@ -77,7 +79,10 @@ function errorText(error: unknown, fallback: BudgetText): BudgetText {
 }
 
 /** An isolated consent dialog. Only its read-only offer loads automatically. */
-export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, consent: offered, payerLabel, previous }: BudgetDialogProps) {
+const TERMS_PAGES = [['terms', 'termsOfService'], ['ai-use', 'aiUseRules'], ['pricing', 'pricingPage']] as const;
+const termsLinks: CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: 'var(--sp-1) var(--sp-4)', listStyle: 'none', padding: 0, margin: 0 };
+
+export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, consent: offered, payerLabel, previous, siteUrl }: BudgetDialogProps) {
   const { t, locale } = useI18n();
   const { c: ct } = useChatText();
   // Fixed when the dialog opens, and replaced only by a quote this dialog saw refused for a change.
@@ -326,10 +331,11 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
   };
 
   /** A payment refusal the chat explains in its own words (organization payer, frozen wallet,
-   *  risk controls, consent); price changes and expired quotes keep the dialog's own wording. */
+   *  risk controls, consent, a suspended Agent access); price changes and expired or used quotes
+   *  keep the dialog's own wording, next to its own "get a new quote". */
   const paymentRefusal = (failure: unknown): string | null => {
     const known = refusalOf(failure, { organization: payerLabel !== undefined });
-    return known && !['price_changed', 'funds'].includes(known.kind) ? ct(known.text) : null;
+    return known && !['price_changed', 'funds', 'quote'].includes(known.kind) ? ct(known.text) : null;
   };
   const pricing = quote ?? offer;
   const reuse = prior && offer ? renewalParams(prior, offer, prior.terms.unit) : null;
@@ -357,9 +363,9 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
     {['editing', 'quoting', 'quoteError'].includes(phase) && <button type="submit" form={`${id}-form`} className={`btn${renewal && reuse ? '' : ' primary'}`} style={action}
       disabled={busy || changed || !hasIntent}>{m(phase === 'quoting' ? 'quoting' : phase === 'quoteError' ? 'retryQuote' : 'getQuote')}</button>}
     {renewal && reuse && phase === 'editing' && <button type="button" className="btn primary" style={action}
-      disabled={busy || changed || !hasIntent} onClick={() => void renewAndSend()}>{ct('acceptNew')}</button>}
+      disabled={busy || changed || !hasIntent} aria-describedby={`${id}-terms`} onClick={() => void renewAndSend()}>{ct('acceptNew')}</button>}
     {quote && phase !== 'confirmed' && !used && single && <button type="button" className="btn primary" style={action} disabled={!canConfirm}
-      onClick={() => void confirm()}>{m(phase === 'confirming' ? 'confirming' : phase === 'confirmError' ? 'retryConfirm'
+      aria-describedby={`${id}-terms`} onClick={() => void confirm()}>{m(phase === 'confirming' ? 'confirming' : phase === 'confirmError' ? 'retryConfirm'
         : quote.environment === 'test' ? 'confirmTest' : 'confirm')}</button>}
     {consentStage === 'edit' && <button type="submit" form={`${id}-consent-form`} className="btn primary" style={action}
       disabled={changed || expired || consentPending}>{c('review')}</button>}
@@ -446,6 +452,15 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
           {quote && detail(m('quoteId'), quote.id)}
         </dl></details>
       </>}
+      {/* A confirmed paid run records the published versions in force (synwevo_core.terms). */}
+      <section className="notice" style={stack} aria-labelledby={`${id}-terms`}>
+        <p id={`${id}-terms`} className="small" style={{ margin: 0 }}>{m('termsAccept')}</p>
+        <ul style={termsLinks} aria-label={m('termsLinks')}>
+          {TERMS_PAGES.map(([page, label]) => <li key={page}>
+            <a href={publicHref(siteUrl, page, locale)} target="_blank" rel="noopener noreferrer">{m(label)}<span className="sr-only">{m('newTab')}</span></a>
+          </li>)}
+        </ul>
+      </section>
       {phase === 'review' && quote && single && <p className={`notice ${used || expired || quote.status === 'revoked' ? 'warn' : 'info'}`} role="status" aria-live="polite">
         {m(used ? 'accepted' : expired ? 'expired' : quote.status === 'revoked' ? 'revoked' : 'ready')}
       </p>}

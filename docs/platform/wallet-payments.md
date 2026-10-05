@@ -41,6 +41,12 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
    调用 `Ledger.credit_verified_payment`，其校验回调在账本事务内重新读取收件箱行并核对订单、金额、币种、支付单号与
    付款状态。重复投递、同一付款的另一事件都不会重复入账。金额/币种/会话不符的事件记为 `rejected`、不入账、返回 200
    以停止重试；处理失败返回 500 让 Stripe 重试，账户进程的清理任务每小时也会重放未处理的收件箱行。
+   **失败告警**：收件箱事件以 `failed` 或 `rejected` 结束（含重放路径 `process_pending`），以及进不了收件箱的投递
+   （签名 `signature_missing|malformed|mismatch|stale`、`payload_too_large`、`payload_invalid`、
+   `environment_mismatch`、`event_conflict`），都调用 `alert_payment_webhook_failure`，通知有
+   `platform.config.manage` 的平台管理员（站内与邮件），每个环境、渠道、代码每个 UTC 日一次。告警只带渠道名
+   （`stripe`）与稳定代码（如 `amount_mismatch`、`payment_order_mismatch`、`processing_error`），从不带请求体、
+   签名、事件 ID 或客户信息；告警送不出去也不改变返回给 Stripe 的结果。
 5. 返回页轮询 `GET /api/auth/wallet/topups/{order_id}`（`pending|paid|failed|expired` 与 `credited_at`）；
    `GET /api/auth/wallet/receipts/{order_id}` 只对已入账订单返回收据：订单号、金额、币种、付款方式（来自 Stripe 的
    `charge.succeeded`，未收到则为空，不编造）、入账时间、运营方名称（发布时的设置版本）、Stripe 支付单号。只有发起人
@@ -53,6 +59,13 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
 冻结该钱包。冻结的钱包不能预留/派发付费调用，也不能再充值（`wallet_frozen`）。争议先于入账到达时，事件记为失败并由
 Stripe 重试，入账后再处理，不会丢失。解除冻结是财务管理员带理由的审计操作；拒付记录与欠款保留不变。争议结案
 （`charge.dispute.closed`）本期不自动处理：胜诉后的补偿由管理员带理由赠送。
+
+**冻结经得起恢复备份。** 冻结在任何 SQL 写入之前先追加到安全日志（`synwevo_core/journal.py` 的 `payer_frozen`：
+冻结 id、环境、钱包账户 id、付款方类型与 id、拒付 id，不含金额、邮箱或支付载荷）；写不进日志，拒付整笔不记录，
+事件留在收件箱重试。恢复时不论备份时间都重放，并按冻结 id 应用：恢复的库里已有这项冻结（仍冻结，或管理员在备份前
+已解除）就原样保留，绝不重新冻结；库里没有的才重新建立，钱包重新不能付款；库里没有这个钱包账户则无可冻结。
+若拒付本身晚于备份（库里没有拒付记录），重建的冻结不带拒付关联，管理员凭日志里的冻结 id 解除
+（`POST /api/admin/billing/freezes/{id}/lift`）；财务视图的冻结账户数会计入它。
 
 ## 4. 平台权限与财务视图
 
@@ -74,7 +87,9 @@ Stripe 重试，入账后再处理，不会丢失。解除冻结是财务管理�
 ## 5. 组织付费
 
 组织钱包（`org_wallet`）由持有组织权限 `org.billing.manage` 的人充值（所有者默认持有；管理员默认**不**持有，可通过
-自定义角色授予）。付费设置在账户源站：
+自定义角色授予）。谁是组织的付费管理者只由一个函数判定：`synwevo_core.billing.org_payers.manages_billing`（有效组织的
+有效成员，基础角色或自定义角色带该权限）；充值接口、下列付费设置接口与用量/流水读取接口都调用它，所以能为组织付款的人
+就是能读组织账单的人。付费设置在账户源站：
 
 | 接口（前缀 `/api/auth/organizations/{oid}/billing`） | 说明 |
 |---|---|

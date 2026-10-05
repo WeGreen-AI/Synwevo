@@ -30,6 +30,7 @@ from dataclasses import dataclass
 import hashlib
 import hmac
 import json
+import logging
 import time
 from typing import Any, Protocol
 from urllib.parse import quote, urlencode
@@ -38,10 +39,13 @@ import httpx
 
 from synwevo_core.billing import BillingError, DisputeNotice, Ledger, PaymentReceipt, Unit
 from synwevo_core.billing.payment_settings import MERCHANT, PROVIDER, PaymentSettings
+from synwevo_core.billing.risk import alert_payment_webhook_failure
 from synwevo_core.billing.wallet_config import (CURRENCY, EXCHANGE_VERSION, cny_unit, environment_from_env,
                                                 fen_to_units, units_from_env)
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import Store, new_id
+
+log = logging.getLogger(__name__)
 
 STRIPE_API = "https://api.stripe.com"
 CHECKOUT_HOST = "https://checkout.stripe.com/"
@@ -396,48 +400,73 @@ class TopupService:
         if secret is None:
             return 503, {"error": "payments_not_configured"}
         if len(payload) > MAX_WEBHOOK_BYTES:
-            return 400, {"error": "payload_too_large"}
+            return self._refused("payload_too_large", {"error": "payload_too_large"})
         try:
             verify_signature(payload, signature, secret, now=self.clock())
         except SignatureError as exc:
-            return 400, {"error": "signature_invalid", "reason": exc.reason}
+            return self._refused("signature_" + exc.reason, {"error": "signature_invalid", "reason": exc.reason})
         try:
             event = json.loads(payload)
         except ValueError:
-            return 400, {"error": "payload_invalid"}
+            return self._refused("payload_invalid", {"error": "payload_invalid"})
         if (not isinstance(event, dict) or not _ident(event.get("id")) or not str(event.get("id")).startswith("evt_")
                 or not isinstance(event.get("type"), str) or len(event["type"]) > 100
                 or type(event.get("livemode")) is not bool):
-            return 400, {"error": "payload_invalid"}
+            return self._refused("payload_invalid", {"error": "payload_invalid"})
         if event["livemode"] != (self.environment == "live"):
-            return 400, {"error": "environment_mismatch"}
+            return self._refused("environment_mismatch", {"error": "environment_mismatch"})
         facts = _facts(event)
         if facts is None:
-            return 400, {"error": "payload_invalid"}
+            return self._refused("payload_invalid", {"error": "payload_invalid"})
         digest = hashlib.sha256(payload).hexdigest()
         encoded = json.dumps(facts, sort_keys=True, separators=(",", ":"))
         with self.store.tx() as t:
             row = t.execute("SELECT * FROM payment_webhook_inbox WHERE provider=? AND event_id=?",
                             (PROVIDER, event["id"])).fetchone()
+            conflict = row is not None and (row["facts_json"] != encoded or row["type"] != event["type"]
+                                            or row["environment"] != self.environment)
             if row is None:
                 t.execute("INSERT INTO payment_webhook_inbox(provider,event_id,environment,type,payload_sha256,facts_json,"
                           "signature_verified,received_at,status) VALUES (?,?,?,?,?,?,1,?,'received')",
                           (PROVIDER, event["id"], self.environment, event["type"], digest, encoded, self.clock()))
-            elif row["facts_json"] != encoded or row["type"] != event["type"] or row["environment"] != self.environment:
-                return 400, {"error": "event_conflict"}
-            elif row["status"] in ("processed", "ignored", "rejected"):
+            elif not conflict and row["status"] in ("processed", "ignored", "rejected"):
                 return 200, {"received": True, "status": row["status"]}
-            t.execute("UPDATE payment_webhook_inbox SET attempts=attempts+1 WHERE provider=? AND event_id=?",
-                      (PROVIDER, event["id"]))
+            if not conflict:
+                t.execute("UPDATE payment_webhook_inbox SET attempts=attempts+1 WHERE provider=? AND event_id=?",
+                          (PROVIDER, event["id"]))
+        if conflict:
+            return self._refused("event_conflict", {"error": "event_conflict"})
         try:
             status, code = self._process(event["id"], event["type"], facts, digest)
         except Exception:  # noqa: BLE001 - recorded as failed and retried by the provider; nothing echoed
             status, code = "failed", "processing_error"
         self.store.execute("UPDATE payment_webhook_inbox SET status=?,result_code=?,processed_at=? "
                            "WHERE provider=? AND event_id=?", (status, code, self.clock(), PROVIDER, event["id"]))
+        self._ended(status, code)
         if status == "failed":
             return 500, {"error": "processing_failed"}
         return 200, {"received": True, "status": status}
+
+    # ------------------------------------------------------------------ alerts
+    def _alert(self, code: str) -> None:
+        """Tell the platform's administrators that a webhook failed (synwevo_core.billing.risk:
+        deduplicated per environment, provider, code and day). Only the provider name and a stable
+        code travel — never the payload, its signature, an event id or a customer detail — and an
+        alert that cannot be delivered never changes what the provider is told."""
+        try:
+            alert_payment_webhook_failure(self.store, environment=self.environment, provider=PROVIDER, code=code)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("payment webhook alert could not be raised: %s", type(exc).__name__)
+
+    def _refused(self, code: str, body: dict) -> tuple[int, dict]:
+        """A delivery refused before it reached the inbox (signature, shape, environment, conflict)."""
+        self._alert(code)
+        return 400, body
+
+    def _ended(self, status: str, code: str | None) -> None:
+        """An inbox event that ended failed (to be retried) or rejected (never credited)."""
+        if status in ("failed", "rejected"):
+            self._alert(code or "processing_error")
 
     def process_pending(self, limit: int = 50) -> int:
         """Re-run inbox rows left 'received'/'failed' (e.g. a crash after the insert). Bounded."""
@@ -453,6 +482,7 @@ class TopupService:
                 status, code = "failed", "processing_error"
             self.store.execute("UPDATE payment_webhook_inbox SET status=?,result_code=?,processed_at=?,attempts=attempts+1 "
                                "WHERE provider=? AND event_id=?", (status, code, self.clock(), PROVIDER, row["event_id"]))
+            self._ended(status, code)
             done += status != "failed"
         return done
 

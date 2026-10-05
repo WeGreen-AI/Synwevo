@@ -15,14 +15,35 @@ a run; the organization decides who may charge it and how much:
 * The organization's wallet (``org_wallet``) never goes negative and is frozen by a chargeback
   like a person's.
 
-This module never decides who may *manage* billing; the routes check ``org.billing.manage``
-inside the same transaction as the change and write the audit row.
+Who manages an organization's billing is decided in one place, ``manages_billing``: its owner, or
+a member whose base or custom roles carry ``org.billing.manage`` (``OrgRoles``). The top-up and
+organization-billing routes check it inside the same transaction as the change and write the
+audit row; the usage and statement reads (``billing.usage``) use the same function, so whoever
+may pay for an organization may read what it paid, and nobody else.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from ..org_roles import OrgRoles
 from .models import BillingError, Unit, identifier, integer
+
+#: The organization permission that lets a member manage (and read) the organization's money.
+BILLING_PERMISSION = "org.billing.manage"
+
+
+def manages_billing(store, organization_id: str, user_id: str, *, require_active: bool = True) -> bool:
+    """Whether ``user_id`` currently manages ``organization_id``'s billing: an active member whose
+    base role (owner) or custom roles hold ``org.billing.manage``, of an organization that exists,
+    is not deleted and — unless ``require_active`` is False — is active. Read from current rows
+    (inside the caller's transaction when there is one); an organization admin without the
+    permission, a platform administrator and anyone outside the organization are not managers."""
+    if not isinstance(organization_id, str) or not isinstance(user_id, str):
+        return False
+    org = store.one("SELECT status, deleted_at FROM organizations WHERE id=?", (organization_id,))
+    if not org or org["deleted_at"] is not None or (require_active and org["status"] != "active"):
+        return False
+    return OrgRoles(store).has(organization_id, user_id, BILLING_PERMISSION)
 
 
 def month_start(at: int) -> int:

@@ -3,6 +3,7 @@
  *  claim is made here, and the amounts are arithmetic examples, not the governed prices. */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import React from 'react';
@@ -12,7 +13,7 @@ import { MemoryRouter } from 'react-router-dom';
 globalThis.window ??= { location: new URL('http://127.0.0.1/agent/c/conv_fixture'), history: { state: null, replaceState() {} },
   addEventListener() {}, removeEventListener() {}, setInterval: () => 0, clearInterval() {} } as any;
 let server: any, cost: any, refusals: any, payers: any, composer: any, label: any, copy: any, parts: any, status: any,
-  ui: any, core: any;
+  ui: any, core: any, errors: any;
 before(async () => {
   server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
     logLevel: 'error', appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null },
@@ -30,6 +31,8 @@ before(async () => {
     server.ssrLoadModule('/src/apps/agent/aiLabel.ts'), server.ssrLoadModule('/src/apps/agent/chat.messages.ts'),
     server.ssrLoadModule('/src/apps/agent/ChatParts.tsx'), server.ssrLoadModule('/src/apps/agent/ComposerStatus.tsx'),
   ]);
+  // The chat's error wording and its catalogue, as the Agent page loads them (index.tsx).
+  [errors] = await Promise.all([server.ssrLoadModule('/src/apps/agent/errors.tsx'), server.ssrLoadModule('/src/apps/agent/messages.ts')]);
 });
 after(async () => { ui?.setLocale('zh-Hans'); await server?.close(); });
 
@@ -200,6 +203,129 @@ test('each refusal maps to a translated sentence and its one next step', () => {
   assert.equal(refusals.refusalOf({ code: 'billing_risk_breaker_open' }, { organization: true }).kind, 'breaker');
 });
 
+test('a suspended Agent access says so, without a payment next step, and tells the person whom to ask', async () => {
+  const refusal = refusals.refusalOf({ code: 'agent_access_suspended' });
+  assert.equal(refusal?.kind, 'access_suspended');
+  assert.equal(refusal.next, null);
+  // The same refusal replayed, and the same code ending a running answer, read the same.
+  assert.equal(refusals.refusalOf({ code: 'idempotent_failure', detail: { code: 'agent_access_suspended' } }).kind, 'access_suspended');
+  const words = { 'zh-Hans': ['管理员已暂停你的 Agent 使用权限', '联系平台管理员'],
+    en: ['An administrator has suspended your Agent access', 'contact the platform administrator'],
+    'zh-Hant': ['管理員已暫停你的 Agent 使用權限', '聯絡平台管理員'] } as const;
+  for (const locale of LOCALES) {
+    const html = render(locale, React.createElement(parts.RefusalNotice, { refusal, walletUrl: '/account/wallet', live: true, onRequote() {}, onPersonal() {} }));
+    for (const text of words[locale]) assert.ok(html.includes(text), `${locale}: ${text} in ${html}`);
+    // Not a wallet, limit or price problem: no top-up, settings or re-confirmation is offered.
+    assert.ok(!html.includes('<a') && !html.includes('<button') && html.includes('role="alert"'), html);
+    assert.ok(!/余额|餘額|balance/i.test(html), html);
+  }
+  // A send under a continuing consent that the server refuses for this reason says it too, not
+  // the consent panel's generic "refused".
+  const controls = await server.ssrLoadModule('/src/apps/agent/ConsentControls.tsx');
+  const failure = render('en', React.createElement(controls.ConsentFailure, { error: { code: 'agent_access_suspended' } }));
+  assert.ok(failure.includes('An administrator has suspended your Agent access'), failure);
+  const own = render('en', React.createElement(controls.ConsentFailure, { error: { code: 'consent_revoked' } }));
+  assert.ok(!own.includes('suspended'), own);
+});
+
+/** Every error code the merged backend can hand the chat (a refused send, a refused quote or
+ *  confirmation, or the error a running answer ends with), read from the Python sources, must be
+ *  either a refusal with its own sentence and next step (refusals.ts) or a specific sentence of
+ *  the chat (errors.tsx) — never the generic "could not finish" — unless it is listed below with
+ *  the reason no chat ever shows it. Billing errors reach the chat as "billing_" + code. */
+const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+const AGENT_DIR = 'apps/suite/synwevo_suite/agent/';
+const SOURCES = [...readdirSync(ROOT + AGENT_DIR).filter((f) => f.endsWith('.py')).map((f) => AGENT_DIR + f),
+  'packages/core/synwevo_core/agent_safety.py',
+  ...['ledger', 'admission', 'risk', 'traffic', 'payer_budgets', 'org_payers', 'models'].map((n) => `packages/core/synwevo_core/billing/${n}.py`)];
+/** Codes built at run time (an HTTP status table, a period name), spelled out. */
+const COMPUTED = ['provider_balance', 'provider_error', 'provider_overloaded', 'provider_rate_limited',
+  ...['daily', 'weekly', 'monthly'].flatMap((p) => [`billing_payer_${p}_budget_exceeded`, `billing_cost_${p}_budget_exceeded`])];
+function serverCodes(): Set<string> {
+  const codes = new Set<string>(COMPUTED);
+  for (const file of SOURCES) {
+    const source = readFileSync(ROOT + file, 'utf8');
+    for (const [, kind, code] of source.matchAll(/\b(ServiceError|ProviderError|BillingError|DeepSeekError)\(\s*(?:\d+\s*,\s*)?"([a-z_]+)"/g)) {
+      if (code.endsWith('_')) continue;  // a prefix joined at run time ("billing_" + exc.code)
+      codes.add(kind === 'BillingError' ? `billing_${code}` : code);
+    }
+  }
+  return codes;
+}
+const NOT_IN_CHAT: [string, string][] = [
+  ['agent_suspension_not_found missing_reason report_closed report_decision_invalid report_not_found safety_rule_invalid safety_rules_changed safety_rules_invalid '
+    + 'billing_invalid_risk_policy billing_invalid_risk_scope billing_invalid_breaker_source',
+    // The Admin risk tab's own codes (risk_allowlist_*, risk_suspension_*) need no entry: the
+    // chat words any "risk_" code as a stop before dispatch.
+    'administrators govern these in the Admin shell, which words them'],
+  ['report_exists report_category_invalid', 'met only in the report dialog, which words them (ReportDialog)'],
+  ['provider_consent_not_needed', 'answers the consent page itself; the consent dialog words it'],
+  ['bad_key model_personal_key_unsupported memory_not_found too_many_memories transfer_policy_changed',
+    'met on the Agent settings page (personal key, memories, transfer policy), which words them'],
+  ['wallet_unavailable', 'the payer list (GET /api/suite/agent/payers); the composer says the organization payers cannot be loaded'],
+  ['billing_quote_limit_exceeded billing_quote_requires_turn_transaction',
+    'met only while asking for a quote: the budget dialog words a refused quote'],
+  ['empty_message', 'the composer never sends an empty message'],
+  ['unauthorized', 'an expired session: the shared client catalogue asks the person to sign in again on every page'],
+  ['billing_grant_reason_required billing_invalid_grant billing_welcome_already_granted billing_freeze_not_found billing_order_already_funded '
+    + 'billing_payment_authority_denied billing_payment_delegation_required billing_payment_environment_mismatch billing_payment_event_conflict '
+    + 'billing_payment_evidence_untrusted billing_payment_not_succeeded billing_payment_order_mismatch billing_payment_transaction_conflict '
+    + 'billing_wallet_forbidden billing_invalid_org_payer billing_org_payer_conflict billing_org_workspace_unknown billing_price_version_conflict',
+    'wallet, payment, grant and organization-payer management on the account service, never on the chat path'],
+  ['billing_model_authority_required billing_model_configuration_required billing_model_cost_admission_required billing_model_traffic_required '
+    + 'billing_invalid_price_bands billing_invalid_price_basis billing_invalid_price_purpose '
+    + 'billing_invalid_route billing_invalid_traffic_policy billing_invalid_cost_policy billing_invalid_payer_budget billing_price_band_required',
+    'composition and configuration checks: the service refuses to start or an administrator\'s change is refused'],
+  ['billing_attempt_not_claimable billing_attempt_not_found billing_attempt_not_pending billing_balance_cache_inconsistent billing_balance_cache_missing '
+    + 'billing_billing_requires_own_transaction billing_call_not_dispatchable billing_call_not_found billing_dispatch_fenced billing_idempotency_conflict '
+    + 'billing_inconsistent_usage billing_invalid_attempt_ticket billing_invalid_context billing_invalid_cost_admission billing_invalid_cost_expiry '
+    + 'billing_invalid_cost_fact billing_invalid_cost_time billing_invalid_dispatch_admission billing_invalid_environment billing_invalid_evidence_digest '
+    + 'billing_invalid_hold_deadline billing_invalid_identifier billing_invalid_integer billing_invalid_payer billing_invalid_price billing_invalid_rebuild '
+    + 'billing_invalid_unit billing_invalid_usage billing_invalid_usage_evidence billing_journal_hold_invariant_broken billing_missing_cache_classification '
+    + 'billing_missing_usage billing_model_call_already_recorded billing_payer_budget_conflict billing_payer_budget_requires_transaction '
+    + 'billing_provider_request_conflict billing_retry_requires_known_platform_fault billing_run_context_conflict billing_run_not_found '
+    + 'billing_run_route_conflict billing_unconfirmed_price_route billing_unexpected_retry_reason billing_unit_mismatch billing_unit_scale_conflict '
+    + 'billing_unknown_sale_unit billing_usage_conflict billing_usage_evidence_mismatch billing_usage_evidence_missing billing_usage_evidence_untrusted '
+    + 'billing_usage_owner_mismatch billing_usage_without_dispatch',
+    'ledger invariants and recovery internals: a broken invariant is an internal fault, worded by the generic billing sentence and logged'],
+];
+const GENERIC = ['费用或授权状态暂不允许继续，请核对后重试。', '未能完成此操作，请核对结果后重试。'];
+
+test('every refusal the backend can send to the chat has its own honest sentence', () => {
+  const codes = serverCodes();
+  // Families the scan must find, or it is reading the wrong files.
+  for (const code of ['agent_access_suspended', 'billing_insufficient_funds', 'billing_risk_breaker_open', 'content_blocked_input',
+    'provider_consent_required', 'model_effort_unavailable', 'billing_org_payer_not_granted']) assert.ok(codes.has(code), code);
+  const elsewhere = new Map<string, string>();
+  for (const [names, why] of NOT_IN_CHAT) for (const code of names.split(' ')) {
+    assert.ok(codes.has(code), `${code} is listed as not shown in the chat but no longer raised (${why})`);
+    elsewhere.set(code, why);
+  }
+  const t = (source: string) => source;
+  const unworded: string[] = [], misfiled: string[] = [];
+  for (const code of [...codes].sort()) {
+    const refusal = refusals.refusalOf({ code });
+    const source = refusal ? copy.chatCopy[refusal.text][0] : errors.agentErrorText({ code }, t);
+    if (!refusal && GENERIC.includes(source)) {
+      if (!elsewhere.has(code)) unworded.push(code);
+      continue;
+    }
+    if (elsewhere.has(code)) misfiled.push(code);
+    for (const locale of ['en', 'zh-Hant'] as const) assert.notEqual(core.translate(locale, source), source, `${code} in ${locale}`);
+    // An empty wallet is the person's only when the ledger says so; everything else the platform
+    // or provider causes (an upstream 402 or 429, a breaker) never reads as "your balance" or
+    // "your quota ran out".
+    if (code !== 'billing_insufficient_funds') {
+      assert.ok(!/余额|餘額|额度不足|額度不足/.test(source)
+        && !/\b(balance|insufficient|top up|quota)\b/i.test(core.translate('en', source)), `${code}: ${source}`);
+    }
+  }
+  assert.deepEqual(unworded, [], 'raised to the chat with only a generic sentence');
+  assert.deepEqual(misfiled, [], 'worded in the chat but listed as never shown there');
+  // A data-sharing consent page's own answer is never a send refusal.
+  assert.equal(refusals.refusalOf({ code: 'provider_consent_not_needed' }), null);
+});
+
 test('a refusal notice states what happened and offers the next step', () => {
   const funds = refusals.refusalOf({ code: 'billing_insufficient_funds' });
   const html = render('en', React.createElement(parts.RefusalNotice, { refusal: funds, walletUrl: '/account/wallet?from=suite', live: true }));
@@ -232,6 +358,106 @@ test('a refusal notice states what happened and offers the next step', () => {
   assert.ok(orgLimit.includes('本月额度已用完') && !orgLimit.includes('<button'), orgLimit);
   const frozen = render('zh-Hant', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_wallet_frozen' }), walletUrl: '/account/wallet' }));
   assert.ok(frozen.includes('暫時凍結') && frozen.includes('href="/account/wallet"') && frozen.includes('開啟錢包'), frozen);
+});
+
+// ---------------------------------------------------------------- reporting an answer
+
+test('a report sends the reason and note, and the answer\'s text only when the person ticks the box', async () => {
+  const report = await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx');
+  assert.equal(report.reportInput('conv_fixture', 'msg_fixture', report.initialReport), null);
+  assert.equal(report.reportInput('conv_fixture', 'msg_fixture', { ...report.initialReport, category: 'spam' }), null);
+  // Off by default: a reason alone shares nothing of the conversation.
+  assert.deepEqual(report.reportInput('conv_fixture', 'msg_fixture', { ...report.initialReport, category: 'wrong' }),
+    { conversation_id: 'conv_fixture', message_id: 'msg_fixture', category: 'wrong', include_excerpt: false });
+  assert.deepEqual(report.reportInput('conv_fixture', 'msg_fixture', { category: 'privacy', note: '  fixture note  ', attach: true }),
+    { conversation_id: 'conv_fixture', message_id: 'msg_fixture', category: 'privacy', note: 'fixture note', include_excerpt: true });
+  assert.equal(report.reportInput('c', 'm', { category: 'other', note: 'x'.repeat(1200), attach: false }).note.length, 1000);
+  assert.deepEqual([...report.REPORT_CATEGORIES], ['harmful', 'illegal', 'privacy', 'wrong', 'other']);
+  // The server's own categories (synwevo_core.agent_safety.REPORT_CATEGORIES) and limits.
+  const safety = readFileSync(ROOT + 'packages/core/synwevo_core/agent_safety.py', 'utf8');
+  assert.match(safety, /REPORT_CATEGORIES = \("harmful", "illegal", "privacy", "wrong", "other"\)/);
+  assert.match(safety, /MAX_NOTE = 1000\b/);
+  assert.match(safety, /MAX_EXCERPT = 2000\b/);
+});
+
+test('a report ends sent, already reported, or not sent with the reason, and a retry is offered only then', async () => {
+  const report = await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx');
+  const sent: unknown[] = [];
+  const ok = await report.sendReport(async (input: unknown) => { sent.push(input); return { id: 'arp_fixture', status: 'open', included_excerpt: false }; },
+    { category: 'wrong' });
+  assert.deepEqual(ok, { state: 'sent', withText: false });
+  assert.deepEqual(sent, [{ category: 'wrong' }]);
+  assert.deepEqual(await report.sendReport(async () => ({ included_excerpt: true }), {}), { state: 'sent', withText: true });
+  const refuse = (code: unknown) => async () => { throw code; };
+  assert.deepEqual(await report.sendReport(refuse({ code: 'report_exists' }), {}), { state: 'exists' });
+  assert.deepEqual(await report.sendReport(refuse({ code: 'idempotent_failure', detail: { code: 'report_exists' } }), {}), { state: 'exists' });
+  assert.deepEqual(await report.sendReport(refuse({ code: 'report_category_invalid' }), {}), { state: 'failed', text: 'failedCategory' });
+  assert.deepEqual(await report.sendReport(refuse({ code: 'message_not_found' }), {}), { state: 'failed', text: 'failedGone' });
+  assert.deepEqual(await report.sendReport(refuse({ code: 'conversation_not_found' }), {}), { state: 'failed', text: 'failedGone' });
+  assert.deepEqual(await report.sendReport(refuse(new TypeError('Failed to fetch')), {}), { state: 'failed', text: 'failed' });
+  // A gateway's answer is not the application's: never "already reported".
+  assert.deepEqual(await report.sendReport(refuse({ code: 'report_exists', upstream: true }), {}), { state: 'failed', text: 'failed' });
+  const words = { 'zh-Hans': ['举报已提交', '你已经举报过这条回答', '举报没有提交成功'],
+    en: ['Report sent', 'You have already reported this answer', 'The report was not sent'],
+    'zh-Hant': ['檢舉已送出', '你已經檢舉過這則回答', '檢舉沒有送出成功'] } as const;
+  for (const locale of LOCALES) {
+    const done = render(locale, React.createElement(report.ReportStatus, { phase: { state: 'sent', withText: false } }));
+    assert.ok(done.includes(words[locale][0]) && done.includes('role="status"'), done);
+    const exists = render(locale, React.createElement(report.ReportStatus, { phase: { state: 'exists' } }));
+    assert.ok(exists.includes(words[locale][1]) && exists.includes('role="status"'), exists);
+    const failed = render(locale, React.createElement(report.ReportStatus, { phase: { state: 'failed', text: 'failed' } }));
+    assert.ok(failed.includes(words[locale][2]) && failed.includes('role="alert"'), failed);
+  }
+  assert.ok(render('en', React.createElement(report.ReportStatus, { phase: { state: 'sent', withText: true } })).includes('with the answer’s text'));
+  assert.equal(render('en', React.createElement(report.ReportStatus, { phase: { state: 'editing' } })), '');
+});
+
+test('the report dialog is a labelled form: a reason group, an optional note and an unticked attach box', async () => {
+  const report = await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx');
+  const words = { 'zh-Hans': ['举报这条回答', '原因', '有害或冒犯', '内容错误或误导', '备注（可选）', '附上这条回答的文字', '提交举报', '取消'],
+    en: ['Report this answer', 'Reason', 'Harmful or offensive', 'Wrong or misleading', 'Note (optional)', 'Attach this answer’s text', 'Send report', 'Cancel'],
+    'zh-Hant': ['檢舉這則回答', '原因', '有害或冒犯', '內容錯誤或誤導', '備註（選填）', '附上這則回答的文字', '送出檢舉', '取消'] } as const;
+  for (const locale of LOCALES) {
+    const html = render(locale, React.createElement(report.default, { conversationId: 'conv_fixture', messageId: 'msg_fixture',
+      send: async () => ({}), onClose() {}, onReported() {} }));
+    for (const text of words[locale]) assert.ok(html.includes(text), `${locale}: ${text}`);
+    assert.match(html, /role="dialog" aria-modal="true" aria-labelledby="[^"]+" aria-describedby="[^"]+-intro"/);
+    assert.match(html, /<fieldset[^>]*><legend>/);
+    assert.equal(html.match(/type="radio"/g)?.length, 5);
+    assert.equal(html.match(/type="checkbox"/g)?.length, 1);
+    assert.ok(!/type="checkbox"[^>]*checked/.test(html), 'attach is off by default');
+    assert.match(html, /<textarea[^>]*maxLength="1000"/);
+    // The first reason takes focus when the dialog opens (keyboard users start at the choice).
+    assert.match(html, /type="radio"[^>]*data-autofocus="true"/);
+    assert.match(html, /<button type="submit" form="[^"]+-form" class="btn primary"/);
+  }
+  // Complete in three languages and not colliding with another wording of the same source.
+  const copy = await server.ssrLoadModule('/src/apps/agent/report.messages.ts');
+  assert.deepEqual(core.validateMessages(copy.reportMessages), []);
+  for (const [key, [source, en, hant]] of Object.entries(copy.reportCopy) as [string, [string, string, string]][]) {
+    const params = { count: 7 };
+    const fill = (text: string) => text.replace('{count}', '7');
+    assert.equal(core.translate('en', source, params), fill(en), key);
+    assert.equal(core.translate('zh-Hant', source, params), fill(hant), key);
+  }
+});
+
+test('every answer with text has a report control; questions and answers being written do not', async () => {
+  const chat = await server.ssrLoadModule('/src/apps/agent/Chat.tsx');
+  const message = (id: string, role: string, body: string, extra: Record<string, unknown> = {}) => ({ id, parent_id: null, role, status: 'done',
+    body, hidden: false, error: null, turn: null, tool_calls: [], created_at: 1, ...extra });
+  const conversation = { id: 'conv_fixture', title: 'Fixture', status: 'active', scope: [], sealed: false, event_seq: 1, head_id: 'msg_a2',
+    messages: [message('msg_u1', 'user', 'Fixture question?'), { ...message('msg_a1', 'assistant', 'Fixture answer.'), parent_id: 'msg_u1' },
+      { ...message('msg_u2', 'user', 'Again?'), parent_id: 'msg_a1' },
+      { ...message('msg_a2', 'assistant', 'Being written', { turn: { id: 'turn_fixture', status: 'running' } }), parent_id: 'msg_u2' }] };
+  const props = { conversation, loading: false, error: null, connection: 'connected', configured: true, spaces: [],
+    act: async () => ({}), send: async () => true, refresh: async () => {} };
+  for (const [locale, label] of [['en', 'Report this answer'], ['zh-Hant', '檢舉這則回答'], ['zh-Hans', '举报这条回答']] as const) {
+    const html = render(locale, React.createElement(chat.default, props));
+    // One control: the finished answer; not the questions, not the answer still being written.
+    assert.equal(html.split(`aria-label="${label}"`).length - 1, 1, html);
+    assert.match(html, new RegExp(`aria-haspopup="dialog" aria-label="${label}"`));
+  }
 });
 
 // ---------------------------------------------------------------- payer selection
@@ -452,6 +678,50 @@ test('the top-up link points at the account service\'s wallet page and nowhere e
   assert.equal(composer.walletHref(undefined, 'suite', origin), '/account/wallet?from=suite');
   assert.equal(composer.walletHref('javascript:alert(1)', null, origin), '/account/wallet');
   assert.equal(composer.walletHref('https://accounts.fixture.test/account#x?y', null, origin), 'https://accounts.fixture.test/account/wallet');
+});
+
+test('the terms, AI use rules and pricing are the portal\'s pages on the configured public site', async () => {
+  const site = 'https://site.fixture.test';
+  assert.equal(composer.publicHref(site, 'terms', 'zh-Hans', 'https://docwave.fixture.test'), 'https://site.fixture.test/terms');
+  assert.equal(composer.publicHref(`${site}/ignored/path?x=1`, 'ai-use', 'en', 'https://docwave.fixture.test'), 'https://site.fixture.test/en/ai-use');
+  assert.equal(composer.publicHref(site, 'pricing', 'zh-Hant', 'https://docwave.fixture.test'), 'https://site.fixture.test/zh-Hant/pricing');
+  // A single-host install (no separate site, or the site is this host) stays on this host.
+  assert.equal(composer.publicHref(undefined, 'terms', 'en', 'https://docwave.fixture.test'), '/en/terms');
+  assert.equal(composer.publicHref(site, 'terms', 'en', site), '/en/terms');
+  for (const bad of ['javascript:alert(1)', 'not a url', 'ftp://site.fixture.test']) {
+    assert.equal(composer.publicHref(bad, 'terms', 'zh-Hans', 'https://docwave.fixture.test'), '/terms', bad);
+  }
+  // The same addresses the portal itself links (its publicPath) and the server renders (PUBLIC_PATHS).
+  const portal = await server.ssrLoadModule(ROOT + 'apps/portal/web/src/publicRoutes.ts');
+  for (const page of ['terms', 'ai-use', 'pricing', 'privacy'] as const) for (const locale of LOCALES) {
+    assert.equal(composer.publicHref(site, page, locale, 'https://docwave.fixture.test'), site + portal.publicPath(page, locale), `${page} ${locale}`);
+    assert.deepEqual(portal.publicRoute(portal.publicPath(page, locale)), { page, locale });
+  }
+  const served = readFileSync(ROOT + 'apps/portal/synwevo_portal/public.py', 'utf8');
+  assert.match(served, /PAGES = \("home", "privacy", "service", "terms", "ai-use", "pricing"\)/);
+});
+
+test('the cost dialog links the terms in force and says the first paid run accepts them', async () => {
+  const dialog = await server.ssrLoadModule('/src/apps/agent/BudgetDialog.tsx');
+  const words = { 'zh-Hans': ['即表示你接受当前生效版本的服务条款、AI 使用规范与定价', '首次付费运行会记录这些版本', '>服务条款<', '>AI 使用规范<', '>定价<', '在新标签页打开'],
+    en: ['By confirming a paid run you accept the versions in force', 'Your first paid run records those versions', '>Terms of Service<', '>AI use rules<', '>Pricing<', 'opens in a new tab'],
+    'zh-Hant': ['即表示你接受目前生效版本的服務條款、AI 使用規範與定價', '首次付費執行會記錄這些版本', '>服務條款<', '>AI 使用規範<', '>定價<', '在新分頁開啟'] } as const;
+  const prefix = { 'zh-Hans': '', en: '/en', 'zh-Hant': '/zh-Hant' } as const;
+  for (const locale of LOCALES) {
+    const html = render(locale, React.createElement(dialog.default, { intent: { conversation_id: 'conv_fixture', text: 'Fixture question' },
+      onQuote: async () => { throw new Error('fixture'); }, onConfirm: async () => {}, onClose() {}, siteUrl: 'https://site.fixture.test' }));
+    for (const text of words[locale]) assert.ok(html.includes(text), `${locale}: ${text}`);
+    for (const page of ['terms', 'ai-use', 'pricing']) {
+      assert.ok(html.includes(`href="https://site.fixture.test${prefix[locale]}/${page}" target="_blank" rel="noopener noreferrer"`), `${locale} ${page}`);
+    }
+    assert.ok(!html.includes('localhost'), html);
+    assert.match(html, /<section class="notice"[^>]*aria-labelledby="([^"]+-terms)"[\s\S]*<p id="\1"/);
+  }
+  // The data-sharing consent's privacy and AI-use links go to the public site too, never this host.
+  const consent = readFileSync(new URL('../src/apps/agent/ProviderConsent.tsx', import.meta.url), 'utf8');
+  assert.ok(!/href="\/(privacy|ai-use)"/.test(consent) && consent.includes('publicHref(auth?.site_url, "privacy", locale)'), 'ProviderConsent links');
+  const index = readFileSync(new URL('../src/apps/agent/index.tsx', import.meta.url), 'utf8');
+  assert.ok(index.includes('siteUrl={auth?.site_url}'), 'the dialog gets the server-controlled site origin');
 });
 
 test('Enter sends, Shift+Enter breaks a line, and an input method composition is never cut short', () => {

@@ -388,6 +388,64 @@ def test_a_dispute_before_the_credit_is_retried_not_lost(world):
     assert cny_booked(world) == 0
 
 
+# ---------------------------------------------------------------- failure alerts
+def webhook_alerts(w, uid):
+    return w["store"].all("SELECT * FROM notifications WHERE user_id=? "
+                          "AND kind='billing.risk.payment_webhook_failed' ORDER BY seq", (uid,))
+
+
+def alerted_codes(w, uid):
+    return [json.loads(r["params"])["code"] for r in webhook_alerts(w, uid)]
+
+
+def test_failed_or_rejected_webhooks_alert_administrators_once_a_day_per_code_with_no_payload(world, monkeypatch):
+    from synwevo_core.platform_access import PlatformAccess
+    world["configure"]()
+    boss = world["users"]["carol"]["id"]
+    PlatformAccess(world["store"]).host_grant(boss, "super_admin", source="fixture:webhook-alerts",
+                                              reason="isolated alert recipient")
+    c, order, session = created(world)
+    event = session_event(order, session_id=session)
+    # Signature failures never reach the inbox; administrators still hear of them, by code only.
+    assert deliver(world, event, secret="whsec_" + "fixture0wrong0secret0000000").status_code == 400
+    assert deliver(world, event, secret="whsec_" + "fixture0wrong0secret0000000").status_code == 400
+    assert deliver(world, event, at=time.time() - 301).status_code == 400
+    assert alerted_codes(world, boss) == ["signature_mismatch", "signature_stale"], "每种代码每天只告警一次"
+    # A rejected event (never credited) and one that failed (the provider retries it).
+    assert deliver(world, session_event(order, amount=999999, session_id=session, event_id="evt_amount")).json()["status"] == "rejected"
+    early = {"id": "evt_dispute_early", "object": "event", "type": "charge.dispute.created", "livemode": False,
+             "data": {"object": {"id": "dp_early", "object": "dispute", "payment_intent": "pi_fixture1",
+                                 "amount": 1000, "currency": "cny", "status": "needs_response"}}}
+    assert deliver(world, early).status_code == 500
+    assert alerted_codes(world, boss)[2:] == ["amount_mismatch", "payment_order_mismatch"]
+    # A processed or ignored event raises nothing.
+    assert deliver(world, event).json()["status"] == "processed"
+    assert deliver(world, session_event(order, paid=False, session_id=session, event_id="evt_unpaid")).json()["status"] == "ignored"
+    assert len(alerted_codes(world, boss)) == 4
+    # The replay of inbox rows left failed (process_pending) alerts too, under the same rules.
+    topups = world["api"].state.topups
+    world["store"].execute("UPDATE payment_webhook_inbox SET status='failed' WHERE event_id='evt_dispute_early'")
+    monkeypatch.setattr(topups, "_process", lambda *a: (_ for _ in ()).throw(RuntimeError("fixture: ledger unavailable")))
+    assert topups.process_pending() == 0
+    assert alerted_codes(world, boss)[4:] == ["processing_error"]
+    assert topups.process_pending() == 0
+    assert len(alerted_codes(world, boss)) == 5, "同一天同一代码不再重复"
+    # The next day the same failure is reported again, once.
+    import synwevo_core.billing.risk as risk
+    tomorrow = time.gmtime(time.time() + 86400)
+    monkeypatch.setattr(risk.time, "gmtime", lambda *a: tomorrow)
+    topups.process_pending()
+    topups.process_pending()
+    assert alerted_codes(world, boss)[5:] == ["processing_error"]
+    # Only the provider name and a stable code travel: no payload, signature, event or customer detail.
+    for row in webhook_alerts(world, boss):
+        assert json.loads(row["params"]).keys() == {"provider", "code"} and json.loads(row["params"])["provider"] == "stripe"
+        text = json.dumps(row, ensure_ascii=False)
+        for secret in (FIXTURE_WEBHOOK_SECRET, "whsec_", "evt_", "pi_fixture1", "dp_early", order, session, "Private Name",
+                       "payer@example.test", "v1="):
+            assert secret not in text, secret
+
+
 # ---------------------------------------------------------------- organization payer
 def test_only_a_billing_manager_tops_up_an_organization_and_the_money_lands_there(world):
     world["configure"]()

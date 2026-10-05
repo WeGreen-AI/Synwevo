@@ -162,6 +162,20 @@ recognised by their stems (`risk_*allowlist*`, `*breaker*`, `*brake*`, `*suspend
 balance and is shown as the service being unavailable, never as the person's balance. Every
 refusal before dispatch says that nothing was called or charged for the refused step.
 
+An administrator's suspension of the person's Agent access (`agent_access_suspended`, 403 on a
+send and the check before every model call of a running answer) has its own sentence: Agent
+access is suspended, nothing new was called or charged, and the next step is to contact the
+platform administrator (no top-up, settings or re-confirmation is offered). The same mapping
+also words a reasoning effort the route does not offer (`model_effort_unavailable`, Agent
+settings), a request above the per-call size bound (`billing_model_request_too_large`), and a
+confirmed quote that no longer opens the run (`billing_quote_*`: get a new quote). A send under a
+continuing consent that is refused for one of these reasons shows the same sentence in the
+consent panel. The chat test (`apps/suite/web/tests/agent-chat.test.ts`) reads every error code
+the agent, ledger, admission, risk, traffic, budget, organization-payer and safety modules raise
+and requires each to be a refusal, a specific sentence (`errors.tsx`), or listed with the reason no
+chat shows it; and no platform-side code (an upstream 402 or 429, a breaker) may mention a
+balance or a used-up quota.
+
 When a continuing consent's model or price no longer applies (`model_changed`), the consent
 panel and the quote dialog list what changed (model, route, price version, unit, each rate per
 million tokens, per-call hold). The dialog offers "confirm the new price and send" in one step:
@@ -193,11 +207,20 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
   Whether a stopped call is charged is the gateway's incomplete-call policy.
 * **Records.** A stop is stored as rule id/version, direction and length — never text.
   `agent.message.report` files a report on an answer; its text is attached only when the person
-  sets `include_excerpt`. Administrators (`platform.users.*`) close reports and suspend or
+  sets `include_excerpt`. In the chat every finished answer with text has a "Report" control
+  (`ReportDialog.tsx`): a reason (harmful, illegal, privacy, wrong, other), an optional note
+  (≤ 1000 characters) and an "attach this answer's text" box that is off by default; it ends
+  "sent" (saying whether the text went with it), "already reported" (`report_exists`, not a
+  failure) or "not sent" with the reason and a retry of the same request. Administrators (`platform.users.*`) close reports and suspend or
   restore a person's Agent access with a reason: 403 `agent_access_suspended`, running turns are
   cancelled, journalled `agent_access_suspended`.
 * **Terms.** A paid run records the terms / AI use / pricing versions in force once per version
-  (`synwevo_core/terms.py`); the account export lists them, together with the Agent's visible
+  (`synwevo_core/terms.py`). The chat's cost dialog says so before the confirmation (its confirm
+  buttons are described by that sentence) and links the three pages on the public site: the
+  server-controlled `site_url` of the auth state plus the portal's localized path (`/terms`,
+  `/en/ai-use`, `/zh-Hant/pricing` …, `composer.ts` `publicHref`), opened in a new tab; on a
+  single-host install without a separate site the path stays on the same host. The data-sharing
+  consent's privacy and AI-use links use the same origin; the account export lists them, together with the Agent's visible
   conversation text, memories, settings, consents, quotes and the wallet statement
   (`synwevo_core/agent_records.py`); account deletion erases the Agent's content.
 

@@ -61,7 +61,13 @@ _PLATFORM_RECEIPT = "platform_withdrawal:"
 # backup's time and applied by id, which keeps an administrator's later lift that the backup
 # already holds, and re-suspends (re-opens) only what the restored database never saw.
 RISK_KINDS = {"model_dispatch_suspended", "model_breaker_opened"}
-ALWAYS_REPLAYED = ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND} | RISK_KINDS
+# A wallet frozen by a chargeback (billing/ledger.py record_chargeback): the same write-ahead rule
+# and for the same reasons. Replayed whatever the backup's time and applied by the freeze's id, so
+# a freeze the restored database already holds stays as it is there — active, or lifted by an
+# administrator before the backup — and only a freeze the restored database never saw is
+# re-created, which stops the payer's wallet from paying again until an administrator lifts it.
+PAYER_FREEZE_KIND = "payer_frozen"
+ALWAYS_REPLAYED = ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND} | RISK_KINDS | {PAYER_FREEZE_KIND}
 
 KINDS = {
     "api_platform_approval_revoked",  # {approval_id}, including unconsumed approvals
@@ -97,6 +103,8 @@ KINDS = {
     "ai_policy_narrowed",       # {workspace_id, processing, providers}
     "model_credential_withdrawn",  # {environment, credential_revision} — that revision and older
     "model_provider_disabled",  # {event_id, environment}
+    # A personal or organization wallet frozen by a payment dispute after its credit was spent.
+    PAYER_FREEZE_KIND,          # {freeze_id, environment, account_id, payer_kind, payer_id, chargeback_id}
 } | ORGANIZATION_KINDS
 
 #: A workspace's AI processing policy, narrowest first (suite agent tools.workspace_policy).
@@ -127,6 +135,7 @@ _REQUIRED = {
     "ai_policy_narrowed": ("workspace_id", "processing"),
     "model_credential_withdrawn": ("environment",),
     "model_provider_disabled": ("event_id", "environment"),
+    PAYER_FREEZE_KIND: ("freeze_id", "environment", "account_id", "payer_kind", "payer_id", "chargeback_id"),
     **{kind: ("event_id", "organization_id") for kind in ORGANIZATION_KINDS},
     "organization_member_removed": ("event_id", "organization_id", "user_id"),
     "organization_role_changed": ("event_id", "organization_id", "user_id", "role"),
@@ -171,6 +180,9 @@ def _validate(entry, line: int) -> None:
                 or any(not isinstance(p, str) or not p.strip() for p in providers)):
             bad()
     if kind in ("model_credential_withdrawn", "model_provider_disabled") and entry["environment"] not in ("test", "live"):
+        bad()
+    if kind == PAYER_FREEZE_KIND and (entry["environment"] not in ("test", "live")
+                                      or entry["payer_kind"] not in ("user", "organization")):
         bad()
     if kind == "model_credential_withdrawn" and (type(entry.get("credential_revision")) is not int
                                                  or entry["credential_revision"] < 1):
@@ -519,6 +531,26 @@ def _apply_risk(c, e) -> int:
     return 1
 
 
+def _apply_payer_frozen(c, e) -> int:
+    """Re-create a chargeback freeze the restored database never recorded (by its id).
+
+    A freeze the database already holds is left exactly as it is, including an administrator's
+    lift. A wallet account the restored database does not have held no funds there, so there is
+    nothing to freeze. When the chargeback itself is not in the restored database (it arrived
+    after the backup) the freeze is re-created without that link: the wallet stays frozen, and an
+    administrator lifts it by the id in this entry once the dispute is settled."""
+    if c.execute("SELECT 1 FROM billing_account_freezes WHERE id=?", (e["freeze_id"],)).fetchone():
+        return 0
+    if not c.execute("SELECT 1 FROM billing_accounts WHERE id=? AND environment=?",
+                     (e["account_id"], e["environment"])).fetchone():
+        return 0
+    linked = c.execute("SELECT 1 FROM billing_chargebacks WHERE id=? AND account_id=?",
+                       (e["chargeback_id"], e["account_id"])).fetchone()
+    return c.execute("INSERT OR IGNORE INTO billing_account_freezes(id,account_id,reason,chargeback_id,created_at) "
+                     "VALUES (?,?,'chargeback',?,?)",
+                     (e["freeze_id"], e["account_id"], e["chargeback_id"] if linked else None, int(e["at"]))).rowcount
+
+
 def _apply_ai_policy(c, e, t: float) -> int:
     """Make the workspace's policy at most as open as the journalled one: the narrower
     processing and the intersection of providers. A restored row (or its absence, which means
@@ -603,6 +635,8 @@ def apply(store: Store, entries: list[dict]) -> dict:
                 n = _apply_platform_revocation(store, c, e)
             elif k in RISK_KINDS:
                 n = _apply_risk(c, e)
+            elif k == PAYER_FREEZE_KIND:
+                n = _apply_payer_frozen(c, e)
             elif k in ORGANIZATION_KINDS:
                 n = _apply_organization(c, e, demoted_orgs, demoted_workspaces)
             elif k == UNCLAIM_KIND:

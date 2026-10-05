@@ -89,6 +89,7 @@ export function RefusalNotice({ refusal, walletUrl, onRequote, onPersonal, busy 
     {next === "settings" && <Link className="btn sm" to="/agent/settings">{c("nextSettings")}</Link>}
     {next === "consent" && <Link className="btn sm" to="/agent/settings">{c("nextConsent")}</Link>}
     {next === "requote" && onRequote && <button type="button" className="btn sm primary" disabled={busy} onClick={onRequote}>{c("nextRequote")}</button>}
+    {next === "reconfirm" && onRequote && <button type="button" className="btn sm primary" disabled={busy} onClick={onRequote}>{c("nextReconfirm")}</button>}
   </div>;
 }
 

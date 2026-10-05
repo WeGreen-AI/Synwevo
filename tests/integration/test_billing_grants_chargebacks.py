@@ -202,6 +202,118 @@ def test_a_dispute_needs_verified_evidence_and_the_funded_payment(money):
     assert balance(money).booked == 100000 - 33300
 
 
+# ---------------------------------------------------------------- the freeze survives a restore
+def _backup(store, name, tmp_path):
+    """A consistent copy of the live database, as `platform.py backup` takes one (fixture copy)."""
+    target = tmp_path / name
+    target.mkdir()
+    src = sqlite3.connect(f"file:{store.db_path}?mode=ro", uri=True)
+    try:
+        dst = sqlite3.connect(target / store.db_path.name)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    return target
+
+
+def _active_freezes(store, account):
+    return store.all("SELECT id,chargeback_id FROM billing_account_freezes WHERE account_id=? AND lifted_at IS NULL", (account,))
+
+
+def test_a_chargeback_freeze_is_journalled_before_it_is_written_and_names_only_ids(money, monkeypatch):
+    from synwevo_core import journal
+    store, ledger, users, _ = money
+    pay(money, "order-1", amount_minor=1000, credit=1000)
+    # The journal line is written ahead of the freeze: if it cannot be written nothing changes,
+    # and the provider's event can be processed again.
+    real = journal.record
+    monkeypatch.setattr(journal, "record", lambda *a, **k: (_ for _ in ()).throw(OSError("fixture: disk full")))
+    with pytest.raises(OSError):
+        dispute(money, "order-1", 1000)
+    assert store.one("SELECT COUNT(*) AS n FROM billing_chargebacks")["n"] == 0
+    assert store.one("SELECT COUNT(*) AS n FROM billing_account_freezes")["n"] == 0 and balance(money).booked == 1000
+    seen = []
+
+    def ahead(store_, kind, **fields):
+        # Write-ahead: nothing of this chargeback is written yet when its line is appended.
+        seen.append((kind, store.one("SELECT COUNT(*) AS n FROM billing_chargebacks")["n"],
+                     store.one("SELECT COUNT(*) AS n FROM billing_account_freezes")["n"],
+                     store.one("SELECT COUNT(*) AS n FROM billing_journal WHERE kind='chargeback'")["n"]))
+        return real(store_, kind, **fields)
+    monkeypatch.setattr(journal, "record", ahead)
+    result = dispute(money, "order-1", 1000)
+    assert seen == [("payer_frozen", 0, 0, 0)]
+    monkeypatch.setattr(journal, "record", real)
+    entries = [e for e in journal.read(store.root) if e["kind"] == "payer_frozen"]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert set(entry) == {"at", "kind", "freeze_id", "environment", "account_id", "payer_kind", "payer_id", "chargeback_id"}
+    assert (entry["freeze_id"], entry["chargeback_id"], entry["payer_kind"], entry["payer_id"], entry["environment"]) == (
+        result["freeze_id"], result["id"], "user", users[0], "test")
+    # A replayed dispute is the same chargeback: no second line.
+    dispute(money, "order-1", 1000)
+    assert len([e for e in journal.read(store.root) if e["kind"] == "payer_frozen"]) == 1
+    # Malformed entries are refused (a restore stops rather than guessing).
+    for bad in ({"payer_kind": "team"}, {"environment": "staging"}, {"freeze_id": ""}):
+        with pytest.raises(ValueError):
+            journal.record(store, "payer_frozen", **{**{k: entry[k] for k in entry if k not in ("at", "kind")}, **bad})
+
+
+def test_a_restored_backup_keeps_the_payer_frozen_and_never_undoes_a_later_lift(money, tmp_path):
+    from synwevo_core import journal
+    store, ledger, users, ticks = money
+    pay(money, "order-1", amount_minor=1000, credit=1000)
+    before_dispute = _backup(store, "backup-before-dispute", tmp_path)
+    result = dispute(money, "order-1", 400)
+    wallet = store.one("SELECT account_id FROM billing_chargebacks WHERE id=?", (result["id"],))["account_id"]
+    while_frozen = _backup(store, "backup-while-frozen", tmp_path)
+    ledger.lift_freeze(result["freeze_id"], actor_id=users[1], reason="dispute won at the provider")
+    after_lift = _backup(store, "backup-after-lift", tmp_path)
+    # Replayed whatever the backup's time.
+    entries = journal.read(store.root, since=10**12)
+    assert [e["kind"] for e in entries] == ["payer_frozen"]
+
+    # 1. A backup from before the dispute: the wallet is frozen again, by the same freeze id. The
+    #    chargeback is not in that database, so the freeze carries no link to it.
+    restored = Store(before_dispute)
+    assert _active_freezes(restored, wallet) == []
+    assert journal.apply(restored, entries)["payer_frozen"] == 1
+    assert _active_freezes(restored, wallet) == [{"id": result["freeze_id"], "chargeback_id": None}]
+    again = Ledger(restored, environment="test", namespace="fixture-agent", authorize=fixture_authorize,
+                   verify_payment=fixture_verify, verify_dispute=fixture_verify, clock=lambda: ticks[0], max_hold_seconds=1000)
+    assert again.wallet_frozen(payer_kind="user", payer_id=users[0], unit=UNIT)
+    uid = users[0]
+    ctx = ChargeContext(uid, uid, "run-after-restore", "fixture-approval")
+    again.open_run(ctx, unit=UNIT, budget=100, max_calls=1, max_attempts=1, deadline=START + 900)
+    with pytest.raises(BillingError, match="wallet_frozen"):
+        again.reserve_call(ctx, logical_call_id="c", amount=10, price_id="fixture-sale", deadline=START + 500)
+    assert journal.apply(restored, entries)["payer_frozen"] == 0          # idempotent
+    assert len(restored.all("SELECT * FROM billing_account_freezes")) == 1
+    # An administrator can still lift it by that id.
+    again.lift_freeze(result["freeze_id"], actor_id=users[1], reason="dispute settled after the restore")
+    assert not again.wallet_frozen(payer_kind="user", payer_id=users[0], unit=UNIT)
+    assert journal.apply(restored, entries)["payer_frozen"] == 0          # a lift is never undone
+
+    # 2. A backup that already holds the freeze: left exactly as it is there.
+    restored = Store(while_frozen)
+    assert journal.apply(restored, entries)["payer_frozen"] == 0
+    assert _active_freezes(restored, wallet) == [{"id": result["freeze_id"], "chargeback_id": result["id"]}]
+
+    # 3. A backup taken after an administrator lifted it: not re-created.
+    restored = Store(after_lift)
+    assert journal.apply(restored, entries)["payer_frozen"] == 0
+    assert _active_freezes(restored, wallet) == []
+    assert restored.one("SELECT lifted_by FROM billing_account_freezes WHERE id=?", (result["freeze_id"],))["lifted_by"] == users[1]
+
+    # 4. A database without that wallet holds none of its funds: nothing to freeze.
+    empty = Store(tmp_path / "restored-without-the-wallet")
+    assert journal.apply(empty, entries)["payer_frozen"] == 0
+    assert empty.one("SELECT COUNT(*) AS n FROM billing_account_freezes")["n"] == 0
+
+
 # ---------------------------------------------------------------- organization wallets
 def test_an_organization_top_up_funds_the_organization_not_the_person(money):
     from synwevo_core.organizations import Organizations
@@ -229,6 +341,12 @@ def test_an_organization_top_up_funds_the_organization_not_the_person(money):
                                     merchant_id="m", amount_minor=1, currency="CNY", unit=UNIT, credit_units=1,
                                     exchange_version="x", payer_kind="organization", payer_org_id="org-missing")
     assert ledger.audit_balances() == []
+    # A dispute of the organization's top-up freezes the organization's wallet, journalled as such.
+    from synwevo_core import journal
+    frozen = dispute(money, "org-order", 800)
+    assert frozen["payer_kind"] == "organization" and frozen["frozen"] is True
+    [entry] = [e for e in journal.read(store.root) if e["kind"] == "payer_frozen"]
+    assert (entry["payer_kind"], entry["payer_id"], entry["freeze_id"]) == ("organization", oid, frozen["freeze_id"])
 
 
 # ---------------------------------------------------------------- migration

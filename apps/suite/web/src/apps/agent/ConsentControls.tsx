@@ -8,6 +8,7 @@ import { formatAmount, formatRate, type Pricing } from './budget';
 import { PriceChangeList, useChatText } from './ChatParts';
 import { consentCode, effectiveConsentStatus, validateConsentList, type Consent, type ConsentWriter } from './consent';
 import { consentCopy, type ConsentText } from './consent.messages';
+import { refusalOf } from './refusals';
 import type { Workspace } from './types';
 
 export const consentStack: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', minWidth: 0, overflowWrap: 'anywhere' };
@@ -17,6 +18,10 @@ export function useConsentText() {
   return { m: (key: ConsentText, params?: Params) => t(consentCopy[key][0], params), t, locale };
 }
 export function consentErrorKey(error: unknown, fallback: ConsentText = 'refused'): ConsentText {
+  return consentErrorKnown(error) ?? fallback;
+}
+/** The consent wording for a code this panel knows, or null. */
+function consentErrorKnown(error: unknown): ConsentText | null {
   const code = consentCode(error);
   const map: Record<string, ConsentText> = {
     consent_explicit_scope_required: 'explicitScope', consent_already_exists: 'alreadyExists', consent_limit_exceeded: 'limitExceeded',
@@ -28,11 +33,16 @@ export function consentErrorKey(error: unknown, fallback: ConsentText = 'refused
     quote_expired_or_revoked: 'quoteChanged', quote_context_changed: 'quoteChanged', model_configuration_changed: 'model_changed',
     route_confirmation_expired: 'model_changed', model_route_unavailable: 'model_changed',
   };
-  return map[code] ?? fallback;
+  return Object.hasOwn(map, code) ? map[code] : null;
 }
 export function ConsentFailure({ error, fallback = 'refused', retry }: { error: unknown; fallback?: ConsentText; retry?: () => void }) {
   const { m, t } = useConsentText();
-  return <div><Failure error={new Error(m(consentErrorKey(error, fallback)))} onRetry={retry} />
+  const { c } = useChatText();
+  const own = consentErrorKnown(error);
+  // A send refused for a reason the chat words (funds, risk controls, a suspended Agent access…)
+  // says that reason, not the panel's generic "refused".
+  const known = own ? null : refusalOf(error);
+  return <div><Failure error={new Error(own ? m(own) : known ? c(known.text) : m(fallback))} onRetry={retry} />
     {error instanceof ApiError && error.requestId && <p className="muted small">{t(budgetCopy.requestId[0], { id: error.requestId })}</p>}
   </div>;
 }

@@ -5,7 +5,8 @@
  *  payer's grant and monthly limits), the risk controls ("risk_*": suspension,
  *  automatic brake, paid-dispatch breaker, staged-rollout allowlist), the platform cost admission
  *  ("cost_*", including the per-call maximum cost), the separate data-sharing consent
- *  ("provider_consent_*") and content safety ("content_blocked_*" / "content_filtered_*"). Known
+ *  ("provider_consent_*"), content safety ("content_blocked_*" / "content_filtered_*") and an
+ *  administrator's suspension of the person's Agent access ("agent_access_suspended"). Known
  *  codes are listed exactly; the risk, consent and content families are also recognised by their
  *  documented stems so a new code of the same kind is never shown as a generic failure
  *  (docs/agent-runtime.md, "Refusals in the chat"). An upstream 402 is the operator's DeepSeek
@@ -14,10 +15,12 @@ import type { ChatText } from './chat.messages';
 
 export type RefusalKind = 'funds' | 'org_funds' | 'frozen' | 'org_frozen' | 'org_limit' | 'org_payer' | 'limit' | 'no_limit' | 'brake'
   | 'suspended' | 'breaker' | 'allowlist' | 'call_cap' | 'not_configured' | 'consent' | 'consent_changed' | 'price_changed'
-  | 'content_input' | 'content_output';
+  | 'content_input' | 'content_output' | 'access_suspended' | 'effort' | 'too_long' | 'quote';
 /** "personal": pay with the personal wallet instead (an organization payer refused); "wallet":
- *  open the wallet page on the account service (a frozen wallet says why there). */
-export type NextStep = 'topup' | 'wallet' | 'personal' | 'settings' | 'consent' | 'requote' | null;
+ *  open the wallet page on the account service (a frozen wallet says why there); "requote":
+ *  confirm the changed price; "reconfirm": get a new quote for unchanged terms (an expired or used
+ *  one). A next step that is a person to ask (the administrator) is part of the sentence. */
+export type NextStep = 'topup' | 'wallet' | 'personal' | 'settings' | 'consent' | 'requote' | 'reconfirm' | null;
 export interface Refusal { kind: RefusalKind; code: string; text: ChatText; next: NextStep }
 
 const TEXT: Record<RefusalKind, [ChatText, NextStep]> = {
@@ -42,6 +45,11 @@ const TEXT: Record<RefusalKind, [ChatText, NextStep]> = {
   // The message stays in the composer to be edited; a stopped answer can be retried below it.
   content_input: ['refusedContentInput', null],
   content_output: ['refusedContentOutput', null],
+  // An administrator's decision about this person: only they can explain or lift it.
+  access_suspended: ['refusedAccessSuspended', null],
+  effort: ['refusedEffort', 'settings'],
+  too_long: ['refusedTooLong', null],
+  quote: ['refusedQuote', 'reconfirm'],
 };
 /** The sentence for each kind (for tests and documentation). */
 export const REFUSAL_TEXT: Record<RefusalKind, ChatText> = Object.fromEntries(
@@ -69,6 +77,23 @@ const EXACT: Record<string, RefusalKind> = {
   // The platform's per-call maximum cost (cost policy): a policy limit on this call, not an outage.
   billing_cost_call_limit_exceeded: 'call_cap', cost_call_limit_exceeded: 'call_cap',
   provider_consent_version_changed: 'consent_changed',
+  // Safety package: an administrator suspended this person's Agent access (403 on send, or the
+  // check before every model call of a running answer).
+  agent_access_suspended: 'access_suspended',
+  // Gateway: the route does not offer the chosen reasoning effort; refused before anything is held.
+  model_effort_unavailable: 'effort', billing_model_effort_unavailable: 'effort',
+  // Gateway: the request is above the per-call size bound; refused before anything is held.
+  billing_model_request_too_large: 'too_long',
+  // The confirmed quote no longer opens the run (expired, used, revoked or the conversation moved on).
+  billing_quote_expired_or_revoked: 'quote', billing_quote_context_changed: 'quote', billing_quote_already_used: 'quote',
+  billing_quote_not_found: 'quote', quote_not_found: 'quote', billing_quote_conversation_unavailable: 'quote',
+  // The confirmed route's price can no longer be applied: confirm the current terms.
+  billing_price_not_applicable: 'price_changed', billing_price_route_mismatch: 'price_changed',
+  billing_price_not_published: 'price_changed',
+  // The organization's wallet no longer matches the payer the run named.
+  billing_org_payer_inconsistent: 'org_payer',
+  // The governed model configuration cannot be read right now: the service, not the person.
+  billing_model_configuration_unavailable: 'breaker',
 };
 
 /** The code an error carries, unwrapping an idempotent replay of a refused request. A failure the
@@ -96,7 +121,8 @@ export function refusalKind(code: string): RefusalKind | null {
   // Platform cost admission (switch, caps, unknown-usage limits): the service, not the person.
   if (/^cost_/.test(bare)) return 'breaker';
   // Payment consents are "billing_consent_*"; the data-sharing consent is "provider_consent_*".
-  if (/^provider_consent_/.test(code)) return 'consent';
+  // "provider_consent_not_needed" answers a consent page's request, never a send.
+  if (/^provider_consent_/.test(code) && code !== 'provider_consent_not_needed') return 'consent';
   // Content safety: an input rule refuses before anything is sent; an output rule or the
   // provider's own filter stops the answer (whether that is charged is the admin's policy).
   if (/^content_(blocked|filtered)_input/.test(code)) return 'content_input';

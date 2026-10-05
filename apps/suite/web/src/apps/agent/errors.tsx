@@ -50,7 +50,8 @@ const errors: Record<string, string> = {
   provider_auth: "模型凭据不可用，请检查 Agent 设置。",
   provider_forbidden: "模型服务拒绝访问，请检查账户权限。",
   provider_model_missing: "所配置的模型不可用，请联系平台管理员。",
-  provider_rate_limited: "模型服务额度不足或请求过于频繁，请稍后重试。",
+  // Upstream 429 is the operator account's concurrency limit: never a quota or balance of the person.
+  provider_rate_limited: "模型服务暂时繁忙或请求过于频繁，请稍后重试。",
   provider_timeout: "模型响应超时，已完成的操作保留。",
   provider_unreachable: "暂时无法连接模型服务，请稍后重试。",
   provider_overloaded: "模型服务暂时繁忙，请稍后重试。",
@@ -79,6 +80,38 @@ const errors: Record<string, string> = {
   turn_running: "已有回答正在进行，请等待或先停止。",
   turn_cancelled: "回答已停止，后续操作未执行。",
   conversation_sealed: "访问权限已改变，相关内容已隐藏。请新建会话继续。",
+  // Known codes of the send path and of a running answer that are not payment refusals
+  // (refusals.ts words those, with their next step).
+  account_unavailable: "账户或会话不可用，回答已停止。",
+  billing_account_unavailable: "账户或会话不可用，回答已停止。",
+  agent_busy: "进行中的任务已达到上限，请先完成或停止已有任务。",
+  agent_internal: "处理这次请求时出错，回答已停止。可以重新生成。",
+  agent_unavailable: "服务正在停止，请稍后重试。",
+  billing_attempt_budget_exceeded: "本次运行已用完授权的模型调用次数，后续调用尚未开始。",
+  billing_run_expired: "本次运行已超过授权的时限，后续调用尚未开始。",
+  billing_model_authority_denied: "这次运行已不再获准调用模型（已停止，或会话、来源权限已变化），没有发起新的模型调用。",
+  conversation_archived: "会话已归档，恢复后才能继续。",
+  conversation_not_found: "会话不存在或已删除。",
+  conversation_too_long: "会话已经很长了，请新建会话继续。",
+  message_not_found: "这条消息已不存在，请刷新会话。",
+  message_too_long: "消息过长，请缩短后再发送。",
+  tool_call_not_found: "这个操作已不存在，请刷新会话。",
+  turn_not_found: "这次回答已不存在，请刷新会话。",
+  not_a_member: "范围里有你不是成员的工作空间，请重新选择。",
+  outside_conversation_scope: "目标工作空间不在本会话的范围内，操作没有执行。",
+  source_unverifiable: "无法重新核实来源权限，操作没有执行。",
+  confirmation_basis_unavailable: "此操作尚不能核实目标版本，请在应用中执行。",
+  result_access_changed: "结果所依据的内容或访问权限已变化，请刷新后重试。",
+  result_access_unverifiable: "无法核实原结果的访问权限，请刷新后重试。",
+  // The provider's own failures: what the person can do; whether anything was charged is the
+  // answer's own ledger line (never claimed here).
+  provider_error: "模型服务出错，回答已停止。请稍后重新生成；已完成的操作保留。",
+  provider_interrupted: "模型连接中途断开，回答已停止。是否计费以本条回答的结算记录为准。",
+  provider_bad_request: "模型服务未接受这次请求，回答已停止。请重新生成，或新建会话继续。",
+  provider_bad_output: "模型返回了无法使用的结果，回答已停止。请重新生成。",
+  provider_redirect: "暂时无法完成模型调用，回答已停止。请稍后重试。",
+  provider_invalid_request: "暂时无法完成模型调用，回答已停止。请稍后重试。",
+  provider_async_context: "暂时无法完成模型调用，回答已停止。请稍后重试。",
 };
 
 export function agentErrorText(error: unknown, t: (key: string) => string): string {
