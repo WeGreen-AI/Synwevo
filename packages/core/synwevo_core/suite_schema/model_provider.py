@@ -28,4 +28,22 @@ CREATE TRIGGER IF NOT EXISTS model_provider_no_replace BEFORE INSERT ON model_pr
 WHEN EXISTS(SELECT 1 FROM model_provider_versions
  WHERE (environment=NEW.environment AND revision=NEW.revision) OR operation_id=NEW.operation_id)
 BEGIN SELECT RAISE(ABORT,'immutable_model_provider'); END;
+-- Append-only health observations of one published provider revision (billing/provider_settings.py).
+-- model_missing (GET /models no longer lists the route's model) and upstream_balance (HTTP 402)
+-- close paid dispatch for that revision; a later revision starts open. No secret or content here.
+CREATE TABLE IF NOT EXISTS model_provider_health (
+    environment TEXT NOT NULL CHECK(environment IN ('test','live')),
+    seq INTEGER NOT NULL CHECK(typeof(seq)='integer' AND seq>0),
+    revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>0),
+    state TEXT NOT NULL CHECK(state IN ('model_listed','model_missing','models_check_failed','upstream_balance')),
+    requested_model TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY(environment,seq)
+);
+CREATE INDEX IF NOT EXISTS model_provider_health_revision ON model_provider_health(environment,revision,seq);
+CREATE TRIGGER IF NOT EXISTS model_provider_health_no_update BEFORE UPDATE ON model_provider_health
+BEGIN SELECT RAISE(ABORT,'immutable_model_provider_health'); END;
+CREATE TRIGGER IF NOT EXISTS model_provider_health_no_delete BEFORE DELETE ON model_provider_health
+BEGIN SELECT RAISE(ABORT,'immutable_model_provider_health'); END;
 """

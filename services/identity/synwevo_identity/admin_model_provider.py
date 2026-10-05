@@ -51,8 +51,31 @@ class ProviderVersion(ProviderContract):
     operation_id: str | None
 
 
+class ProviderClosure(ProviderContract):
+    state: Literal["model_missing", "upstream_balance"]
+    reason_code: str
+    requested_model: str
+    since: int
+
+
+class ProviderCheck(ProviderContract):
+    state: Literal["model_listed", "model_missing", "models_check_failed"]
+    at: int
+
+
+class ProviderHealth(ProviderContract):
+    """Automatic closure of paid dispatch on the current revision; publishing again reopens it."""
+    closure: ProviderClosure | None
+    last_models_check: ProviderCheck | None
+
+
 class ProviderState(ProviderVersion):
     status: Literal["unconfigured", "configured"]
+
+
+class ProviderStatus(ProviderState):
+    """The current version as read by administrators; previews bind the version, not its health."""
+    health: ProviderHealth | None
 
 
 class ProviderHistory(ProviderContract):
@@ -150,10 +173,10 @@ class ProviderOperations(SignedPreview):
         self._actor(request, view=True)
         with self.store.tx():
             self._actor(request, view=True)
-            version = self._settings().read() if self.environment else {
+            version = self._settings().status() if self.environment else {
                 "environment": None, "provider": PROVIDER, "account_ref": ACCOUNT_REF,
                 "revision": 0, "spec": None, "credential_revision": 0, "credential_configured": False,
-                "actor_id": None, "created_at": None, "reason": None, "operation_id": None}
+                "actor_id": None, "created_at": None, "reason": None, "operation_id": None, "health": None}
             self._actor(request, view=True)
             return _state(version)
 
@@ -259,7 +282,7 @@ def build_router(store, audit):
     environment = value if value in ("test", "live") else None
     operations = ProviderOperations(store, audit, environment)
 
-    @router.get("", response_model=ProviderState)
+    @router.get("", response_model=ProviderStatus)
     def read(request: Request):
         return operations.read(request)
 

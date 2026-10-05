@@ -57,6 +57,15 @@ def install(ctx) -> None:
             hooks.append(recovery.close)
         if ctx.start_jobs:
             recovery.start()
+    if isinstance(provider, GovernedDeepSeek):
+        # The governed model id is checked against GET /models at start, on each newly
+        # published revision and periodically (agent/model_check.py); a missing id closes the route.
+        check = provider.model_check()
+        ctx.api.state.agent_model_check = check
+        if hooks is not None:
+            hooks.append(check.close)
+        if ctx.start_jobs:
+            check.start()
 
     @ctx.api.get("/api/suite/agent/conversations/{cid}/events", tags=["agent"])
     async def events(cid: str, request: Request, after: int = 0):

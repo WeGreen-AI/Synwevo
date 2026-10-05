@@ -8,22 +8,64 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 import hashlib
+import hmac
 import json
+import logging
 import math
 from typing import Callable
 from uuid import uuid4
 
+from synwevo_core.auth import Auth
 from synwevo_core.billing import BillingError, ChargeContext, Ledger, PriceSnapshot, Usage, UsageEvidence
 from synwevo_core.billing.models import identifier, integer
 from synwevo_core.billing.traffic import TrafficCancelled
 
-from .deepseek import (EFFORTS, Attempt, DeepSeekCancelled, DeepSeekError, DeepSeekProvider,
-                       DeepSeekResult, Limits, allowed_efforts, deepseek_effort, normalize_usage)
+from .deepseek import (BASE_URL, EFFORTS, Attempt, DeepSeekCancelled, DeepSeekError, DeepSeekProvider,
+                       DeepSeekResult, Limits, allowed_efforts, deepseek_effort, normalize_usage, upstream_base)
 from .provider import Credential, ProviderError
+
+log = logging.getLogger("synwevo.agent.gateway")
+#: Domain label of the key that pseudonymizes payers for the provider's user_id field.
+PSEUDONYM_LABEL = b"synwevo/model-user-pseudonym/v1"
+#: What a person sees when the upstream refused for the operator's account (HTTP 402) or a
+#: closed route stopped the call. Never "your balance is insufficient": it is not theirs.
+UNAVAILABLE = "模型服务暂时不可用，本次未扣费。请稍后再试。"
+#: Refusals of a closed route: the platform breaker (an upstream 402, billing/risk.py) or a model
+#: id the provider no longer lists. Both stop before any reservation or send.
+CLOSED_CODES = ("risk_breaker_open", "provider_model_missing")
 
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _open_platform_breaker(store, *, environment: str, reason_code: str,
+                           fallback: Callable[[], object] | None = None) -> str:
+    """THE seam an upstream HTTP 402 (the operator's provider balance is empty) closes paid
+    dispatch through. Returns which mechanism closed it.
+
+    When the platform-wide paid-dispatch breaker is installed
+    (``synwevo_core.billing.risk.trip_platform_breaker``), it is opened with source
+    ``upstream_402``: it stops every paid call inside the dispatch transaction, is audited and
+    alerts administrators, and an administrator closes it after topping up ("platform_breaker").
+    Without that module, ``fallback`` records this package's own minimal state: the current
+    provider revision is closed (``model_provider_health`` state ``upstream_balance``, audited,
+    administrators alerted) until an administrator publishes the configuration again
+    ("provider_revision"). Only a missing module selects the fallback; a broken one raises.
+    """
+    try:
+        from synwevo_core.billing.risk import trip_platform_breaker
+    except ModuleNotFoundError as exc:
+        if exc.name != "synwevo_core.billing.risk":
+            raise
+        trip_platform_breaker = None
+    if trip_platform_breaker is not None:
+        trip_platform_breaker(store, environment=environment, source="upstream_402", reason_code=reason_code)
+        return "platform_breaker"
+    if fallback is not None:
+        fallback()
+        return "provider_revision"
+    return "none"
 
 
 @dataclass(frozen=True)
@@ -92,9 +134,13 @@ class MeteredDeepSeek:
     name = "deepseek"
 
     def __init__(self, ledger: Ledger, *, current_authority: Callable[[ChargeContext], bool],
-                 transport=None, limits: Limits | None = None, cost_admission=None, traffic=None):
+                 transport=None, limits: Limits | None = None, cost_admission=None, traffic=None,
+                 base_url: str = BASE_URL, route_guard: Callable[[object], None] | None = None,
+                 on_upstream_balance: Callable[[object], None] | None = None):
         if not callable(current_authority):
             raise BillingError("model_authority_required")
+        if any(hook is not None and not callable(hook) for hook in (route_guard, on_upstream_balance)):
+            raise BillingError("model_configuration_required")
         if cost_admission is not None and (getattr(cost_admission, "ledger", None) is not ledger
                                           or not callable(getattr(cost_admission, "admit", None))):
             raise BillingError("model_cost_admission_required")
@@ -105,6 +151,39 @@ class MeteredDeepSeek:
         self.current_authority = current_authority
         self.transport = transport  # Trusted Python fixture injection only; not a route option.
         self.limits = limits or Limits()
+        # Official origin, or a loopback FIXTURE double only in the test billing environment.
+        self.base_url = upstream_base(ledger.environment, None if base_url == BASE_URL else base_url)
+        # route_guard(route) raises BillingError while the route is closed (missing model id,
+        # upstream 402); it runs before reserving and again inside the dispatch transaction.
+        self.route_guard = route_guard
+        # on_upstream_balance(route) closes paid dispatch after an upstream HTTP 402.
+        self.on_upstream_balance = on_upstream_balance
+
+    def pseudonym(self, payer_user_id: str) -> str:
+        """The provider's user_id for a payer: HMAC-SHA256 under a key derived from the server
+        root secret, scoped to environment and namespace. Stable per payer, reveals no account
+        id (unlike a plain hash, it cannot be recomputed from a guessed id without the key),
+        and matches DeepSeek's [a-zA-Z0-9-_]{1,512}. A root rekey changes every pseudonym."""
+        key = hmac.new(Auth(self.store).secret(), PSEUDONYM_LABEL, hashlib.sha256).digest()
+        scope = f"{self.ledger.environment}:{self.ledger.namespace}:{identifier(payer_user_id)}"
+        return hmac.new(key, scope.encode(), hashlib.sha256).hexdigest()
+
+    def _guard(self, route):
+        if self.route_guard is not None:
+            self.route_guard(route)
+
+    def _closed(self, route, exc):
+        """An upstream 402 closes paid dispatch (never fails the caller's error path) and the
+        person is told the service is unavailable and they were not charged — the empty
+        balance is the operator's, not theirs."""
+        hook = self.on_upstream_balance
+        try:
+            _open_platform_breaker(self.store, environment=self.ledger.environment, reason_code="http_402",
+                                   fallback=(lambda: hook(route)) if hook is not None else None)
+        except Exception as error:  # noqa: BLE001 - the 402 itself must still reach the person
+            log.warning("closing paid dispatch after an upstream 402 failed: %s", type(error).__name__)
+        exc.message = UNAVAILABLE
+        exc.args = (UNAVAILABLE,)
 
     def _check(self, context):
         with self.store.conn() as connection:
@@ -185,6 +264,11 @@ class MeteredDeepSeek:
             raise BillingError("model_configuration_changed")
         if route.valid_until <= self.ledger._now():
             raise BillingError("route_confirmation_expired")
+        try:
+            self._guard(route)  # A closed route reserves nothing and sends nothing.
+        except BillingError as exc:
+            exc.not_dispatched = True
+            raise
         if deepseek_effort(effort) not in route.reasoning_efforts:
             # Refused before any reservation or send: the route does not offer this level.
             error = ProviderError("model_effort_unavailable",
@@ -250,6 +334,11 @@ class MeteredDeepSeek:
                 def admit(transaction, dispatch_ticket):
                     nonlocal admission_refusal
                     try:
+                        # Under the dispatch writer lock: a 402 or a failed model check that
+                        # committed a closure before this point stops this send too.
+                        self._guard(route)
+                        if self.cost_admission is None:
+                            return
                         if claim is not None:
                             self.traffic.admit(transaction, claim, attempt_key=dispatch_ticket.attempt_key,
                                 inflight_until=self.ledger._now() + math.ceil(self.limits.timeout_s) + 1)
@@ -261,7 +350,8 @@ class MeteredDeepSeek:
                         raise
                 try:
                     self.ledger.dispatch(ticket, block_unresolved_run=True,
-                                         admission=admit if self.cost_admission is not None else None)
+                                         admission=admit if self.cost_admission is not None
+                                         or self.route_guard is not None else None)
                 except BillingError as exc:
                     # Preserve the existing transport contract for fencing/unknown usage;
                     # only our typed payer-policy refusal needs the new user-facing reason.
@@ -270,16 +360,16 @@ class MeteredDeepSeek:
                     raise
 
             provider = DeepSeekProvider(limits=replace(self.limits, max_tokens=route.output_token_ceiling),
-                                        transport=self.transport, efforts=route.reasoning_efforts)
-            # A scoped pseudonym, stable per platform/environment/payer, reveals no account ID.
-            pseudonym = hashlib.sha256((self.ledger.environment + ":" + self.ledger.namespace + ":" +
-                                       context.payer_user_id).encode()).hexdigest()
+                                        transport=self.transport, efforts=route.reasoning_efforts,
+                                        base_url=self.base_url)
             try:
                 result = provider.step(credential=credential, system=system, tools=tools, messages=messages,
                     effort=effort, on_text=on_text, should_stop=should_stop,
-                    user_id=pseudonym, before_dispatch=before_dispatch)
+                    user_id=self.pseudonym(context.payer_user_id), before_dispatch=before_dispatch)
             except (DeepSeekError, DeepSeekCancelled) as exc:
                 self._observe(key, ticket, route, exc.attempt, completed=False, claim=claim)
+                if isinstance(exc, DeepSeekError) and exc.code == "provider_balance":
+                    self._closed(route, exc)
                 if admission_refusal is not None:
                     # The transport deliberately sanitizes callback exceptions. Preserve
                     # only our local typed refusal, after recording the unsent attempt.
@@ -423,7 +513,8 @@ class MeteredTurnProvider:
             exc.usage_reliability = exc.attempt.usage_reliability
             raise
         except BillingError as exc:
-            error = ProviderError("billing_" + exc.code, "本次运行的预算或用量状态暂不允许继续，请查看费用记录")
+            error = ProviderError("billing_" + exc.code, UNAVAILABLE if exc.code in CLOSED_CODES
+                                  else "本次运行的预算或用量状态暂不允许继续，请查看费用记录")
             if getattr(exc, "not_dispatched", False):
                 error.metered_usage = {"input_tokens": 0, "output_tokens": 0}
                 error.usage_reliability = "not_dispatched"

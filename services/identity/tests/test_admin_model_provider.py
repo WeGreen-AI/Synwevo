@@ -134,7 +134,8 @@ def test_unconfigured_reads_do_not_seed_prices_costs_credentials_or_enable_route
     assert response.status_code == 200, response.text
     assert response.json() == {"environment": "test", "provider": "deepseek", "account_ref": "platform-deepseek",
         "status": "unconfigured", "revision": 0, "spec": None, "credential_revision": 0,
-        "credential_configured": False, "actor_id": None, "created_at": None, "reason": None, "operation_id": None}
+        "credential_configured": False, "actor_id": None, "created_at": None, "reason": None, "operation_id": None,
+        "health": {"closure": None, "last_models_check": None}}
     assert w["admin"].get(BASE + "/history").json() == {"items": [], "next_before_revision": None}
     plan = preview(w, credential={"action": "keep"})
     assert plan["after"] == DISABLED and not plan["credential_configured"]
@@ -151,7 +152,8 @@ def test_preview_and_publication_never_expose_keys_or_ciphertext_or_grant_busine
     before = {table: w["store"].all(f"SELECT * FROM {table}") for table in untouched}
     started = time.time()
     plan = preview(w)
-    assert plan["before"] == w["admin"].get(BASE).json()
+    # A preview binds the version, not its health: a model-id check must not invalidate it.
+    assert plan["before"] == {k: v for k, v in w["admin"].get(BASE).json().items() if k != "health"}
     assert plan["after"] == w["spec"] and plan["risk"] == "high" and plan["environment"] == "test"
     assert type(plan["expires_at"]) is float and started + 299 <= plan["expires_at"] <= time.time() + 301
     binding = decoded(plan)
@@ -169,7 +171,7 @@ def test_preview_and_publication_never_expose_keys_or_ciphertext_or_grant_busine
     assert state["credential_configured"] and state["status"] == "configured" and state["spec"] == w["spec"]
     assert state["actor_id"] == w["root"]["id"] and state["reason"] == REASON
     assert state["operation_id"] == result["operation_id"]
-    assert state == w["admin"].get(BASE).json()
+    assert {**state, "health": {"closure": None, "last_models_check": None}} == w["admin"].get(BASE).json()
     assert {k: v for k, v in state.items() if k != "status"} == ProviderSettings(w["store"], environment="test").read()
     cipher = w["store"].one("SELECT secret_enc FROM model_provider_credentials")["secret_enc"]
     assert cipher and KEY not in cipher

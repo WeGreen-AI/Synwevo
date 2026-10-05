@@ -18,7 +18,11 @@ import httpx
 
 from .provider import Cancelled, Credential, ProviderError, StepResult
 
-ENDPOINT = "https://api.deepseek.com/chat/completions"
+BASE_URL = "https://api.deepseek.com"
+ENDPOINT = BASE_URL + "/chat/completions"
+_STATUS = {400: "provider_bad_request", 401: "provider_auth", 402: "provider_balance",
+           403: "provider_forbidden", 404: "provider_model_missing", 422: "provider_bad_request",
+           429: "provider_rate_limited", 500: "provider_error", 503: "provider_overloaded"}
 CAPABILITY_VERSION = "deepseek-chat-2026-09-30"
 _NAME = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,200}\Z")
@@ -113,8 +117,9 @@ class DeepSeekResult:
 
 
 class DeepSeekError(ProviderError):
-    def __init__(self, code: str, attempt: Attempt, *, retry_after: float | None = None):
-        super().__init__(code, "模型请求未完成，请核实调用状态", retryable=False, retry_after=retry_after)
+    def __init__(self, code: str, attempt: Attempt, *, retry_after: float | None = None,
+                 message: str = "模型请求未完成，请核实调用状态"):
+        super().__init__(code, message, retryable=False, retry_after=retry_after)
         self.attempt = attempt
         # Private reasoning/visible text received before the failure (never unrun tool calls).
         # Thinking mode with tools refuses later requests that omit it (docs/deepseek-provider.md).
@@ -454,15 +459,105 @@ class _Assembly:
         return DeepSeekResult(StepResult(content, _FINISH[a.finish_reason], model=a.returned_model), replay, a)
 
 
+_LOOPBACK = ("127.0.0.1", "::1", "localhost")
+
+
+def _loopback(value: object) -> bool:
+    try:
+        url = httpx.URL(value) if isinstance(value, str) else None
+    except Exception:  # noqa: BLE001 - any unparsable value is simply not loopback
+        return False
+    return bool(url) and url.scheme in ("http", "https") and url.host in _LOOPBACK and url.port is not None \
+        and not url.userinfo and url.path in ("", "/") and not url.query and not url.fragment
+
+
+def upstream_base(environment: str | None, override: str | None) -> str:
+    """The upstream origin the platform key may be sent to.
+
+    Always the official origin, except that end-to-end tests may point at a labelled FIXTURE
+    double (apps/suite/scripts/deepseek_test_double.py) when the billing environment is
+    ``test`` AND the target is a loopback host. Anything else is refused at startup, so a
+    configuration mistake can never send the platform key to another host.
+    """
+    if override in (None, ""):
+        return BASE_URL
+    if environment != "test":
+        raise ValueError("DeepSeek upstream override is refused outside SYNWEVO_BILLING_ENVIRONMENT=test")
+    if not _loopback(override):
+        raise ValueError("DeepSeek upstream override must be a loopback origin: http(s)://127.0.0.1|[::1]|localhost:<port>")
+    return override.rstrip("/")
+
+
+def _base(value: str) -> str:
+    if value != BASE_URL and not _loopback(value):
+        raise ValueError("DeepSeek upstream must be the official origin or a loopback test double")
+    return value.rstrip("/")
+
+
+async def alist_models(credential: Credential, *, transport: httpx.AsyncBaseTransport | None = None,
+                       base_url: str = BASE_URL, timeout_s: float = 15.0) -> frozenset[str]:
+    """GET /models: the model ids the platform account can currently request.
+
+    One bounded request, no redirects/retries/proxies; the key goes only to the official (or
+    loopback test) origin. Errors are DeepSeekError with the same codes as chat requests.
+    """
+    a = Attempt()
+    base = _base(base_url)
+    if (credential.provider != "deepseek" or not isinstance(credential.api_key, str)
+            or not 1 <= len(credential.api_key) <= 4096 or not all(33 <= ord(c) <= 126 for c in credential.api_key)):
+        raise DeepSeekError("provider_invalid_request", a)
+    timeout = httpx.Timeout(timeout_s, connect=min(timeout_s, 10.0))
+    client_transport = transport if transport is not None else httpx.AsyncHTTPTransport(retries=0, trust_env=False)
+    try:
+        async with asyncio.timeout(timeout_s):
+            async with httpx.AsyncClient(transport=client_transport, timeout=timeout, trust_env=False,
+                                         follow_redirects=False) as client:
+                a.dispatch = "unknown"
+                async with client.stream("GET", base + "/models", headers={
+                        "Authorization": "Bearer " + credential.api_key, "Accept": "application/json",
+                        "Accept-Encoding": "identity"}) as response:
+                    a.dispatch, a.http_status = "observed", response.status_code
+                    if response.status_code != 200:
+                        raise DeepSeekError("provider_redirect" if 300 <= response.status_code < 400
+                                            else _STATUS.get(response.status_code, "provider_error"), a)
+                    body = bytearray()
+                    async for piece in response.aiter_raw():
+                        body.extend(piece)
+                        _require(len(body) <= 262_144)
+                    _require(response.headers.get("content-type", "").split(";")[0].strip().lower() == "application/json")
+                    listing = _loads(body.decode("utf-8"))
+                    _require(isinstance(listing, dict) and isinstance(listing.get("data"), list) and len(listing["data"]) <= 1000)
+                    ids = set()
+                    for item in listing["data"]:
+                        _require(isinstance(item, dict) and isinstance(item.get("id"), str) and bool(_ID.fullmatch(item["id"])))
+                        ids.add(item["id"])
+                    return frozenset(ids)
+    except DeepSeekError:
+        raise
+    except (TimeoutError, httpx.TimeoutException):
+        raise DeepSeekError("provider_timeout", a) from None
+    except httpx.HTTPError:
+        raise DeepSeekError("provider_transport", a) from None
+    except Exception:
+        raise DeepSeekError("provider_bad_output", a) from None
+
+
+def list_models(credential: Credential, **kwargs) -> frozenset[str]:
+    """Synchronous entry point for worker threads (never from a running event loop)."""
+    return asyncio.run(alist_models(credential, **kwargs))
+
+
 class DeepSeekProvider:
     name = "deepseek"
 
     def __init__(self, *, limits: Limits | None = None, thinking: bool = True,
-                 transport: httpx.AsyncBaseTransport | None = None, efforts=EFFORTS):
+                 transport: httpx.AsyncBaseTransport | None = None, efforts=EFFORTS,
+                 base_url: str = BASE_URL):
         _require(type(thinking) is bool)
         self.limits = limits or Limits()
         self.thinking = thinking
         self.efforts = allowed_efforts(efforts)  # The governed route's allowed values.
+        self.base_url = _base(base_url)  # Official origin, or a loopback FIXTURE double in tests.
         self._transport = transport  # Trusted dependency injection for isolated tests only.
 
     def step(self, **kwargs) -> DeepSeekResult:
@@ -554,16 +649,13 @@ class DeepSeekProvider:
                 if time.monotonic() >= deadline:
                     raise TimeoutError()
                 a.dispatch = "unknown"
-                async with client.stream("POST", ENDPOINT, content=body, extensions={"trace": trace},
+                async with client.stream("POST", self.base_url + "/chat/completions", content=body, extensions={"trace": trace},
                                          headers={"Authorization": "Bearer " + credential.api_key,
                                                   "Content-Type": "application/json", "Accept": "text/event-stream",
                                                   "Accept-Encoding": "identity"}) as response:
                     a.dispatch, a.http_status = "observed", response.status_code
                     if response.status_code != 200:
-                        codes = {400: "provider_bad_request", 401: "provider_auth", 402: "provider_balance",
-                                 403: "provider_forbidden", 404: "provider_model_missing", 422: "provider_bad_request",
-                                 429: "provider_rate_limited", 500: "provider_error", 503: "provider_overloaded"}
-                        code = "provider_redirect" if 300 <= response.status_code < 400 else codes.get(response.status_code, "provider_error")
+                        code = "provider_redirect" if 300 <= response.status_code < 400 else _STATUS.get(response.status_code, "provider_error")
                         after = response.headers.get("retry-after", "")
                         retry_after = float(after) if re.fullmatch(r"[0-9]{1,6}", after) and int(after) <= 86400 else None
                         raise DeepSeekError(code, a, retry_after=retry_after)
