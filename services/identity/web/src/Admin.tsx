@@ -1,5 +1,6 @@
 import { ModelCostsTab } from "./governance/ModelCostsTab";
 import { ModelProviderTab } from "./governance/ModelProviderTab";
+import { AgentSafetyTab } from "./governance/AgentSafetyTab";
 import { ModelPricesTab } from "./governance/ModelPricesTab";
 import { SettingsTab } from "./governance/SettingsTab";
 import { AppRunsTab, FlowRunsTab } from "./governance/RunsTab";
@@ -95,6 +96,7 @@ function AdminViews({ held, tab }: { held: Held; tab: Tab }) {
     {tab === "model-provider" && <ModelProviderTab onDenied={onDenied}
       canRead={!permitted(held, "platform.config.view").disabled}
       canManage={!permitted(held, "platform.config.manage").disabled} />}
+    {tab === "agent-safety" && <AgentSafetyTab onDenied={onDenied} held={held} />}
     {tab === "registration" && <SettingsTab onDenied={onDenied} held={held} />}
     {tab === "identity" && <IdentityProvidersTab onDenied={onDenied} />}
     {tab === "mail" && <MailTab onDenied={onDenied} held={held} />}

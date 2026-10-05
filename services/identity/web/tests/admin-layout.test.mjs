@@ -26,7 +26,8 @@ test('navigation uses effective permissions, keeps API administration in the she
   assert.deepEqual(nav.adminGroups(held).flatMap(group => group.items.map(item => item.id)), ['overview', 'api-platform']);
   assert.deepEqual(nav.adminGroups(new Set()), []);
   const support = new Set(['platform.users.view', 'platform.workspaces.view']);
-  assert.deepEqual(nav.adminGroups(support).flatMap(group => group.items.map(item => item.id)), ['users', 'workspaces']);
+  // Agent reports and suspensions are account governance (platform.users.view); its rule lists need platform.config.*.
+  assert.deepEqual(nav.adminGroups(support).flatMap(group => group.items.map(item => item.id)), ['users', 'workspaces', 'agent-safety']);
 });
 
 test('legacy links resolve only to a permitted view; API direct links cannot bypass the required permission', () => {
