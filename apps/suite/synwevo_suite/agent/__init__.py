@@ -57,6 +57,15 @@ def install(ctx) -> None:
             hooks.append(recovery.close)
         if ctx.start_jobs:
             recovery.start()
+        # Upstream balance, breaker thresholds, reconciliation and ledger audit (billing/risk_monitor.py):
+        # one round at a time across processes; nothing runs before a cost policy is published.
+        from synwevo_core.billing.risk_monitor import RiskMonitor
+        monitor = RiskMonitor(ctx.store, environment=agent.provider.gateway.ledger.environment)
+        ctx.api.state.model_risk_monitor = monitor
+        if hooks is not None:
+            hooks.append(monitor.close)
+        if ctx.start_jobs:
+            monitor.start()
 
     @ctx.api.get("/api/suite/agent/conversations/{cid}/events", tags=["agent"])
     async def events(cid: str, request: Request, after: int = 0):
