@@ -8,6 +8,8 @@ export interface TurnTokens { input_cached: number; input_uncached: number; outp
 export interface TurnCost {
   charged_minor: string; currency: string; scale: number; tokens: TurnTokens;
   model: string | null; band: string | null; state: 'settled' | 'pending' | 'held'; held_minor: string;
+  /** Who the ledger charged for this run (absent from servers before organization payment). */
+  payer?: { kind: 'user' | 'organization'; id: string } | null;
 }
 
 const MINOR = /^(0|[1-9][0-9]{0,30})$/;
@@ -72,7 +74,9 @@ export function validTurnCost(value: unknown): TurnCost | null {
     || !['settled', 'pending', 'held'].includes(v.state)
     || !t || !count(t.input_cached) || !count(t.input_uncached) || !count(t.output) || !count(t.reasoning) || t.reasoning > t.output
     || !(v.model === null || (typeof v.model === 'string' && !!v.model))
-    || !(v.band === null || typeof v.band === 'string')) return null;
+    || !(v.band === null || typeof v.band === 'string')
+    || !(v.payer == null || (typeof v.payer === 'object' && (v.payer.kind === 'user' || v.payer.kind === 'organization')
+      && typeof v.payer.id === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(v.payer.id)))) return null;
   return v;
 }
 

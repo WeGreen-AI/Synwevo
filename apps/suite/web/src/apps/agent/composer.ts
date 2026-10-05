@@ -50,17 +50,25 @@ export function turnMaximum(consent: { budget: string; unit: { code: string; sca
   return null;
 }
 
-/** The account service's wallet page (top-up lives there), from the server-given account URL. */
-export function walletHref(accountUrl: string | undefined | null, appId?: string | null, origin = globalThis.location?.origin ?? 'http://localhost'): string {
+/** A page of the account service, from the server-given account URL: "" is the account page
+ *  itself, "wallet" the wallet page (where top-up lives). Only http(s) URLs; anything else falls
+ *  back to this origin's /account. */
+export function accountHref(accountUrl: string | undefined | null, appId?: string | null, origin = globalThis.location?.origin ?? 'http://localhost',
+                            page: '' | 'wallet' = ''): string {
   let url: URL;
   try { url = new URL(accountUrl || '/account', origin); } catch { url = new URL('/account', origin); }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') url = new URL('/account', origin);
   const base = url.pathname.replace(/\/+$/, '');
-  url.pathname = (base.endsWith('/account') ? base : '/account') + '/wallet';
+  url.pathname = (base.endsWith('/account') ? base : '/account') + (page ? `/${page}` : '');
   url.search = '';
   url.hash = '';
   if (appId) url.searchParams.set('from', appId);
   return url.origin === origin ? url.pathname + url.search : url.href;
+}
+
+/** The account service's wallet page (top-up lives there). */
+export function walletHref(accountUrl: string | undefined | null, appId?: string | null, origin = globalThis.location?.origin ?? 'http://localhost'): string {
+  return accountHref(accountUrl, appId, origin, 'wallet');
 }
 
 /** The exact price per million tokens of one rate, in the offer's unit (a reduced fraction when

@@ -1,7 +1,8 @@
 /** Which refusal stopped a paid send or a later model call, in words a person can act on, and the
  *  one next step.
  *
- *  Codes come from the ledger/gateway ("billing_*"), the risk controls ("risk_*": suspension,
+ *  Codes come from the ledger/gateway ("billing_*", including a frozen wallet and the organization
+ *  payer's grant and monthly limits), the risk controls ("risk_*": suspension,
  *  automatic brake, paid-dispatch breaker, staged-rollout allowlist), the platform cost admission
  *  ("cost_*", including the per-call maximum cost), the separate data-sharing consent
  *  ("provider_consent_*") and content safety ("content_blocked_*" / "content_filtered_*"). Known
@@ -11,13 +12,22 @@
  *  balance, never the person's wallet. */
 import type { ChatText } from './chat.messages';
 
-export type RefusalKind = 'funds' | 'limit' | 'no_limit' | 'brake' | 'suspended' | 'breaker' | 'allowlist'
-  | 'call_cap' | 'not_configured' | 'consent' | 'consent_changed' | 'price_changed' | 'content_input' | 'content_output';
-export type NextStep = 'topup' | 'settings' | 'consent' | 'requote' | null;
+export type RefusalKind = 'funds' | 'org_funds' | 'frozen' | 'org_frozen' | 'org_limit' | 'org_payer' | 'limit' | 'no_limit' | 'brake'
+  | 'suspended' | 'breaker' | 'allowlist' | 'call_cap' | 'not_configured' | 'consent' | 'consent_changed' | 'price_changed'
+  | 'content_input' | 'content_output';
+/** "personal": pay with the personal wallet instead (an organization payer refused); "wallet":
+ *  open the wallet page on the account service (a frozen wallet says why there). */
+export type NextStep = 'topup' | 'wallet' | 'personal' | 'settings' | 'consent' | 'requote' | null;
 export interface Refusal { kind: RefusalKind; code: string; text: ChatText; next: NextStep }
 
 const TEXT: Record<RefusalKind, [ChatText, NextStep]> = {
   funds: ['refusedFunds', 'topup'],
+  // A member cannot top up an organization's wallet; they can pay personally or ask its billing manager.
+  org_funds: ['refusedOrgFunds', 'personal'],
+  frozen: ['refusedFrozen', 'wallet'],
+  org_frozen: ['refusedOrgFrozen', 'personal'],
+  org_limit: ['refusedOrgLimit', 'personal'],
+  org_payer: ['refusedOrgPayer', 'personal'],
   limit: ['refusedLimit', 'settings'],
   no_limit: ['refusedNoLimit', 'settings'],
   brake: ['refusedBrake', null],
@@ -39,6 +49,13 @@ export const REFUSAL_TEXT: Record<RefusalKind, ChatText> = Object.fromEntries(
 
 const EXACT: Record<string, RefusalKind> = {
   billing_insufficient_funds: 'funds', insufficient_funds: 'funds',
+  billing_wallet_frozen: 'frozen', wallet_frozen: 'frozen',
+  // Organization payment (org-payments): the member's or the workspace's monthly limit, and a
+  // grant, membership or organization that no longer lets this person charge it.
+  billing_org_member_monthly_limit_exceeded: 'org_limit', billing_org_workspace_monthly_limit_exceeded: 'org_limit',
+  billing_org_payer_not_granted: 'org_payer', billing_org_payer_not_member: 'org_payer',
+  billing_organization_unavailable: 'org_payer', billing_organization_billing_not_configured: 'org_payer',
+  billing_organization_billing_not_supported: 'org_payer', billing_payer_forbidden: 'org_payer',
   billing_payer_daily_budget_exceeded: 'limit', billing_payer_weekly_budget_exceeded: 'limit',
   billing_payer_monthly_budget_exceeded: 'limit', billing_payer_budget_disabled: 'limit',
   billing_payer_budget_not_configured: 'no_limit',
@@ -87,8 +104,12 @@ export function refusalKind(code: string): RefusalKind | null {
   return null;
 }
 
-export function refusalOf(error: unknown): Refusal | null {
+/** `organization`: the refused run was charged to an organization (the selected payer for a
+ *  fresh refusal; the answer's ledger payer for one in the transcript). */
+export function refusalOf(error: unknown, context: { organization?: boolean } = {}): Refusal | null {
   const code = errorCode(error);
-  const kind = refusalKind(code);
+  let kind = refusalKind(code);
+  if (context.organization && kind === 'funds') kind = 'org_funds';
+  if (context.organization && kind === 'frozen') kind = 'org_frozen';
   return kind ? { kind, code, text: TEXT[kind][0], next: TEXT[kind][1] } : null;
 }

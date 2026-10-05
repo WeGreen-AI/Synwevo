@@ -120,6 +120,7 @@ a.ag-chip-link { color: var(--accent); }
 .ag-low { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0; padding: var(--sp-2) var(--sp-3); border-radius: var(--radius); background: var(--warn-weak); color: var(--text); font-size: var(--fs-3); animation: ag-reveal var(--dur-2) var(--ease); }
 .ag-low.is-empty { background: var(--err-weak); }
 .ag-low span { flex: 1 1 200px; }
+.ag-welcome-note { margin: 0; padding: var(--sp-1) var(--sp-3); border-radius: var(--radius); background: var(--accent-weak); color: var(--text); font-size: var(--fs-2); animation: ag-reveal var(--dur-2) var(--ease); }
 .ag-max { font-size: var(--fs-2); color: var(--text-2); font-variant-numeric: tabular-nums; }
 .ag-model-button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .ag-models { display: grid; gap: var(--sp-3); margin: 0; padding: 0; list-style: none; }

@@ -20,12 +20,15 @@ before(async () => {
       if (id.endsWith('/ui/src/i18n.tsx')) return code.replace("() => 'zh-Hans' as const", 'getLocale');
     } }],
   });
-  [cost, refusals, payers, composer, label, copy, parts, status, ui, core] = await Promise.all([
+  // The shared i18n modules load first and once: loading them concurrently with the catalogues
+  // could evaluate them twice, leaving a catalogue registered in an instance the tests do not read.
+  ui = await server.ssrLoadModule('@synwevo/ui');
+  core = await server.ssrLoadModule('@synwevo/ui/i18n-core');
+  [cost, refusals, payers, composer, label, copy, parts, status] = await Promise.all([
     server.ssrLoadModule('/src/apps/agent/cost.ts'), server.ssrLoadModule('/src/apps/agent/refusals.ts'),
     server.ssrLoadModule('/src/apps/agent/payers.ts'), server.ssrLoadModule('/src/apps/agent/composer.ts'),
     server.ssrLoadModule('/src/apps/agent/aiLabel.ts'), server.ssrLoadModule('/src/apps/agent/chat.messages.ts'),
     server.ssrLoadModule('/src/apps/agent/ChatParts.tsx'), server.ssrLoadModule('/src/apps/agent/ComposerStatus.tsx'),
-    server.ssrLoadModule('@synwevo/ui'), server.ssrLoadModule('@synwevo/ui/i18n-core'),
   ]);
 });
 after(async () => { ui?.setLocale('zh-Hans'); await server?.close(); });
@@ -87,7 +90,8 @@ test('only a well-formed ledger cost is shown, and its summary follows its state
   assert.deepEqual(cost.costSummary(cost.validTurnCost(fixtureCost({ state: 'pending', held_minor: '90', charged_minor: '0' }))), { key: 'costPending' });
   for (const bad of [null, {}, fixtureCost({ charged_minor: 12 }), fixtureCost({ charged_minor: '-1' }), fixtureCost({ state: 'estimated' }),
     fixtureCost({ scale: 40 }), fixtureCost({ currency: '' }), fixtureCost({ tokens: { input_cached: 1, input_uncached: 1, output: 1, reasoning: 2 } }),
-    fixtureCost({ tokens: { input_cached: 1.5, input_uncached: 1, output: 1, reasoning: 0 } }), fixtureCost({ model: '' })]) {
+    fixtureCost({ tokens: { input_cached: 1.5, input_uncached: 1, output: 1, reasoning: 0 } }), fixtureCost({ model: '' }),
+    fixtureCost({ payer: { kind: 'team', id: 'x' } }), fixtureCost({ payer: { kind: 'organization', id: 'bad id!' } }), fixtureCost({ payer: 'org' })]) {
     assert.equal(cost.validTurnCost(bad), null, JSON.stringify(bad));
   }
   assert.equal(cost.bandText('peak'), 'bandPeak');
@@ -116,6 +120,17 @@ test('an answer\'s cost line renders the ledger figure, its breakdown and state 
   assert.equal(render('en', React.createElement(parts.TurnCostLine, { cost: { charged_minor: '5' } })), '');
   const one = render('en', React.createElement(parts.TurnCostLine, { cost: fixtureCost({ tokens: { input_cached: 1, input_uncached: 0, output: 0, reasoning: 0 } }) }));
   assert.ok(one.includes('>1 token<'), one);
+  // Who the ledger charged: the personal wallet, or the organization by the name the payer list gives.
+  const mine = render('en', React.createElement(parts.TurnCostLine, { cost: fixtureCost({ payer: { kind: 'user', id: 'usr_fixture' } }) }));
+  assert.ok(mine.includes('<dt>Paid by</dt><dd>Personal wallet</dd>'), mine);
+  const org = { kind: 'organization', id: 'org_fixture' };
+  const named = render('zh-Hant', React.createElement(parts.TurnCostLine, { cost: fixtureCost({ payer: org }),
+    payerName: (p: any) => (p.id === 'org_fixture' ? 'Fixture Org' : null) }));
+  assert.ok(named.includes('<dt>付款方</dt><dd>組織：Fixture Org</dd>'), named);
+  const unnamed = render('en', React.createElement(parts.TurnCostLine, { cost: fixtureCost({ payer: org }) }));
+  assert.ok(unnamed.includes('<dd>An organization</dd>'), unnamed);
+  // Servers before organization payment send no payer: no row rather than a guess.
+  assert.ok(!render('en', React.createElement(parts.TurnCostLine, { cost: fixtureCost() })).includes('Paid by'));
 });
 
 // ---------------------------------------------------------------- refusals
@@ -123,6 +138,14 @@ test('an answer\'s cost line renders the ledger figure, its breakdown and state 
 test('each refusal maps to a translated sentence and its one next step', () => {
   const cases: [string, string, string | null][] = [
     ['billing_insufficient_funds', 'funds', 'topup'],
+    ['billing_wallet_frozen', 'frozen', 'wallet'],
+    ['billing_org_member_monthly_limit_exceeded', 'org_limit', 'personal'],
+    ['billing_org_workspace_monthly_limit_exceeded', 'org_limit', 'personal'],
+    ['billing_org_payer_not_granted', 'org_payer', 'personal'],
+    ['billing_org_payer_not_member', 'org_payer', 'personal'],
+    ['billing_organization_unavailable', 'org_payer', 'personal'],
+    ['billing_organization_billing_not_configured', 'org_payer', 'personal'],
+    ['billing_payer_forbidden', 'org_payer', 'personal'],
     ['billing_payer_daily_budget_exceeded', 'limit', 'settings'],
     ['billing_payer_budget_disabled', 'limit', 'settings'],
     ['billing_payer_budget_not_configured', 'no_limit', 'settings'],
@@ -169,6 +192,12 @@ test('each refusal maps to a translated sentence and its one next step', () => {
   }
   assert.equal(refusals.refusalOf(null), null);
   assert.equal(refusals.refusalOf('billing_insufficient_funds'), null);
+  // An organization payer cannot be topped up by the member: its own sentence and next step.
+  assert.deepEqual([refusals.refusalOf({ code: 'billing_insufficient_funds' }, { organization: true }).kind,
+    refusals.refusalOf({ code: 'billing_insufficient_funds' }, { organization: true }).next], ['org_funds', 'personal']);
+  assert.deepEqual([refusals.refusalOf({ code: 'billing_wallet_frozen' }, { organization: true }).kind,
+    refusals.refusalOf({ code: 'billing_wallet_frozen' }, { organization: true }).next], ['org_frozen', 'personal']);
+  assert.equal(refusals.refusalOf({ code: 'billing_risk_breaker_open' }, { organization: true }).kind, 'breaker');
 });
 
 test('a refusal notice states what happened and offers the next step', () => {
@@ -196,35 +225,93 @@ test('a refusal notice states what happened and offers the next step', () => {
   // Without a handler the action is not offered (never an empty button).
   const none = render('en', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_consent_model_changed' }) }));
   assert.ok(!none.includes('<button'), none);
+  const orgFunds = render('en', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_insufficient_funds' }, { organization: true }),
+    walletUrl: '/account/wallet', onPersonal() {} }));
+  assert.ok(orgFunds.includes('organization’s wallet') && orgFunds.includes('>Pay with my personal wallet</button>') && !orgFunds.includes('Top up'), orgFunds);
+  const orgLimit = render('zh-Hans', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_org_member_monthly_limit_exceeded' }) }));
+  assert.ok(orgLimit.includes('本月额度已用完') && !orgLimit.includes('<button'), orgLimit);
+  const frozen = render('zh-Hant', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_wallet_frozen' }), walletUrl: '/account/wallet' }));
+  assert.ok(frozen.includes('暫時凍結') && frozen.includes('href="/account/wallet"') && frozen.includes('開啟錢包'), frozen);
 });
 
 // ---------------------------------------------------------------- payer selection
 
 const me = { id: 'usr_fixture', name: 'Fixture Person' };
-test('the personal wallet is always offered first; only valid organization grants are added', () => {
-  assert.deepEqual(payers.parsePayers(undefined, me).map(payers.payerKey), ['user:usr_fixture']);
-  const list = payers.parsePayers({ payers: [
-    { kind: 'organization', id: 'org_fixture', name: 'Fixture Org', balance: { available: '5000', currency: 'CNY', scale: 2 } },
-    { kind: 'organization', id: 'org_fixture', name: 'Duplicate' },
-    { kind: 'organization', id: 'org_paused', name: 'Paused Org', available: false },
-    { kind: 'organization', id: 'bad id!', name: 'Bad' },
-    { kind: 'organization', id: 'org_noname' },
-    { kind: 'user', id: 'usr_someone_else', name: 'Someone' },
-    { kind: 'user', id: 'usr_fixture', balance: { available: '100', currency: 'CNY', scale: 2 } },
-    { kind: 'team', id: 'team_fixture', name: 'Team' },
-  ] }, me);
-  assert.deepEqual(list.map(payers.payerKey), ['user:usr_fixture', 'organization:org_fixture']);
-  assert.deepEqual(list[0].balance, { available: '100', currency: 'CNY', scale: 2 });
-  assert.equal(list[1].name, 'Fixture Org');
-  assert.equal(payers.parsePayers({ payers: [{ kind: 'organization', id: 'org_x', name: 'X', balance: { available: '1.5', currency: 'CNY', scale: 2 } }] }, me)[1].balance, null);
+/** Fixture: the response shape of GET /api/suite/agent/payers (package org-payments,
+ *  synwevo_suite.agent.payers.payers), with made-up wallet figures in units of scale 4. */
+const UNIT4 = { code: 'CNY', scale: 4 };
+function fixturePayers(overrides: Record<string, unknown> = {}, org: Record<string, unknown> = {}) {
+  return { configured: true, environment: 'test', currency: 'CNY', unit: UNIT4,
+    payers: [
+      { kind: 'user', id: 'usr_fixture', label: null, available: '35000', frozen: false },
+      { kind: 'organization', id: 'org_fixture', label: 'Fixture Org', available: '900000', frozen: false,
+        monthly_limit: '200000', spent_this_month: '150000', held: '20000', remaining_this_month: '30000', ...org },
+    ],
+    welcome: { state: 'granted' }, ...overrides };
+}
+
+test('the payer list is read exactly as org-payments sends it; the personal wallet always comes first', () => {
+  const list = payers.parsePayers(fixturePayers(), me);
+  assert.equal(list.configured, true);
+  assert.equal(list.environment, 'test');
+  assert.deepEqual(list.unit, UNIT4);
+  assert.equal(list.welcome, 'granted');
+  assert.deepEqual(list.payers.map(payers.payerKey), ['user:usr_fixture', 'organization:org_fixture']);
+  assert.deepEqual(list.payers[0].facts, { unit: UNIT4, available: '35000', frozen: false });
+  assert.equal(list.payers[1].name, 'Fixture Org');
+  assert.deepEqual(list.payers[1].facts, { unit: UNIT4, available: '900000', frozen: false,
+    monthly: { limit: '200000', spent: '150000', held: '20000', remaining: '30000' } });
+  // What an organization payer can still spend is the smaller of its wallet and the allowance.
+  assert.equal(payers.spendable(list.payers[1]), 30000n);
+  assert.equal(payers.spendable(list.payers[0]), 35000n);
+  assert.equal(payers.spendable(payers.parsePayers(fixturePayers({}, { available: '-5', remaining_this_month: '30000' }), me).payers[1]), -5n);
+  assert.equal(payers.spendable(payers.parsePayers(fixturePayers({}, { frozen: true }), me).payers[1]), 0n);
+});
+
+test('a missing, unconfigured or malformed payer list offers only what it can prove', () => {
+  for (const value of [undefined, null, {}, 'x', { configured: false, environment: 'test', currency: 'CNY', unit: null, payers: [], welcome: null }]) {
+    const list = payers.parsePayers(value, me);
+    assert.deepEqual(list.payers.map(payers.payerKey), ['user:usr_fixture']);
+    assert.equal(list.payers[0].facts, null);
+    assert.equal(list.welcome, null);
+  }
+  // An unconfigured wallet lists no organization, even if entries were sent.
+  assert.equal(payers.parsePayers(fixturePayers({ configured: false }), me).payers.length, 1);
+  const messy = payers.parsePayers(fixturePayers({ payers: [
+    { kind: 'organization', id: 'org_fixture', label: 'Fixture Org', available: '1', frozen: false,
+      monthly_limit: '1', spent_this_month: '0', held: '0', remaining_this_month: '1' },
+    { kind: 'organization', id: 'org_fixture', label: 'Duplicate', available: '1', frozen: false },
+    { kind: 'organization', id: 'bad id!', label: 'Bad' },
+    { kind: 'organization', id: 'org_nolabel', name: 'Only a name field', available: '1', frozen: false },
+    { kind: 'organization', id: 'org_badfigures', label: 'Bad figures', available: '1.5', frozen: false },
+    { kind: 'organization', id: 'org_nolimit', label: 'No limit', available: '10', frozen: false },
+    { kind: 'user', id: 'usr_someone_else', label: null, available: '999', frozen: false },
+    { kind: 'user', id: 'usr_fixture', label: null, available: '100', frozen: true },
+    { kind: 'team', id: 'team_fixture', label: 'Team' },
+  ], welcome: { state: 'surprise' }, unit: { code: 'CNY', scale: 2.5 } }), me);
+  assert.deepEqual(messy.payers.map(payers.payerKey),
+    ['user:usr_fixture', 'organization:org_fixture', 'organization:org_badfigures', 'organization:org_nolimit']);
+  // Without a valid unit no figure is trusted; an unknown welcome state is ignored.
+  assert.ok(messy.payers.every((p: any) => p.facts === null));
+  assert.equal(messy.welcome, null);
+  const figures = payers.parsePayers(fixturePayers({ payers: [
+    { kind: 'organization', id: 'org_badfigures', label: 'Bad figures', available: '1.5', frozen: false,
+      monthly_limit: '1', spent_this_month: '0', held: '0', remaining_this_month: '1' },
+    { kind: 'organization', id: 'org_nolimit', label: 'No limit', available: '10', frozen: false },
+    { kind: 'organization', id: 'org_frozenflag', label: 'Frozen flag', available: '10', frozen: 'no',
+      monthly_limit: '1', spent_this_month: '0', held: '0', remaining_this_month: '1' },
+  ] }), me);
+  assert.ok(figures.payers.slice(1).every((p: any) => p.facts === null), JSON.stringify(figures.payers));
+  assert.equal(payers.spendable(figures.payers[1]), null);
 });
 
 test('the remembered payer is used only while still offered; the personal default sends nothing extra', () => {
-  const list = payers.parsePayers({ payers: [{ kind: 'organization', id: 'org_fixture', name: 'Fixture Org' }] }, me);
+  const list = payers.parsePayers(fixturePayers(), me).payers;
   assert.equal(payers.payerKey(payers.choosePayer(list, { kind: 'organization', id: 'org_fixture' })), 'organization:org_fixture');
   assert.equal(payers.payerKey(payers.choosePayer(list, { kind: 'organization', id: 'org_revoked' })), 'user:usr_fixture');
   assert.equal(payers.payerKey(payers.choosePayer(list, null)), 'user:usr_fixture');
   assert.deepEqual(payers.payerInput(list[0], me.id), {});
+  // agent.turn.quote takes the payer flat (org-payments QuoteTurn: payer_kind, payer_id).
   assert.deepEqual(payers.payerInput(list[1], me.id), { payer_kind: 'organization', payer_id: 'org_fixture' });
   const store = new Map<string, string>();
   const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
@@ -238,30 +325,102 @@ test('the remembered payer is used only while still offered; the personal defaul
   assert.doesNotThrow(() => payers.rememberPayer(me.id, list[1], broken));
 });
 
+test('a quote or consent pays only for the payer it names', () => {
+  const org = { kind: 'organization', id: 'org_fixture' }, mine = { kind: 'user', id: me.id };
+  // Terms issued before organization payment existed carry no payer: they are personal.
+  assert.deepEqual(payers.payerOf({}, me.id), mine);
+  assert.deepEqual(payers.payerOf({ payer: { kind: 'user', id: me.id } }, me.id), mine);
+  assert.deepEqual(payers.payerOf({ payer: { kind: 'user' } }, me.id), mine);
+  assert.deepEqual(payers.payerOf({ payer: org }, me.id), org);
+  assert.equal(payers.payerOf({ payer: { kind: 'user', id: 'usr_someone_else' } }, me.id), null);
+  assert.equal(payers.payerOf({ payer: { kind: 'organization' } }, me.id), null);
+  assert.equal(payers.payerOf({ payer: { kind: 'team', id: 'x' } }, me.id), null);
+  assert.equal(payers.samePayer(payers.payerOf({ payer: org }, me.id), mine), false);
+  assert.equal(payers.samePayer(payers.payerOf({}, me.id), mine), true);
+  assert.equal(payers.samePayer(null, mine), false);
+});
+
+const fixtureStatus = { available: true, environment: 'test', unit: CNY, per_call_hold: '100',
+  balance: { booked: '350', held: '50', available: '300' },
+  limit: { configured: true, enabled: true, usage_state: 'available', remaining: '2000', period: 'daily' } };
+function moneyProps(overrides: Record<string, unknown> = {}) {
+  const list = payers.parsePayers(fixturePayers(), me);
+  return { status: fixtureStatus, offer: null, payers: list.payers, payersError: false, payer: list.payers[0], setPayer() {},
+    walletUrl: '/account/wallet', accountUrl: '/account', environment: list.environment, welcome: null, ...overrides };
+}
+
 test('the composer shows the payer choice, balance, limit and a low-balance top-up', () => {
-  const list = payers.parsePayers({ payers: [{ kind: 'organization', id: 'org_fixture', name: 'Fixture Org' }] }, me);
-  const fixtureStatus = { available: true, environment: 'test', unit: CNY, per_call_hold: '100',
-    balance: { booked: '350', held: '50', available: '300' },
-    limit: { configured: true, enabled: true, usage_state: 'available', remaining: '2000', period: 'daily' } };
-  const props = { status: fixtureStatus, offer: null, payers: list, payersError: false, payer: list[0], setPayer() {}, walletUrl: '/account/wallet' };
+  const props = moneyProps();
   const html = render('en', React.createElement(status.ComposerStatus, { money: props }));
   assert.ok(html.includes('<select') && html.includes('Personal wallet') && html.includes('Organization: Fixture Org'), html);
   assert.ok(html.includes('Balance CN¥3.00') && html.includes('CN¥0.50 on hold') && html.includes('CN¥20.00 left today'), html);
   assert.ok(html.includes('Test wallet'), html);
   assert.ok(html.includes('may not cover many more answers') && html.includes('href="/account/wallet"'), html);
-  const single = render('zh-Hans', React.createElement(status.ComposerStatus, { money: { ...props, payers: [list[0]],
+  const single = render('zh-Hans', React.createElement(status.ComposerStatus, { money: { ...props, payers: [props.payers[0]],
     status: { ...fixtureStatus, balance: { booked: '50', held: '0', available: '50' } } } }));
   assert.ok(!single.includes('<select') && single.includes('个人钱包') && single.includes('余额不足以完成一次调用'), single);
-  // An organization payer shows only what the server listed for it, and no personal limit.
-  const org = render('en', React.createElement(status.ComposerStatus, { money: { ...props, payer: list[1] } }));
-  assert.ok(org.includes('Balance unavailable') && !org.includes('left today') && !org.includes('Top up'), org);
-  const missing = render('en', React.createElement(status.ComposerStatus, { money: { ...props, payers: [list[0]],
+  const missing = render('en', React.createElement(status.ComposerStatus, { money: { ...props, payers: [props.payers[0]],
     status: { ...fixtureStatus, limit: { configured: false, enabled: false, usage_state: null, remaining: null, period: null } } } }));
   assert.ok(missing.includes('No spending limit set') && missing.includes('href="/agent/settings"'), missing);
   // Without the paid service the composer says so instead of inventing a balance.
-  const closed = render('zh-Hans', React.createElement(status.ComposerStatus, { money: { ...props, payers: [list[0]],
+  const closed = render('zh-Hans', React.createElement(status.ComposerStatus, { money: { ...props, payers: [props.payers[0]],
     status: { available: false, reason: 'not_configured' } } }));
   assert.ok(closed.includes('付费模型服务尚未开放') && !closed.includes('余额 ¥') && !closed.includes('去充值'), closed);
+  // The personal balance falls back to the payer list when the billing status has none.
+  const listed = render('en', React.createElement(status.ComposerStatus, { money: { ...props, status: null } }));
+  assert.ok(listed.includes('Balance CN¥3.50') && !listed.includes('Balance unavailable'), listed);
+});
+
+test('an organization payer shows its wallet and this member\'s monthly allowance, and never a personal top-up', () => {
+  // The organization's figures are in wallet units of scale 4; the offer's hold in the same unit.
+  const status4 = { ...fixtureStatus, unit: UNIT4, per_call_hold: '10000', balance: { booked: '35000', held: '0', available: '35000' } };
+  const list = payers.parsePayers(fixturePayers(), me).payers;
+  const props = moneyProps({ status: status4, payer: list[1] });
+  const html = render('en', React.createElement(status.ComposerStatus, { money: props }));
+  assert.ok(html.includes('Organization balance CN¥90.00') && html.includes('CN¥3.00 of your CN¥20.00 monthly allowance left'), html);
+  assert.ok(!html.includes('left today') && !html.includes('Top up') && !html.includes('href="/account/wallet"'), html);
+  // 30000 left of the allowance is three holds: low, and the way on is the personal wallet.
+  assert.ok(html.includes('monthly allowance from it is low') && html.includes('>Pay with my personal wallet</button>'), html);
+  const empty = render('zh-Hant', React.createElement(status.ComposerStatus, { money: moneyProps({ status: status4,
+    payer: payers.parsePayers(fixturePayers({}, { remaining_this_month: '9999' }), me).payers[1] }) }));
+  assert.ok(empty.includes('不足以完成一次呼叫') && empty.includes('改用個人錢包'), empty);
+  const plenty = render('en', React.createElement(status.ComposerStatus, { money: moneyProps({ status: status4,
+    payer: payers.parsePayers(fixturePayers({}, { remaining_this_month: '200000' }), me).payers[1] }) }));
+  assert.ok(!plenty.includes('is low') && !plenty.includes('cannot cover'), plenty);
+  // Figures in another unit than the offer's are shown but never compared with its hold.
+  const otherUnit = render('en', React.createElement(status.ComposerStatus, { money: moneyProps({ payer: list[1] }) }));
+  assert.ok(otherUnit.includes('Organization balance') && !otherUnit.includes('is low') && !otherUnit.includes('cannot cover'), otherUnit);
+  // An organization listed without figures shows none.
+  const bare = payers.parsePayers(fixturePayers({}, { available: 'x' }), me).payers[1];
+  const unknown = render('en', React.createElement(status.ComposerStatus, { money: moneyProps({ payer: bare }) }));
+  assert.ok(unknown.includes('Balance unavailable') && !unknown.includes('allowance left'), unknown);
+});
+
+test('a frozen wallet is said plainly, with the wallet page or the personal wallet as the way on', () => {
+  const list = payers.parsePayers(fixturePayers({ payers: [
+    { kind: 'user', id: 'usr_fixture', label: null, available: '35000', frozen: true },
+    { kind: 'organization', id: 'org_fixture', label: 'Fixture Org', available: '900000', frozen: true,
+      monthly_limit: '200000', spent_this_month: '0', held: '0', remaining_this_month: '200000' },
+  ] }), me).payers;
+  const mine = render('en', React.createElement(status.ComposerStatus, { money: moneyProps({ payers: list, payer: list[0], status: null }) }));
+  assert.ok(mine.includes('Wallet frozen') && mine.includes('payment issue') && mine.includes('href="/account/wallet"') && !mine.includes('Top up'), mine);
+  const org = render('zh-Hans', React.createElement(status.ComposerStatus, { money: moneyProps({ payers: list, payer: list[1] }) }));
+  assert.ok(org.includes('钱包已冻结') && org.includes('组织钱包已冻结') && org.includes('改用个人钱包</button>'), org);
+});
+
+test('the welcome allowance is mentioned once granted, or how to receive it', () => {
+  const granted = render('en', React.createElement(status.ComposerStatus, { money: moneyProps({ welcome: 'granted' }) }));
+  assert.ok(granted.includes('one-time welcome allowance was added'), granted);
+  const verify = render('zh-Hant', React.createElement(status.ComposerStatus, { money: moneyProps({ welcome: 'email_unverified' }) }));
+  assert.ok(verify.includes('驗證你的電子郵件地址') && verify.includes('href="/account"'), verify);
+  for (const welcome of ['already', 'ineligible', 'capacity', 'deferred', null]) {
+    const html = render('en', React.createElement(status.ComposerStatus, { money: moneyProps({ welcome }) }));
+    assert.ok(!html.includes('welcome allowance'), String(welcome));
+  }
+  // It is about the personal wallet: not shown while an organization pays.
+  const list = payers.parsePayers(fixturePayers(), me).payers;
+  const org = render('en', React.createElement(status.ComposerStatus, { money: moneyProps({ welcome: 'granted', payer: list[1] }) }));
+  assert.ok(!org.includes('welcome allowance'), org);
 });
 
 // ---------------------------------------------------------------- the composer's facts
@@ -366,6 +525,31 @@ test('every answer carries the AI label in three languages, and copied text incl
   assert.equal(label.withAiLabel('', wording['zh-Hans']), `— ${wording['zh-Hans']}`);
 });
 
+test('an exported conversation is the visible text only, with the AI label after every answer', async () => {
+  const ex = await server.ssrLoadModule('/src/apps/agent/exportChat.ts');
+  const words = { you: 'You', agent: 'Synwevo Agent', hidden: 'Hidden after an access change', label: 'Generated by AI. May contain errors. For reference only.' };
+  const message = (id: string, role: string, body: string, extra: Record<string, unknown> = {}) => ({ id, parent_id: null, role, status: 'done', body,
+    hidden: false, error: null, turn: null, tool_calls: [], created_at: 1, ...extra });
+  const text = ex.conversationMarkdown('Fixture\nconversation', [
+    message('msg_u1', 'user', 'Fixture question?'),
+    message('msg_a1', 'assistant', 'Fixture answer.\n\n| a | b |\n|---|---|\n| 1 | 2 |', { turn: { id: 'turn_1', status: 'succeeded', cost: { charged_minor: '99' } },
+      tool_calls: [{ id: 'call_1', input: { secret_fixture_input: true } }] }),
+    message('msg_u2', 'user', 'Second fixture question'),
+    message('msg_a2', 'assistant', '', { status: 'failed', error: { code: 'provider_timeout', message: 'x' } }),
+    message('msg_a3', 'assistant', 'withheld fixture text', { hidden: true }),
+    message('msg_s', 'system', 'internal fixture text'),
+  ], words);
+  assert.equal(text, '# Fixture conversation\n\n## You\n\nFixture question?\n\n## Synwevo Agent\n\nFixture answer.\n\n| a | b |\n|---|---|\n| 1 | 2 |'
+    + `\n\n— ${words.label}\n\n## You\n\nSecond fixture question\n\n## Synwevo Agent\n\n${words.hidden}\n`);
+  // Every answer that has text carries the label exactly once; questions never do.
+  assert.equal(text.split(words.label).length - 1, 1);
+  for (const absent of ['secret_fixture_input', 'withheld fixture text', 'internal fixture text', '99']) assert.ok(!text.includes(absent), absent);
+  assert.equal(ex.exportFileName('Fixture: a/b*c?', new Date(Date.UTC(2026, 9, 5, 12))), 'Fixture a b c-2026-10-05.md');
+  assert.equal(ex.exportFileName('  \n ', new Date(Date.UTC(2026, 0, 2, 12))), 'conversation-2026-01-02.md');
+  assert.equal(ex.exportFileName('比较两个模型的价格', new Date(Date.UTC(2026, 9, 5, 12))), '比较两个模型的价格-2026-10-05.md');
+  assert.ok(ex.exportFileName('x'.repeat(300), new Date(Date.UTC(2026, 9, 5, 12))).length <= 80 + '-2026-10-05.md'.length);
+});
+
 test('the chat catalogue is complete in three languages and does not collide with other wording', () => {
   assert.deepEqual(core.validateMessages(copy.chatMessages), []);
   const seen = new Map<string, string>();
@@ -374,7 +558,7 @@ test('the chat catalogue is complete in three languages and does not collide wit
     if (seen.has(source)) assert.equal(seen.get(source), `${english}|${hant}`, `duplicate source ${key}`);
     seen.set(source, `${english}|${hant}`);
     // The first registered wording wins; ours must be the one the reader sees.
-    assert.equal(core.translate('zh-Hant', source, { count: 2, amount: '1', period: 'p', name: 'n', model: 'm', n: 1, total: 2, lang: 'l', budget: 'b' }),
-      hant.replace(/\{(\w+)\}/g, (_: string, p: string) => ({ count: '2', amount: '1', period: 'p', name: 'n', model: 'm', n: '1', total: '2', lang: 'l', budget: 'b' } as any)[p]), key);
+    assert.equal(core.translate('zh-Hant', source, { count: 2, amount: '1', period: 'p', name: 'n', model: 'm', n: 1, total: 2, lang: 'l', budget: 'b', limit: 'x' }),
+      hant.replace(/\{(\w+)\}/g, (_: string, p: string) => ({ count: '2', amount: '1', period: 'p', name: 'n', model: 'm', n: '1', total: '2', lang: 'l', budget: 'b', limit: 'x' } as any)[p]), key);
   }
 });

@@ -10,6 +10,7 @@ import {
 import { PriceChangeList, useChatText } from './ChatParts';
 import { renewalParams, samePricing } from './composer';
 import { majorDecimal } from './cost';
+import { refusalOf } from './refusals';
 import { budgetCopy, type BudgetText } from './budget.messages';
 import { consentTotal, consentInput, type Consent, type ConsentInput, type ConsentWriteState, type ConsentWriter } from './consent';
 import { ConsentRecovery, ConsentScope, ConsentTerms, consentErrorKey, useConsentText } from './ConsentControls';
@@ -324,6 +325,12 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
     setConsentReview(null);
   };
 
+  /** A payment refusal the chat explains in its own words (organization payer, frozen wallet,
+   *  risk controls, consent); price changes and expired quotes keep the dialog's own wording. */
+  const paymentRefusal = (failure: unknown): string | null => {
+    const known = refusalOf(failure, { organization: payerLabel !== undefined });
+    return known && !['price_changed', 'funds'].includes(known.kind) ? ct(known.text) : null;
+  };
   const pricing = quote ?? offer;
   const reuse = prior && offer ? renewalParams(prior, offer, prior.terms.unit) : null;
   const renewal = Boolean(prior && offer && !quote && ['editing', 'quoting', 'quoteError'].includes(phase));
@@ -385,7 +392,7 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
       </div>}
       {differs && phase === 'review' && <p className="notice warn" role="alert">{ct('quoteDiffers')}</p>}
       {['offerError', 'quoteError', 'confirmError'].includes(phase) && <div>
-        <Failure error={new Error(m(errorText(error, phase === 'offerError' ? 'offerError' : phase === 'quoteError' ? 'quoteError' : 'confirmError')))}
+        <Failure error={new Error(paymentRefusal(error) ?? m(errorText(error, phase === 'offerError' ? 'offerError' : phase === 'quoteError' ? 'quoteError' : 'confirmError')))}
           onRetry={phase === 'offerError' ? () => void loadOffer() : undefined} />
         {error instanceof ApiError && error.requestId && <p className="muted small">{m('requestId', { id: error.requestId })}</p>}
       </div>}

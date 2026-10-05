@@ -7,6 +7,7 @@ import { AiLabel, RefusalNotice, ThinkingStatus, TurnCostLine, useChatText } fro
 import { shouldSubmit } from "./composer";
 import { AgentFailure as Failure, agentErrorText } from "./errors";
 import { Markdown } from "./Markdown";
+import { validTurnCost } from "./cost";
 import { refusalOf } from "./refusals";
 import { activeTurn, branchMessages, type Conversation, type Message, type ToolCall, type Workspace } from "./types";
 
@@ -85,7 +86,7 @@ function Scope({ scope, spaces, change, close }: { scope: string[] | null; space
 type CopyState = { id: string; ok: boolean } | null;
 
 export default function Chat({ conversation, loading, error, connection, configured, spaces, act, send, refresh, sentDraft = 0, aside,
-  status, maximum, hint, walletUrl }: {
+  status, maximum, hint, walletUrl, organizationPayer = false, onPersonal, payerName }: {
   conversation?: Conversation; loading: boolean; error: unknown; connection: string; configured: boolean | undefined;
   spaces: Workspace[]; act: Act; send: (text: string) => Promise<unknown>; refresh: () => Promise<void>; sentDraft?: number;
   /** Payment state for this conversation, shown above the composer. */
@@ -98,6 +99,12 @@ export default function Chat({ conversation, loading, error, connection, configu
   hint?: string;
   /** The account service's wallet page, for a top-up next step. */
   walletUrl?: string;
+  /** The selected payer is an organization (a fresh refusal is about its wallet or allowance). */
+  organizationPayer?: boolean;
+  /** Switch the payer to the personal wallet, after an organization payer was refused. */
+  onPersonal?: () => void;
+  /** An organization's name for an organization-paid answer. */
+  payerName?: (payer: { kind: "organization"; id: string }) => string | null | undefined;
 }) {
   const { t } = useI18n();
   const { c } = useChatText();
@@ -162,7 +169,8 @@ export default function Chat({ conversation, loading, error, connection, configu
     const assistant = m.role === "assistant";
     const active = !!m.turn && activeTurn(m);
     const thinking = assistant && active && m.turn!.status === "running" && !m.body;
-    const refusal = m.error ? refusalOf(m.error) : null;
+    // A refusal in the transcript is about the payer the ledger charged for that run.
+    const refusal = m.error ? refusalOf(m.error, { organization: validTurnCost(m.turn?.cost)?.payer?.kind === "organization" }) : null;
     const failed = m.turn?.status === "failed";
     return <article key={m.id} className={`ag-message ${m.role}`}>
       <div className="ag-message-label">{m.role === "user" ? t("你") : "Synwevo Agent"}</div>
@@ -172,13 +180,13 @@ export default function Chat({ conversation, loading, error, connection, configu
       {assistant && active && !!m.body && m.turn!.status === "running" && <span className="sr-only" role="status">{c("writing")}</span>}
       {m.tool_calls.map((call) => <ActionCard key={call.id} call={call} act={action} busy={busy} />)}
       {m.turn && active && m.turn.status !== "running" && <p role="status"><Status status={m.turn.status} /></p>}
-      {m.error && (refusal ? <RefusalNotice refusal={refusal} walletUrl={walletUrl} busy={blocked}
+      {m.error && (refusal ? <RefusalNotice refusal={refusal} walletUrl={walletUrl} busy={blocked} onPersonal={organizationPayer ? onPersonal : undefined}
         onRequote={refusal.next === "requote" ? () => void action("agent.turn.start", { conversation_id: conversation!.id, regenerate_of: m.id }) : undefined} />
         : <p className="err">{agentErrorText(m.error, t)}</p>)}
       {m.turn?.status === "cancelled" && <p className="muted">{t("已取消，不再启动后续操作。已完成的结果保留。")}</p>}
       {assistant && !m.hidden && <footer className="ag-answer-foot">
         {!!m.body && <AiLabel />}
-        <TurnCostLine cost={m.turn?.cost} />
+        <TurnCostLine cost={m.turn?.cost} payerName={payerName} />
         {/* While this answer is still being written there is nothing final to copy, retry or switch. */}
         {!active && <div className="ag-message-tools">
           {!!m.body && <button type="button" className="btn ghost sm" onClick={() => void copyAnswer(m)}>
@@ -203,7 +211,7 @@ export default function Chat({ conversation, loading, error, connection, configu
       </footer>}
     </article>;
   }
-  const failureRefusal = failure != null ? refusalOf(failure) : null;
+  const failureRefusal = failure != null ? refusalOf(failure, { organization: organizationPayer }) : null;
   return <div className="ag-chat">
     <div className="ag-transcript-wrap">
       <div className="ag-transcript" ref={scroller} tabIndex={0} aria-label={t("当前会话")} onCopy={copySelection}
@@ -225,7 +233,7 @@ export default function Chat({ conversation, loading, error, connection, configu
       {conversation?.status === "archived" && <p className="notice">{t("这个会话已归档。恢复后可继续。")}</p>}
       {configured === false && <p className="notice"><Link to="/agent/settings">{t("模型服务未配置。请先打开 Agent 设置。")}</Link></p>}
       {conversation && connection !== "connected" && <p className="muted small" role="status">{t(connection === "offline" ? "连接中断，正在恢复；已完成的操作不会重复执行。" : "正在连接实时更新…")}</p>}
-      {failure != null && (failureRefusal ? <RefusalNotice refusal={failureRefusal} walletUrl={walletUrl} live busy={blocked}
+      {failure != null && (failureRefusal ? <RefusalNotice refusal={failureRefusal} walletUrl={walletUrl} live busy={blocked} onPersonal={onPersonal}
         onRequote={failureRefusal.next === "requote" ? () => void submit() : undefined} /> : <Failure error={failure} />)}
       {status}
       <form className="ag-composer" onSubmit={(e) => void submit(e)}>

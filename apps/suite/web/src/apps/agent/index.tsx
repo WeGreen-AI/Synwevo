@@ -7,7 +7,7 @@ import { Empty, Loading } from "../../shared/states";
 import { AgentFailure as Failure } from "./errors";
 import { newKey, op, read } from "../../shared/ops";
 import Chat from "./Chat";
-import { activeTurn, type Conversation, type Workspace } from "./types";
+import { activeTurn, branchMessages, type Conversation, type Workspace } from "./types";
 import { useConversation } from "./useConversation";
 import { ConsentPanel, ConsentRecovery, useConversationConsents } from "./ConsentControls";
 import { ConsentStateError, PendingConsentOperation, createConsentWriter, effectiveConsentStatus, validateConsent,
@@ -15,8 +15,9 @@ import { ConsentStateError, PendingConsentOperation, createConsentWriter, effect
 import { validateOffer, type BudgetIntent } from "./budget";
 import { chatCopy } from "./chat.messages";
 import { ComposerStatus, TurnMaximum, type ModelOffer } from "./ComposerStatus";
-import { turnMaximum, walletHref, type BillingStatus } from "./composer";
-import { choosePayer, parsePayers, payerInput, personal, recallPayer, rememberPayer, type Payer } from "./payers";
+import { accountHref, turnMaximum, walletHref, type BillingStatus } from "./composer";
+import { conversationMarkdown, downloadText, exportFileName } from "./exportChat";
+import { choosePayer, parsePayers, payerInput, payerKey, payerOf, personal, recallPayer, rememberPayer, samePayer, type Payer } from "./payers";
 import "./messages";
 import { automationCopy } from "./automations.messages";
 import "./agent.css";
@@ -64,11 +65,15 @@ function AgentApp() {
   const [payerList, setPayerList] = useState<unknown>();
   const [payersError, setPayersError] = useState(false);
   const [payerRef, setPayerRef] = useState(() => (userId ? recallPayer(userId) : null));
-  const payers = parsePayers(payerList, { id: userId, name: payerName });
+  const payerFacts = parsePayers(payerList, { id: userId, name: payerName });
+  const payers = payerFacts.payers;
   const payer: Payer = userId ? choosePayer(payers, payerRef) : personal(userId, payerName);
   const organizationPayer = payer.kind !== "user";
-  const payerLabel = organizationPayer ? payer.name : payerName;
   const walletUrl = walletHref(auth?.account_url, auth?.app_id);
+  const accountUrl = accountHref(auth?.account_url, auth?.app_id);
+  /** A consent pays only for the payer it was issued for (shared contract "Payer"). */
+  const paysFor = (terms: object) => samePayer(payerOf(terms, userId), payer);
+  const organizationName = (ref: { kind: "organization"; id: string }) => payers.find((p) => payerKey(p) === payerKey(ref))?.name;
   // One payment writer per conversation: an uncertain outcome stays locked across navigation.
   const writers = useRef(new Map<string, ConsentWriter>());
   const writerFor = useCallback((cid: string) => {
@@ -148,10 +153,12 @@ function AgentApp() {
   function consentFor(cid: string): Consent | null {
     if (writers.current.get(cid)?.pending()) throw new PendingConsentOperation();
     if (cid !== id) return null;  // A conversation created by this send has no consent yet.
-    if (organizationPayer) return null;  // A personal consent never pays for an organization's run.
+    // Continuing consents are created for the personal wallet only; an organization's run goes
+    // through a single-run quote that names it.
+    if (organizationPayer) return null;
     if (!conversation || conversation.id !== cid || consents.error != null || !consents.data) throw new ConsentStateError("consent_state_unavailable");
     if (single) return null;
-    return consents.data.find((c) => effectiveConsentStatus(c, conversation.scope) === "active") ?? null;
+    return consents.data.find((c) => effectiveConsentStatus(c, conversation.scope) === "active" && paysFor(c)) ?? null;
   }
   /** The writer shows a refusal or an unresolved outcome itself; nothing is resent or switched to a quote. */
   async function consentSend(consent: Consent, input: Record<string, unknown>) {
@@ -252,10 +259,18 @@ function AgentApp() {
   const blocking = consents.data?.some((c) => !["revoked", "expired"].includes(effectiveConsentStatus(c, conversation?.scope ?? null)));
   const dialogScope = budgetIntent?.conversation_id === id ? conversation?.scope ?? null : null;
   const title = conversation?.title === "新会话" ? t("新会话") : conversation?.title;
-  const activeConsent = !organizationPayer && conversation ? consents.data?.find((c) => effectiveConsentStatus(c, conversation.scope) === "active") ?? null : null;
-  // The newest consent whose model or price no longer applies: what the person last confirmed.
-  const staleConsent = consents.data?.filter((c) => c.status === "model_changed").sort((a, b) => b.created_at - a.created_at)[0] ?? null;
-  const money = billingRequired ? { status, offer, payers, payersError, payer, setPayer: choose, walletUrl } : null;
+  const activeConsent = !organizationPayer && conversation ? consents.data?.find((c) => effectiveConsentStatus(c, conversation.scope) === "active" && paysFor(c)) ?? null : null;
+  // The newest consent for this payer whose model or price no longer applies: what the person last confirmed.
+  const staleConsent = consents.data?.filter((c) => c.status === "model_changed" && paysFor(c)).sort((a, b) => b.created_at - a.created_at)[0] ?? null;
+  const money = billingRequired ? { status, offer, payers, payersError, payer, setPayer: choose, walletUrl, accountUrl,
+    environment: payerFacts.environment, welcome: payerFacts.welcome } : null;
+  function exportConversation() {
+    if (!conversation) return;
+    const name = title ?? t("新会话");
+    const text = conversationMarkdown(name, branchMessages(conversation.messages, conversation.head_id),
+      { you: t(chatCopy.exportYou[0]), agent: "Synwevo Agent", hidden: t("内容因权限变化已隐藏"), label: t(chatCopy.aiLabel[0]) });
+    downloadText(text, exportFileName(name, new Date()));
+  }
   return <div className="ag-app">
     <header className="topbar">
       <button className="btn ghost ag-mobile-menu" aria-label={t(sidebar ? "关闭会话列表" : "打开会话列表")} aria-expanded={sidebar} aria-controls="agent-sidebar" onClick={() => setSidebar(!sidebar)}>☰</button>
@@ -282,6 +297,8 @@ function AgentApp() {
           <div className="ag-toolbar"><h1>{title ?? t("新会话")}</h1>
             {conversation && <div className="ag-toolbar-actions">
               <button className="btn ghost sm" disabled={busy} onClick={() => void manage("rename")}>{t("重命名会话")}</button>
+              <button className="btn ghost sm" disabled={!branchMessages(conversation.messages, conversation.head_id).length}
+                title={t(chatCopy.exportChatHint[0])} onClick={exportConversation}>{t(chatCopy.exportChat[0])}</button>
               <button className="btn ghost sm" disabled={busy || running} onClick={() => void manage("archive")}>{t(conversation.status === "archived" ? "恢复" : "归档")}</button>
               <button className="btn ghost sm" disabled={busy || running} onClick={() => void manage("delete")}>{t("删除会话")}</button>
             </div>}
@@ -289,7 +306,8 @@ function AgentApp() {
           {actionError != null && <Failure error={actionError} />}
           <Chat key={id ?? "new"} conversation={conversation} loading={!!id && !conversation && !error} error={error} connection={connection}
             spaces={spaces} configured={configured} act={act} send={send} refresh={refresh} sentDraft={sentDraft}
-            walletUrl={walletUrl}
+            walletUrl={walletUrl} organizationPayer={organizationPayer} payerName={organizationName}
+            onPersonal={organizationPayer && payers[0] ? () => choose(payers[0]) : undefined}
             status={money && <ComposerStatus money={money} disabled={running} />}
             maximum={money && <TurnMaximum maximum={turnMaximum(single ? null : activeConsent, offer)} />}
             hint={money ? t(chatCopy.turnMaximumHint[0]) : undefined}
@@ -304,7 +322,13 @@ function AgentApp() {
         </>}
       </main>
       {budgetIntent && <BudgetDialog intent={budgetIntent} onClose={() => setBudgetIntent(undefined)}
-        onQuote={(params) => write("agent.turn.quote", { ...budgetIntent, ...params, ...payerInput(payer, userId) })}
+        onQuote={async (params) => {
+          const quote = await write("agent.turn.quote", { ...budgetIntent, ...params, ...payerInput(payer, userId) });
+          // The quote must name the payer shown in the dialog; a server that ignores the choice
+          // (or a different payer) is never confirmed.
+          if (!samePayer(payerOf(quote, userId), payer)) throw new Error("quote_payer_mismatch");
+          return quote;
+        }}
         payerLabel={organizationPayer ? t(chatCopy.payerOrganization[0], { name: payer.name }) : undefined}
         previous={budgetIntent.conversation_id === id && staleConsent && !organizationPayer ? { terms: staleConsent, budget: staleConsent.budget,
           max_calls: staleConsent.max_calls, run_seconds: staleConsent.run_seconds } : undefined}

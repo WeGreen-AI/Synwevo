@@ -24,7 +24,9 @@ export function AiLabel() {
 
 /** The settled cost beside an answer, with an expandable breakdown. Renders nothing for a turn
  *  without a ledger run (or a malformed value): no figure is better than a guessed one. */
-export function TurnCostLine({ cost }: { cost: unknown }) {
+export function TurnCostLine({ cost, payerName }: { cost: unknown;
+  /** The organization's name for an organization-paid answer, when the payer list has it. */
+  payerName?: (payer: { kind: "organization"; id: string }) => string | null | undefined }) {
   const { c, locale } = useChatText();
   const [open, setOpen] = useState(false);
   const id = useId();
@@ -55,6 +57,8 @@ export function TurnCostLine({ cost }: { cost: unknown }) {
         {row(c("costCharged"), money(value.charged_minor))}
         {value.held_minor !== "0" && row(c("costHeldLabel"), money(value.held_minor))}
         {row(c("costState"), c(value.state === "settled" ? "stateSettled" : value.state === "held" ? "stateHeld" : "statePending"))}
+        {value.payer && row(c("costPayer"), value.payer.kind === "user" ? c("payerPersonal")
+          : (() => { const name = payerName?.(value.payer as { kind: "organization"; id: string }); return name ? c("payerOrganization", { name }) : c("payerOrganizationUnnamed"); })())}
         {value.model && row(c("costModel"), value.model)}
         {band && row(c("costBand"), c(band))}
         {row(c("tokensCached"), tokens(value.tokens.input_cached))}
@@ -69,8 +73,10 @@ export function TurnCostLine({ cost }: { cost: unknown }) {
 
 /** A refusal in a sentence, and the one thing to do about it. `live` announces a fresh refusal;
  *  refusals already in the transcript are static text. */
-export function RefusalNotice({ refusal, walletUrl, onRequote, busy = false, live = false }: {
-  refusal: Refusal; walletUrl?: string | null; onRequote?: () => void; busy?: boolean; live?: boolean;
+export function RefusalNotice({ refusal, walletUrl, onRequote, onPersonal, busy = false, live = false }: {
+  refusal: Refusal; walletUrl?: string | null; onRequote?: () => void;
+  /** Switch the payer to the personal wallet (offered when an organization payer was refused). */
+  onPersonal?: () => void; busy?: boolean; live?: boolean;
 }) {
   const { c } = useChatText();
   const next = refusal.next;
@@ -78,6 +84,8 @@ export function RefusalNotice({ refusal, walletUrl, onRequote, busy = false, liv
     data-refusal={refusal.kind}>
     <p>{c(refusal.text)}</p>
     {next === "topup" && walletUrl && <a className="btn sm primary" href={walletUrl}>{c("nextTopUp")}</a>}
+    {next === "wallet" && walletUrl && <a className="btn sm" href={walletUrl}>{c("nextWallet")}</a>}
+    {next === "personal" && onPersonal && <button type="button" className="btn sm" disabled={busy} onClick={onPersonal}>{c("nextPersonal")}</button>}
     {next === "settings" && <Link className="btn sm" to="/agent/settings">{c("nextSettings")}</Link>}
     {next === "consent" && <Link className="btn sm" to="/agent/settings">{c("nextConsent")}</Link>}
     {next === "requote" && onRequote && <button type="button" className="btn sm primary" disabled={busy} onClick={onRequote}>{c("nextRequote")}</button>}
