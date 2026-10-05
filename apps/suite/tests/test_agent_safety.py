@@ -358,3 +358,35 @@ def test_a_restore_cannot_reopen_a_workspace_to_the_model(agent):
     store.execute("UPDATE agent_workspace_policies SET processing='none' WHERE workspace_id=?", (a,))
     journal.apply(store, entries)
     assert workspace_policy(store, a)["processing"] == "none"
+
+
+# ------------------------------------------------------------------ terms at first paid use
+from .test_agent_metering import gateway  # noqa: E402,F401 — fixture (isolated paid gateway)
+from .test_agent_run_quotes import paid  # noqa: E402,F401 — fixture
+
+
+def test_the_first_paid_run_records_the_published_terms_versions_once(paid):  # noqa: F811
+    from synwevo_core.terms import DOCUMENTS, TermsAcceptances
+    g = paid
+    caps, uid = g.agent.caps, g.user["id"]
+    accepted = TermsAcceptances(g.store)
+    assert accepted.history(uid) == []
+    args = {"conversation_id": g.conversation["id"], "text": "fixture question", "budget": "1000", "max_calls": 3,
+            "run_seconds": 500}
+    quote = caps.invoke("agent.turn.quote", args, user_id=uid, idempotency_key="terms-quote-1")["output"]
+    assert accepted.history(uid) == []                        # a quote is not yet a paid use
+    turn = caps.invoke("agent.turn.start", {"conversation_id": g.conversation["id"], "text": "fixture question",
+                                            "quote_id": quote["id"]}, user_id=uid, idempotency_key="terms-start-1")
+    rows = accepted.history(uid)
+    assert {(r["document"], r["version"]) for r in rows} == {(d, v) for d, (v, _) in DOCUMENTS.items()}
+    assert {r["context"] for r in rows} == {"paid_run:" + turn["output"]["turn_id"]}
+    assert accepted.record_paid_use(uid, context="paid_run:later") == []      # once per version
+
+
+def test_an_unpaid_run_records_no_terms(agent):
+    from synwevo_core.terms import TermsAcceptances
+    agent.sign_in("alice")
+    _consent(agent)
+    _, r = _start(agent, [say("free")])
+    assert wait_turn(agent.people.store, r.json()["output"]["turn_id"]) == "succeeded"
+    assert TermsAcceptances(agent.people.store).history(agent.people.uid("alice")) == []

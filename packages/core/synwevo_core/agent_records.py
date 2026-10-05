@@ -72,6 +72,9 @@ def export(store: Store, user_id: str) -> dict:
                                                     "WHERE user_id=? ORDER BY at, rowid", (user_id,))
         out["reports"] = store.all("SELECT conversation_id,message_id,category,note,excerpt,status,created_at,resolved_at "
                                    "FROM agent_message_reports WHERE user_id=? ORDER BY created_at", (user_id,))
+    if _table(store, "agent_terms_acceptances"):
+        out["terms_accepted"] = store.all("SELECT document,version,accepted_at,context FROM agent_terms_acceptances "
+                                          "WHERE user_id=? ORDER BY accepted_at, rowid", (user_id,))
     if _table(store, "agent_model_quotes"):
         out["quotes"] = [{**{k: q[k] for k in ("id", "environment", "conversation_id", "created_at", "expires_at",
                                                  "accepted_turn_id", "revoked_at")}, **_terms(q["terms_json"])}

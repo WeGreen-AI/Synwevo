@@ -25,6 +25,7 @@ from synwevo_core.billing import BillingError
 from synwevo_core.capabilities import Capabilities, canonical, fingerprint
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import Store, new_id, now
+from synwevo_core.terms import TermsAcceptances
 
 from synwevo_core.agent_safety import AgentAccess, ProviderConsents, SafetyEvents
 
@@ -475,6 +476,9 @@ class Agent:
                             parent_id=parent_id, regenerate_of=regenerate_of)
             except BillingError as exc:
                 raise ServiceError(409, "billing_" + exc.code, "本次预算授权已变化，请重新获取报价") from None
+            # A confirmed paid run is the person's first paid use of the published terms, AI use
+            # rules and pricing versions in force (synwevo_core.terms); recorded once per version.
+            TermsAcceptances(self.store).record_paid_use(user["id"], context=f"paid_run:{turn_id}")
         elif quote_id is not None or consent_id is not None:
             raise ServiceError(409, "billing_not_configured", "付费模型服务尚未配置")
         with self.store.tx() as t:

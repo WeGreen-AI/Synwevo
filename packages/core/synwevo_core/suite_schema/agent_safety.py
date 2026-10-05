@@ -10,6 +10,8 @@
 * ``agent_message_reports`` are people's reports on an answer; the excerpt is stored only when the
   reporter chose to include it.
 * ``agent_access_suspensions`` are administrators' suspensions of one person's Agent access.
+* ``agent_terms_acceptances`` record which terms / AI-use / pricing version a person accepted at
+  their first paid use (`synwevo_core.terms`).
 
 All additive; older code ignores these tables.
 """
@@ -87,4 +89,13 @@ CREATE TABLE IF NOT EXISTS agent_access_suspensions (
     lift_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS agent_access_suspensions_user ON agent_access_suspensions(user_id, lifted_at);
+
+CREATE TABLE IF NOT EXISTS agent_terms_acceptances (
+    user_id TEXT NOT NULL,
+    document TEXT NOT NULL,
+    version TEXT NOT NULL,
+    accepted_at REAL NOT NULL,
+    context TEXT NOT NULL,
+    PRIMARY KEY (user_id, document, version)
+);
 """
