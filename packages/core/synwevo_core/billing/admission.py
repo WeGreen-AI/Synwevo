@@ -15,6 +15,7 @@ import json
 
 from .ledger import Ledger
 from .models import AttemptTicket, BillingError, Unit, identifier, integer
+from .risk import BrakeTripped, RiskControls, RiskPolicy
 from .traffic import TrafficLimits
 
 _MAX_RECORDS = 10_000
@@ -36,6 +37,10 @@ class CostPolicy:
     max_unknown: int
     # Request/token rates, per-payer in-flight calls and waiting; None keeps the limits above only.
     traffic: TrafficLimits | None = None
+    # Largest conservative cost bound one call may reserve; None sets no per-call cap.
+    max_call_cost: int | None = None
+    # Brake, breaker thresholds and allowlist mode (billing/risk.py); None keeps their defaults.
+    risk: RiskPolicy | None = None
 
     def __post_init__(self):
         for value in (self.revision, self.account_ref, self.provider):
@@ -48,6 +53,10 @@ class CostPolicy:
             integer(value, positive=True, maximum=_MAX_RECORDS)
         if self.traffic is not None and (not isinstance(self.traffic, TrafficLimits)
                                          or self.traffic.payer_inflight > self.max_inflight):
+            raise BillingError("invalid_cost_policy")
+        if self.max_call_cost is not None:
+            integer(self.max_call_cost)
+        if self.risk is not None and not isinstance(self.risk, RiskPolicy):
             raise BillingError("invalid_cost_policy")
 
 
@@ -183,6 +192,9 @@ class CostAdmission:
             raise BillingError("cost_provider_mismatch")
         if price.unit != policy.unit:
             raise BillingError("cost_unit_mismatch")
+        if policy.max_call_cost is not None and amount > policy.max_call_cost:
+            # The per-call cap is checked where the call's cost bound is reserved: nothing is sent.
+            raise BillingError("cost_call_limit_exceeded")
         if t.execute("SELECT 1 FROM model_cost_admissions WHERE attempt_key=?", (ticket.attempt_key,)).fetchone():
             raise BillingError("cost_attempt_already_admitted")
         counters = self._counters(t, policy, now, adding=1)
@@ -195,6 +207,9 @@ class CostAdmission:
             raise BillingError("cost_unknown_limit")
         if counters["inflight"] + 1 > policy.max_inflight:
             raise BillingError("cost_inflight_limit")
+        # Breaker, allowlist, suspensions and velocity: refusals only, still before any write.
+        RiskControls(ledger.store, environment=ledger.environment, clock=ledger._now).guard(
+            t, policy=policy, call=call, attempt=attempt, amount=amount, now=now)
         # No writes precede all checks. Store/schema own persistence and immutability.
         t.execute(
             "INSERT INTO model_cost_admissions(attempt_key,environment,provider,account_ref,unit,"
@@ -202,6 +217,19 @@ class CostAdmission:
             (ticket.attempt_key, ledger.environment, policy.provider, policy.account_ref, policy.unit.code,
              amount, policy.revision, json.dumps(asdict(policy), sort_keys=True, separators=(",", ":")), now, expires_at),
         )
+
+    def after_refusal(self, exc: BaseException) -> None:
+        """After the refusing dispatch transaction rolled back: latch a velocity breach.
+
+        The gateway calls this with the refusal it re-raises. Anything else is ignored; a latch
+        that fails is re-detected (the refusal is computed from facts) on the next attempt."""
+        if isinstance(exc, BrakeTripped):
+            try:
+                RiskControls(self.ledger.store, environment=self.ledger.environment,
+                             clock=self.ledger._now).record_trip(exc.trip)
+            except Exception as error:  # noqa: BLE001 - never mask the caller's refusal
+                import logging
+                logging.getLogger("synwevo.billing.risk").error("brake latch failed: %s", type(error).__name__)
 
     def snapshot(self) -> dict:
         """Internal, consistent counters; neither a public projection nor send permission."""

@@ -16,6 +16,7 @@ import pytest
 
 from synwevo_core.billing import AttemptTicket, BillingError, Ledger, Rate, Unit, Usage
 from synwevo_core.billing.admission import CostAdmission, CostPolicy
+from synwevo_core.billing.risk import RiskControls
 from synwevo_core.store import Store
 from tests.integration.test_billing_ledger import (
     COST_UNIT, START, UNIT, balance, context, cost_price, evidence, fixture_authorize,
@@ -317,6 +318,9 @@ def test_environment_and_real_provider_accounts_have_separate_budgets(funded):
     live.publish_price(cost_price())
     fund(funded, 100, order="fixture-live-order", ledger=live)
     _, second = prepare(funded, "live", ledger=live)
+    # Live paid dispatch admits only allowlisted payers until a published risk section says otherwise.
+    RiskControls(funded[0], environment="live").allow("user", funded[2][0], actor_id=funded[2][1],
+                                                      reason="isolated live fixture cohort")
     live_admission = CostAdmission(live, current_policy=lambda: p)
     send(live_admission, second, amount=1)
     _, third = prepare(funded, "different-account")

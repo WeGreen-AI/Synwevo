@@ -272,6 +272,10 @@ class MeteredDeepSeek:
                     # The transport deliberately sanitizes callback exceptions. Preserve
                     # only our local typed refusal, after recording the unsent attempt.
                     admission_refusal.not_dispatched = True
+                    # The refusing transaction has rolled back: a velocity brake latches now.
+                    after_refusal = getattr(self.cost_admission, "after_refusal", None)
+                    if after_refusal is not None:
+                        after_refusal(admission_refusal)
                     raise admission_refusal from None
                 raise
             # A syntactically valid stream can still be a refusal, truncation or an

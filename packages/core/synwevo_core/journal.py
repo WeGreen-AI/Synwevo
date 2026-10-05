@@ -56,7 +56,12 @@ UNCLAIM_KIND = "workspace_unclaimed"
 # Code rollback retains the mirror; recovery requires a reader supporting platform grants.
 PLATFORM_GRANT_KIND = "platform_grant_revoked"
 _PLATFORM_RECEIPT = "platform_withdrawal:"
-ALWAYS_REPLAYED = ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND}
+# Paid model dispatch stopped by the risk controls (billing/risk.py). Written ahead of the SQL
+# change, so a backup taken between the line and its COMMIT lacks both: replayed whatever the
+# backup's time and applied by id, which keeps an administrator's later lift that the backup
+# already holds, and re-suspends (re-opens) only what the restored database never saw.
+RISK_KINDS = {"model_dispatch_suspended", "model_breaker_opened"}
+ALWAYS_REPLAYED = ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND} | RISK_KINDS
 
 KINDS = {
     "api_platform_approval_revoked",  # {approval_id}, including unconsumed approvals
@@ -81,6 +86,8 @@ KINDS = {
     PLATFORM_GRANT_KIND,       # {event_id, user_id, grant_id, role, granted_at, granted_by}
     UNCLAIM_KIND,               # {workspace_id, label_restored} — the assignment of legacy data undone
     "consent_withdrawn",        # {user_id, client_id, workspace_id?} — the consent and that client's tokens
+    "model_dispatch_suspended", # {suspension_id, environment, scope_kind, scope_id} — paid model calls of a payer/route
+    "model_breaker_opened",     # {event_id, environment} — paid model calls stopped platform-wide
 } | ORGANIZATION_KINDS
 
 _REQUIRED = {
@@ -99,6 +106,8 @@ _REQUIRED = {
     PLATFORM_GRANT_KIND: ("event_id", "user_id", "grant_id", "role", "granted_by"),
     UNCLAIM_KIND: ("workspace_id",),
     "consent_withdrawn": ("user_id", "client_id"),
+    "model_dispatch_suspended": ("suspension_id", "environment", "scope_kind", "scope_id"),
+    "model_breaker_opened": ("event_id", "environment"),
     **{kind: ("event_id", "organization_id") for kind in ORGANIZATION_KINDS},
     "organization_member_removed": ("event_id", "organization_id", "user_id"),
     "organization_role_changed": ("event_id", "organization_id", "user_id", "role"),
@@ -133,6 +142,9 @@ def _validate(entry, line: int) -> None:
     if kind == "role_changed" and entry["role"] not in {"owner", "admin", "editor", "viewer"}:
         bad()
     if kind == UNCLAIM_KIND and type(entry.get("label_restored", False)) is not bool:
+        bad()
+    if kind in RISK_KINDS and (entry["environment"] not in ("test", "live") or (
+            kind == "model_dispatch_suspended" and entry["scope_kind"] not in ("user", "organization", "route"))):
         bad()
     if kind in ORGANIZATION_KINDS:
         scope = entry.get("workspace_ids")
@@ -459,6 +471,25 @@ def _disable_suite_webhook(c: sqlite3.Connection, sid, t: float) -> int:
     return 1
 
 
+def _apply_risk(c, e) -> int:
+    """Re-suspend / re-open only what the restored database never recorded (by id)."""
+    at = int(e["at"])
+    if e["kind"] == "model_dispatch_suspended":
+        return c.execute("INSERT OR IGNORE INTO model_risk_suspensions(id,environment,scope_kind,scope_id,source,"
+                         "reason_code,created_at) VALUES (?,?,?,?,'journal','journal_replay',?)",
+                         (e["suspension_id"], e["environment"], e["scope_kind"], e["scope_id"], at)).rowcount
+    if c.execute("SELECT 1 FROM model_risk_breaker_events WHERE id=?", (e["event_id"],)).fetchone():
+        return 0
+    latest = c.execute("SELECT seq,state FROM model_risk_breaker_events WHERE environment=? ORDER BY seq DESC LIMIT 1",
+                       (e["environment"],)).fetchone()
+    if latest is not None and latest["state"] == "open":
+        return 0
+    c.execute("INSERT INTO model_risk_breaker_events(id,environment,seq,state,source,reason_code,created_at) "
+              "VALUES (?,?,?,'open','journal','journal_replay',?)",
+              (e["event_id"], e["environment"], (latest["seq"] if latest else 0) + 1, at))
+    return 1
+
+
 def apply(store: Store, entries: list[dict]) -> dict:
     """Make every withdrawal in `entries` true in `store`. Returns counts per kind.
 
@@ -486,6 +517,8 @@ def apply(store: Store, entries: list[dict]) -> dict:
                 continue
             if k == PLATFORM_GRANT_KIND:
                 n = _apply_platform_revocation(store, c, e)
+            elif k in RISK_KINDS:
+                n = _apply_risk(c, e)
             elif k in ORGANIZATION_KINDS:
                 n = _apply_organization(c, e, demoted_orgs, demoted_workspaces)
             elif k == UNCLAIM_KIND:

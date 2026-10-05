@@ -42,8 +42,11 @@ test('model provider is a real config-governance page and preserves permission-f
   const read = new Set(['platform.config.view']);
   const groups = nav.adminGroups(read);
   assert.deepEqual(groups.find(group => group.label === '配置与治理').items.map(item => item.id),
-    ['registration', 'model-provider', 'model-prices', 'model-costs']);
+    ['registration', 'model-provider', 'model-prices', 'model-costs', 'model-risk']);
   assert.equal(groups.flatMap(group => group.items).filter(item => item.id === 'model-provider').length, 1);
+  // The paid-call risk page reads with the same config grant; without it the page is neither listed nor reachable.
+  assert.equal(nav.resolveAdminPage('/admin', 'model-risk', read), 'model-risk');
+  assert.equal(nav.resolveAdminPage('/admin', 'model-risk', new Set(['platform.users.view'])), 'users');
   assert.equal(nav.resolveAdminPage('/admin', 'model-provider', read), 'model-provider');
   // Adding a page must not change which existing page an unqualified /admin opens.
   for (const asked of [null, '', 'unknown']) assert.equal(nav.resolveAdminPage('/admin', asked, read), 'identity');

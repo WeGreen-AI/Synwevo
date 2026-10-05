@@ -211,6 +211,8 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.include_router(build_model_provider_router(store, audit))
     from .admin_payments import build_router as build_admin_payments_router
     api.include_router(build_admin_payments_router(store, audit))
+    from .admin_model_risk import build_router as build_model_risk_router
+    api.include_router(build_model_risk_router(store, audit))
     from .admin_runs import build_router as build_runs_router
     api.include_router(build_runs_router(store, audit))
     from .wallet_routes import build_router as build_wallet_router, from_host as wallet_from_host

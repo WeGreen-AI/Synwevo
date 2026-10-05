@@ -8,7 +8,8 @@ import { errText } from './labels';
 import { useUnsavedChanges } from '../lib/hooks';
 import { walletAmount } from '../pages/account/money';
 import { budgetKeys, limitKeys, trafficBounds, trafficKeys, costForm, emptyCostForm, sameCostSpec, unitKey, validCostSpec, validUnit,
-  validateCostForm, unitsToAmount, type CostForm, type CostPolicySpec, type CostUnit, type TrafficKey } from './model-costs';
+  validateCostForm, unitsToAmount, riskOptionalAmountKeys, riskSecondBounds, riskSecondKeys, type CostForm, type CostPolicySpec,
+  type CostUnit, type RiskAmountKey, type RiskSecondKey, type TrafficKey } from './model-costs';
 import './model-costs.messages';
 
 type Environment = 'test' | 'live' | null;
@@ -30,7 +31,12 @@ const labels = { daily_budget: '每日成本上限', weekly_budget: '每周成�
   unknown_budget: '用量待确认的成本上限', max_inflight: '同时进行的调用上限', max_unknown: '用量待确认的调用上限',
   platform_rpm: '平台每分钟调用数', platform_tpm: '平台每分钟 token 数', payer_rpm: '每个付款人每分钟调用数',
   payer_tpm: '每个付款人每分钟 token 数', payer_inflight: '每个付款人同时进行的调用数', wait_seconds: '最长排队等待（秒）',
-  max_waiting: '排队中的调用总数上限', max_waiting_per_payer: '每个付款人排队中的调用上限' };
+  max_waiting: '排队中的调用总数上限', max_waiting_per_payer: '每个付款人排队中的调用上限',
+  max_call_cost: '单次调用成本上限', payer_window_s: '付款方刹车窗口（秒）', payer_window_cost: '付款方窗口成本阈值',
+  route_window_s: '模型路线刹车窗口（秒）', route_window_cost: '模型路线窗口成本阈值', balance_warn: '上游余额预警阈值',
+  balance_close: '上游余额停止阈值', balance_poll_s: '上游余额读取间隔（秒）', reconcile_tolerance: '每日对账容差',
+  pending_alert: '待确认用量提醒阈值' };
+type FieldKey = typeof budgetKeys[number] | typeof limitKeys[number] | TrafficKey | RiskSecondKey | RiskAmountKey | 'max_call_cost' | 'reconcile_tolerance';
 const grid: CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: 16 };
 const fieldset: CSSProperties = { margin: 0, padding: 0, border: 0, minWidth: 0 };
 const sameForm = (a: CostForm, b: CostForm) => Object.keys(a).every(key => a[key as keyof CostForm] === b[key as keyof CostForm]);
@@ -57,6 +63,15 @@ function PolicyDetails({ spec }: { spec: CostPolicySpec | null }) {
     <div><dt>{t('模型调用速率与排队')}</dt><dd style={{ margin: 0 }}>{t(spec.traffic ? '已启用' : '未设置（只执行同时进行的调用上限）')}</dd></div>
     {spec.traffic && trafficKeys.map(key => <div key={key}><dt>{t(labels[key])}</dt>
       <dd style={{ margin: 0 }}>{new Intl.NumberFormat(locale).format(spec.traffic![key])}</dd></div>)}
+    <div><dt>{t(labels.max_call_cost)}</dt><dd style={{ margin: 0 }}>{spec.max_call_cost === undefined ? t('不限') : `${walletAmount(spec.max_call_cost, spec.unit.scale, locale)} ${spec.unit.code}`}</dd></div>
+    <div><dt>{t('自动刹车与上游余额阈值')}</dt><dd style={{ margin: 0 }}>{t(spec.risk ? '已启用' : '未设置（正式环境只允许放行名单中的付款方）')}</dd></div>
+    {spec.risk && <>
+      <div><dt>{t('只允许放行名单中的付款方')}</dt><dd style={{ margin: 0 }}>{t(spec.risk.allowlist_only ? '是' : '否')}</dd></div>
+      {riskSecondKeys.map(key => <div key={key}><dt>{t(labels[key])}</dt><dd style={{ margin: 0 }}>{new Intl.NumberFormat(locale).format(spec.risk![key])}</dd></div>)}
+      {riskOptionalAmountKeys.map(key => <div key={key}><dt>{t(labels[key])}</dt><dd style={{ margin: 0 }}>{spec.risk![key] === null ? t('不检查')
+        : `${walletAmount(spec.risk![key]!, spec.unit.scale, locale)} ${spec.unit.code}`}</dd></div>)}
+      <div><dt>{t(labels.reconcile_tolerance)}</dt><dd style={{ margin: 0 }}>{walletAmount(spec.risk.reconcile_tolerance, spec.unit.scale, locale)} {spec.unit.code}</dd></div>
+    </>}
   </dl>;
 }
 
@@ -216,18 +231,20 @@ function ModelCostsContent({ held, onDenied }: { held: Held; onDenied: () => voi
       {item.operation_id && <p className="small muted">{t('操作编号：{id}', { id: item.operation_id })}</p>}
     </div>;
   }
-  function field(key: typeof budgetKeys[number] | typeof limitKeys[number] | TrafficKey, monetary: boolean) {
+  function field(key: FieldKey, monetary: boolean, optional = false) {
     const problem = tried ? validation.errors[key] : undefined;
     const traffic = (trafficKeys as readonly string[]).includes(key);
+    const seconds = (riskSecondKeys as readonly string[]).includes(key);
+    const [low, high] = traffic ? trafficBounds[key as TrafficKey] : riskSecondBounds;
     return <label className="field" htmlFor={`${id}-${key}`} key={key} style={{ minWidth: 0 }}>
       <span>{t(labels[key])}{monetary && selectedUnit ? ` (${selectedUnit.code})` : ''}</span>
-      <input id={`${id}-${key}`} className="input" type="text" inputMode={monetary ? 'decimal' : 'numeric'} required
+      <input id={`${id}-${key}`} className="input" type="text" inputMode={monetary ? 'decimal' : 'numeric'} required={!optional}
         maxLength={monetary ? 33 : traffic ? 13 : 5} value={form[key]} onChange={event => edit(key, event.target.value)}
-        aria-invalid={!!problem} aria-describedby={`${id}-${traffic ? `${key}-range` : 'amount-help'}${problem ? ` ${id}-${key}-error` : ''}`}
+        aria-invalid={!!problem} aria-describedby={`${id}-${traffic || seconds ? `${key}-range` : optional ? `${key}-optional` : 'amount-help'}${problem ? ` ${id}-${key}-error` : ''}`}
         style={{ width: '100%', minWidth: 0 }} />
-      {traffic && <span id={`${id}-${key}-range`} className="small muted">{t('范围 {low}–{high}', {
-        low: new Intl.NumberFormat(locale).format(trafficBounds[key as TrafficKey][0]),
-        high: new Intl.NumberFormat(locale).format(trafficBounds[key as TrafficKey][1]) })}</span>}
+      {(traffic || seconds) && <span id={`${id}-${key}-range`} className="small muted">{t('范围 {low}–{high}', {
+        low: new Intl.NumberFormat(locale).format(low), high: new Intl.NumberFormat(locale).format(high) })}</span>}
+      {optional && <span id={`${id}-${key}-optional`} className="small muted">{t('留空表示不检查此项。')}</span>}
       {problem && <span className="small" id={`${id}-${key}-error`}>{t(problem)}</span>}
     </label>;
   }
@@ -321,6 +338,29 @@ function ModelCostsContent({ held, onDenied }: { held: Held; onDenied: () => voi
             </select>{tried && validation.errors.traffic && <span id={`${id}-traffic-error`} className="small">{t(validation.errors.traffic)}</span>}
           </label>
           {form.traffic === 'yes' && <div style={grid}>{trafficKeys.map(key => field(key, false))}</div>}
+        </fieldset>
+        <fieldset className="col gap12" style={fieldset} disabled={!canWrite || frozen}>
+          <legend>{t('单次调用上限与风险控制')}</legend>
+          <p className="small muted" id={`${id}-risk-help`}>{t('单次调用上限限制一次调用可预留的成本。自动刹车按滚动窗口统计付款方和模型路线的提供方成本，超过阈值的调用被拒绝并暂停该付款方或路线，直到管理员解除。上游余额低于停止阈值时自动关闭全部付费调用。')}</p>
+          <div style={grid}>{field('max_call_cost', true, true)}</div>
+          <label className="field" htmlFor={`${id}-risk`} style={{ maxWidth: 480 }}><span>{t('自动刹车与上游余额阈值')}</span>
+            <select id={`${id}-risk`} className="input" required value={form.risk} onChange={event => edit('risk', event.target.value)}
+              aria-invalid={tried && !!validation.errors.risk} aria-describedby={`${id}-risk-help${tried && validation.errors.risk ? ` ${id}-risk-error` : ''}`}>
+              <option value="">{t('请选择是否启用')}</option><option value="yes">{t('启用')}</option><option value="no">{t('未设置（正式环境只允许放行名单中的付款方）')}</option>
+            </select>{tried && validation.errors.risk && <span id={`${id}-risk-error`} className="small">{t(validation.errors.risk)}</span>}
+          </label>
+          {form.risk === 'yes' && <div style={grid}>
+            <label className="field" htmlFor={`${id}-allowlist_only`}><span>{t('只允许放行名单中的付款方')}</span>
+              <select id={`${id}-allowlist_only`} className="input" required value={form.allowlist_only} onChange={event => edit('allowlist_only', event.target.value)}
+                aria-invalid={tried && !!validation.errors.allowlist_only} aria-describedby={tried && validation.errors.allowlist_only ? `${id}-allowlist_only-error` : undefined}>
+                <option value="">{t('请选择')}</option><option value="yes">{t('是（分阶段开放）')}</option><option value="no">{t('否（所有付款方）')}</option>
+              </select>{tried && validation.errors.allowlist_only && <span id={`${id}-allowlist_only-error`} className="small">{t(validation.errors.allowlist_only)}</span>}
+            </label>
+            {field('payer_window_s', false)}{field('payer_window_cost', true, true)}
+            {field('route_window_s', false)}{field('route_window_cost', true, true)}
+            {field('balance_warn', true, true)}{field('balance_close', true, true)}{field('balance_poll_s', false)}
+            {field('reconcile_tolerance', true)}{field('pending_alert', true, true)}
+          </div>}
         </fieldset>
         {tried && !validation.spec && <p className="notice err" role="alert">{t('请修正已标出的成本字段，再预览变更。')}</p>}
         <div><button type="submit" className="btn primary" disabled={!canWrite || frozen || changedBase || conflict || (validation.spec !== null && sameCostSpec(validation.spec, base.spec))}>{t('预览成本变更')}</button></div>

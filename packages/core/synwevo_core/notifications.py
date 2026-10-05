@@ -218,6 +218,52 @@ CATALOGUE: dict[str, dict] = {
     "docs.job_finished": {"category": "docs", "severity": "info", "email": "digest", "title": {
         "zh-Hans": "项目「{project}」的生成任务{outcome}", "zh-Hant": "專案「{project}」的產生任務{outcome}", "en": "Generation for “{project}” {outcome}"}, "body": {
         "zh-Hans": "{done} 份成功，{failed} 份失败。", "zh-Hant": "{done} 份成功，{failed} 份失敗。", "en": "{done} succeeded, {failed} failed."}},
+    # ---- paid model risk controls (billing/risk.py, docs/platform/model-risk.md): amounts and codes only
+    "billing.risk.brake_triggered": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "付费调用自动刹车：{risk}的成本速率超过阈值", "zh-Hant": "付費呼叫自動煞車：{risk}的成本速率超過門檻", "en": "Paid-call brake: {risk} cost velocity over its threshold"}, "body": {
+        "zh-Hans": "{window} 秒窗口内的成本超过了阈值，该{risk}的付费调用已暂停。核对后可在管理后台解除。", "zh-Hant": "{window} 秒視窗內的成本超過了門檻，該{risk}的付費呼叫已暫停。核對後可在管理後台解除。",
+        "en": "Cost within the {window}-second window passed its threshold; paid calls for this {risk} are suspended. Lift it in the admin console after review."}},
+    "billing.risk.paid_paused": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "你的付费 Agent 调用已暂停", "zh-Hant": "你的付費 Agent 呼叫已暫停", "en": "Your paid Agent calls are paused"}, "body": {
+        "zh-Hans": "短时间内的用量超过了平台的安全阈值，付费调用已自动暂停；被拒绝的请求没有发送，也不会扣费。平台管理员核对后会解除暂停。",
+        "zh-Hant": "短時間內的用量超過了平台的安全門檻，付費呼叫已自動暫停；被拒絕的請求沒有傳送，也不會扣費。平台管理員核對後會解除暫停。",
+        "en": "Usage in a short period passed the platform's safety threshold, so paid calls were paused automatically. Refused requests were not sent and are not charged. A platform administrator will lift the pause after review."}},
+    "billing.risk.breaker_opened": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "付费调用总闸已关闭", "zh-Hant": "付費呼叫總閘已關閉", "en": "Paid calls are switched off platform-wide"}, "body": {
+        "zh-Hans": "原因：{risk}。在管理员核对并重新开启前，所有付费 Agent 调用都会被拒绝，且不会扣费。", "zh-Hant": "原因：{risk}。在管理員核對並重新開啟前，所有付費 Agent 呼叫都會被拒絕，且不會扣費。",
+        "en": "Reason: {risk}. Until an administrator reviews and reopens it, every paid Agent call is refused and nothing is charged."}},
+    "billing.risk.low_balance": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "模型提供方余额偏低", "zh-Hant": "模型供應商餘額偏低", "en": "Model provider balance is low"}, "body": {
+        "zh-Hans": "上游账户余额为 {balance} {unit}，已低于预警阈值。请尽快充值；低于停止阈值时付费调用会自动停止。", "zh-Hant": "上游帳戶餘額為 {balance} {unit}，已低於預警門檻。請盡快儲值；低於停止門檻時付費呼叫會自動停止。",
+        "en": "The upstream account balance is {balance} {unit}, below the warning threshold. Top it up soon: paid calls stop automatically below the stop threshold."}},
+    "billing.risk.reconciliation": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "模型成本对账（{day}）：{risk}", "zh-Hant": "模型成本對帳（{day}）：{risk}", "en": "Model cost reconciliation ({day}): {risk}"}, "body": {
+        "zh-Hans": "上游余额变化与账本成本的核对结果需要处理，请在管理后台查看金额与原因代码。", "zh-Hant": "上游餘額變化與帳本成本的核對結果需要處理，請在管理後台檢視金額與原因代碼。",
+        "en": "The comparison of the upstream balance change with ledger cost needs attention. Review the amounts and reason code in the admin console."}},
+    "billing.risk.ledger_audit": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "账本余额审计发现 {count} 处差异", "zh-Hant": "帳本餘額稽核發現 {count} 處差異", "en": "Ledger balance audit found {count} differences"}, "body": {
+        "zh-Hans": "缓存余额或余数与不可变的账本分录不一致，请在管理后台核对。审计不会自动修改任何余额。", "zh-Hant": "快取餘額或餘數與不可變的帳本分錄不一致，請在管理後台核對。稽核不會自動修改任何餘額。",
+        "en": "Cached balances or remainders disagree with the immutable journal. Review them in the admin console; the audit changes no balance by itself."}},
+    "billing.risk.pending_exposure": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "用量待确认的成本偏高", "zh-Hant": "用量待確認的成本偏高", "en": "Unconfirmed usage exposure is high"}, "body": {
+        "zh-Hans": "尚未确认用量的调用预留成本合计 {amount} {unit}，超过提醒阈值。", "zh-Hant": "尚未確認用量的呼叫預留成本合計 {amount} {unit}，超過提醒門檻。",
+        "en": "Calls without confirmed usage hold {amount} {unit} of reserved cost, above the alert threshold."}},
+    "billing.risk.payment_webhook_failed": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "支付回调处理失败", "zh-Hant": "付款回呼處理失敗", "en": "A payment webhook failed"}, "body": {
+        "zh-Hans": "{provider} 的支付回调未能处理（{code}）。请检查支付渠道配置与回调记录。", "zh-Hant": "{provider} 的付款回呼未能處理（{code}）。請檢查付款管道設定與回呼記錄。",
+        "en": "A {provider} payment webhook could not be processed ({code}). Check the payment channel configuration and webhook records."}},
+}
+
+#: Fixed words for the paid-model risk alerts' `risk` parameter (never free text).
+RISK_WORDS = {
+    "payer": {"zh-Hans": "付款方", "zh-Hant": "付款方", "en": "payer"},
+    "route": {"zh-Hans": "模型路线", "zh-Hant": "模型路線", "en": "model route"},
+    "balance": {"zh-Hans": "上游余额低于停止阈值或不可用", "zh-Hant": "上游餘額低於停止門檻或不可用", "en": "the upstream balance is below the stop threshold or unavailable"},
+    "upstream_402": {"zh-Hans": "模型提供方报告平台账户余额不足", "zh-Hant": "模型供應商回報平台帳戶餘額不足", "en": "the model provider reported the platform account out of balance"},
+    "admin": {"zh-Hans": "平台管理员手动关闭", "zh-Hant": "平台管理員手動關閉", "en": "switched off by a platform administrator"},
+    "drift": {"zh-Hans": "差额超出容差", "zh-Hant": "差額超出容差", "en": "difference beyond tolerance"},
+    "incomplete": {"zh-Hans": "缺少余额读数，无法核对", "zh-Hant": "缺少餘額讀數，無法核對", "en": "balance readings missing, not reconciled"},
+    "error": {"zh-Hans": "执行失败", "zh-Hant": "執行失敗", "en": "failed"},
 }
 
 #: Wording for the `what` of a security change, keyed so the mail and the inbox agree.
@@ -795,6 +841,8 @@ def _localised_params(params: dict, loc: str) -> dict:
         out["what"] = _fmt(SECURITY_WHAT[out["what"]][loc], out)
     if "outcome" in out and out["outcome"] in OUTCOME_WORDS:
         out["outcome"] = OUTCOME_WORDS[out["outcome"]][loc]
+    if "risk" in out and out["risk"] in RISK_WORDS:
+        out["risk"] = RISK_WORDS[out["risk"]][loc]
     return out
 
 
