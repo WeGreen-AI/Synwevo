@@ -154,6 +154,11 @@ class PriceSnapshot:
 
 @dataclass(frozen=True)
 class ChargeContext:
+    """Who pays for a run. ``payer_kind`` is ``personal`` (the shared contract's ``user``) or
+    ``organization``: then ``organization_id`` names the organization whose wallet is charged
+    and ``payer_user_id`` is the member the organization granted (always the actor). An
+    organization payer is admitted only by the ledger's organization policy (``org_payers``)."""
+
     payer_user_id: str
     actor_user_id: str
     run_id: str
@@ -161,17 +166,30 @@ class ChargeContext:
     workspace_id: str | None = None
     delegation_id: str | None = None
     payer_kind: str = "personal"
+    organization_id: str | None = None
 
     def __post_init__(self):
-        if self.payer_kind != "personal":
-            raise BillingError("organization_billing_not_supported")
+        if self.payer_kind not in ("personal", "organization"):
+            raise BillingError("invalid_payer")
+        if (self.payer_kind == "organization") != (self.organization_id is not None):
+            raise BillingError("invalid_payer")
         for value in (self.payer_user_id, self.actor_user_id, self.run_id, self.authorization_ref):
             identifier(value)
-        for value in (self.workspace_id, self.delegation_id):
+        for value in (self.workspace_id, self.delegation_id, self.organization_id):
             if value is not None:
                 identifier(value)
         if self.payer_user_id != self.actor_user_id and self.delegation_id is None:
             raise BillingError("payment_delegation_required")
+        if self.payer_kind == "organization" and (self.payer_user_id != self.actor_user_id
+                                                  or self.delegation_id is not None):
+            raise BillingError("invalid_payer")
+
+    @property
+    def payer(self) -> tuple[str, str]:
+        """(kind, id) in the shared contract's terms."""
+        if self.payer_kind == "organization":
+            return "organization", self.organization_id
+        return "user", self.payer_user_id
 
 
 @dataclass(frozen=True)
@@ -225,6 +243,34 @@ class PaymentReceipt:
             identifier(getattr(self, key))
         if self.environment not in ("test", "live") or self.status != "succeeded":
             raise BillingError("payment_not_succeeded")
+        integer(self.amount_minor, positive=True)
+        if (not isinstance(self.payload_sha256, str) or len(self.payload_sha256) != 64
+                or any(c not in "0123456789abcdef" for c in self.payload_sha256)):
+            raise BillingError("invalid_evidence_digest")
+
+
+@dataclass(frozen=True)
+class DisputeNotice:
+    """Input to the mandatory, injected verifier of a durable, signature-verified dispute fact
+    (the provider's "a cardholder disputed this payment"). Like PaymentReceipt, constructing it
+    proves nothing. ``amount_minor`` is the disputed amount in the payment currency."""
+
+    environment: str
+    provider: str
+    merchant_id: str
+    dispute_id: str
+    event_id: str
+    payment_id: str
+    amount_minor: int
+    currency: str
+    evidence_ref: str
+    payload_sha256: str
+
+    def __post_init__(self):
+        for key in ("provider", "merchant_id", "dispute_id", "event_id", "payment_id", "currency", "evidence_ref"):
+            identifier(getattr(self, key))
+        if self.environment not in ("test", "live"):
+            raise BillingError("invalid_environment")
         integer(self.amount_minor, positive=True)
         if (not isinstance(self.payload_sha256, str) or len(self.payload_sha256) != 64
                 or any(c not in "0123456789abcdef" for c in self.payload_sha256)):

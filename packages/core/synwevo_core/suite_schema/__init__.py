@@ -6,7 +6,8 @@ applied by the store on every start. Everything is additive (`CREATE … IF NOT 
 `ADD COLUMN`): older code ignores these tables, so a rollback needs no data restore.
 
 Each module may define ``SCHEMA`` (SQL script), ``COLUMNS`` (``(table, column, declaration)``
-added when missing) and ``INDEXES`` (``(name, table, columns)``).
+added when missing), ``INDEXES`` (``(name, table, columns)``) and ``rebuild(c)`` (an idempotent
+table rebuild run outside any transaction, for the one change ``ALTER TABLE`` cannot make).
 """
 from __future__ import annotations
 
@@ -28,6 +29,11 @@ def apply(c) -> None:
         schema = getattr(mod, "SCHEMA", None)
         if schema:
             c.executescript(schema)
+        rebuild = getattr(mod, "rebuild", None)
+        if rebuild is not None:
+            # A table rebuild (widening a CHECK) owns its transaction: SQLite only lets foreign
+            # keys be switched off outside one (synwevo_core.schema_widen).
+            rebuild(c)
         columns = getattr(mod, "COLUMNS", ())
         indexes = getattr(mod, "INDEXES", ())
         migrate = getattr(mod, "migrate", None)

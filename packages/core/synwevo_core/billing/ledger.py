@@ -13,8 +13,14 @@ import time
 from uuid import uuid4
 
 from ..store import Store
-from .models import (AttemptTicket, Balance, BillingError, ChargeContext, PaymentReceipt,
+from .models import (AttemptTicket, Balance, BillingError, ChargeContext, DisputeNotice, PaymentReceipt,
                      PriceSnapshot, Settlement, Unit, UsageEvidence, identifier, integer)
+
+#: Account kinds that hold a payer's money (never negative); the others are platform accounts.
+WALLET_KINDS = ("wallet", "org_wallet")
+#: Wallet journal kinds the statements show (suite_schema.billing.JOURNAL_KINDS).
+STATEMENT_KINDS = ("paid", "test_payment", "sale", "grant", "chargeback")
+GRANT_KINDS = ("welcome", "admin")
 
 
 def _json(value) -> str:
@@ -36,7 +42,7 @@ class Ledger:
     """
 
     def __init__(self, store: Store, *, environment: str, namespace: str, authorize=None,
-                 verify_payment=None, clock=None, max_hold_seconds: int = 86400):
+                 verify_payment=None, clock=None, max_hold_seconds: int = 86400, verify_dispute=None):
         if environment not in ("test", "live"):
             raise BillingError("invalid_environment")
         self.store = store
@@ -44,7 +50,14 @@ class Ledger:
         self.namespace = identifier(namespace)
         self.authorize = authorize
         self.payer_budgets = None  # Trusted composition installs a policy consumer, never an implicit grant.
+        # Organization payer policy (billing.org_payers.OrgPayers): the organization's current
+        # grant to the member and its monthly limits, checked under the reservation's writer
+        # lock. None refuses every organization payer.
+        self.org_payers = None
         self.verify_payment = verify_payment
+        # verify_dispute(connection, DisputeNotice) -> True only for a durable, authenticated
+        # provider dispute fact (the same contract as verify_payment). None refuses chargebacks.
+        self.verify_dispute = verify_dispute
         self.clock = clock or (lambda: int(time.time()))
         self.max_hold_seconds = integer(max_hold_seconds, positive=True, maximum=86400)
 
@@ -95,6 +108,31 @@ class Ledger:
                   (key, self.environment, unit, owner, kind))
         t.execute("INSERT INTO billing_balances(account_id,amount) VALUES (?,0)", (key,))
         return key
+
+    def _active_org(self, t, organization_id):
+        identifier(organization_id)
+        if not t.execute("SELECT 1 FROM organizations WHERE id=? AND status='active' AND deleted_at IS NULL",
+                         (organization_id,)).fetchone():
+            raise BillingError("organization_unavailable")
+
+    @staticmethod
+    def _payer_kind(kind):
+        if kind not in ("user", "organization"):
+            raise BillingError("invalid_payer")
+        return "wallet" if kind == "user" else "org_wallet"
+
+    def _payer_account(self, t, unit: str, payer_kind: str, payer_id: str):
+        """The payer's wallet: a person's (``user``) or an organization's (``organization``)."""
+        return self._account(t, unit, identifier(payer_id), self._payer_kind(payer_kind))
+
+    def _context_account(self, t, unit: str, context: ChargeContext):
+        kind, owner = context.payer
+        return self._payer_account(t, unit, kind, owner)
+
+    @staticmethod
+    def _frozen(t, account) -> bool:
+        return t.execute("SELECT 1 FROM billing_account_freezes WHERE account_id=? AND lifted_at IS NULL LIMIT 1",
+                         (account,)).fetchone() is not None
 
     def _balance(self, t, account):
         row = t.execute("SELECT amount FROM billing_balances WHERE account_id=?", (account,)).fetchone()
@@ -149,19 +187,30 @@ class Ledger:
 
     def create_payment_order(self, *, order_id: str, payer_user_id: str, provider: str,
                              merchant_id: str, amount_minor: int, currency: str, unit: Unit,
-                             credit_units: int, exchange_version: str) -> str:
-        """Internal server-priced order only. Creates no balance and claims no payment."""
+                             credit_units: int, exchange_version: str, payer_kind: str = "user",
+                             payer_org_id: str | None = None) -> str:
+        """Internal server-priced order only. Creates no balance and claims no payment.
+
+        ``payer_user_id`` is the person who pays. With ``payer_kind='organization'`` the verified
+        payment funds ``payer_org_id``'s wallet; whether that person may top it up is the
+        caller's (current organization permission) decision, taken before this call.
+        """
         for value in (order_id, payer_user_id, provider, merchant_id, currency, exchange_version):
             identifier(value)
         integer(amount_minor, positive=True)
         integer(credit_units, positive=True)
+        self._payer_kind(payer_kind)
+        if (payer_kind == "organization") != (payer_org_id is not None):
+            raise BillingError("invalid_payer")
         args = (payer_user_id, provider, merchant_id, amount_minor, currency, unit.code,
-                credit_units, exchange_version)
+                credit_units, exchange_version, payer_kind, payer_org_id)
         columns = ("payer_user_id", "provider", "merchant_id", "amount_minor", "currency", "unit",
-                   "credit_units", "exchange_version")
+                   "credit_units", "exchange_version", "payer_kind", "payer_org_id")
         with self._tx() as t:
             self._unit(t, unit)
             self._active_user(t, payer_user_id)
+            if payer_org_id is not None:
+                self._active_org(t, payer_org_id)
             row = t.execute("SELECT * FROM billing_orders WHERE environment=? AND namespace=? AND order_id=?",
                             (self.environment, self.namespace, order_id)).fetchone()
             if row:
@@ -169,7 +218,8 @@ class Ledger:
                     raise BillingError("idempotency_conflict")
                 return row["id"]
             key = _id()
-            t.execute("INSERT INTO billing_orders VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            t.execute("INSERT INTO billing_orders(id,environment,namespace,order_id," + ",".join(columns) +
+                      ",created_at) VALUES (" + ",".join("?" * (len(columns) + 5)) + ")",
                       (key, self.environment, self.namespace, order_id, *args, self._now()))
             return key
 
@@ -203,7 +253,10 @@ class Ledger:
             else:
                 if t.execute("SELECT 1 FROM billing_payments WHERE order_key=?", (order["id"],)).fetchone():
                     raise BillingError("order_already_funded")
-                wallet = self._account(t, order["unit"], order["payer_user_id"])
+                if order["payer_kind"] == "organization":
+                    wallet = self._payer_account(t, order["unit"], "organization", order["payer_org_id"])
+                else:
+                    wallet = self._account(t, order["unit"], order["payer_user_id"])
                 kind = "paid" if self.environment == "live" else "test_payment"
                 source = self._account(t, order["unit"], "platform", kind)
                 journal = self._post(t, voucher="payment:" + order["id"], unit=order["unit"],
@@ -223,6 +276,167 @@ class Ledger:
                 t.execute("INSERT INTO billing_payment_events VALUES (?,?,?,?,?,?,?,?)",
                           (*event_unique, payment_key, receipt.evidence_ref, receipt.payload_sha256, self._now()))
             return journal
+
+    def grant(self, *, grant_id: str, kind: str, payer_kind: str, payer_id: str, unit: Unit, amount: int,
+              reason: str, actor_id: str, abuse_key: str | None = None) -> dict:
+        """Credit an audited grant: never a payment, never anonymous, never without a reason.
+
+        ``kind='welcome'`` is the one-time allowance (a person only; ``abuse_key`` identifies the
+        verified address so a deleted and re-registered account cannot take it twice); the
+        database refuses a second welcome per account or per address. ``kind='admin'`` is an
+        administrator's grant: ``actor_id`` is that administrator, whose permission the caller
+        checked in the same request. Idempotent by ``grant_id``: a replay with the same facts
+        returns the first result, changed facts conflict. The row is the audit record (actor,
+        reason, time); the journal entry is kind ``grant`` from the platform grant account.
+        """
+        identifier(grant_id)
+        identifier(actor_id)
+        integer(amount, positive=True)
+        if kind not in GRANT_KINDS:
+            raise BillingError("invalid_grant")
+        if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 500 or reason != reason.strip():
+            raise BillingError("grant_reason_required")
+        self._payer_kind(payer_kind)
+        identifier(payer_id)
+        if kind == "welcome" and (payer_kind != "user" or abuse_key is None):
+            raise BillingError("invalid_grant")
+        if abuse_key is not None:
+            identifier(abuse_key)
+        facts = (kind, payer_kind, payer_id, unit.code, amount, reason, actor_id, abuse_key)
+        with self._tx() as t:
+            self._unit(t, unit)
+            row = t.execute("SELECT * FROM billing_grants WHERE environment=? AND grant_id=?",
+                            (self.environment, grant_id)).fetchone()
+            if row:
+                if tuple(row[k] for k in ("kind", "payer_kind", "payer_id", "unit", "amount", "reason",
+                                          "actor_id", "abuse_key")) != facts:
+                    raise BillingError("idempotency_conflict")
+                return self._grant_row(row)
+            if payer_kind == "user":
+                self._active_user(t, payer_id)
+            else:
+                self._active_org(t, payer_id)
+            if kind == "welcome" and t.execute(
+                    "SELECT 1 FROM billing_grants WHERE environment=? AND kind='welcome' AND (payer_id=? OR abuse_key=?)",
+                    (self.environment, payer_id, abuse_key)).fetchone():
+                raise BillingError("welcome_already_granted")
+            wallet = self._payer_account(t, unit.code, payer_kind, payer_id)
+            source = self._account(t, unit.code, "platform", "grant")
+            key = _id()
+            journal = self._post(t, voucher="grant:" + key, unit=unit.code, debit=source, credit=wallet,
+                                 amount=amount, kind="grant", reference=key)
+            t.execute("INSERT INTO billing_grants(id,environment,grant_id,kind,payer_kind,payer_id,account_id,unit,"
+                      "amount,reason,actor_id,abuse_key,journal_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (key, self.environment, grant_id, kind, payer_kind, payer_id, wallet, unit.code, amount,
+                       reason, actor_id, abuse_key, journal, self._now()))
+            return self._grant_row(t.execute("SELECT * FROM billing_grants WHERE id=?", (key,)).fetchone())
+
+    @staticmethod
+    def _grant_row(row) -> dict:
+        return {k: row[k] for k in ("id", "grant_id", "kind", "payer_kind", "payer_id", "unit", "amount",
+                                     "reason", "actor_id", "journal_id", "created_at")}
+
+    def count_grants(self, *, kind: str, since: int) -> int:
+        """How many grants of ``kind`` this environment made since ``since`` (abuse caps)."""
+        if kind not in GRANT_KINDS:
+            raise BillingError("invalid_grant")
+        integer(since)
+        row = self.store.one("SELECT COUNT(*) AS n FROM billing_grants WHERE environment=? AND kind=? AND created_at>=?",
+                             (self.environment, kind, since))
+        return row["n"]
+
+    def has_welcome(self, *, payer_id: str, abuse_key: str | None = None) -> bool:
+        row = self.store.one("SELECT 1 AS x FROM billing_grants WHERE environment=? AND kind='welcome' "
+                             "AND (payer_id=? OR abuse_key=?)", (self.environment, payer_id, abuse_key))
+        return row is not None
+
+    def record_chargeback(self, notice: DisputeNotice) -> dict:
+        """A dispute opened after the payment was credited: take back what is still there.
+
+        The disputed share of the order's credit (``ceil(credit_units * disputed / paid)``) is
+        moved from the funded wallet to the platform chargeback account, limited to what the
+        wallet has available (booked minus active holds), so the wallet never goes negative; the
+        rest is recorded as outstanding. The wallet is frozen in the same transaction: it cannot
+        reserve new paid calls until an administrator lifts the freeze. Idempotent per dispute;
+        the verifier must have checked the durable, signature-verified provider event.
+        """
+        if not isinstance(notice, DisputeNotice) or notice.environment != self.environment:
+            raise BillingError("payment_environment_mismatch")
+        with self._tx() as t:
+            if self.verify_dispute is None or self.verify_dispute(t, notice) is not True:
+                raise BillingError("payment_evidence_untrusted")
+            old = t.execute("SELECT * FROM billing_chargebacks WHERE environment=? AND provider=? AND dispute_id=?",
+                            (self.environment, notice.provider, notice.dispute_id)).fetchone()
+            if old:
+                if (old["merchant_id"], old["amount_minor"], old["currency"]) != (
+                        notice.merchant_id, notice.amount_minor, notice.currency):
+                    raise BillingError("payment_event_conflict")
+                return self._chargeback_row(t, old)
+            payment = t.execute("SELECT p.*,o.credit_units,o.amount_minor AS paid_minor,o.currency AS paid_currency "
+                                "FROM billing_payments p JOIN billing_orders o ON o.id=p.order_key "
+                                "WHERE p.environment=? AND p.provider=? AND p.payment_id=?",
+                                (self.environment, notice.provider, notice.payment_id)).fetchone()
+            if (not payment or payment["merchant_id"] != notice.merchant_id
+                    or payment["paid_currency"] != notice.currency or notice.amount_minor > payment["paid_minor"]):
+                raise BillingError("payment_order_mismatch")
+            journal_row = t.execute("SELECT credit_account,unit FROM billing_journal WHERE id=?",
+                                    (payment["journal_id"],)).fetchone()
+            wallet, unit = journal_row["credit_account"], journal_row["unit"]
+            disputed = -(-payment["credit_units"] * notice.amount_minor // payment["paid_minor"])
+            booked, held = self._balance(t, wallet)
+            recovered = max(0, min(disputed, booked - held))
+            key = _id()
+            journal = None
+            if recovered:
+                sink = self._account(t, unit, "platform", "chargeback")
+                journal = self._post(t, voucher="chargeback:" + key, unit=unit, debit=wallet, credit=sink,
+                                     amount=recovered, kind="chargeback", reference=key)
+            t.execute("INSERT INTO billing_chargebacks(id,environment,provider,merchant_id,dispute_id,event_id,payment_key,"
+                      "account_id,amount_minor,currency,disputed_units,recovered_units,outstanding_units,journal_id,"
+                      "evidence_ref,payload_sha256,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (key, self.environment, notice.provider, notice.merchant_id, notice.dispute_id, notice.event_id,
+                       payment["id"], wallet, notice.amount_minor, notice.currency, disputed, recovered,
+                       disputed - recovered, journal, notice.evidence_ref, notice.payload_sha256, self._now()))
+            t.execute("INSERT INTO billing_account_freezes(id,account_id,reason,chargeback_id,created_at) "
+                      "VALUES (?,?,'chargeback',?,?)", (_id(), wallet, key, self._now()))
+            return self._chargeback_row(t, t.execute("SELECT * FROM billing_chargebacks WHERE id=?", (key,)).fetchone())
+
+    @staticmethod
+    def _chargeback_row(t, row) -> dict:
+        account = t.execute("SELECT kind,owner FROM billing_accounts WHERE id=?", (row["account_id"],)).fetchone()
+        freeze = t.execute("SELECT id,lifted_at FROM billing_account_freezes WHERE chargeback_id=?", (row["id"],)).fetchone()
+        return {"id": row["id"], "dispute_id": row["dispute_id"], "payer_kind": "organization" if account["kind"] == "org_wallet" else "user",
+                "payer_id": account["owner"], "amount_minor": row["amount_minor"], "currency": row["currency"],
+                "disputed_units": row["disputed_units"], "recovered_units": row["recovered_units"],
+                "outstanding_units": row["outstanding_units"], "journal_id": row["journal_id"],
+                "freeze_id": freeze["id"] if freeze else None,
+                "frozen": bool(freeze) and freeze["lifted_at"] is None, "created_at": row["created_at"]}
+
+    def lift_freeze(self, freeze_id: str, *, actor_id: str, reason: str) -> dict:
+        """End a freeze (an administrator's audited decision, e.g. the dispute was won or the
+        outstanding amount was settled outside the product). The chargeback stays recorded."""
+        identifier(freeze_id)
+        identifier(actor_id)
+        if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 500:
+            raise BillingError("grant_reason_required")
+        with self._tx() as t:
+            row = t.execute("SELECT f.* FROM billing_account_freezes f JOIN billing_accounts a ON a.id=f.account_id "
+                            "WHERE f.id=? AND a.environment=?", (freeze_id, self.environment)).fetchone()
+            if not row:
+                raise BillingError("freeze_not_found")
+            if row["lifted_at"] is None:
+                t.execute("UPDATE billing_account_freezes SET lifted_at=?,lifted_by=?,lift_reason=? WHERE id=?",
+                          (self._now(), actor_id, reason.strip(), freeze_id))
+            row = t.execute("SELECT * FROM billing_account_freezes WHERE id=?", (freeze_id,)).fetchone()
+            return {k: row[k] for k in ("id", "account_id", "reason", "chargeback_id", "created_at",
+                                         "lifted_at", "lifted_by", "lift_reason")}
+
+    def wallet_frozen(self, *, payer_kind: str, payer_id: str, unit: Unit) -> bool:
+        kind = self._payer_kind(payer_kind)
+        with self.store.conn() as t:
+            row = t.execute("SELECT id FROM billing_accounts WHERE environment=? AND unit=? AND owner=? AND kind=?",
+                            (self.environment, unit.code, payer_id, kind)).fetchone()
+            return bool(row) and self._frozen(t, row[0])
 
     def open_run(self, context: ChargeContext, *, unit: Unit, budget: int, max_calls: int,
                  max_attempts: int, deadline: int) -> str:
@@ -304,7 +518,7 @@ class Ledger:
             run = self._run(t, context.run_id)
             fixed = json.loads(run["context"])
             # Workspace is attribution per call, never a change of payer or run authority.
-            if any(fixed[k] != v for k, v in asdict(context).items() if k != "workspace_id"):
+            if any(fixed.get(k) != v for k, v in asdict(context).items() if k != "workspace_id"):
                 raise BillingError("run_context_conflict")
             price = self._price(t, price_id, "sale")
             if price.unit.code != run["unit"]:
@@ -326,15 +540,26 @@ class Ledger:
                               "WHERE c.run_key=?", (run["id"],)).fetchone()[0]
             if calls[0] >= run["max_calls"] or spent + calls[1] + amount > run["budget"]:
                 raise BillingError("run_budget_exceeded")
-            account = self._account(t, run["unit"], context.payer_user_id)
+            account = self._context_account(t, run["unit"], context)
+            if self._frozen(t, account):
+                raise BillingError("wallet_frozen")
             booked, held = self._balance(t, account)
             if amount > booked - held:
                 raise BillingError("insufficient_funds")
-            payer_policy = self.payer_budgets.check(t, account, amount=amount, at=now) if self.payer_budgets else None
+            organization = context.payer_kind == "organization"
+            if organization:
+                if self.org_payers is None:
+                    raise BillingError("organization_billing_not_configured")
+                org_policy = self.org_payers.check(t, account, context, amount=amount, at=now)
+                payer_policy = None
+            else:
+                payer_policy = self.payer_budgets.check(t, account, amount=amount, at=now) if self.payer_budgets else None
             key = _id()
             t.execute("INSERT INTO billing_calls(id,run_key,logical_call_id,context,account_id,price_id,hold_units,deadline,status,created_at) "
                       "VALUES (?,?,?,?,?,?,?,?,'reserved',?)",
                       (key, run["id"], logical_call_id, encoded, account, price_id, amount, deadline, now))
+            if organization:
+                self.org_payers.record(t, key, org_policy)
             if payer_policy is not None:
                 self.payer_budgets.record(t, key, payer_policy)
             self._event(t, key, "reserved", "authorized_upper_bound")
@@ -430,7 +655,15 @@ class Ledger:
                     or attempt["status"] != "prepared" or attempt["lease_until"] <= self._now()
                     or call["status"] != "reserved" or call["cancel_requested"]):
                 raise BillingError("dispatch_fenced")
-            if self.payer_budgets is not None:
+            context = ChargeContext(**json.loads(call["context"]))
+            if self._frozen(t, call["account_id"]):
+                raise BillingError("wallet_frozen")
+            if context.payer_kind == "organization":
+                if self.org_payers is None:
+                    raise BillingError("organization_billing_not_configured")
+                policy = self.org_payers.check(t, call["account_id"], context, amount=0, at=self._now())
+                self._event(t, call["id"], "org_payer_checked", "grant:" + str(policy["grant_revision"]), ticket.attempt_key)
+            elif self.payer_budgets is not None:
                 policy = self.payer_budgets.check(t, call["account_id"], amount=0, at=self._now())
                 self._event(t, call["id"], "payer_budget_checked", "revision:" + str(policy["revision"]), ticket.attempt_key)
             # Sequential model gateways must check under this same writer lock. A read
@@ -617,6 +850,52 @@ class Ledger:
                                  "used": used, "held": held, "available": booked-held})
             return {"balances": balances, "used_through_seq": through}
 
+    def overview_for_payer(self, *, payer_kind: str, payer_id: str, units) -> dict:
+        """The same snapshot as overview_for_user for any payer. No requester check: the caller
+        has decided (current organization permission) that this reader may see this wallet."""
+        kind = self._payer_kind(payer_kind)
+        identifier(payer_id)
+        if (not isinstance(units, (tuple, list)) or not 1 <= len(units) <= 16
+                or any(not isinstance(unit, Unit) for unit in units)):
+            raise BillingError("invalid_unit")
+        with self._tx() as t:
+            self._expire(t)
+            balances, through = [], 0
+            for unit in units:
+                known = t.execute("SELECT scale FROM billing_units WHERE code=?", (unit.code,)).fetchone()
+                if not known or known[0] != unit.scale:
+                    raise BillingError("unit_scale_conflict")
+                account = t.execute("SELECT id FROM billing_accounts WHERE environment=? AND unit=? AND owner=? AND kind=?",
+                                    (self.environment, unit.code, payer_id, kind)).fetchone()
+                booked = held = used = 0
+                frozen = False
+                if account:
+                    booked, held = self._balance(t, account[0])
+                    frozen = self._frozen(t, account[0])
+                    through = max(through, t.execute("SELECT COALESCE(MAX(rowid),0) FROM billing_journal WHERE environment=? "
+                                                     "AND (debit_account=? OR credit_account=?)",
+                                                     (self.environment, account[0], account[0])).fetchone()[0])
+                    used = t.execute("SELECT COALESCE(SUM(amount),0) FROM billing_journal WHERE environment=? "
+                                     "AND debit_account=? AND kind='sale'", (self.environment, account[0])).fetchone()[0]
+                balances.append({"unit": unit.code, "scale": unit.scale, "booked": booked, "used": used,
+                                 "held": held, "available": booked - held, "frozen": frozen})
+            return {"balances": balances, "used_through_seq": through}
+
+    def statement_for_payer(self, *, payer_kind: str, payer_id: str, after_seq: int = 0, limit: int = 100) -> list[dict]:
+        """statement_for_user for any payer; the caller decided this reader may see it."""
+        kind = self._payer_kind(payer_kind)
+        identifier(payer_id)
+        integer(after_seq)
+        integer(limit, positive=True, maximum=500)
+        with self._tx() as t:
+            rows = t.execute("SELECT j.rowid AS seq,j.id,j.kind,j.unit,u.scale,j.created_at,"
+                             "CASE WHEN a.id=j.credit_account THEN j.amount ELSE -j.amount END AS delta "
+                             "FROM billing_journal j JOIN billing_accounts a ON a.id IN (j.debit_account,j.credit_account) "
+                             "JOIN billing_units u ON u.code=j.unit WHERE a.kind=? AND a.owner=? "
+                             "AND j.environment=? AND j.rowid>? ORDER BY j.rowid LIMIT ?",
+                             (kind, payer_id, self.environment, after_seq, limit)).fetchall()
+            return [dict(r) for r in rows]
+
     def statement_for_user(self, *, requester_user_id: str, payer_user_id: str,
                            after_seq: int = 0, limit: int = 100) -> list[dict]:
         """Allowlisted personal journal projection; no cost/evidence/delegation/workspace leak.
@@ -665,7 +944,7 @@ class Ledger:
                     if rebuild:
                         t.execute("INSERT INTO billing_balances VALUES (?,?) ON CONFLICT(account_id) DO UPDATE SET amount=excluded.amount",
                                   (account["id"], expected))
-                if account["kind"] == "wallet":
+                if account["kind"] in WALLET_KINDS:
                     held = t.execute("SELECT COALESCE(SUM(hold_units),0) FROM billing_calls WHERE account_id=? AND status='reserved'",
                                      (account["id"],)).fetchone()[0]
                     if expected < held:

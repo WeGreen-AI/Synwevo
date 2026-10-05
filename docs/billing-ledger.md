@@ -276,3 +276,33 @@ isolated six-file service change. Tool sessions for the completed first tests/ch
 OS-wide `ps` inspection was denied by the sandbox, so no system-wide process inventory is
 claimed. Final tests and checks also exited 0. Crash-test child processes were reaped by
 subprocess.run, no service was launched.
+
+## Grants, chargebacks and organization wallets (org-payments, 2026-10-05)
+
+Owner decisions (agent_deepseek_prompt §6.1): wallet currency CNY, a one-time CNY 1 welcome
+allowance, organizations may pay for members, **no refunds** (top-ups are final), disputes are
+still handled. The ledger gained exactly what those decisions need; there is no refund API.
+
+| Addition | Rule |
+|---|---|
+| Account kind `org_wallet` | An organization's wallet (owner = organization id). Same never-negative trigger as a person's `wallet`. |
+| Account kinds `grant`, `chargeback` | Platform accounts: the source of grants, the sink of recovered disputed units. |
+| Journal kind `grant` | `Ledger.grant(grant_id, kind, payer_kind, payer_id, unit, amount, reason, actor_id, abuse_key)`. `kind` is `welcome` (a person only, once per account **and** once per verified-address key, enforced by unique indexes) or `admin` (a named administrator). Reason 8–500 characters is mandatory; the immutable `billing_grants` row is the audit record (actor, reason, time). Idempotent by `grant_id`; changed facts conflict. |
+| Journal kind `chargeback` | `Ledger.record_chargeback(DisputeNotice)` through the mandatory `verify_dispute` callback (durable, signature-verified provider event). Takes back `ceil(credit_units × disputed / paid)` but never more than the wallet's available units (booked − active holds): the wallet never goes negative, the rest is `outstanding_units`. The wallet is frozen in the same transaction. Idempotent per dispute. |
+| `billing_account_freezes` | A frozen wallet cannot reserve (`wallet_frozen`) or cross the dispatch fence. `Ledger.lift_freeze(freeze_id, actor_id, reason)` is an administrator's audited decision; a lifted freeze cannot be edited again. |
+| `billing_orders.payer_kind/payer_org_id` | An order funds either the paying person (`user`, the default and every pre-existing order) or an organization (`organization`). |
+| `ChargeContext.payer_kind='organization'` + `organization_id` | The organization's wallet is reserved; the member stays payer and actor (no delegation). Admitted only through `Ledger.org_payers` (the organization's current grant and monthly limits, checked under the reservation and dispatch writer lock); without it the ledger refuses (`organization_billing_not_configured`). The shared contract's payer kind `user` is `personal` inside `ChargeContext` (pre-existing stored contexts). |
+| Projections | `overview_for_payer` / `statement_for_payer` serve organization wallets; the caller decides (current organization permission) who may read them. Statements show `grant` and `chargeback` beside `paid/test_payment/sale`. |
+
+Migration: SQLite cannot alter a CHECK, so `suite_schema.billing.rebuild` widens
+`billing_accounts.kind` and `billing_journal.kind` with the documented table rebuild
+(`synwevo_core.schema_widen`: foreign keys off, one `BEGIN IMMEDIATE`, copy rows unchanged,
+recreate indexes/triggers/views from their stored text, `foreign_key_check`, commit). It also
+replaces the journal trigger so organization wallets cannot go negative. It is idempotent and
+runs on every open; a fresh database is created wide and does nothing. Rollback: the previous
+release reads the rebuilt tables unchanged; it does not know the new kinds and its wallet page
+refuses a statement containing them rather than mislabelling them.
+
+Tests: `tests/integration/test_billing_grants_chargebacks.py` (grants, welcome uniqueness,
+dispute after spend, freeze/lift, organization wallet, and the upgrade of the previous
+release's exact table text with rows, balances, immutability and foreign keys kept).
