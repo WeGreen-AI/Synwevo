@@ -47,7 +47,8 @@ function tokensText(row: { tokens: CallRow['tokens'] }, locale: string, t: (s: s
  *  version, the tokens the provider reported, and what the ledger settled. */
 export function CallsTable({ items, organization, timezone }: { items: CallRow[]; organization: boolean; timezone: string }) {
   const { t, locale } = useI18n();
-  return <div className="tbl-wrap usage-calls"><table className="tbl">
+  // The table scrolls sideways on a phone: a focusable, named region so a keyboard can scroll it too.
+  return <div className="tbl-wrap usage-calls" tabIndex={0} role="region" aria-label={t('每次调用')}><table className="tbl">
       <caption className="sr-only">{t('每次调用的模型、时段、价格版本、token 构成、费用与结束原因')}</caption>
       <thead><tr><th scope="col">{t('时间')}</th><th scope="col">{t(organization ? '成员' : '对话')}</th><th scope="col">{t('模型与时段')}</th>
         <th scope="col">{t('Token')}</th><th scope="col">{t('费用')}</th><th scope="col">{t('状态')}</th><th scope="col">{t('结束原因与耗时')}</th></tr></thead>

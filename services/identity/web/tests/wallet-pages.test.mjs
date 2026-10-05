@@ -239,6 +239,8 @@ test('the calls table shows band, price version, token breakdown and settled cos
   for (const text of ['deepseek-flash', '低谷时段', 'price_fixture_v2', '1,200', '560', '120', '0.004321', '达到长度上限', '7 秒', 'Fixture conversation', '<caption', 'scope="col"'])
     assert.ok(personal.includes(text), `${text} in ${personal}`);
   assert.ok(personal.includes('时段未记录') && personal.includes('已删除的对话') && personal.includes('预留 '), 'unknown facts are named, not guessed');
+  // Seven columns scroll sideways on a 390px phone: the scroller is a named region a keyboard can focus and scroll.
+  assert.match(personal, /^<div class="tbl-wrap usage-calls" tabindex="0" role="region" aria-label="每次调用">/);
   const org = render(h(usage.CallsTable, { items: [{ ...row, conversation_id: null, conversation_title: undefined, member_user_id: 'u_m', member_name: 'Member Fixture' }], organization: true, timezone: 'UTC' }));
   assert.ok(org.includes('Member Fixture') && org.includes('>成员<') && !org.includes('>对话<'), org);
 });
