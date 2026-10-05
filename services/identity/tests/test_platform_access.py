@@ -71,6 +71,13 @@ ROUTES = [
     ("POST", "/api/admin/billing/prices/drafts/{draft_id}/calculate", "platform.config.view", False),
     ("POST", "/api/admin/billing/prices/drafts/{draft_id}/preview", "platform.config.manage", False),
     ("POST", "/api/admin/billing/prices/drafts/{draft_id}/publish", "platform.config.manage", True),
+    ("GET", "/api/admin/billing/prices/schedule", "platform.config.view", False),
+    ("GET", "/api/admin/billing/prices/schedule/history", "platform.config.view", False),
+    ("POST", "/api/admin/billing/prices/schedule/preview", "platform.config.manage", False),
+    ("POST", "/api/admin/billing/prices/schedule/publish", "platform.config.manage", True),
+    ("GET", "/api/admin/billing/prices/markups", "platform.config.view", False),
+    ("POST", "/api/admin/billing/prices/markups/preview", "platform.config.manage", False),
+    ("POST", "/api/admin/billing/prices/markups/publish", "platform.config.manage", True),
     ("GET", "/api/admin/billing/cost-policy", "platform.config.view", False),
     ("GET", "/api/admin/billing/cost-policy/history", "platform.config.view", False),
     ("GET", "/api/admin/billing/cost-policy/traffic", "platform.config.view", False),
@@ -110,6 +117,10 @@ PRICE_SPEC = {"name": "Permission matrix fixture", "purpose": "cost", "provider"
               "model": "fixture-route", "unit": {"code": "FIX_MATRIX", "scale": 6},
               "input_uncached": "1", "input_cached": "0.1", "output": "2",
               "terms_ref": "fixture:matrix", "effective_from": 0, "previous_price_id": None}
+# The provider's published peak windows and one synthetic holiday.
+CALENDAR_SPEC = {"peak_windows": [{"weekdays": [1, 2, 3, 4, 5], "start": "01:00", "end": "04:00"}],
+                 "holiday_utc_offset_minutes": 480, "holidays": [{"date": "2026-10-01", "name": "Fixture holiday"}],
+                 "source_ref": "fixture:matrix-calendar"}
 COST_SPEC = {"enabled": False, "unit": PRICE_SPEC["unit"], "daily_budget": "100",
              "weekly_budget": "100", "monthly_budget": "100", "unknown_budget": "0",
              "max_inflight": 1, "max_unknown": 1}
@@ -143,8 +154,8 @@ def world(tmp_path, monkeypatch):
     with store.tx():
         published, _ = catalogue.create(spec=PRICE_SPEC, actor_id=root["id"],
                                         idempotency_key="matrix_cost_fixture")
-        catalogue.publish(published["id"], expected_revision=1, actor_id=root["id"],
-                          operation_id="matrix_cost_publish", reason=REASON)
+        cost_price_id = catalogue.publish(published["id"], expected_revision=1, actor_id=root["id"],
+                                          operation_id="matrix_cost_publish", reason=REASON)["price_id"]
         draft, _ = catalogue.create(spec=PRICE_SPEC, actor_id=root["id"],
                                     idempotency_key="matrix_draft_fixture")
     plain = verified(store, ident, "plain@example.test")
@@ -161,7 +172,7 @@ def world(tmp_path, monkeypatch):
         return c
 
     w = {"api": api, "store": store, "ident": ident, "root": root, "plain": plain, "login": login,
-         "draft_id": draft["id"],
+         "draft_id": draft["id"], "cost_price_id": cost_price_id,
          "wid": ident.workspaces_for(plain["id"])[0]["id"]}
     yield w
     for c in clients:
@@ -202,7 +213,7 @@ def _path(template, w, *, legacy: str | None = None):
                            freeze_id="freeze_fixture_missing")
 
 
-def _call(client, method, path):
+def _call(client, method, path, w):
     if method == "GET":
         return client.get(path)
     if path.startswith(("/api/admin/billing/payments", "/api/admin/billing/grants", "/api/admin/billing/freezes")):
@@ -210,7 +221,12 @@ def _call(client, method, path):
         return client.request(method, path, json={"reason": REASON, "idempotency_key": "matrix_billing_admin_0001"},
                               headers={CSRF_HEADER: client.cookies.get(CSRF_COOKIE) or ""})
     if path.startswith("/api/admin/billing/"):
-        if path.endswith("/drafts"):
+        if "/prices/schedule/" in path:
+            body = {"expected_revision": 0, "spec": CALENDAR_SPEC}
+        elif "/prices/markups/" in path:
+            body = {"spec": {"name": "Permission matrix fixture", "cost_price_id": w["cost_price_id"], "markup": "1.5",
+                             "off_peak_markup": None, "terms_ref": "fixture:matrix", "effective_from": 0}}
+        elif path.endswith("/drafts"):
             body = {"spec": PRICE_SPEC, "idempotency_key": "matrix_http_draft"}
         elif "/prices/drafts/" in path:
             body = {"expected_revision": 1}
@@ -266,7 +282,7 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
     c = world["login"](holder(world, role))
     for method, template, permission, dangerous in ROUTES:
         path = _path(template, world, legacy=LEGACY_WID)
-        r = _call(c, method, path)
+        r = _call(c, method, path, world)
         if permission is not None and permission not in ROLES[role]:
             assert r.status_code == 403 and r.json()["error"] == "platform_permission_denied", (role, method, path, r.text)
             assert r.json()["detail"]["permission"] == permission
@@ -308,7 +324,7 @@ def test_no_platform_permission_sees_404_everywhere_including_owners_and_workspa
     for who in (world["plain"], owner, ws_admin):
         c = world["login"](who)
         for method, template, _, _ in ROUTES:
-            r = _call(c, method, _path(template, world))
+            r = _call(c, method, _path(template, world), world)
             assert r.status_code == 404 and r.json()["error"] == "not_found", (who["email"], template, r.text)
         assert c.get(CONSOLE_GET).status_code == 404
         assert post(c, CONSOLE_POST, {"reason": REASON}).status_code == 404

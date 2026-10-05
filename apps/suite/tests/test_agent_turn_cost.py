@@ -36,7 +36,7 @@ def test_settled_answer_carries_its_ledger_charge_and_settled_tokens(governed):
     assert sale > 0
     assert cost == {'charged_minor': str(sale), 'currency': 'FIXFACT', 'scale': 6,
                     'tokens': {'input_cached': 5, 'input_uncached': 8, 'output': 7, 'reasoning': 3},
-                    'model': 'fixture-model', 'band': None, 'state': 'settled', 'held_minor': '0',
+                    'model': 'fixture-model', 'band': 'flat', 'state': 'settled', 'held_minor': '0',
                     'payer': {'kind': 'user', 'id': g.user['id']}}
     text = json.dumps(cost)
     for private in ('fixture-upstream', 'fixture:cost', 'fixture-route', KEY_HINT):

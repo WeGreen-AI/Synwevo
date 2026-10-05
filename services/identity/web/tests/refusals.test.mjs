@@ -61,6 +61,8 @@ const SERVER = [
   { file: ID + "org_billing_routes.py", surfaces: ["org"] },
   { file: CORE + "billing/payment_settings.py", surfaces: ["admin"] },
   { file: CORE + "billing/catalogue.py", surfaces: ["admin"] },
+  // peak windows and holiday calendar: only the Admin model-prices tab edits them
+  { file: CORE + "billing/bands.py", surfaces: ["admin"] },
   { file: CORE + "billing/cost_settings.py", surfaces: ["admin"] },
   { file: CORE + "billing/provider_settings.py", surfaces: ["admin"] },
   { file: ID + "admin_handover.py", surfaces: ["account", "admin"] },
@@ -445,6 +447,7 @@ test("every model-provider refusal has a specific, translated code-only default 
     model_route_expired: 'Model route verification has expired. Verify the route again.',
     model_price_unavailable: 'First publish sale and cost prices in the same environment.',
     model_price_mismatch: 'The model route does not match the effective prices. Select matching prices.',
+    model_price_markup_basis: 'This sale price was derived from a different cost price. Select the cost price it was marked up from.',
     model_cost_policy_required: 'Check that the model cost budget is enabled and uses the same unit as the cost price.',
     model_no_change: 'The model configuration has not changed. No publication is needed.',
     model_bad_page: 'Invalid model configuration history pagination parameters.',

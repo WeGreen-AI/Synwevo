@@ -129,8 +129,10 @@ def model_call(env: Env, who: str, cid: str, model: str, *, at: int | None = Non
                                             cost_price_id=COST[model].price_id, requested_model=model)
         env.ledger.dispatch(ticket)
         if usage is not None:
+            # The provider meters the call 7 s after dispatch; the ledger pins that as completed_at.
+            env.ledger.clock = lambda: now + 7
             env.ledger.settle_trusted_usage(ticket.attempt_key, UsageEvidence(
-                "fixture-provider", "fixture-request-" + turn, PRIVATE_EVIDENCE, usage, model, "fixture-cap", now))
+                "fixture-provider", "fixture-request-" + turn, PRIVATE_EVIDENCE, usage, model, "fixture-cap", now + 7))
             if finish is not None:
                 metered = "mc-" + turn
                 with env.store.tx() as t:

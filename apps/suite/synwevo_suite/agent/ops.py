@@ -114,6 +114,8 @@ class ModelTerms(_In):
     price_id: str
     unit: MoneyUnit
     rates: TokenRates
+    # A time-banded tariff: ``rates`` are its peak (highest, held) rates; these apply off-peak.
+    off_peak_rates: TokenRates | None = None
     per_tokens: int = F(strict=True, ge=1)
     terms_ref: str
     per_call_hold: str = F(pattern=r"^[0-9]+$")

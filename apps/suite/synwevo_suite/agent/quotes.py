@@ -17,7 +17,7 @@ from synwevo_core.billing import BillingError, ChargeContext
 from synwevo_core.billing.models import integer
 from synwevo_core.store import new_id
 
-from .consents import ModelConsents
+from .consents import ModelConsents, off_peak_rates
 from .gateway import Route, _json
 
 
@@ -55,7 +55,7 @@ class RunQuotes:
                 "price_id": sale.price_id, "unit": raw["unit"], "terms_ref": sale.terms_ref,
                 "rates": {key: {"numerator": str(raw[key]["numerator"]), "denominator": str(raw[key]["denominator"])}
                           for key in ("input_uncached", "input_cached", "output")},
-                "per_tokens": sale.per_tokens, "per_call_hold": str(self.gateway.upper_bound(route, sale)),
+                "off_peak_rates": off_peak_rates(raw), "per_tokens": sale.per_tokens, "per_call_hold": str(self.gateway.upper_bound(route, sale)),
                 "max_calls_limit": 12, "run_seconds_limit": min(3600, route.valid_until - self.ledger._now())}
 
     @staticmethod
@@ -113,7 +113,8 @@ class RunQuotes:
             if outstanding >= 100:
                 raise BillingError("quote_limit_exceeded")
             quote_id = new_id("quote")
-            terms = {"route": asdict(route), "sale": asdict(sale), "budget": budget,
+            # Flat prices keep the pre-band term shape, so existing consents stay comparable.
+            terms = {"route": asdict(route), "sale": sale.to_dict(), "budget": budget,
                      "max_calls": max_calls, "deadline": deadline, "per_call_hold": hold, "payer": payer}
             self.store.execute("INSERT INTO agent_model_quotes(id,environment,namespace,user_id,conversation_id,"
                 "binding_digest,scope_json,terms_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -139,7 +140,7 @@ class RunQuotes:
         return {"id": row["id"], "environment": row["environment"], "payer_user_id": user_id,
                 "conversation_id": row["conversation_id"], "model": route["requested_model"],
                 "confirmed_route": route["confirmed_route"], "route_version": route["version"],
-                "price_id": sale["price_id"], "unit": sale["unit"], "rates": rates,
+                "price_id": sale["price_id"], "unit": sale["unit"], "rates": rates, "off_peak_rates": off_peak_rates(sale),
                 "per_tokens": sale["per_tokens"], "terms_ref": sale["terms_ref"],
                 "budget": str(terms["budget"]), "per_call_hold": str(terms["per_call_hold"]),
                 "max_calls": terms["max_calls"], "deadline": terms["deadline"],

@@ -73,7 +73,8 @@ def test_no_seed_quote_preserves_money_precision_and_published_price_is_ledger_s
     body = {"expected_revision": 1, "input_uncached": 1000, "input_cached": 1000, "output": 1000}
     quote = post(w["admin"], BASE + f"/drafts/{draft['id']}/calculate", body).json()
     assert quote == {"unit": {"code": "FIX_UNIT", "scale": 6}, "exact": {"numerator": "1506", "denominator": "1"},
-                     "display_amount": "0.001506", "charge_units_if_no_prior_remainder": "1506", "per_tokens": 1000000}
+                     "display_amount": "0.001506", "charge_units_if_no_prior_remainder": "1506", "per_tokens": 1000000,
+                     "bands": None}  # A flat (single-rate) draft has no peak/off-peak breakdown.
     plan = preview(w, draft)
     assert plan["draft"] == draft and plan["environment"] == "test"
     assert not w["store"].all("SELECT * FROM billing_prices")

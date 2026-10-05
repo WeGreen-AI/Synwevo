@@ -123,6 +123,7 @@ export const REFUSAL_SOURCES: Record<string, string> = {
   model_route_expired: "模型路线核实已过期，请重新核实",
   model_price_unavailable: "请先发布同一环境的销售价格与成本价格",
   model_price_mismatch: "模型路线与已生效价格不匹配，请重新选择",
+  model_price_markup_basis: "销售价由另一成本价加价生成，请选择与之对应的成本价",
   model_cost_policy_required: "请检查模型成本预算已启用，并与成本价格的单位一致。",
   cost_traffic_invalid: "速率与排队设置无效：付款人上限不能高于平台上限，排队上限须在总上限内",
   model_no_change: "模型配置未发生变化，无需提交",
