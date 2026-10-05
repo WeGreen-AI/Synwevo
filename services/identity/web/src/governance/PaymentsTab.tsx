@@ -1,6 +1,6 @@
 import { useId, useRef, useState, type FormEvent } from "react";
 import { post } from "@synwevo/auth-client";
-import { useI18n } from "@synwevo/ui";
+import { fmtTime, useI18n } from "@synwevo/ui";
 import { ActionDialog } from "./ActionDialog";
 import { useAdminData } from "./data";
 import { fenText, parseYuan, yuanInput } from "./billing-money";
@@ -22,10 +22,14 @@ type Spec = { enabled: boolean; operator_name: string; packages: Package[]; cust
   min_amount_minor: number; max_amount_minor: number; velocity: Velocity };
 type State = { environment: "test" | "live" | null; revision: number; spec: Spec | null; credential_configured: boolean;
   status: "configured" | "unconfigured"; wallet_unit: { code: string; scale: number } | null;
-  webhook_url: string; webhook_events: string[]; created_at: number | null; reason: string | null };
+  webhook_url: string; webhook_events: string[]; created_at: number | null; reason: string | null;
+  /** Top-up checkouts that can still be paid; revoking the keys would strand them (payments-1). */
+  open_checkouts?: { count: number; until: number | null } };
 type Row = { id: string; yuan: string; label: string };
 type Form = { enabled: boolean; operator: string; packages: Row[]; custom: boolean; min: string; max: string;
-  perHour: string; perDay: string; pending: string; dayAmount: string; credential: "keep" | "replace" | "revoke" };
+  perHour: string; perDay: string; pending: string; dayAmount: string; credential: "keep" | "replace" | "revoke";
+  /** Revoke although checkouts are still open: an explicit, audited decision. */
+  override?: boolean };
 
 const API = "/api/admin/billing/payments";
 const DEFAULT_FORM: Form = { enabled: false, operator: "", packages: [{ id: "", yuan: "", label: "" }], custom: false,
@@ -163,6 +167,13 @@ export function PaymentsTab({ onDenied, canManage }: { onDenied: () => void; can
           <input type="radio" name={`${id}-cred`} checked={current.credential === action}
             disabled={action !== "replace" && !state.credential_configured} onChange={() => set({ credential: action })} />
           {t(action === "keep" ? "保留当前密钥" : action === "replace" ? "设置或轮换密钥" : "撤销密钥（充值随即关闭）")}</label>)}
+        {current.credential === "revoke" && !!state.open_checkouts?.count && <div className="notice warn col gap8" role="note" id={`${id}-open`}>
+          <p style={{ margin: 0 }}>{t("仍有 {n} 个未到期的充值收银台（最晚 {time} 到期）。撤销密钥会删除 Webhook 签名密钥，此后在这些收银台完成的付款无法验证、无法自动入账。建议先关闭充值并保留密钥，等它们到期后再撤销。",
+            { n: state.open_checkouts.count, time: state.open_checkouts.until ? fmtTime(state.open_checkouts.until) : "—" })}</p>
+          <label className="row gap8"><input type="checkbox" checked={!!current.override} aria-describedby={`${id}-open`}
+            onChange={(e) => set({ override: e.target.checked })} />
+            {t("仍要立即撤销（例如签名密钥已泄露）；这些付款需要人工核对")}</label>
+        </div>}
         {current.credential === "replace" && <>
           <p className="muted small">{t(live ? "正式环境只接受正式模式密钥（sk_live_ 或 rk_live_）。" : "测试环境只接受测试模式密钥（sk_test_ 或 rk_test_）。")}</p>
           <label className="col gap4">{t("Stripe 密钥")}
@@ -184,11 +195,13 @@ export function PaymentsTab({ onDenied, canManage }: { onDenied: () => void; can
         min: fenText(state.spec.min_amount_minor, locale), max: fenText(state.spec.max_amount_minor, locale) })}</p>}
     </section>}
     {confirming && <ActionDialog title={t("发布支付设置")} confirmLabel={t("发布")} danger={live} reason="required"
-      impact={<p>{t(confirming.enabled ? "发布后，用户可以按这些套餐和限制向钱包充值。" : "发布后，钱包充值关闭；已发起的付款仍会在支付通知到达后入账。")}</p>}
+      impact={current.credential === "revoke" && current.override && !!state.open_checkouts?.count
+        ? <p className="notice warn">{t("撤销后，{n} 个未到期收银台中完成的付款无法自动入账，需要人工核对。", { n: state.open_checkouts.count })}</p>
+        : <p>{t(confirming.enabled ? "发布后，用户可以按这些套餐和限制向钱包充值。" : "发布后，钱包充值关闭；已发起的付款仍会在支付通知到达后入账。")}</p>}
       run={async (reason) => {
         const credential = current.credential === "replace"
           ? { action: "replace", secret_key: secretKey.current?.value || "", webhook_secret: webhookSecret.current?.value || "" }
-          : { action: current.credential };
+          : { action: current.credential, ...(current.credential === "revoke" && current.override ? { override_open_checkouts: true } : {}) };
         // A retry after the identity confirmation sends the same inputs; they are emptied when
         // the dialog closes or the publication succeeds.
         return await post(`${API}/publish`, { expected_revision: state.revision, spec: confirming, credential, reason,

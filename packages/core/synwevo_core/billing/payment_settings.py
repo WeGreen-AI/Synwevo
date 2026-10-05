@@ -95,6 +95,10 @@ class CredentialChange(Strict):
     action: Literal["keep", "replace", "revoke"]
     secret_key: SecretStr | None = Field(default=None, repr=False)
     webhook_secret: SecretStr | None = Field(default=None, repr=False)
+    # Revoke even though top-up checkouts opened under these keys can still be paid: those
+    # payments can then no longer be verified or credited automatically (review payments-1).
+    # Only for revoke; an explicit, audited decision (e.g. the signing secret itself leaked).
+    override_open_checkouts: bool = False
 
     @model_validator(mode="after")
     def present(self):
@@ -103,6 +107,8 @@ class CredentialChange(Strict):
                 raise ValueError("both secrets required")
         elif self.secret_key is not None or self.webhook_secret is not None:
             raise ValueError("unexpected secret")
+        if self.override_open_checkouts and self.action != "revoke":
+            raise ValueError("override only for revoke")
         return self
 
     def check(self, environment: str) -> None:
@@ -116,7 +122,8 @@ class CredentialChange(Strict):
     def commitment(self) -> dict:
         def digest(value):
             return hashlib.sha256(value.get_secret_value().encode()).hexdigest() if value is not None else None
-        return {"action": self.action, "secret_key": digest(self.secret_key), "webhook_secret": digest(self.webhook_secret)}
+        return {"action": self.action, "secret_key": digest(self.secret_key), "webhook_secret": digest(self.webhook_secret),
+                **({"override_open_checkouts": True} if self.override_open_checkouts else {})}
 
 
 @dataclass(frozen=True)
@@ -165,6 +172,13 @@ class PaymentSettings:
                                  (self.environment, revision))
         return self._record(row)
 
+    def open_checkouts(self) -> dict:
+        """Top-up checkouts that can still be paid (not yet expired): their payments are verified
+        with the current webhook signing secret. ``until`` is when the last of them expires."""
+        row = self.store.one("SELECT COUNT(*) AS n, MAX(expires_at) AS until FROM payment_topups WHERE environment=? "
+                             "AND status IN ('creating','pending') AND expires_at>?", (self.environment, self.clock()))
+        return {"count": row["n"], "until": row["until"] if row["n"] else None}
+
     def plan(self, spec, credential, *, expected_revision):
         if type(expected_revision) is not int or not 0 <= expected_revision < 2**63 - 1:
             raise ServiceError(400, "payment_bad_revision", "支付配置版本无效，请重新读取")
@@ -173,6 +187,14 @@ class PaymentSettings:
         before = self.read()
         if before["revision"] != expected_revision:
             raise ServiceError(409, "payment_revision_conflict", "支付配置已变化，请保留输入并重新读取")
+        if credential.action == "revoke" and not credential.override_open_checkouts:
+            # Revoking deletes the webhook signing secret: a customer who then pays a checkout that
+            # is still open is charged but can never be credited. Close top-ups (keep the keys)
+            # and revoke once they expired (at most CHECKOUT_TTL_S), or override explicitly.
+            still_open = self.open_checkouts()
+            if still_open["count"]:
+                raise ServiceError(409, "payment_revoke_open_checkouts", "仍有未到期的充值收银台：撤销密钥后，在这些收银台完成的付款将无法验证、无法入账。请先关闭充值并保留密钥，等它们到期后再撤销；确需立即撤销请明确确认",
+                                   {"open_checkouts": still_open["count"], "open_until": still_open["until"]})
         present = before["credential_configured"] if credential.action == "keep" else credential.action == "replace"
         if spec.enabled and not present:
             raise ServiceError(409, "payment_credential_required", "开启充值前请先配置支付密钥与 Webhook 签名密钥")

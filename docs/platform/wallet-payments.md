@@ -72,6 +72,20 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
   min(2^尝试次数 分钟, 1 天) 再试，总共最多 12 次（约等于 Stripe 自己三天的重试窗口），之后保持“失败”供管理员处理
   （财务视图计数）并提醒一次。
 
+### 撤销密钥与未到期的收银台（复审 payments-1，2026-10-05）
+
+撤销会删除 Webhook 签名密钥，此后任何支付通知都无法验证。若这时还有未到期的收银台（`creating`/`pending` 且
+`expires_at` 未到，最长 `CHECKOUT_TTL_S` = 1 小时），顾客在那里完成付款会被扣款却永远不能入账。因此：
+
+- 仍有这样的收银台时，`revoke` 被拒绝（409 `payment_revoke_open_checkouts`，附 `open_checkouts` 数量与最晚到期时间
+  `open_until`）。`GET /payments` 的 `open_checkouts` 让设置页在选择撤销时就显示这一提醒。
+- 推荐做法：先发布“关闭充值、保留密钥”（随时可以），等收银台到期后再撤销；关闭期间付款照常入账。
+- 确需立即撤销（例如签名密钥本身已泄露，继续验证反而会接受伪造通知）时，管理员必须明确勾选
+  `override_open_checkouts`；审计记录 `override_open_checkouts` 与当时的未到期数量，这些付款需要人工核对。
+
+为什么不在撤销后继续保留旧签名密钥验证到期前的通知：撤销最常见的原因正是怀疑密钥泄露；保留泄露的签名密钥会让
+伪造的“已付款”通知在窗口内入账。拒绝 + 明确覆盖让默认路径不伤害顾客，紧急路径由管理员知情决定。
+
 ## 4. 平台权限与财务视图
 
 新增平台权限 `platform.billing.view`（查看）与 `platform.billing.manage`（支付设置、赠送、解除冻结），只属于最高管理员
@@ -81,7 +95,7 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
 | 接口（前缀 `/api/admin/billing`） | 权限 | 说明 |
 |---|---|---|
 | `GET /payments` | view | 支付设置状态、Webhook 地址与事件列表；不含密钥 |
-| `POST /payments/publish` | manage，危险操作 | 版本化发布；理由必填、幂等、审计；可替换/撤销密钥 |
+| `POST /payments/publish` | manage，危险操作 | 版本化发布；理由必填、幂等、审计；可替换/撤销密钥（仍有未到期收银台时撤销被拒绝，见下） |
 | `GET /finance` | view | 已入账充值、赠送（欢迎/管理员）、拒付与冻结、支付通知失败数、未使用余额 |
 | `POST /grants` | manage，危险操作 | 赠送（`grant` 分录，理由必填、幂等、审计），个人按邮箱、组织按 ID，单次最多 10000 元 |
 | `POST /freezes/{id}/lift` | manage，危险操作 | 解除拒付冻结，理由必填、审计 |
