@@ -220,13 +220,27 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
   path the step is recorded as platform cost, never sold.
 * **Records.** A stop is stored as rule id/version, direction and length — never text.
   `agent.message.report` files a report on an answer; its text is attached only when the person
-  sets `include_excerpt`. In the chat every finished answer with text has a "Report" control
+  sets `include_excerpt`, and only while the answer is visible to them: an answer hidden after an
+  access change can be reported bare, never quoted (409 `report_excerpt_hidden`, the engine's
+  `message_hidden`). In the chat every finished answer with text has a "Report" control
   (`ReportDialog.tsx`): a reason (harmful, illegal, privacy, wrong, other), an optional note
   (≤ 1000 characters) and an "attach this answer's text" box that is off by default; it ends
   "sent" (saying whether the text went with it), "already reported" (`report_exists`, not a
-  failure) or "not sent" with the reason and a retry of the same request. Administrators (`platform.users.*`) close reports and suspend or
+  failure) or "not sent" with the reason and a retry of the same request. Administrators
+  (`platform.users.*`) close reports and suspend or
   restore a person's Agent access with a reason: 403 `agent_access_suspended`, running turns are
   cancelled, journalled `agent_access_suspended`.
+* **Withdrawals survive a restore.** The consent withdrawal, the suspension, a workspace AI-policy
+  narrowing (`ai_policy_narrowed`), a withdrawn platform model key (`model_credential_withdrawn`) and
+  a provider switch-off (`model_provider_disabled`) are journalled before their transaction commits,
+  so a backup can land between the line and the COMMIT. A restore therefore replays them whatever
+  the backup's time (`journal.ALWAYS_REPLAYED`), and each replay keeps what the backup already holds
+  after it: a suspension by id (a lifted one stays lifted), a consent withdrawal as of its time (a
+  later consent stands), the key withdrawal and switch-off by the operation id of the provider
+  version that committed with them, the policy narrowing by a receipt committed with it; a replay
+  leaves its own receipt, so a key published later under a reused revision number survives the
+  next restore (`apps/suite/tests/test_agent_withdrawal_restore.py`,
+  `services/identity/tests/test_model_withdrawal_journal.py`).
 * **Terms.** A paid run records the terms / AI use / pricing versions in force once per version
   (`synwevo_core/terms.py`). The chat's cost dialog says so before the confirmation (its confirm
   buttons are described by that sentence) and links the three pages on the public site: the
@@ -235,7 +249,14 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
   single-host install without a separate site the path stays on the same host. The data-sharing
   consent's privacy and AI-use links use the same origin; the account export lists them, together with the Agent's visible
   conversation text, memories, settings, consents, quotes and the wallet statement
-  (`synwevo_core/agent_records.py`); account deletion erases the Agent's content.
+  (`synwevo_core/agent_records.py`); account deletion erases the Agent's content, including the
+  copies in the capability layer's run records (`op_runs` of app `agent` keep only their receipt:
+  who, which operation, when, state, error code, object id). The export never
+  carries a text the Agent may hide: the engine's hide rule re-reads sources through the business
+  applications, which the account service cannot run, so an answer keeps its text only when it
+  depends on no workspace or only on "reported by" sources in workspaces the person still belongs
+  to; any other answer is exported `hidden` with an empty body (`hidden_notice` says why and points
+  to the conversation), and a report's quote follows its answer.
 
 ## Verification and remaining gates
 

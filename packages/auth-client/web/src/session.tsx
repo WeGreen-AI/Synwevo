@@ -78,6 +78,9 @@ export interface AuthState {
   /** True when passkeys registered under a previous domain exist in this deployment: a "no passkey
    *  for this site" result then deserves an explanation and the way to re-register. */
   passkeys_elsewhere?: boolean;
+  /** Whether this deployment offers the paid Agent wallet (billing environment and wallet units
+   *  configured). Deployment-wide; the account shells draw their wallet entries only when true. */
+  wallet_offered?: boolean;
 }
 
 interface Ctx {

@@ -18,14 +18,25 @@ This helper is that procedure and nothing else:
 * Indexes and triggers on the table, and every trigger or view elsewhere whose text names it,
   are recreated from their stored text after the rename (dependent ones are dropped first, so
   the rename cannot fail on a dangling reference).
+* Rows keep their rowid (the ledger journal's rowid is the wallet statement's stable cursor).
+* The foreign-key check covers what a rebuild can break and nothing else: the rebuilt tables and
+  every table whose foreign keys reference one of them, compared with the same check taken under
+  the write lock before the rebuild. Only a violation the rebuild added refuses it (naming the
+  tables). A violation already in the database — anywhere, e.g. a row an out-of-band fix with
+  foreign keys off left behind — is not this migration's to judge: it is left exactly as it was
+  and logged by table and count (never row content), and the start goes on.
 * ``PRAGMA foreign_keys`` cannot change inside a transaction, so the caller's connection must
   not be in one; the previous setting is restored afterwards, also on failure.
 """
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
+
+_log = logging.getLogger("synwevo.schema_widen")
 
 
 def _stored(c: sqlite3.Connection, table: str) -> str | None:
@@ -51,6 +62,29 @@ def pending(c: sqlite3.Connection, changes: Mapping[str, Sequence[tuple[str, str
     return list(_pending(c, changes))
 
 
+def _fk_scope(c: sqlite3.Connection, tables) -> list[str]:
+    """``tables`` (those that exist) and every table whose foreign keys reference one of them."""
+    wanted = {t.lower() for t in tables}
+    scope = []
+    for (name,) in c.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall():
+        if name.lower() in wanted or any(
+                fk[2].lower() in wanted for fk in c.execute(f'PRAGMA foreign_key_list("{name}")').fetchall()):
+            scope.append(name)
+    return scope
+
+
+def _fk_violations(c: sqlite3.Connection, scope: Sequence[str], tables) -> Counter:
+    """(child table, parent table) -> rows violating a foreign key, for the keys a rebuild of
+    ``tables`` can affect: every key of a rebuilt table, and every key that points at one."""
+    wanted = {t.lower() for t in tables}
+    found: Counter = Counter()
+    for table in scope:
+        for child, _rowid, parent, _fk in c.execute(f'PRAGMA foreign_key_check("{table}")').fetchall():
+            if child.lower() in wanted or parent.lower() in wanted:
+                found[(child, parent)] += 1
+    return found
+
+
 def widen_checks(c: sqlite3.Connection, changes: Mapping[str, Sequence[tuple[str, str]]], *,
                  extra: Callable[[sqlite3.Connection], None] | None = None, force: bool = False) -> list[str]:
     """Rebuild each table in ``changes`` with its (old, new) clause replacements applied.
@@ -69,6 +103,10 @@ def widen_checks(c: sqlite3.Connection, changes: Mapping[str, Sequence[tuple[str
         c.execute("BEGIN IMMEDIATE")
         try:
             todo = _pending(c, changes)                       # again, under the write lock
+            # What the foreign-key check judges: the tables of ``changes`` (also when only
+            # ``extra`` runs) and their referencing tables, before anything changes.
+            scope = _fk_scope(c, changes)
+            before = _fk_violations(c, scope, changes)
             saved: dict[str, tuple[str, str]] = {}
             for table in todo:
                 pattern = re.compile(r"\b" + re.escape(table) + r"\b")
@@ -98,6 +136,8 @@ def widen_checks(c: sqlite3.Connection, changes: Mapping[str, Sequence[tuple[str
                 c.execute(f'DROP TABLE IF EXISTS "{staging}"')
                 c.execute(f'CREATE TABLE "{staging}" (' + sql[head.end():])
                 columns = ",".join(f'"{r[1]}"' for r in c.execute(f'PRAGMA table_info("{table}")').fetchall())
+                if not re.search(r"\)\s*WITHOUT\s+ROWID\s*$", sql, re.IGNORECASE):
+                    columns = "rowid," + columns              # keep each row's rowid
                 c.execute(f'INSERT INTO "{staging}" ({columns}) SELECT {columns} FROM "{table}"')
                 c.execute(f'DROP TABLE "{table}"')
                 # Legacy rename: no re-parse of every other trigger and view in the schema. A
@@ -118,9 +158,13 @@ def widen_checks(c: sqlite3.Connection, changes: Mapping[str, Sequence[tuple[str
                     c.execute(sql)
             if extra is not None:
                 extra(c)
-            problems = c.execute("PRAGMA foreign_key_check").fetchall()
-            if problems:
-                raise RuntimeError("schema widening left foreign key violations")
+            after = _fk_violations(c, _fk_scope(c, changes), changes)
+            added = sorted({child for (child, parent), n in after.items() if n > before[(child, parent)]})
+            if added:
+                raise RuntimeError("schema widening would add foreign key violations in " + ", ".join(added))
+            if before:
+                _log.warning("schema widening kept foreign key violations that were already in the database: %s",
+                             ", ".join(f"{child} -> {parent}: {n}" for (child, parent), n in sorted(before.items())))
             c.execute("COMMIT")
             return rebuilt
         except BaseException:

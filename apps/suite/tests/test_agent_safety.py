@@ -370,6 +370,32 @@ def test_reporting_an_answer_shares_its_text_only_by_choice(agent):
     assert other.status_code == 404
 
 
+def test_an_answer_hidden_after_an_access_change_cannot_be_copied_into_a_report(agent):
+    """The Agent hides an answer once the person lost access to a workspace it read; a report
+    must not carry that text to the platform's reviewers either (it may still be filed bare)."""
+    p = agent.people
+    agent.sign_in("alice")
+    _consent(agent)
+    agent.agent.provider = DisclosedModel([
+        call("run_operation", {"operation": "forms.form.list", "workspace_id": p.b, "input": {}}),
+        lambda msgs: say("fixture answer built from workspace B"),
+    ])
+    conv = op(agent, "agent.conversation.create", {})["output"]["id"]
+    r = agent.post("/api/suite/ops/agent.turn.start", json={"input": {"conversation_id": conv, "text": "B?"}}, headers=CSRF)
+    assert wait_turn(p.store, r.json()["output"]["turn_id"]) == "succeeded"
+    mid = r.json()["output"]["assistant_message_id"]
+    p.store.execute("DELETE FROM memberships WHERE workspace_id=? AND user_id=?", (p.b, p.uid("alice")))
+    shown = [m for m in op(agent, "agent.conversation.get", {"conversation_id": conv})["output"]["messages"] if m["id"] == mid]
+    assert shown[0]["hidden"] is True
+    refused = agent.post("/api/suite/ops/agent.message.report", headers=CSRF, json={"input": {
+        "conversation_id": conv, "message_id": mid, "category": "wrong", "include_excerpt": True}})
+    assert refused.status_code == 409 and refused.json()["error"] == "report_excerpt_hidden"
+    assert p.store.one("SELECT COUNT(*) AS n FROM agent_message_reports")["n"] == 0
+    out = op(agent, "agent.message.report", {"conversation_id": conv, "message_id": mid, "category": "wrong"})["output"]
+    assert out["included_excerpt"] is False
+    assert "workspace B" not in json.dumps(p.store.all("SELECT * FROM agent_message_reports"))
+
+
 # ------------------------------------------------------------------ DeepSeek wire
 def test_deepseek_content_filter_finish_is_named_on_the_step():
     from .test_deepseek import complete, run
@@ -420,7 +446,8 @@ def test_a_restore_cannot_reopen_a_workspace_to_the_model(agent):
     op(agent, "agent.workspace_policy.set", {"processing": "platform", "providers": ["anthropic"]}, ws=a)
     entries = narrowed()
     assert [(e["processing"], e["providers"]) for e in entries] == [("platform", ["anthropic"])]
-    # A backup from before the narrowing.
+    # A backup from before the narrowing: neither the narrower policy nor the receipt that committed with it.
+    store.execute("DELETE FROM meta WHERE key=?", ("ai_policy_narrowed:" + entries[0]["event_id"],))
     store.execute("UPDATE agent_workspace_policies SET processing='any' WHERE workspace_id=?", (a,))
     store.execute("UPDATE agent_workspace_model_providers SET providers_json='[\"anthropic\",\"deepseek\"]' WHERE workspace_id=?", (a,))
     assert journal.apply(store, entries)["ai_policy_narrowed"] == 1

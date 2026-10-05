@@ -125,20 +125,25 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
 
 | 接口（前缀 `/api/auth/organizations/{oid}/billing`） | 说明 |
 |---|---|
-| `GET` | 组织钱包、每位成员的授权（是否允许、每月额度、本月已用与预留）、每个工作空间的可选每月额度 |
+| `GET` | 组织钱包、每位成员的授权（是否允许、每月额度、本月已用与预留） |
 | `PUT /members/{uid}` | `{enabled, monthly_limit_minor, expected_revision}`：允许某成员用组织付费；版本冲突返回 409 |
-| `PUT /workspaces/{wid}` | `{monthly_limit_minor 或 null, expected_revision}`：工作空间每月额度（null 为不限） |
-| `GET /statement` | 组织钱包流水；每笔消费标明是哪位成员、哪个工作空间（只有金额与元数据） |
+| `GET /statement` | 组织钱包流水；每笔消费标明是哪位成员（只有金额与元数据） |
 
 成员在对话中选择付款方（`GET /api/suite/agent/payers`，个人默认在第一位）。额度按 UTC 自然月计算，已结算消费加进行中
-预留不得超过成员额度与工作空间额度；撤回授权、成员离开、组织冻结或删除都会在下一次预留与下一次发送前生效。所有变更
-写审计（`org.billing.member_grant`、`org.billing.workspace_limit`）。
+预留不得超过成员额度；撤回授权、成员离开、组织冻结或删除都会在下一次预留与下一次发送前生效。所有变更写审计
+（`org.billing.member_grant`）。
+
+**暂不提供按工作空间的每月额度**（§6.1 要求的“按空间额度”仍未完成）。账本可以按调用所归属的工作空间限额
+（`OrgPayers.check` 读 `ChargeContext.workspace_id`），但组织付费的 Agent 运行还没有归属工作空间：一次对话可以进入此人
+所在的任何工作空间，成员自报的工作空间拦不住在另一个空间里干活的调用。这样的额度不会生效，所以接口不接受、页面不显示
+（2026-10-05 评审 money-3/authz-3）。要提供它，须先让组织付费的运行在报价时固定一个工作空间，并把整次运行（每次工具调用、
+复制到其他空间、运行中修改范围、持续付款授权、恢复重放）都限制在该空间内，再在每次预留时按它核对。
 
 **页面**：组织详情页的「组织付费」区（`services/identity/web/src/pages/org/OrganizationBilling.tsx`）只对持有
 `org.billing.manage` 的人显示：组织钱包可用/冻结金额与拒付冻结标记；为组织钱包充值（与个人充值同一套服务端定价、
 Turnstile 与限频，`payer_kind=organization`，只跳转到 Stripe 托管收银台）；从收银台返回组织页后轮询订单状态
 （先快后慢，2 分钟后停止并提供“再次查看”），只有服务端报告 `paid` 才显示“已到账”与收据（金额、付款方式、到账时间、
-收款方、支付单号，可打印），取消返回直接说明“没有扣款”，失败/过期提示可重新发起；每位成员的授权开关与每月额度（显示本月已用与冻结）；工作空间每月额度（留空为不限）；组织账单（按页加载，
+收款方、支付单号，可打印），取消返回直接说明“没有扣款”，失败/过期提示可重新发起；每位成员的授权开关与每月额度（显示本月已用与冻结）；组织账单（按页加载，
 每笔消费注明成员邮箱）。未配置计费环境时只显示“组织付费尚未开放”，充值未开放时显示原因，不出现假入口。金额以整数
 单位用 BigInt 精确格式化；额度输入与服务端上限一致（每月最多 1,000,000 元）。三语言文案在 `org-billing.messages.ts`，
 由 `pages/org/flow.validation.mjs` 检查完整性与权限门槛。
@@ -150,7 +155,7 @@ Turnstile 与限频，`payer_kind=organization`，只跳转到 Stripe 托管收�
   签名密钥按官方算法签名）：未配置诚实关闭、服务端定价、Checkout 参数、限频（含并发请求不能同时越过）、Turnstile、签名/时效/多签名、只在已付时入账、
   重放与乱序、错配拒绝、收据、拒付冻结、组织充值。
 - `tests/integration/test_billing_org_payers.py`、`apps/suite/tests/test_agent_payers.py`、
-  `services/identity/tests/test_org_billing_routes.py`：组织授权、成员与工作空间月额度（含跨月）、撤回授权阻止发送、
+  `services/identity/tests/test_org_billing_routes.py`：组织授权、成员月额度（含跨月；账本层的工作空间额度机制）、不提供工作空间额度设置、撤回授权阻止发送、
   组织付款不动个人钱包、付款方列表、委派自定义角色、版本冲突与审计。
 - `services/identity/tests/test_admin_payments.py`：设置发布与密钥不回显、环境与密钥模式绑定、权限矩阵、赠送、财务视图与解冻、
   基准日、旧授权表加宽。`test_platform_access.py` 的路由权限矩阵包含新路由与财务角色。

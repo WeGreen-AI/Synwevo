@@ -1,11 +1,13 @@
 /** Organization payments (synwevo_identity.org_billing_routes), for holders of org.billing.manage:
  *  the organization wallet and its top-up, which members may charge it for their Agent runs and
- *  how much a month, an optional monthly limit per workspace, and the organization statement.
+ *  how much a month, and the organization statement. There is no per-workspace limit: no
+ *  organization-paid run is attributed to a workspace yet, so such a limit would bind nothing
+ *  (org_billing_routes).
  *
  *  Nothing here moves money. A top-up is priced by the server and paid in the payment provider's
  *  hosted checkout; the wallet is credited only from the provider's signed notification. Limits
  *  are rechecked by the ledger at every reservation and send, so a change here applies to the
- *  next model call. The statement carries amounts and who/where a charge was for — never a
+ *  next model call. The statement carries amounts and whom a charge was for — never a
  *  conversation. Amounts stay exact: integer wallet units are formatted with BigInt.
  *
  *  The hosted checkout returns here with ?topup=<order>&result=success|cancel. The page then
@@ -24,12 +26,11 @@ import "../../org-billing.messages";
 
 type Unit = { code: string; scale: number };
 interface MemberGrant { user_id: string; email: string; display_name: string | null; role: string; revision: number; enabled: boolean; monthly_limit: string; spent_this_month: string; held: string }
-interface WorkspaceLimit { workspace_id: string; name: string; revision: number; monthly_limit: string | null; spent_this_month: string; held: string }
 interface Billing { organization_id: string; environment: string | null; currency: "CNY"; unit: Unit; month_start: number;
-  wallet: { booked: string; held: string; available: string; frozen: boolean }; members: MemberGrant[]; workspaces: WorkspaceLimit[] }
+  wallet: { booked: string; held: string; available: string; frozen: boolean }; members: MemberGrant[] }
 interface TopupOptions { available: boolean; reason?: string; currency: "CNY"; packages: { id: string; amount_minor: number; label: string }[];
   custom_amount?: boolean; min_amount_minor: number | null; max_amount_minor: number | null }
-interface StatementItem { seq: string; id: string; kind: string; delta: string; created_at: number; member_id?: string; member_email?: string | null; workspace_id?: string }
+interface StatementItem { seq: string; id: string; kind: string; delta: string; created_at: number; member_id?: string; member_email?: string | null }
 interface Statement { items: StatementItem[]; next_after_seq: string | null }
 interface TopupStatus { order_id: string; status: "pending" | "paid" | "failed" | "expired"; amount_minor: number; currency: string; credited_at?: number }
 interface Receipt { order_id: string; amount_minor: number; currency: string; method: string | null; paid_at: number | null;
@@ -89,7 +90,6 @@ export default function OrganizationBilling({ organization, mine }: { organizati
       </div>
       {organization.status === "active" && <OrganizationTopup organization={organization} />}
       <MemberGrants organization={organization} data={data} onSaved={setData} />
-      <WorkspaceLimits organization={organization} data={data} onSaved={setData} />
       <OrganizationStatement key={revision} organization={organization} unit={data.unit} />
     </>}
   </section>;
@@ -234,38 +234,6 @@ function MemberGrants({ organization, data, onSaved }: { organization: Organizat
   </div>;
 }
 
-function WorkspaceLimits({ organization, data, onSaved }: { organization: Organization; data: Billing; onSaved: (b: Billing) => void }) {
-  const { t, locale } = useI18n(); const id = useId(); const action = useAction();
-  const [drafts, setDrafts] = useState<Record<string, string>>({}); const [saved, setSaved] = useState<string | null>(null);
-  const scale = data.unit.scale; const money = (units: string) => cnyText(units, scale, locale);
-  const editable = organization.status === "active";
-  if (!data.workspaces.length) return null;
-  return <div className="flow-stack" role="group" aria-labelledby={`${id}-h`}>
-    <h3 id={`${id}-h`}>{t("工作空间额度")}</h3>
-    <p className="tiny muted">{t("可选：限制归属到某个工作空间的组织付费调用每月合计。留空表示不单独限制。")}</p>
-    <FlowError error={action.error} />
-    {saved && <p className="notice ok" role="status">{t("已保存「{name}」的每月额度。", { name: saved })}</p>}
-    <ul className="org-list">{data.workspaces.map(w => {
-      const current = w.monthly_limit === null ? "" : yuanInput(unitsToFen(w.monthly_limit, scale) ?? 0);
-      const text = drafts[w.workspace_id] ?? current; const fen = text.trim() ? parseYuan(text, MAX_LIMIT_YUAN) : null;
-      const valid = !text.trim() || fen !== null; const changed = text.trim() !== current;
-      return <li key={w.workspace_id}>
-        <div className="org-billing-who"><strong>{w.name}</strong>
-          <div className="tiny muted">{t("本月已用 {spent} · 冻结 {held}", { spent: money(w.spent_this_month), held: money(w.held) })}</div></div>
-        <form className="org-actions" onSubmit={e => { e.preventDefault(); if (!valid || !changed) return; void action.run(async () => {
-          setSaved(null);
-          const next = await put<Billing>(`${orgPath(organization.id)}/billing/workspaces/${encodeURIComponent(w.workspace_id)}`,
-            { monthly_limit_minor: fen, expected_revision: w.revision });
-          setDrafts(without(w.workspace_id)); onSaved(next); setSaved(w.name);
-        }); }}>
-          <label className="row gap8">{t("每月额度（元，留空不限）")}<input className="input org-billing-amount" inputMode="decimal" autoComplete="off" value={text} aria-invalid={!valid}
-            disabled={!editable || action.busy} onChange={e => setDrafts(v => ({ ...v, [w.workspace_id]: e.target.value }))} /></label>
-          <button className="btn" disabled={!editable || !valid || !changed || action.busy} aria-label={t("保存「{name}」的每月额度", { name: w.name })}>{t("保存")}</button>
-        </form>
-      </li>; })}</ul>
-  </div>;
-}
-
 function OrganizationStatement({ organization, unit }: { organization: Organization; unit: Unit }) {
   const { t, locale } = useI18n(); const id = useId(); const action = useAction();
   const [items, setItems] = useState<StatementItem[] | null>(null); const [next, setNext] = useState<string | null>(null);
@@ -276,7 +244,7 @@ function OrganizationStatement({ organization, unit }: { organization: Organizat
   useEffect(() => { setItems(null); void action.run(() => load("0")); }, [organization.id]);   // eslint-disable-line react-hooks/exhaustive-deps
   return <div className="flow-stack" role="group" aria-labelledby={`${id}-h`}>
     <h3 id={`${id}-h`}>{t("组织账单")}</h3>
-    <p className="tiny muted">{t("组织钱包的每一笔入账与扣费；消费注明成员与工作空间，不包含任何对话内容。")}</p>
+    <p className="tiny muted">{t("组织钱包的每一笔入账与扣费；消费注明成员，不包含任何对话内容。")}</p>
     <FlowError error={action.error} />
     {!items ? (action.error ? null : <Loading />) : !items.length ? <p className="muted">{t("还没有账单记录。")}</p> : <ul className="org-list">{items.map(r =>
       <li key={r.id}><div className="org-billing-who"><strong>{t(KIND[r.kind] || r.kind)}</strong>

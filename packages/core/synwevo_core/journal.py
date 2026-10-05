@@ -67,7 +67,22 @@ RISK_KINDS = {"model_dispatch_suspended", "model_breaker_opened"}
 # administrator before the backup — and only a freeze the restored database never saw is
 # re-created, which stops the payer's wallet from paying again until an administrator lifts it.
 PAYER_FREEZE_KIND = "payer_frozen"
-ALWAYS_REPLAYED = ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND} | RISK_KINDS | {PAYER_FREEZE_KIND}
+# The personal Agent's and model governance's withdrawals are written ahead of their SQL change for
+# the same reason, and replayed whatever the backup's time for the same race. Each is applied so
+# that it never undoes what the restored database already holds after it:
+# * a suspension by its id (a lifted one keeps its row, so it stays lifted);
+# * a consent withdrawal as of its time (a consent given again afterwards stands);
+# * a provider switch-off and a credential withdrawal by the operation id of the published version
+#   that committed with them — present means the backup has the change and anything after it — and,
+#   once replayed, by a receipt in `meta` (credential revisions restart after a restore, so "that
+#   revision and older" alone could hit a key published later under a reused number);
+# * an AI-policy narrowing by a receipt committed with it (record_ai_policy_narrowed) or written by
+#   its replay (the policy is one mutable row; a later re-widening must stand).
+AGENT_MODEL_KINDS = {"agent_access_suspended", "agent_provider_consent_withdrawn", "ai_policy_narrowed",
+                     "model_credential_withdrawn", "model_provider_disabled"}
+_AI_POLICY_RECEIPT = "ai_policy_narrowed:"
+_CREDENTIAL_RECEIPT = "model_credential_withdrawn:"
+ALWAYS_REPLAYED = ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND} | RISK_KINDS | AGENT_MODEL_KINDS | {PAYER_FREEZE_KIND}
 
 KINDS = {
     "api_platform_approval_revoked",  # {approval_id}, including unconsumed approvals
@@ -100,8 +115,8 @@ KINDS = {
     "agent_access_suspended",   # {suspension_id, user_id}
     # Model governance: a workspace's AI processing policy made narrower, the platform model
     # credential withdrawn (revoked or replaced) and the platform model provider switched off.
-    "ai_policy_narrowed",       # {workspace_id, processing, providers}
-    "model_credential_withdrawn",  # {environment, credential_revision} — that revision and older
+    "ai_policy_narrowed",       # {event_id, workspace_id, processing, providers}
+    "model_credential_withdrawn",  # {event_id, environment, credential_revision} — that revision and older
     "model_provider_disabled",  # {event_id, environment}
     # A personal or organization wallet frozen by a payment dispute after its credit was spent.
     PAYER_FREEZE_KIND,          # {freeze_id, environment, account_id, payer_kind, payer_id, chargeback_id}
@@ -132,8 +147,8 @@ _REQUIRED = {
     "model_breaker_opened": ("event_id", "environment"),
     "agent_provider_consent_withdrawn": ("user_id", "provider"),
     "agent_access_suspended": ("suspension_id", "user_id"),
-    "ai_policy_narrowed": ("workspace_id", "processing"),
-    "model_credential_withdrawn": ("environment",),
+    "ai_policy_narrowed": ("event_id", "workspace_id", "processing"),
+    "model_credential_withdrawn": ("event_id", "environment"),
     "model_provider_disabled": ("event_id", "environment"),
     PAYER_FREEZE_KIND: ("freeze_id", "environment", "account_id", "payer_kind", "payer_id", "chargeback_id"),
     **{kind: ("event_id", "organization_id") for kind in ORGANIZATION_KINDS},
@@ -305,6 +320,19 @@ def record_platform_revocation(store: Store, grant: dict, *, at: float) -> None:
                grant_id=grant["id"], role=grant["role"], granted_at=grant["granted_at"],
                granted_by=grant["granted_by"])
         c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_PLATFORM_RECEIPT + eid,))
+
+
+def record_ai_policy_narrowed(store: Store, *, workspace_id: str, processing: str, providers: list[str]) -> None:
+    """Journal a workspace AI-policy narrowing ahead of the change, with its receipt in the same
+    transaction (the caller's): a backup holding the receipt holds the narrowing, and whatever
+    the workspace decided after it, so its replay leaves that alone."""
+    with store.conn() as c:
+        if not c.in_transaction:
+            raise RuntimeError("an AI policy narrowing requires a write transaction")
+        eid = new_id("aip")
+        record(store, "ai_policy_narrowed", event_id=eid, workspace_id=workspace_id,
+               processing=processing, providers=providers)
+        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_AI_POLICY_RECEIPT + eid,))
 
 
 def read(root: str | Path, since: float = 0.0) -> list[dict]:
@@ -588,7 +616,9 @@ def _apply_provider_disabled(c, e) -> int:
     switches the platform model provider off — keyed by the journal event, so it happens once.
     It reuses the newest version's author (who exists in that database) and says why."""
     op = "journal_" + e["event_id"]
-    if c.execute("SELECT 1 FROM model_provider_versions WHERE operation_id=?", (op,)).fetchone():
+    # The switch-off's own version (its operation id is the event id) or this replay's: the
+    # restored history already has it, and any re-enabling after it stands.
+    if c.execute("SELECT 1 FROM model_provider_versions WHERE operation_id IN (?,?)", (e["event_id"], op)).fetchone():
         return 0
     latest = c.execute("SELECT * FROM model_provider_versions WHERE environment=? ORDER BY revision DESC LIMIT 1",
                        (e["environment"],)).fetchone()
@@ -673,13 +703,21 @@ def apply(store: Store, entries: list[dict]) -> dict:
                               "VALUES (?,?,'journal_replay','journal',?)",
                               (e["suspension_id"], e["user_id"], e["at"])).rowcount
             elif k == "ai_policy_narrowed":
-                n = _apply_ai_policy(c, e, t)
+                receipt = _AI_POLICY_RECEIPT + e["event_id"]
+                if not c.execute("SELECT 1 FROM meta WHERE key=?", (receipt,)).fetchone():
+                    n = _apply_ai_policy(c, e, t)
+                    c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (receipt,))
             elif k == "model_credential_withdrawn":
-                # The withdrawn revision and anything older loses its sealed secret; a newer
-                # credential the restored database already holds is left alone.
-                n = c.execute("UPDATE model_provider_credentials SET secret_enc=NULL WHERE environment=? "
-                              "AND revision<=? AND secret_enc IS NOT NULL",
-                              (e["environment"], e["credential_revision"])).rowcount
+                receipt = _CREDENTIAL_RECEIPT + e["event_id"]
+                if not (c.execute("SELECT 1 FROM meta WHERE key=?", (receipt,)).fetchone() or c.execute(
+                        "SELECT 1 FROM model_provider_versions WHERE environment=? AND operation_id=?",
+                        (e["environment"], e["event_id"])).fetchone()):
+                    # The withdrawn revision and anything older loses its sealed secret; a newer
+                    # credential the restored database already holds is left alone.
+                    n = c.execute("UPDATE model_provider_credentials SET secret_enc=NULL WHERE environment=? "
+                                  "AND revision<=? AND secret_enc IS NOT NULL",
+                                  (e["environment"], e["credential_revision"])).rowcount
+                    c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (receipt,))
             elif k == "model_provider_disabled":
                 n = _apply_provider_disabled(c, e)
             elif k == "client_secret_rotated":

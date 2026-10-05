@@ -339,8 +339,8 @@ class ProviderSettings:
             from .. import journal
             before = plan["before"]
             if credential.action != "keep" and before["credential_configured"] and before["credential_revision"] > 0:
-                journal.record(self.store, "model_credential_withdrawn", environment=self.environment,
-                               credential_revision=before["credential_revision"])
+                journal.record(self.store, "model_credential_withdrawn", event_id=identifier(operation_id),
+                               environment=self.environment, credential_revision=before["credential_revision"])
             if (before["spec"] or {}).get("enabled") and not plan["after"]["enabled"]:
                 journal.record(self.store, "model_provider_disabled", event_id=identifier(operation_id),
                                environment=self.environment)

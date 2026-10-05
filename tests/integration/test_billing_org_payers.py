@@ -151,4 +151,6 @@ def test_payers_for_lists_what_is_left_and_the_summary_names_members(org):
     summary = org["payers"].summary(org["oid"], UNIT)
     member = next(m for m in summary["members"] if m["user_id"] == org["users"]["member"])
     assert member["enabled"] and member["held"] == 100 and summary["wallet"]["available"] == 900
+    # No workspace limits are offered: no organization-paid run is attributed to a workspace yet.
+    assert "workspaces" not in summary
     assert call

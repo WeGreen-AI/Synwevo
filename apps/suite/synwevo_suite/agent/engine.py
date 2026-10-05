@@ -313,6 +313,11 @@ class Agent:
                     lost.add(wid)
         return lost
 
+    def message_hidden(self, user_id: str, cid: str, message: dict) -> bool:
+        """Whether the person now sees this message hidden after an access change — the rule of
+        conversation_json, for paths that copy a message elsewhere (a report's quote)."""
+        return bool(self._source_workspaces(message) & self._lost_workspaces(user_id, cid))
+
     @staticmethod
     def _source_workspaces(message: dict) -> set[str]:
         """Workspaces an answer depends on (losing one hides it). Not where a copy came from:

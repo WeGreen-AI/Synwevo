@@ -27,10 +27,12 @@ export function reportInput(conversationId: string, messageId: string, choice: R
 
 /** A refused report in words: "exists" is an outcome (already reported), the rest say why it was
  *  not sent. An unknown failure (network, a gateway) may be retried with the same request. */
-export function reportOutcome(error: unknown): "exists" | Extract<ReportText, "failedCategory" | "failedGone" | "failed"> {
+export function reportOutcome(error: unknown): "exists" | Extract<ReportText, "failedCategory" | "failedGone" | "failedHidden" | "failed"> {
   const code = errorCode(error);
   if (code === "report_exists") return "exists";
   if (code === "report_category_invalid") return "failedCategory";
+  // The answer was hidden after an access change: it may be reported, but never quoted.
+  if (code === "report_excerpt_hidden") return "failedHidden";
   if (["message_not_found", "conversation_not_found", "conversation_sealed"].includes(code)) return "failedGone";
   return "failed";
 }

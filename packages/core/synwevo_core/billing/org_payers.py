@@ -6,8 +6,11 @@ a run; the organization decides who may charge it and how much:
 * **The organization's grant to the member** (``billing_org_member_grants``): enabled or not, and a
   monthly limit in wallet units (UTC calendar month). Set by someone who currently holds
   ``org.billing.manage`` (owners hold it; others by a custom role). No grant = no organization payer.
-* **An optional monthly limit per workspace** (``billing_org_workspace_limits``) for the calls
-  attributed to that workspace.
+* **A monthly limit per workspace** (``billing_org_workspace_limits``) bounds the calls attributed to
+  that workspace (``ChargeContext.workspace_id``). No organization-paid Agent run carries one yet —
+  a conversation may reach any of the person's workspaces, so a named workspace would not bind —
+  and nothing offers to set such a limit (org_billing_routes); the check stays for when runs are
+  attributed.
 * **Checked where money is reserved**: ``Ledger.reserve_call`` and ``Ledger.dispatch`` call
   ``check`` under their own writer lock, so a withdrawn grant, a member who left, a frozen or
   deleted organization or an exhausted limit refuses the next reservation and the next send.
@@ -203,7 +206,7 @@ class OrgPayers:
         return out
 
     def summary(self, oid: str, unit: Unit) -> dict:
-        """For a billing manager: the wallet, every member grant and workspace limit, this month's use."""
+        """For a billing manager: the wallet, every member grant and this month's use."""
         now = self.ledger._now()
         with self.store.tx() as t:
             account = self._account(t, oid, unit)
@@ -223,14 +226,6 @@ class OrgPayers:
                                 "enabled": bool(grant and grant["enabled"]),
                                 "monthly_limit": grant["monthly_limit"] if grant else 0,
                                 "spent_this_month": spent, "held": held})
-            workspaces = []
-            for row in t.execute("SELECT id,name FROM workspaces WHERE organization_id=? ORDER BY name", (oid,)).fetchall():
-                limit = self._workspace_limit(t, oid, row["id"])
-                spent, held = self._exposure(t, account, now, workspace_id=row["id"]) if account else (0, 0)
-                workspaces.append({"workspace_id": row["id"], "name": row["name"],
-                                   "revision": limit["revision"] if limit else 0,
-                                   "monthly_limit": limit["monthly_limit"] if limit else None,
-                                   "spent_this_month": spent, "held": held})
             return {"organization_id": oid, "unit": {"code": unit.code, "scale": unit.scale},
                     "wallet": {"booked": booked, "held": held_all, "available": booked - held_all, "frozen": frozen},
-                    "month_start": month_start(now), "members": members, "workspaces": workspaces}
+                    "month_start": month_start(now), "members": members}

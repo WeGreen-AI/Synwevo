@@ -8,6 +8,7 @@ import { ErrorNotice, errorText, timeText } from './common';
 import TopupDialog from './TopupDialog';
 import TopupStatusPanel from './TopupStatus';
 import { LimitsSection, ReminderSection } from './WalletSettings';
+import { WalletGate } from './WalletGate';
 import { WALLET_API, entryKindLabel, moneyText, parsePayer, payerKey, payerQuery, withQuery,
   type Entry, type Overview, type Payer, type PayerOption, type Statement } from './walletModel';
 import './wallet.messages';
@@ -92,6 +93,10 @@ function RecentActivity({ payer, timezone, generation }: { payer: Payer; timezon
 }
 
 export default function Wallet() {
+  return <WalletGate><WalletPage /></WalletGate>;
+}
+
+function WalletPage() {
   const { me } = useSession();
   const { t, locale } = useI18n();
   const [params, setParams] = useSearchParams();

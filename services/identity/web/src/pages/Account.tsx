@@ -17,6 +17,7 @@ import ActivitySection from './account/ActivitySection';
 import ConnectedAppsSection from './account/ConnectedAppsSection';
 import NotificationsSection from './account/NotificationsSection';
 import { ErrorNotice, errorText, timeText, type Profile } from './account/common';
+import { walletOffered } from '../lib/walletOffered';
 import './account/account.css';
 import './account/topup.messages';
 export { default as AccountRecovery } from './account/Recovery';
@@ -95,7 +96,7 @@ export default function Account() {
         <div><a href="/login" className="btn">{t('返回登录')}</a></div></section>}
       {profile?.status === 'active' && me && <div className="account-layout"><nav className="account-nav" aria-label={t('账户设置导航')}>
         {[['profile', '个人资料'], ['email', '邮箱与口令'], ['security', '登录与安全'], ['devices', '登录的设备'], ['workspaces', '工作空间'], ['notifications', '通知'], ['activity', '安全活动'], ['connected-apps', '已授权的应用'], ['privacy', '数据与账户']].map(([id, label]) => <a key={id} href={`#${id}`}>{t(label)}</a>)}
-        <Link to="/account/wallet">{t('钱包与用量')}</Link>
+        {walletOffered(state) && <Link to="/account/wallet">{t('钱包与用量')}</Link>}
       </nav><div className="account-content">
         <SuperAdminInbox />
         <ProfileSection profile={profile} onChange={setProfile} /><EmailSection profile={profile} />

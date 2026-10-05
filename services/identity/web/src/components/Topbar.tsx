@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { ApiError, holdsPlatformAccess, platformHandoffUrl, useSession, MessagesLink, messagesHref, NotificationBell } from "@synwevo/auth-client";
 import { AppIcon, Brand, Drawer, LanguageMenu, useI18n, useMediaQuery } from "@synwevo/ui";
 import { chooseReturnTarget, rememberOrigin } from "../lib/returnTarget";
+import { walletOffered } from "../lib/walletOffered";
 import "./Topbar.messages";
 
 /** Account and governance share one header.
@@ -65,7 +66,8 @@ export function Topbar({ title, children, product = "Account", mobileNavigation 
     <>
       <a className="btn ghost sm" href={link("/account")} aria-current={pathname === "/account" ? "page" : undefined}>{icons && <AppIcon id="/account" />}{t("账户与安全")}</a>
       <a className="btn ghost sm" href={link("/organizations")} aria-current={current("/organizations")}>{icons && <span className="app-icon-space" aria-hidden="true" />}{t("组织")}</a>
-      <a className="btn ghost sm" href={link("/account/wallet")} aria-current={current("/account/wallet")}>{icons && <span className="app-icon-space" aria-hidden="true" />}{t("钱包")}</a>
+      {/* Only where the deployment offers the wallet (auth state `wallet_offered`): billing off is not an outage. */}
+      {walletOffered(state) && <a className="btn ghost sm" href={link("/account/wallet")} aria-current={current("/account/wallet")}>{icons && <span className="app-icon-space" aria-hidden="true" />}{t("钱包")}</a>}
       {/* Conversations are Synwevo Message's (CI-66): the registry address through its sign-in
           start; the account origin's own /messages (a server redirect) only while it is not registered. */}
       <MessagesLink href={messagesHref(state, { lang: locale })} />

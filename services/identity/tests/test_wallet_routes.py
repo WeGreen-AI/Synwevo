@@ -263,17 +263,36 @@ def test_host_environment_separates_same_users_and_is_not_request_controlled(wal
             assert denied.status_code == 400 and denied.json()["error"] == "bad_fields"
 
 
-@pytest.mark.parametrize("settings", [
-    {"configured": False}, {"units": ()}, {"units": (UNIT, UNIT)},
-], ids=["no-ledger", "no-units", "duplicate-units"])
-def test_unconfigured_is_unavailable_not_fake_zero(wallet_factory, settings):
+@pytest.mark.parametrize("settings", [{"configured": False}, {"units": ()}], ids=["no-ledger", "no-units"])
+def test_a_deployment_without_the_wallet_says_it_is_not_offered_not_try_again(wallet_factory, settings):
+    """Billing switched off is a deliberate state of the deployment, not an outage: the wallet's
+    reads say it is not offered here (no fake zero, and no 'try again later')."""
     wallet = wallet_factory(**settings)
+    for path in (ROOT, STATEMENT, ROOT + "/payers"):
+        response = wallet.client.get(path)
+        assert response.status_code == 404 and response.json()["error"] == "wallet_not_offered", path
+        assert "稍后" not in response.json()["message"]
+        assert "balances" not in response.json() and "items" not in response.json()
+    wallet.client.cookies.clear()
+    assert wallet.client.get(ROOT).status_code == 401
+
+
+def test_a_misconfigured_wallet_is_unavailable_not_fake_zero(wallet_factory):
+    wallet = wallet_factory(units=(UNIT, UNIT))
     for path in (ROOT, STATEMENT):
         response = wallet.client.get(path)
         assert response.status_code == 503 and response.json()["error"] == "wallet_unavailable"
         assert "balances" not in response.json() and "items" not in response.json()
-    wallet.client.cookies.clear()
-    assert wallet.client.get(ROOT).status_code == 401
+
+
+def test_the_deployment_state_says_whether_the_wallet_is_offered(wallet_factory, monkeypatch):
+    """The account shells draw their wallet entries from this flag (deployment-wide, never per account)."""
+    wallet = wallet_factory()
+    assert wallet.client.get("/api/auth/state").json()["wallet_offered"] is False   # no billing environment
+    monkeypatch.setenv("SYNWEVO_BILLING_ENVIRONMENT", "test")
+    assert wallet.client.get("/api/auth/state").json()["wallet_offered"] is False   # and no wallet units
+    monkeypatch.setenv("SYNWEVO_BILLING_WALLET_UNITS", '[{"code": "CNY", "scale": 6}]')
+    assert wallet.client.get("/api/auth/state").json()["wallet_offered"] is True
 
 
 def test_stable_pagination_across_namespaces_units_gaps_and_appends(wallet):

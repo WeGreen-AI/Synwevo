@@ -4,7 +4,7 @@ Accounts 的 `/account/wallet` 使用本人当前会话读取额度、流水与�
 
 ## 配置与边界
 
-启动时固定 `SYNWEVO_BILLING_ENVIRONMENT=test|live`，并显式提供 `SYNWEVO_BILLING_WALLET_UNITS`：由 1–16 个 `{code,scale}` 对象组成的 JSON 数组（钱包币种按所有者决定为 CNY）。单位须与既有账本定义相符，不允许浏览器选择精度或环境。未配置、无效、未知单位或存储暂不可用时返回 503 `wallet_unavailable`，页面显示不可用，不显示模拟余额。
+启动时固定 `SYNWEVO_BILLING_ENVIRONMENT=test|live`，并显式提供 `SYNWEVO_BILLING_WALLET_UNITS`：由 1–16 个 `{code,scale}` 对象组成的 JSON 数组（钱包币种按所有者决定为 CNY）。单位须与既有账本定义相符，不允许浏览器选择精度或环境。没有配置环境或钱包单位，就是这个部署不提供钱包（生产默认如此，是有意的关闭，不是故障）：钱包接口返回 404 `wallet_not_offered`“这个部署没有提供付费 Agent 钱包”，认证状态 `/api/auth/state` 的 `wallet_offered` 为 false，账户页顶栏、账户导航与组织页都不显示钱包入口，直接打开钱包、用量或收据页只说明“没有提供”，没有“重试”。配置不一致、未知单位或存储暂不可用时返回 503 `wallet_unavailable`，页面显示不可用，不显示模拟余额。
 
 没有默认币种、零售价或充值额。读取工厂创建的 Ledger 不含付款授权或支付验签回调，不能用于新增扣费或充值。所有生产写入 namespace 的到期恢复服务仍须部署，本页面不替代恢复 worker。
 

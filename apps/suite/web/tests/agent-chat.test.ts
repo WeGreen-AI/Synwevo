@@ -258,7 +258,7 @@ const NOT_IN_CHAT: [string, string][] = [
     // The Admin risk tab's own codes (risk_allowlist_*, risk_suspension_*) need no entry: the
     // chat words any "risk_" code as a stop before dispatch.
     'administrators govern these in the Admin shell, which words them'],
-  ['report_exists report_category_invalid', 'met only in the report dialog, which words them (ReportDialog)'],
+  ['report_exists report_category_invalid report_excerpt_hidden', 'met only in the report dialog, which words them (ReportDialog)'],
   ['provider_consent_not_needed', 'answers the consent page itself; the consent dialog words it'],
   ['bad_key model_personal_key_unsupported memory_not_found too_many_memories transfer_policy_changed',
     'met on the Agent settings page (personal key, memories, transfer policy), which words them'],
@@ -394,6 +394,7 @@ test('a report ends sent, already reported, or not sent with the reason, and a r
   assert.deepEqual(await report.sendReport(refuse({ code: 'idempotent_failure', detail: { code: 'report_exists' } }), {}), { state: 'exists' });
   assert.deepEqual(await report.sendReport(refuse({ code: 'report_category_invalid' }), {}), { state: 'failed', text: 'failedCategory' });
   assert.deepEqual(await report.sendReport(refuse({ code: 'message_not_found' }), {}), { state: 'failed', text: 'failedGone' });
+  assert.deepEqual(await report.sendReport(refuse({ code: 'report_excerpt_hidden' }), {}), { state: 'failed', text: 'failedHidden' });
   assert.deepEqual(await report.sendReport(refuse({ code: 'conversation_not_found' }), {}), { state: 'failed', text: 'failedGone' });
   assert.deepEqual(await report.sendReport(refuse(new TypeError('Failed to fetch')), {}), { state: 'failed', text: 'failed' });
   // A gateway's answer is not the application's: never "already reported".

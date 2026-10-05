@@ -30,6 +30,7 @@ export const reportCopy = {
   exists: ['你已经举报过这条回答，审核人员会处理，不需要再次提交。', 'You have already reported this answer. The reviewers will look at it; there is no need to send it again.', '你已經檢舉過這則回答，審核人員會處理，不需要再次送出。'],
   failedCategory: ['这个原因无法使用，请重新选择后再提交。', 'This reason cannot be used. Choose a reason and send again.', '這個原因無法使用，請重新選擇後再送出。'],
   failedGone: ['这条回答已不存在或你已无法访问，举报没有提交。请刷新会话。', 'This answer no longer exists or is no longer yours to see, so the report was not sent. Refresh the conversation.', '這則回答已不存在或你已無法存取，檢舉沒有送出。請重新整理會話。'],
+  failedHidden: ['这条回答因你的访问权限变化已被隐藏，不能附上它的文字。取消勾选“附上这条回答的文字”后可以重新提交。', 'This answer is hidden because your access changed, so its text cannot be attached. Untick “Attach this answer’s text” and send again.', '這則回答因你的存取權限變化已被隱藏，不能附上它的文字。取消勾選「附上這則回答的文字」後可以重新送出。'],
   failed: ['举报没有提交成功。请检查网络后重新提交。', 'The report was not sent. Check your connection and send it again.', '檢舉沒有送出成功。請檢查網路後重新送出。'],
 } as const;
 

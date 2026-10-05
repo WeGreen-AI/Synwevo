@@ -703,10 +703,14 @@ def register(registry, agent: Agent, store, identity) -> None:
     def report_message(c, i):
         person_only(c)
         agent.conversation(c.user_id, i.conversation_id)            # 404 for anyone but the owner
-        msg = store.one("SELECT body FROM agent_messages WHERE id=? AND conversation_id=? AND role='assistant'",
+        msg = store.one("SELECT body, sources_json FROM agent_messages WHERE id=? AND conversation_id=? AND role='assistant'",
                         (i.message_id, i.conversation_id))
         if not msg:
             raise ServiceError(404, "message_not_found", "消息不存在")
+        if i.include_excerpt and agent.message_hidden(c.user_id, i.conversation_id, msg):
+            # The answer is hidden from the person now; its text must not reach the reviewers either.
+            raise ServiceError(409, "report_excerpt_hidden",
+                               "这条回答因你的访问权限变化已隐藏，举报时不能附带它的内容；可以不附内容举报")
         # The answer's text reaches the platform's reviewers only when the person chose to send it.
         out = reports.create(c.user_id, conversation_id=i.conversation_id, message_id=i.message_id,
                              category=i.category, note=i.note, excerpt=msg["body"] if i.include_excerpt else None)
@@ -793,8 +797,8 @@ def register(registry, agent: Agent, store, identity) -> None:
             # A narrowing is a withdrawal: journalled ahead of the change so a restored backup
             # cannot reopen the workspace's content to a model (synwevo_core.journal).
             from synwevo_core import journal
-            journal.record(store, "ai_policy_narrowed", workspace_id=c.workspace_id,
-                           processing=i.processing, providers=sorted(providers))
+            journal.record_ai_policy_narrowed(store, workspace_id=c.workspace_id,
+                                              processing=i.processing, providers=sorted(providers))
         store.execute("INSERT INTO agent_workspace_policies (workspace_id, processing, updated_by, updated_at) VALUES (?,?,?,?) "
                       "ON CONFLICT(workspace_id) DO UPDATE SET processing=excluded.processing, updated_by=excluded.updated_by, "
                       "updated_at=excluded.updated_at", (c.workspace_id, i.processing, c.user_id, ts))
