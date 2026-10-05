@@ -2,7 +2,9 @@
 
 No price/credential discovery or enablement lives here. A trusted configuration service must
 supply a confirmed route and published prices; a current payment authorizer must be installed
-on Ledger. No network attempt is retried. Recovery settles saved evidence only.
+on Ledger. No network attempt is retried. Recovery settles saved evidence only. After an
+upstream 429/503, later attempts wait out a bounded, jittered cool-down while they are still
+provably unsent (nothing reserved, no dispatch fence); the refused attempt itself is never resent.
 """
 from __future__ import annotations
 
@@ -12,6 +14,9 @@ import hmac
 import json
 import logging
 import math
+import random
+import threading
+import time
 from typing import Callable
 from uuid import uuid4
 
@@ -33,6 +38,12 @@ UNAVAILABLE = "模型服务暂时不可用，本次未扣费。请稍后再试�
 #: Refusals of a closed route: the platform breaker (an upstream 402, billing/risk.py) or a model
 #: id the provider no longer lists. Both stop before any reservation or send.
 CLOSED_CODES = ("risk_breaker_open", "provider_model_missing")
+#: Upstream throttling (HTTP 429 rate limit, 503 overload) and the cool-down it starts.
+THROTTLED = {429: "provider_rate_limited", 503: "provider_overloaded"}
+BACKOFF_BASE_S = 1.0    # first computed cool-down; doubles per consecutive throttle
+BACKOFF_CAP_S = 30.0    # computed cool-down never exceeds this (a Retry-After may, up to a day)
+MAX_WAIT_S = 30.0       # a new call waits at most this long, unsent, before it is refused unsent
+THROTTLED_MESSAGE = "模型服务繁忙，本次没有发送，也没有扣费。请稍后再试。"
 
 
 def _json(value):
@@ -158,6 +169,11 @@ class MeteredDeepSeek:
         self.route_guard = route_guard
         # on_upstream_balance(route) closes paid dispatch after an upstream HTTP 402.
         self.on_upstream_balance = on_upstream_balance
+        # Process-local upstream cool-down after 429/503 (one gateway instance serves the
+        # deployment, docs/deepseek-provider.md). Clock, sleep and jitter are injectable for tests.
+        self._throttle = threading.Lock()
+        self._cool_until, self._strikes, self._cool_code = 0.0, 0, None
+        self._clock, self._sleep, self._random = time.monotonic, time.sleep, random.random
 
     def pseudonym(self, payer_user_id: str) -> str:
         """The provider's user_id for a payer: HMAC-SHA256 under a key derived from the server
@@ -167,6 +183,42 @@ class MeteredDeepSeek:
         key = hmac.new(Auth(self.store).secret(), PSEUDONYM_LABEL, hashlib.sha256).digest()
         scope = f"{self.ledger.environment}:{self.ledger.namespace}:{identifier(payer_user_id)}"
         return hmac.new(key, scope.encode(), hashlib.sha256).hexdigest()
+
+    def _throttled(self, status: int | None, retry_after: float | None) -> None:
+        """Start (or extend) the cool-down after an upstream 429/503. Honors Retry-After (plus
+        up to 20% jitter, so waiting calls do not return together); otherwise full-range
+        equal jitter over an exponential step, capped at BACKOFF_CAP_S."""
+        with self._throttle:
+            self._strikes = min(self._strikes + 1, 16)
+            if retry_after is not None:
+                delay = min(float(retry_after), 86400.0) * (1 + 0.2 * self._random())
+            else:
+                step = min(BACKOFF_CAP_S, BACKOFF_BASE_S * 2 ** (self._strikes - 1))
+                delay = step / 2 + step / 2 * self._random()
+            self._cool_until = max(self._cool_until, self._clock() + delay)
+            self._cool_code = THROTTLED[status]
+
+    def _recovered(self) -> None:
+        with self._throttle:
+            self._strikes = 0
+
+    def _await_upstream(self, should_stop, deadline: int) -> None:
+        """Before anything is reserved or fenced: wait out an upstream cool-down, bounded by
+        MAX_WAIT_S and the run deadline; beyond that refuse the call unsent and unreserved."""
+        while True:
+            with self._throttle:
+                wait, code = self._cool_until - self._clock(), self._cool_code
+            if wait <= 0:
+                return
+            if wait > MAX_WAIT_S or self.ledger._now() + math.ceil(wait) >= deadline:
+                error = ProviderError(code, THROTTLED_MESSAGE, retryable=True, retry_after=math.ceil(wait))
+                error.metered_usage, error.usage_reliability = {"input_tokens": 0, "output_tokens": 0}, "not_dispatched"
+                raise error
+            if should_stop():
+                stopped = DeepSeekCancelled(Attempt())
+                stopped.not_dispatched = True  # Stopped while waiting: nothing reserved or sent.
+                raise stopped
+            self._sleep(min(wait, 0.25))
 
     def _guard(self, route):
         if self.route_guard is not None:
@@ -276,6 +328,7 @@ class MeteredDeepSeek:
             error.metered_usage, error.usage_reliability = {"input_tokens": 0, "output_tokens": 0}, "not_dispatched"
             raise error
         identifier(logical_call_id)
+        self._await_upstream(should_stop, run["deadline"])  # Provably unsent while waiting.
         sale, cost = self._prices(route)
         request = _json({"route": asdict(route), "context": asdict(context), "system": system,
                          "tools": tools, "messages": messages, "effort": effort})
@@ -370,6 +423,10 @@ class MeteredDeepSeek:
                 self._observe(key, ticket, route, exc.attempt, completed=False, claim=claim)
                 if isinstance(exc, DeepSeekError) and exc.code == "provider_balance":
                     self._closed(route, exc)
+                if isinstance(exc, DeepSeekError) and exc.attempt.http_status in THROTTLED:
+                    # This attempt reached the provider: it is never resent (the ledger's
+                    # dispatch fence holds it). Only later, still unsent attempts wait.
+                    self._throttled(exc.attempt.http_status, exc.retry_after)
                 if admission_refusal is not None:
                     # The transport deliberately sanitizes callback exceptions. Preserve
                     # only our local typed refusal, after recording the unsent attempt.
@@ -398,6 +455,7 @@ class MeteredDeepSeek:
                 exc.usage_reliability = result.attempt.usage_reliability
                 raise
             self._observe(key, ticket, route, result.attempt, completed=True, claim=claim)
+            self._recovered()
             return result
         except BaseException:
             # cancel_call releases only proven unsent/known consumption. Unknown holds remain
@@ -507,6 +565,9 @@ class MeteredTurnProvider:
         try:
             result = self.gateway.step(context=context, logical_call_id=logical_call_id, **arguments)
         except (DeepSeekError, DeepSeekCancelled) as exc:
+            if getattr(exc, "not_dispatched", False):
+                exc.metered_usage, exc.usage_reliability = {"input_tokens": 0, "output_tokens": 0}, "not_dispatched"
+                raise
             usage = exc.attempt.usage
             exc.metered_usage = ({"input_tokens": usage.prompt_tokens, "output_tokens": usage.completion_tokens}
                                  if exc.attempt.usage_reliability == "trusted_terminal" and usage else {})
