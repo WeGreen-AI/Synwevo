@@ -440,19 +440,24 @@ class TopupService:
             return 400, {"error": "payload_invalid"}
         digest = hashlib.sha256(payload).hexdigest()
         encoded = json.dumps(facts, sort_keys=True, separators=(",", ":"))
+        # When the provider recorded this event (signed with it): a receipt's payment time. Kept
+        # only when plausible; otherwise unknown, never replaced by the processing time.
+        created = event.get("created")
+        provider_time = created if type(created) is int and 0 < created <= self.clock() + SIGNATURE_TOLERANCE_S else None
         with self.store.tx() as t:
             row = t.execute("SELECT * FROM payment_webhook_inbox WHERE provider=? AND event_id=?",
                             (PROVIDER, event["id"])).fetchone()
             if row is None:
                 t.execute("INSERT INTO payment_webhook_inbox(provider,event_id,environment,type,payload_sha256,facts_json,"
-                          "signature_verified,received_at,status) VALUES (?,?,?,?,?,?,1,?,'received')",
-                          (PROVIDER, event["id"], self.environment, event["type"], digest, encoded, self.clock()))
+                          "signature_verified,received_at,status,provider_created_at) VALUES (?,?,?,?,?,?,1,?,'received',?)",
+                          (PROVIDER, event["id"], self.environment, event["type"], digest, encoded, self.clock(),
+                           provider_time))
             elif row["facts_json"] != encoded or row["type"] != event["type"] or row["environment"] != self.environment:
                 return 400, {"error": "event_conflict"}
             elif row["status"] in ("processed", "ignored", "rejected"):
                 return 200, {"received": True, "status": row["status"]}
-            t.execute("UPDATE payment_webhook_inbox SET attempts=attempts+1 WHERE provider=? AND event_id=?",
-                      (PROVIDER, event["id"]))
+            t.execute("UPDATE payment_webhook_inbox SET attempts=attempts+1,provider_created_at=COALESCE(provider_created_at,?) "
+                      "WHERE provider=? AND event_id=?", (provider_time, PROVIDER, event["id"]))
         try:
             status, code = self._process(event["id"], event["type"], facts, digest)
         except Exception:  # noqa: BLE001 - recorded as failed and retried by the provider; nothing echoed
@@ -551,10 +556,15 @@ class TopupService:
                     return "rejected", exc.code
                 raise
             now = self.clock()
+            # paid_at: when the provider recorded the payment (the event's own time; NULL when
+            # unknown); credited_at: when this platform credited it (review payments-3).
+            paid = self.store.one("SELECT provider_created_at FROM payment_webhook_inbox WHERE provider=? AND event_id=?",
+                                  (PROVIDER, event_id))
             self.store.execute("UPDATE payment_topups SET status='paid',payment_id=COALESCE(payment_id,?),"
                                "paid_at=COALESCE(paid_at,?),credited_at=COALESCE(credited_at,?),journal_id=COALESCE(journal_id,?),"
                                "failure_code=NULL WHERE order_id=?",
-                               (facts["payment_intent"], now, now, journal, order_id))
+                               (facts["payment_intent"], paid["provider_created_at"] if paid else None, now, journal,
+                                order_id))
             method = self.store.one("SELECT facts_json FROM payment_webhook_inbox WHERE provider=? AND type='charge.succeeded' "
                                     "AND json_extract(facts_json,'$.payment_intent')=? LIMIT 1", (PROVIDER, facts["payment_intent"]))
             if method:

@@ -111,8 +111,10 @@ def deliver(w, event, *, secret=FIXTURE_WEBHOOK_SECRET, at=None, extra_signature
 
 
 def session_event(order_id, *, kind="checkout.session.completed", paid=True, amount=1000, currency="cny",
-                  pi="pi_fixture1", event_id=None, session_id="cs_test_fixture1", livemode=False):
+                  pi="pi_fixture1", event_id=None, session_id="cs_test_fixture1", livemode=False, created=None):
+    # ``created``: when the provider recorded the event (Stripe sends it on every event).
     return {"id": event_id or f"evt_{kind.replace('.', '_')}_{order_id}", "object": "event", "type": kind,
+            "created": created if created is not None else int(time.time()),
             "livemode": livemode, "data": {"object": {
                 "id": session_id, "object": "checkout.session", "status": "complete",
                 "payment_status": "paid" if paid else "unpaid", "payment_intent": pi, "amount_total": amount,

@@ -43,7 +43,9 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
    以停止重试；处理失败返回 500 让 Stripe 重试，账户进程的清理任务每小时也会重放未处理的收件箱行。
 5. 返回页轮询 `GET /api/auth/wallet/topups/{order_id}`（`pending|paid|failed|expired` 与 `credited_at`）；
    `GET /api/auth/wallet/receipts/{order_id}` 只对已入账订单返回收据：订单号、金额、币种、付款方式（来自 Stripe 的
-   `charge.succeeded`，未收到则为空，不编造）、入账时间、运营方名称（发布时的设置版本）、Stripe 支付单号。只有发起人
+   `charge.succeeded`，未收到则为空，不编造）、付款时间（Stripe 记录这笔付款成功的时间：签名事件自身的 `created`，
+存于收件箱 `provider_created_at`；未知时不显示，绝不用处理时间代替——复审 payments-3）、入账时间（本平台入账的处理时间，
+重试或补跑时可能晚于付款时间）、运营方名称（发布时的设置版本）、Stripe 支付单号。只有发起人
    或该组织当前的付费管理者可以读取订单与收据。
 
 ## 3. 拒付（争议）
