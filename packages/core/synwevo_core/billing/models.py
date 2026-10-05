@@ -331,7 +331,9 @@ class PaymentReceipt:
 class DisputeNotice:
     """Input to the mandatory, injected verifier of a durable, signature-verified dispute fact
     (the provider's "a cardholder disputed this payment"). Like PaymentReceipt, constructing it
-    proves nothing. ``amount_minor`` is the disputed amount in the payment currency."""
+    proves nothing. ``amount_minor`` is the disputed amount in the payment currency.
+    ``inquiry`` marks an inquiry (the issuer asked; no funds were withdrawn): it freezes the
+    wallet and takes nothing back (Ledger.record_chargeback)."""
 
     environment: str
     provider: str
@@ -343,12 +345,15 @@ class DisputeNotice:
     currency: str
     evidence_ref: str
     payload_sha256: str
+    inquiry: bool = False
 
     def __post_init__(self):
         for key in ("provider", "merchant_id", "dispute_id", "event_id", "payment_id", "currency", "evidence_ref"):
             identifier(getattr(self, key))
         if self.environment not in ("test", "live"):
             raise BillingError("invalid_environment")
+        if type(self.inquiry) is not bool:
+            raise BillingError("invalid_dispute")
         integer(self.amount_minor, positive=True)
         if (not isinstance(self.payload_sha256, str) or len(self.payload_sha256) != 64
                 or any(c not in "0123456789abcdef" for c in self.payload_sha256)):

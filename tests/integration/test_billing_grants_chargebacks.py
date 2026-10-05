@@ -192,10 +192,9 @@ def test_a_dispute_needs_verified_evidence_and_the_funded_payment(money):
                               10, "CNY", "inbox", "d" * 64)
     with pytest.raises(BillingError, match="payment_evidence_untrusted"):
         ledger.record_chargeback(untrusted)
-    with pytest.raises(BillingError, match="payment_order_mismatch"):
+    with pytest.raises(BillingError, match="payment_not_credited"):
         dispute(money, "order-unknown", 10)
-    with pytest.raises(BillingError, match="payment_order_mismatch"):
-        dispute(money, "order-1", 1001, dispute_id="too-much")
+    # More than the paid amount is capped at the payment, not refused: test_billing_dispute_bounds.py
     # a partial dispute takes the proportional share, rounded towards the platform
     result = dispute(money, "order-1", 333, dispute_id="partial")
     assert result["disputed_units"] == 33300 and result["recovered_units"] == 33300
