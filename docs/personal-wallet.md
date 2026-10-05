@@ -13,7 +13,7 @@ Accounts 的 `/account/wallet` 使用本人当前会话读取额度、流水与�
 所有读接口接受共享契约的付款方 `payer_kind=user|organization` 与 `payer_id`：
 
 - `user`（缺省）只能是当前登录本人；指定其他用户 ID 一律 403 `wallet_forbidden`。平台管理员、工作空间角色都不是付款方。
-- `organization` 只对该组织**当前的付费管理者**开放：组织 owner，或基础角色/自定义角色带 `org.billing.manage` 的成员（与充值接口同一规则，由 `synwevo_core.billing.usage.manages_billing` 每次按当前状态判定）。没有该权限的组织 admin、普通成员、其他组织成员、平台管理员，以及不存在或已删除的组织，得到同一个无法区分的 403。
+- `organization` 只对该组织**当前的付费管理者**开放：组织 owner，或基础角色/自定义角色带 `org.billing.manage` 的成员（与充值、组织付费管理接口是同一个函数 `synwevo_core.billing.org_payers.manages_billing`，每次按当前状态判定；组织冻结时读与付都拒绝）。没有该权限的组织 admin、普通成员、其他组织成员、平台管理员，以及不存在或已删除的组织，得到同一个无法区分的 403。
 - 组织的付费管理者能看到每次调用由哪位成员发起（他们本来就能看到成员名单），但**看不到成员的对话**：组织视角的调用行没有对话 ID 与标题，用量也不能按对话分组（只能按日、按模型、按成员）。
 - `GET /api/auth/wallet/payers` 列出本人可读的付款方：本人在前，其后只有本人是付费管理者的有效组织（最多 50 个）。
 

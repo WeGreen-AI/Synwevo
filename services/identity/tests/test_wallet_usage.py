@@ -319,6 +319,44 @@ def test_organization_money_is_read_only_by_its_billing_managers(env):
     assert env.client.get(ROOT, params={"payer_kind": "organization"}).status_code == 400
 
 
+def test_one_rule_decides_who_manages_an_organizations_money_for_paying_and_reading(env):
+    """A custom role carrying org.billing.manage reads the organization's usage and may top it up
+    and manage its payments; a plain organization admin without it can do none of these. Reading
+    and paying ask the same function (org-payments' manages_billing), so they cannot drift."""
+    from synwevo_core.billing import org_payers, usage
+    from synwevo_identity import org_billing_routes, payment_routes
+    assert usage.manages_billing is org_payers.manages_billing
+    assert payment_routes.manages_billing is org_payers.manages_billing
+    assert org_billing_routes.manages_billing is org_payers.manages_billing
+    acme = organization(env, "Acme", {"carol": "owner", "dave": "admin", "erin": "member", "bob": "member"})
+    billing_role(env, acme, "erin")
+    payer = {"payer_kind": "organization", "payer_id": acme}
+
+    def answers(who):
+        env.login(who)
+        read = env.client.get(ROOT + "/usage", params={"group": "member", **payer}).status_code
+        pay = env.client.get(ROOT + "/topup-options", params=payer).status_code
+        manage = env.client.get(f"/api/auth/organizations/{acme}/billing").status_code
+        listed = any(item["id"] == acme for item in get(env, ROOT + "/payers")["items"])
+        return read, pay, manage, listed
+
+    # Organization payments are not configured for this fixture unit (503): the right is still decided first.
+    for who in ("erin", "carol"):
+        assert answers(who) == (200, 200, 503, True), who
+    for who in ("dave", "bob", "admin"):
+        assert answers(who) == (403, 403, 403, False), who
+    # Taking the permission away from the custom role takes both rights away at once.
+    env.store.execute("UPDATE organization_roles SET permissions=? WHERE organization_id=?", (json.dumps([]), acme))
+    assert answers("erin") == (403, 403, 403, False)
+    env.store.execute("UPDATE organization_roles SET permissions=? WHERE organization_id=?",
+                      (json.dumps(["org.billing.manage"]), acme))
+    assert answers("erin") == (200, 200, 503, True)
+    # A frozen organization's money is neither read nor paid; its billing page says it is unavailable.
+    env.store.execute("UPDATE organizations SET status='frozen' WHERE id=?", (acme,))
+    assert answers("erin") == (403, 403, 409, False)
+    assert answers("dave") == (403, 403, 403, False)
+
+
 def test_organization_balance_reads_the_organization_wallet(env):
     kinds = env.store.one("SELECT sql FROM sqlite_master WHERE name='billing_accounts'")["sql"]
     if "org_wallet" not in kinds:

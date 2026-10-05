@@ -23,21 +23,18 @@ from fastapi import APIRouter, Body, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
+from synwevo_core.billing.org_payers import manages_billing
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
-from synwevo_core.org_roles import OrgRoles
 from synwevo_core.sessions import Sessions
 
 from .auth_routes import _challenge
 from .payments import TopupService
 
-PERMISSION = "org.billing.manage"
-
 
 def build_router(ident: Identity, sessions: Sessions, audit, topups: TopupService) -> APIRouter:
     router = APIRouter(tags=["account"])
     store = ident.store
-    roles = OrgRoles(store)
 
     def current(request: Request) -> dict:
         live = sessions.current(getattr(request.state, "session", None))
@@ -53,8 +50,9 @@ def build_router(ident: Identity, sessions: Sessions, audit, topups: TopupServic
             return "user", user["id"]
         if kind != "organization" or not isinstance(pid, str) or not pid or len(pid) > 200:
             raise ServiceError(400, "payer_invalid", "付款方无效")
-        org = store.one("SELECT status,deleted_at FROM organizations WHERE id=?", (pid,))
-        if not org or org["status"] != "active" or org["deleted_at"] is not None or not roles.has(pid, user["id"], PERMISSION):
+        # The organization-billing rule (org_payers.manages_billing): an active organization's
+        # owner or a holder of org.billing.manage; the usage reads use the same function.
+        if not manages_billing(store, pid, user["id"]):
             raise ServiceError(403, "payer_forbidden", "你不能为这个付款方充值或查看其订单")
         return "organization", pid
 

@@ -13,8 +13,9 @@ call's authorization context, other payers' wallets.
 Payer authority is decided here, from current state, on every read:
 * ``user`` — only that user (a platform or workspace administrator is not the payer);
 * ``organization`` — a current billing manager of an active organization: its owner, or a member
-  whose base role or custom roles carry ``org.billing.manage`` (the permission the org-payments
-  package uses for top-ups and organization orders, so reading and paying follow one rule). An
+  whose base role or custom roles carry ``org.billing.manage`` — decided by the org-payments
+  function ``org_payers.manages_billing``, the same one the top-up and organization-billing routes
+  call, so reading and paying follow one rule. An
   organization admin without that permission, an ordinary member, a platform administrator and
   anyone outside the organization get the same refusal, whether or not the organization exists.
 
@@ -31,14 +32,14 @@ import csv
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import io
-import json
 import re
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..org_roles import BASE as ORG_BASE_ROLES
 from ..store import Store
 from .models import MAX_INTEGER, BillingError, identifier, integer
+# One rule for who manages an organization's money, the org-payments one (top-ups, grants, limits).
+from .org_payers import BILLING_PERMISSION, manages_billing  # noqa: F401 - re-exported for readers
 
 PAYER_KINDS = ("user", "organization")
 #: ``billing_accounts.kind`` of each payer's wallet. A personal wallet is the ledger's ``wallet``
@@ -46,8 +47,6 @@ PAYER_KINDS = ("user", "organization")
 #: org-payments package widens the account-kind CHECK to admit it; until then an organization has
 #: no wallet, and every projection of it is honestly empty).
 WALLET_KINDS = {"user": "wallet", "organization": "org_wallet"}
-#: Who may read an organization's money (owners hold every organization permission).
-BILLING_PERMISSION = "org.billing.manage"
 STATES = ("settled", "pending", "held", "not_charged")
 GROUPS = {"user": ("day", "model", "conversation"), "organization": ("day", "model", "member")}
 #: The ledger namespace whose run ids are Agent turn ids (apps/suite agent configuration).
@@ -143,27 +142,6 @@ def wallet_account(t, environment: str, payer: Payer, unit: str):
     return row[0] if row else None
 
 
-def manages_billing(t, organization_id: str, user_id: str) -> bool:
-    """Whether ``user_id`` is a current billing manager of an active organization (see module)."""
-    row = t.execute("SELECT m.role FROM organization_memberships m JOIN organizations o ON o.id=m.organization_id "
-                    "JOIN users u ON u.id=m.user_id WHERE m.organization_id=? AND m.user_id=? "
-                    "AND o.status='active' AND o.deleted_at IS NULL AND u.status='active' AND u.deleted_at IS NULL",
-                    (organization_id, user_id)).fetchone()
-    if not row:
-        return False
-    if row[0] == "owner" or BILLING_PERMISSION in ORG_BASE_ROLES.get(row[0], ()):
-        return True
-    for (permissions,) in t.execute("SELECT r.permissions FROM organization_role_assignments a "
-                                    "JOIN organization_roles r ON r.id=a.role_id "
-                                    "WHERE a.organization_id=? AND a.user_id=?", (organization_id, user_id)):
-        try:
-            if BILLING_PERMISSION in json.loads(permissions or "[]"):
-                return True
-        except (TypeError, ValueError):
-            continue
-    return False
-
-
 class PayerUsage:
     """Read model bound to one ledger environment. ``clock`` is injectable for tests."""
 
@@ -185,7 +163,7 @@ class PayerUsage:
             if payer.id != requester:
                 raise BillingError("wallet_forbidden")
             return
-        if not manages_billing(t, payer.id, requester):
+        if not manages_billing(self.store, payer.id, requester):
             raise BillingError("wallet_forbidden")
 
     def authorize(self, requester: str, payer: Payer) -> None:
@@ -202,7 +180,7 @@ class PayerUsage:
                              "AND o.deleted_at IS NULL ORDER BY o.name,o.id LIMIT ?",
                              (requester, MAX_ORGANIZATIONS)).fetchall()
             out += [{"kind": "organization", "id": row[0], "name": row[1]} for row in rows
-                    if manages_billing(t, row[0], requester)]
+                    if manages_billing(self.store, row[0], requester)]
             return out
 
     # ------------------------------------------------------------------ balance and entries
