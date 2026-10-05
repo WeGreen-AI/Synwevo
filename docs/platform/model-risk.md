@@ -161,7 +161,9 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 ## 12. 未实现与边界
 
 - 网关在上游 402 时调用 `trip_platform_breaker` 的接线属于网关工作包；本包提供并测试了该函数与关闭后的拒绝。
-- 支付回调失败的告警需要支付工作包在回调收件箱记为 `failed`/`rejected` 时调用 `alert_payment_webhook_failure`；本包只提供并测试了挂钩。
+- 支付回调失败的告警已接线：`services/identity/synwevo_identity/payments.py` 在收件箱事件以 `failed`/`rejected`
+  结束（含 `process_pending` 重放）以及签名、载荷、环境校验失败时调用 `alert_payment_webhook_failure`
+  （`docs/platform/wallet-payments.md` §2）。
 - 没有按路线的在途上限：平台 `max_inflight` 覆盖两条路线合计，生产取值按并发配额最小的已启用路线设置（operations.md §11.2 规则 1）。
 - 余额只读取一个币种（成本单位的币种）；多币种余额与汇率不在范围内。
 - 对账按准入时刻归属调用，不把跨边界的结算分摊到两个窗口；差异靠容差与人工复核。

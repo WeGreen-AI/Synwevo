@@ -41,6 +41,12 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
    调用 `Ledger.credit_verified_payment`，其校验回调在账本事务内重新读取收件箱行并核对订单、金额、币种、支付单号与
    付款状态。重复投递、同一付款的另一事件都不会重复入账。金额/币种/会话不符的事件记为 `rejected`、不入账、返回 200
    以停止重试；处理失败返回 500 让 Stripe 重试，账户进程的清理任务每小时也会重放未处理的收件箱行。
+   **失败告警**：收件箱事件以 `failed` 或 `rejected` 结束（含重放路径 `process_pending`），以及进不了收件箱的投递
+   （签名 `signature_missing|malformed|mismatch|stale`、`payload_too_large`、`payload_invalid`、
+   `environment_mismatch`、`event_conflict`），都调用 `alert_payment_webhook_failure`，通知有
+   `platform.config.manage` 的平台管理员（站内与邮件），每个环境、渠道、代码每个 UTC 日一次。告警只带渠道名
+   （`stripe`）与稳定代码（如 `amount_mismatch`、`payment_order_mismatch`、`processing_error`），从不带请求体、
+   签名、事件 ID 或客户信息；告警送不出去也不改变返回给 Stripe 的结果。
 5. 返回页轮询 `GET /api/auth/wallet/topups/{order_id}`（`pending|paid|failed|expired` 与 `credited_at`）；
    `GET /api/auth/wallet/receipts/{order_id}` 只对已入账订单返回收据：订单号、金额、币种、付款方式（来自 Stripe 的
    `charge.succeeded`，未收到则为空，不编造）、入账时间、运营方名称（发布时的设置版本）、Stripe 支付单号。只有发起人
