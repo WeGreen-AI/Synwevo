@@ -389,3 +389,5 @@
 - 2026-10-05T20:04:03.242167+00:00：部署job111952838389持续queued、runner_name为空、steps为空；pending_deployments为[]，没有人工环境审批项。官方 https://www.githubstatus.com/incidents/3q1yb5m7ltvb 报告Actions hosted-runner分配延迟（19:11Z开始，19:15Z说明）。此与本作业排队一致，记录为外部依赖，未取消/重跑/改runner或走手工部署旁路。
 
 - 2026-10-05T20:08:49Z最终只读核对：生产仍a4b42c8、五服务healthy，961acbf部署未发生；release-status.json保存verify成功/deploy queued，production-before-pending-deploy.json保存实际运行版本。官方Actions故障仍investigating（20:08:48Z读取，官方最后更新19:50:50Z），见github-actions-status.json。保留原部署作业，停止本机重复轮询并保存断点；新版本上线核对脚本已准备，未误执行于旧版本。
+
+- **最新覆盖20:10:16Z**：job111952838389 completed/cancelled、runner为空、steps=[]；check-run注释 `The job was not acquired by Runner of type hosted even after multiple attempts`。整个Actions37362720332为failure，verify保持success。前述queued是当时快照；部署现已被平台取消，不会自动继续，也没有执行SSH部署。没有重跑故障平台上的同一操作。STATE写明待故障恢复后仅重跑该deploy job；本地watch自行以exit1结束。最新状态已更新release-status.json。

@@ -1,5 +1,5 @@
 {
-  "conclusion": "",
+  "conclusion": "failure",
   "headSha": "961acbf3ad3e363486261072552c5d91a7024c32",
   "jobs": [
     {
@@ -11,15 +11,18 @@
       "status": "completed"
     },
     {
-      "completedAt": "0001-01-01T00:00:00Z",
-      "conclusion": "",
+      "completedAt": "2026-10-05T20:10:16Z",
+      "conclusion": "cancelled",
       "databaseId": 111952838389,
       "name": "deploy",
       "startedAt": "2026-10-05T19:55:13Z",
-      "status": "queued"
+      "status": "completed",
+      "runner_name": "",
+      "steps": [],
+      "annotation": "The job was not acquired by Runner of type hosted even after multiple attempts"
     }
   ],
-  "status": "queued",
+  "status": "completed",
   "url": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37362720332",
-  "captured_at": "2026-10-05T20:10:23.868664+00:00"
+  "captured_at": "2026-10-05T20:12:49.341062+00:00"
 }
