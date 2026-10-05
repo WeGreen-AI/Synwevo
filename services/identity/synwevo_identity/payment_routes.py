@@ -20,6 +20,7 @@ A person must have a verified address to top up. Every answer is ``private, no-s
 from __future__ import annotations
 
 from fastapi import APIRouter, Body, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from synwevo_core.errors import ServiceError
@@ -143,8 +144,7 @@ def build_router(ident: Identity, sessions: Sessions, audit, topups: TopupServic
             payload += chunk
             if len(payload) > 512 * 1024:
                 return JSONResponse({"error": "payload_too_large"}, status_code=400)
-        import anyio
-        code, body = await anyio.to_thread.run_sync(topups.webhook, payload, request.headers.get("stripe-signature"))
+        code, body = await run_in_threadpool(topups.webhook, payload, request.headers.get("stripe-signature"))
         return JSONResponse(body, status_code=code, headers={"Cache-Control": "no-store"})
 
     return router
