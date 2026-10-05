@@ -23,6 +23,18 @@ Claude-tool credentials, custom headers and proxy API configuration are not prod
 The configured model's supported effort values still require a live verification before release.
 Provider errors expose stable application codes, not raw response bodies.
 
+With `SYNWEVO_AGENT_PROVIDER=deepseek` the platform route, key, prices and cost policy come only
+from Admin governance (docs/deepseek-provider.md, "Gateway rules"). Host settings for it:
+`SYNWEVO_BILLING_ENVIRONMENT` (`test` or `live`), `SYNWEVO_DEEPSEEK_MODEL_CHECK_SECONDS` (model-id
+check interval, 60–86400, default 3600) and, in `test` only, `SYNWEVO_DEEPSEEK_UPSTREAM` pointing at a
+loopback FIXTURE double for end-to-end tests:
+
+    .venv/bin/python apps/suite/scripts/deepseek_test_double.py --port 31790 --models fixture-model
+    SYNWEVO_BILLING_ENVIRONMENT=test SYNWEVO_DEEPSEEK_UPSTREAM=http://127.0.0.1:31790 ...
+
+Any other override is refused at startup. When jobs run, the Suite starts the model-id check
+worker next to the metering recovery worker; both stop with the application.
+
 Organization workspace model-processing policy defaults to off. Owners/admins can permit the
 platform credential or also personal credentials. Personal workspaces default to their owner's
 choice. These policies govern model processing; normal application authorization continues to
