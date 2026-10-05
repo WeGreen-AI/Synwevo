@@ -1,24 +1,37 @@
-# Agent / DeepSeek 计费：当前断点
+# DeepSeek Agent 与计费：当前发布断点
 
-最后检查：2026-10-05T19:20:20.169565+00:00。协调者 Codex `01a0f104-e57f-7092-ab67-50359f43b547`。
+最后核对：2026-10-05T20:08:49Z（香港 10月6日）。协调者 Codex `01a0f104-e57f-7092-ab67-50359f43b547`。
 
-| 项目 | 现场核实 |
+| 项目 | 当前事实 |
 |---|---|
-| 实施工作树 | `.claude/worktrees/agent-billing`，`claude/agent-billing@734736a2fef5788152343707126aa5b4f8e55462`；功能代码已推送 main，补充证据待提交 |
-| 基线 | 原远端 main `3278dfd8ea3994f0fdef601aadd00990d7eff805` 是祖先；87 个计费提交及本轮修复已推送 main。旧 PR #1 已合并，未创建新 PR。fbf4e9c 的 Actions37348318532 文案覆盖失败、deploy skipped；e4a782e 已修复。主检出未提交图标等工作保留 |
-| 锁 | 主检出 `docs/agent-work/.coordinator.lock` 已核实 Claude 原任务配额耗尽且无执行 worker 后接管；原锁备份 `/private/tmp/synwevo-coordinator-before-codex-20261006.txt`。旧 Claude 每分钟循环仍存在但配额已耗尽，未擅自取消、未创建第二循环 |
-| 生产 | 只读 SSH 确认仍为 `a4b42c8da0cee86677cc7d6409e8eaff57543b2b`；accounts/docs/portal/messages/gateway healthy。CI 37226305708 对应此版本；本轮未部署 |
-| 真实模型 | 文件密钥仅在内存读取及隔离库密封保存；官方 models/balance 200；2 次 adapter 流式工具调用通过；隔离真实 Agent 已完成应用目录拒绝、Forms 列表、Forms 详情和跨空间读取四条运行，16 个模型调用各结算一次（包含原失败回答与新成功读后写，详见证据）；另有4次 adapter真实调用覆盖思考开/关 |
-| 本轮修复 | 支付通知/拒付竞争、支付密钥撤销与创建收银台竞争、欢迎额度每日容量并发；模型可见结果带服务器内部链接，Forms get 标记实际资源；工具卡三语言业务名称 |
-| 验证 | 本地定向及浏览器验收已完成；CI37349048194/e4a782e 构建通过；容器3634通过/1失败（Forms get 的生成OpenAPI未同步），deploy skipped；契约已重新生成、4项验证通过。真实写入的列表新增来源误判已于734736a修复并通过隔离真实模型验收 |
-| 当前环境 | 隔离数据 `/private/tmp/synwevo-agent-live-20261006/data`；Accounts 37770、Portal 37769 已于验收后正常关闭；真实 DeepSeek，测试钱包/审计赠送，USD0.10 上游总成本门槛。无真实支付、无客户数据 |
-| 下一动作 | 读后写修复及真实新会话验收已通过，153关联+Python3.12专项26项通过；734736a 的 Actions37355089828 于完整镜像测试81%时 ENOSPC，deploy skipped；CI完整三阶段成功后的临时目录清理已修复，Python3.12 infra 11项通过、独立审查无阻断；正在提交推送，保留全量门槛。旧真实写入frm_7aaa0ee3b939与新验收frm_69612e61a3f8各仅1份，禁止重放。通过后更新 /private/tmp/synwevo-post-deploy-check.py 的预期SHA再核对上线 |
+| 实施工作树 | `.claude/worktrees/agent-billing`；分支 `claude/agent-billing`；产品源提交 `961acbf3ad3e363486261072552c5d91a7024c32` 已推送远端main；文档/证据单独提交，不触发重复CI/CD；产品源版本保持961acbf |
+| 主检出 | 主检出及图标等其他未提交工作完整保留。主检出STATE仅放恢复指针；不在主检出混合实现/提交 |
+| CI | [Actions37362720332](https://github.com/WeGreen-AI/Synwevo/actions/runs/37362720332) verify111940913669 **success**，34m14s；镜像5130通过/5跳过，前端496、infra11及SDK/守卫/类型/构建通过 |
+| 发布 | deploy111952838389 **queued**，未分配runner、无steps；pending_deployments=[]，无人工环境审批。官方Actions runner分配延迟事件3q1yb5m7ltvb。保留此作业，不取消重发，不旁路手工部署 |
+| 生产 | 20:08:49Z只读核对仍运行 `a4b42c8da0cee86677cc7d6409e8eaff57543b2b`；新版本尚未确认部署，不能把verify通过写成上线完成 |
+| 本轮修复 | 并发赠送/支付/拒付；真实内部产物链接；Forms列表读后写的来源检查；三语言手机聊天布局；生成契约同步；CI完整三阶段成功后才回收原生tmp_path，保留失败现场与全部门槛 |
+| 真实验收 | 官方密钥已验证可用；隔离真实Agent16次模型调用/16笔结算，另4次适配器调用（含思考开/关与原生重放）。跨空间owner/viewer读取、只读空间写入403、具体确认后真实新建表单、刷新不重复，证据见目录 |
+| 运行环境 | 隔离库 `/private/tmp/synwevo-agent-live-20261006/data`；Accounts37770与Portal37769已正常停止；隔离钱包不是实际付款。没有向客户发送通知 |
+| 配置 | 主机runtime.env已预置DeepSeek/live/CNY(scale6)、欢迎额度100分=每个已验证账户/邮箱一次CNY1，沿用防重复及每日200次总量。备份见EVIDENCE；未手工重启，随CD加载。`agent`仍未加入应用名单，正式提供方密钥/售价/成本策略仍需现有管理员治理门禁 |
+| 下一具体动作 | 先查当前run及生产current.json；若部署成功，执行下述只读上线核对并记录镜像/备份/健康；若失败，读取该作业日志修根因。不得重新执行已完成模型、赠送或创建表单 |
 
-## 外部条件与明确边界
+## 恢复与证据
 
-- 用户最新优先级：先完成 DeepSeek Agent 与计费，并部署。全球服务不等于已指定收款主体/地区。
-- 已异步询问收款公司与注册地区、现有 Stripe 商户，以及免费“1块”是否每账户一次人民币1元；等待答复，不重复询问、不编造。
-- Stripe 实际收款、微信/支付宝商户资格、真实 webhook 投递尚未验收；没有支付密钥不得标为充值已开放。
-- 公开披露 DeepSeek；上游 API 专门的训练/保留书面答复尚无，不能承诺零保留。未代用户发送外部邮件。
-- 本机测试价与额度是明确隔离的验收配置，不代表已批准公开零售价格；生产密钥仍待正式管理员治理配置，不能通过造管理员会话绕过门禁。
-- 历史产物与依据保留在 EVIDENCE.md、docs/quality/deployment.md。六应用的大范围验收不是本轮 DeepSeek 部署代码完成即可宣称全部完成。
+1. 阅读本树MASTER_PROMPT、STATE、BACKLOG、EVIDENCE；核对主检出 `.coordinator.lock` 的真实持有者活动，不以锁龄强夺。
+2. `gh run view 37362720332 --repo WeGreen-AI/Synwevo`；当前仅执行器排队，不重跑已成功的verify。
+3. 部署完成后运行准备好的 `/private/tmp/synwevo-post-deploy-check.py`（通过 `ssh vultr_tokyo python3 -` 输入；预期SHA已固定961acbf），与 `/private/tmp/synwevo-public-release-check.py`。前者核对四应用镜像标签/ID、网关健康、备份、billing schema与选定非秘密配置；后者核对五域readyz/静态资产/匿名边界/OIDC跳转。尚未执行的新版本验证不得写成通过。
+4. `docs/agent-work/evidence/2026-10-06-deepseek/` 保存真实模型与界面脱敏证据；`ci-verification.json` 绑定准确提交。原始CI日志 `/private/tmp/synwevo-ci-961acbf-verify.log`。
+
+## 剩余外部条件
+
+- 正式平台管理员以真实密码或Passkey完成admin重认证，在价格/成本/风险/提供方页面发布配置。不能通过造会话或直接写治理表替代。密钥文件已可用，不是“缺DeepSeek密钥”。具体入口与步骤见 DEEPSEEK_ENABLEMENT.md。
+- 真实充值仍缺收款公司法定名称、注册地区、可用Stripe商户配置及渠道资格；需真实回调/小额受控交易验收。不得用隔离赠送证明收款成功。
+- 已按用户免费“1块”解释为每个已验证账户/邮箱一次CNY1，不再将币种解释作为发布阻塞；正式售价和加价由管理员发布。
+- API数据训练/保留的提供方书面答复尚未取得；询证草稿已准备，未代发邮件、未承诺零保留。
+- 生产已登录浏览器验收尚未完成；本机IAB正式域名访问曾被客户端拦截，不以公开健康检查冒充完整业务验收。
+- 减少动态效果尚未浏览器实测；真实上游中断收费/价窗切换与正式支付仍是单独验收项，不能由fixture结果替代。
+- 六应用整体A–E矩阵仍保留在BACKLOG；本轮DeepSeek代码验证不能代表全部规格达标。
+
+## 协调与调度
+
+本轮因外部执行器故障及正式商业/管理员配置条件保存断点；停止本地重复轮询，保留远端已排队发布。收尾时仅释放本任务持有的主检出锁。旧Claude任务80146fec的循环d90b5952因其配额耗尽不执行，**本任务未取消该循环，也未创建新循环**。保留GitHub已排队部署作业，后续恢复先查它的最终状态，避免重复副作用。

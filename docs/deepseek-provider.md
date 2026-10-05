@@ -4,7 +4,7 @@
 
 ## Gateway rules (2026-10-05, agent billing programme)
 
-These rules have deterministic FIXTURE coverage. On 2026-10-06 (Hong Kong), the authorized real key additionally passed official model discovery, balance availability, two thinking-disabled SSE tool calls, and three isolated Agent turns with seven settled model calls. See `docs/agent-work/EVIDENCE.md`. These live checks cover terminal usage, cache usage, tool fragments, authenticated application links and the no-replay refresh path. Live thinking-enabled replay, deliberate interruption/error charging, price-window transitions and production payment acceptance remain separate gates; fixture results do not substitute for them.
+These rules have deterministic FIXTURE coverage. On 2026-10-06 (Hong Kong), the authorized real key additionally passed official model discovery, balance availability, four adapter SSE tool calls (thinking disabled and low), and sixteen isolated Agent model calls with sixteen settlements, including cross-workspace reads and a confirmed Forms draft creation. See `docs/agent-work/EVIDENCE.md`. These live checks cover terminal usage, cache usage, tool fragments, authenticated application links and the no-replay refresh path. Thinking-enabled native replay was verified without recording private reasoning. Deliberate real-upstream interruption/error charging, price-window transitions and production payment acceptance remain separate gates; fixture results do not substitute for them.
 
 | Rule | Where | Behaviour |
 | --- | --- | --- |

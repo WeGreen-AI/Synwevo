@@ -377,3 +377,15 @@
 - 容量根因对照（同一20项真实Identity测试，均20 PASS）：默认all保留策略结束67.20MiB/峰值71.31MiB/20个目录；原生failed结束6.11MiB/峰值13.39MiB/0目录。空Store含868个schema对象、checkpoint后3.05MiB；每项一个Store的4176项容量推算约12.46GiB，明确不是故障runner实测。测量 `/private/tmp/synwevo-ci-disk-734736a-9slw2fr1/`。原生failed会丢setup/teardown失败现场，故采用完整三阶段成功后清理的方向，不减测试。
 
 - CI容量修复：新 `--ci-clean-passed-tmp` 仅在 CI=true/native retention=all 时启用，完整三阶段全通过后才删除 pytest 原生函数级目录；失败、跳过、自定义、符号链接及会话数据不删。独立测试覆盖根清理失败、setup/call/teardown失败及本机默认不变。Python3.12.6/pytest9.1.1运行infra共11项通过，证据 `/private/tmp/synwevo-ci-disk-u6bwuik9/production312-infra.{log,json}`；只读独立复核3项通过，`/private/tmp/synwevo-retention-review-zqkr65kf/{retention-tests.log,binding.json}`，前后源码哈希一致。CI专属合成数据挂载提供有限磁盘诊断；保留全量测试、网络隔离、2CPU/3GiB门槛，未扩大机器清理范围。失败数据只保留至runner销毁，无 artifact 上传声明。
+
+- 2026-10-05T19:23:01Z：按用户免费“1块”要求，生产 `runtime.env` 预置 `SYNWEVO_BILLING_WELCOME_MINOR=100`（每个已验证账户/邮箱一次CNY1），保留既有每日200次总量及事务幂等限制。备份 `/opt/synwevo/config/runtime.env.before-welcome-20261005T192301Z`；只增此项，Agent仍不在应用名单，未重启、未赠送，随CI/CD加载。币种解释已向用户说明，正式售价仍由管理员发布。
+
+- 发布前只读检查：2026-10-05T19:29:56Z 主机可用磁盘180.32GiB，仍运行a4b42c8；19:41:31Z接收器原有阻塞队列计数 jobs/webhook_deliveries/mail_outbox 均为0。此为切换前快照，不替代接收器正式切换时复检；未删除缓存、镜像或业务数据。
+
+- 2026-10-05T19:57:24.181190+00:00：961acbf / Actions37362720332 的verify作业111940913669已completed/success，构建与完整镜像测试全部步骤成功；deploy111952838389处于queued。CLI在整条run未结束前尚不能提供日志，测试具体数量待最终日志核实，不从旧结果推断。
+
+- 961acbf准确CI日志：完整镜像5130 passed / 5 skipped / 242既有弃用warnings，1823.45s；verify作业34m14s。6前端工作区496 tests、infra 11项及SDK/守卫/类型/构建门槛通过。CI按全部三阶段成功条件清理4110个临时目录，结束仍10461MiB可用。5个跳过原因是镜像内无Node（2）、无Docker（1）、未设置隔离clamd（1）、项目未选定LICENSE（1）；Node真实协作另在宿主verify步骤通过。安全摘要 `evidence/2026-10-06-deepseek/ci-verification.json`，原始日志 `/private/tmp/synwevo-ci-961acbf-verify.log`。部署作业暂无审批项，等待ubuntu-24.04执行器，不代表已部署。
+
+- 2026-10-05T20:04:03.242167+00:00：部署job111952838389持续queued、runner_name为空、steps为空；pending_deployments为[]，没有人工环境审批项。官方 https://www.githubstatus.com/incidents/3q1yb5m7ltvb 报告Actions hosted-runner分配延迟（19:11Z开始，19:15Z说明）。此与本作业排队一致，记录为外部依赖，未取消/重跑/改runner或走手工部署旁路。
+
+- 2026-10-05T20:08:49Z最终只读核对：生产仍a4b42c8、五服务healthy，961acbf部署未发生；release-status.json保存verify成功/deploy queued，production-before-pending-deploy.json保存实际运行版本。官方Actions故障仍investigating（20:08:48Z读取，官方最后更新19:50:50Z），见github-actions-status.json。保留原部署作业，停止本机重复轮询并保存断点；新版本上线核对脚本已准备，未误执行于旧版本。

@@ -1,0 +1,100 @@
+{
+  "source_commit": "961acbf3ad3e363486261072552c5d91a7024c32",
+  "workflow_url": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37362720332",
+  "verify_job_id": 111940913669,
+  "verify_conclusion": "success",
+  "deployment": "not yet verified; queued at capture",
+  "runtime_tests": {
+    "passed": 5130,
+    "skipped": 5,
+    "warnings": 242,
+    "duration_seconds": 1823.45,
+    "skip_reasons": [
+      "SKIPPED [1] apps/docs/tests/test_sheet_live_clients.py:41: real-room client tests need Node: node is not installed",
+      "SKIPPED [1] apps/docs/tests/test_encrypted_files.py:430: CLAMD_TEST_ADDRESS is not set (a clamd with AlertEncryptedArchive yes)",
+      "SKIPPED [1] apps/docs/tests/test_licensing.py:160: 本项目尚未选定 LICENSE",
+      "SKIPPED [1] tests/integration/test_platform_tooling.py:284: 本机没有 docker",
+      "SKIPPED [1] tests/integration/test_platform_tooling.py:460: needs Node and the workspace's node_modules (the verify job has both)"
+    ]
+  },
+  "tmp_path_cleanup": {
+    "strategy": "only native owned function paths after all three phases pass",
+    "samples": [
+      {
+        "removed": 250,
+        "disk_free_MiB": 10531
+      },
+      {
+        "removed": 500,
+        "disk_free_MiB": 10526
+      },
+      {
+        "removed": 750,
+        "disk_free_MiB": 10518
+      },
+      {
+        "removed": 1000,
+        "disk_free_MiB": 10517
+      },
+      {
+        "removed": 1250,
+        "disk_free_MiB": 10514
+      },
+      {
+        "removed": 1500,
+        "disk_free_MiB": 10515
+      },
+      {
+        "removed": 1750,
+        "disk_free_MiB": 10515
+      },
+      {
+        "removed": 2000,
+        "disk_free_MiB": 10510
+      },
+      {
+        "removed": 2250,
+        "disk_free_MiB": 10508
+      },
+      {
+        "removed": 2500,
+        "disk_free_MiB": 10500
+      },
+      {
+        "removed": 2750,
+        "disk_free_MiB": 10476
+      },
+      {
+        "removed": 3000,
+        "disk_free_MiB": 10475
+      },
+      {
+        "removed": 3250,
+        "disk_free_MiB": 10468
+      },
+      {
+        "removed": 3500,
+        "disk_free_MiB": 10471
+      },
+      {
+        "removed": 3750,
+        "disk_free_MiB": 10451
+      },
+      {
+        "removed": 4000,
+        "disk_free_MiB": 10451
+      },
+      {
+        "removed": 4110,
+        "disk_free_MiB": 10461
+      }
+    ]
+  },
+  "other_gates": {
+    "verify_and_build": "success",
+    "infra_unittest_count": 11,
+    "frontend_test_count": 496,
+    "sdk_checks": "success"
+  },
+  "captured_at": "2026-10-05T20:01:54.171688+00:00"
+}

@@ -1,0 +1,25 @@
+{
+  "conclusion": "",
+  "headSha": "961acbf3ad3e363486261072552c5d91a7024c32",
+  "jobs": [
+    {
+      "completedAt": "2026-10-05T19:55:13Z",
+      "conclusion": "success",
+      "databaseId": 111940913669,
+      "name": "verify",
+      "startedAt": "2026-10-05T19:20:59Z",
+      "status": "completed"
+    },
+    {
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "databaseId": 111952838389,
+      "name": "deploy",
+      "startedAt": "2026-10-05T19:55:13Z",
+      "status": "queued"
+    }
+  ],
+  "status": "queued",
+  "url": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37362720332",
+  "captured_at": "2026-10-05T20:10:23.868664+00:00"
+}

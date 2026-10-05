@@ -2,7 +2,8 @@
 
 This implementation is under acceptance testing. The production application switch defaults
 to unavailable. On 2026-10-06 (Hong Kong), the governed DeepSeek route completed real tool calls
-and three Agent turns in an isolated test wallet; see `docs/agent-work/EVIDENCE.md`. This proves
+and sixteen metered Agent model calls/settlements in an isolated test wallet, including cross-workspace
+reads and a confirmed Forms draft creation; see `docs/agent-work/EVIDENCE.md`. This proves
 that bounded live path, not a complete cross-application workflow or production payment acceptance.
 
 ## Configuration and ownership
@@ -69,9 +70,10 @@ a new review. Regeneration creates a read-only answer branch and cannot repeat a
 
 The current per-turn limits are 12 model steps, 20 tools per step, 120,000 accumulated tokens,
 600,000 context characters and 64,000 output characters. Admission allows three active turns
-per user and 16 overall. These are guardrails, not latency or cost measurements. Monthly cost
-budgets and multi-instance worker leases are not implemented: run one portal Agent worker until
-lease-based recovery is verified. Restarted/uncertain external actions require reconciliation;
+per user and 16 overall. These are guardrails, not latency or cost measurements. The governed paid DeepSeek route also
+enforces the configured payer daily/weekly/monthly budgets and platform cost policy before dispatch
+(`docs/platform/agent-run-budgets.md`, `docs/platform/model-risk.md`). Multi-instance Agent worker
+leases are not implemented: run one portal Agent worker until lease-based recovery is verified. Restarted/uncertain external actions require reconciliation;
 they must not be blindly resubmitted.
 
 History and cached results recheck current access. Generic run lists/details never expose raw
@@ -79,7 +81,10 @@ operation inputs or error detail. Synchronous read snapshots are hidden when re-
 registered operation produces a different projection. Mutation snapshots require an explicit
 `Operation.result_guard`; lack of a safe guard prevents old-result access and does not repeat
 the mutation. `run_result_unavailable` carries the original run ID for reconciliation.
-This conservative version comparison can also hide content after ordinary source edits.
+This conservative version comparison can also hide content after ordinary source edits. Forms list
+proofs created from 734736a preserve their original item IDs: new unrelated forms do not invalidate
+them, but original-item changes, deletion or lost access still do. Legacy hash-only proofs and other
+operations retain the strict comparison; no old proof is guessed or migrated.
 
 ## Cost transparency in the chat
 

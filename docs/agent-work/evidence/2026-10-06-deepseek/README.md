@@ -16,3 +16,7 @@
 ## 后续真实写入与修复
 
 `agent-write-before-fix.json` 记录e4a782e写入成功但旧列表来源检查误封会话；`agent-created-form.jpg` 证明原草稿存在，未重放。修复后独立的新任务见 `agent-write-recovery.json`、`agent-write-success.jpg` 与 `agent-write-recovery-form.jpg`：读取→确认→真实写入→回答完成→刷新不重复→打开产物。新增草稿包含两个真实字段，未发布。旧仅哈希的历史证明不猜测迁移。
+
+最终追加验收累计16个Agent模型调用/16笔结算，另4个适配器调用；前述7笔、10笔文件是先前时间点的快照。`call-latency.json` 只测量账本时间戳差（秒级分辨率），不是首token或完整端到端延迟。`ci-disk-measurement.json` 为CI临时库保留对照，不是生产性能指标。
+
+发布快照：`ci-verification.json` 为961acbf的已通过验证；`release-status.json`、`github-actions-status.json` 和 `production-before-pending-deploy.json` 记录部署因GitHub执行器故障排队、生产仍旧版的最终观察。它们是带时间的证据，不会随远端作业自动更新；恢复必须重新核对。
