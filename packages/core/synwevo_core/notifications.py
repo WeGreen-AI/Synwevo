@@ -105,6 +105,12 @@ CATALOGUE: dict[str, dict] = {
         "zh-Hans": "如果这是你本人的操作，不需要做任何事。如果不是，请立即修改口令并结束其他设备的登录。",
         "zh-Hant": "若為你本人操作，無需處理。若不是，請立即變更密碼並結束其他裝置的登入。",
         "en": "If this was you, nothing to do. If not, change your password now and sign out other devices."}},
+    # ---- the person's own wallet (billing/reminders.py): one notice per crossing of their own threshold
+    "wallet.low_balance": {"category": "platform", "severity": "info", "email": "immediate", "title": {
+        "zh-Hans": "钱包可用余额低于你设的提醒线", "zh-Hant": "錢包可用餘額低於你設的提醒線", "en": "Your wallet balance is below your reminder"}, "body": {
+        "zh-Hans": "可用余额 {available} {unit}，低于你设置的 {threshold} {unit}。充值后可继续使用付费的 Agent；余额回到提醒线以上后，下次低于时会再提醒一次。",
+        "zh-Hant": "可用餘額 {available} {unit}，低於你設定的 {threshold} {unit}。儲值後可繼續使用付費的 Agent；餘額回到提醒線以上後，下次低於時會再提醒一次。",
+        "en": "Available balance is {available} {unit}, below the {threshold} {unit} you set. Top up to keep using the paid Agent; once the balance is back above the line, you will be reminded again the next time it drops."}},
     # ---- organization & workspace membership
     "invitation.received": {"category": "organization", "severity": "action", "email": "immediate", "title": {
         "zh-Hans": "{inviter} 邀请你加入「{workspace}」", "zh-Hant": "{inviter} 邀請你加入「{workspace}」", "en": "{inviter} invited you to “{workspace}”"}, "body": {

@@ -31,4 +31,13 @@ registerMessages({
   '请求参数无效': { en: 'Invalid request parameters', 'zh-Hant': '請求參數無效' },
   '请先登录可用账户': { en: 'Please sign in with an active account', 'zh-Hant': '請先登入可用帳戶' },
   '无权查看此钱包': { en: 'You cannot view this wallet', 'zh-Hant': '無權查看此錢包' },
+  // Refusals of the usage reads and wallet settings (wallet_routes.py), word for word.
+  '付款方参数无效': { en: 'That payer is not valid', 'zh-Hant': '付款方參數無效' },
+  '时间范围无效：起止日期最多相隔 366 天': { en: 'Invalid period: the start and end dates can be at most 366 days apart', 'zh-Hant': '時間範圍無效：起訖日期最多相隔 366 天' },
+  '分组方式无效': { en: 'That grouping is not available', 'zh-Hant': '分組方式無效' },
+  '筛选条件无效': { en: 'Invalid filter', 'zh-Hant': '篩選條件無效' },
+  '所选时间段内的记录过多，请缩短时间段后再试': { en: 'Too many records in this period. Choose a shorter period and try again.', 'zh-Hant': '所選時間段內的記錄過多，請縮短時間段後再試' },
+  '支出上限已在别处修改，请刷新后再试': { en: 'Your spending limits were changed elsewhere. Refresh and try again.', 'zh-Hant': '支出上限已在別處修改，請重新整理後再試' },
+  '模型价格尚未发布，暂时不能设置支出上限': { en: 'Model prices are not published yet, so spending limits cannot be set.', 'zh-Hant': '模型價格尚未發佈，暫時不能設定支出上限' },
+  '余额提醒已在别处修改，请刷新后再试': { en: 'Your balance reminder was changed elsewhere. Refresh and try again.', 'zh-Hant': '餘額提醒已在別處修改，請重新整理後再試' },
 });
