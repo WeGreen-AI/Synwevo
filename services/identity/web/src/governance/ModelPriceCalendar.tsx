@@ -265,11 +265,11 @@ export function ModelPriceCalendar({ manage, onDenied }: { manage: boolean; onDe
             {WEEKDAYS.map(day => <label key={day} className="check"><input type="checkbox" checked={w.weekdays.includes(day)} onChange={() => toggleDay(index, day)} />{t(WEEKDAY_NAMES[day - 1])}</label>)}
           </div>
           <div style={grid}>
-            <label className="field" style={{ minWidth: 0 }}><span>{t('开始（UTC）')}</span>
-              <input className="input" type="text" inputMode="numeric" maxLength={5} placeholder="01:00" value={w.start} aria-describedby={`${id}-window-help`}
+            <label className="field" htmlFor={`${id}-w${index}-start`} style={{ minWidth: 0 }}><span>{t('开始（UTC）')}</span>
+              <input id={`${id}-w${index}-start`} className="input" type="text" inputMode="numeric" maxLength={5} placeholder="01:00" value={w.start} aria-describedby={`${id}-window-help`}
                 onChange={event => editWindow(index, { start: event.target.value })} style={{ width: '100%', minWidth: 0 }} /></label>
-            <label className="field" style={{ minWidth: 0 }}><span>{t('结束（UTC）')}</span>
-              <input className="input" type="text" inputMode="numeric" maxLength={5} placeholder="04:00" value={w.end} aria-describedby={`${id}-window-help`}
+            <label className="field" htmlFor={`${id}-w${index}-end`} style={{ minWidth: 0 }}><span>{t('结束（UTC）')}</span>
+              <input id={`${id}-w${index}-end`} className="input" type="text" inputMode="numeric" maxLength={5} placeholder="04:00" value={w.end} aria-describedby={`${id}-window-help`}
                 onChange={event => editWindow(index, { end: event.target.value })} style={{ width: '100%', minWidth: 0 }} /></label>
           </div>
           {validTime(w.start) && validTime(w.end, true) && minutes(w.start) < minutes(w.end) &&
@@ -286,12 +286,12 @@ export function ModelPriceCalendar({ manage, onDenied }: { manage: boolean; onDe
         <legend><b>{t('节假日（全天低谷）')}</b></legend>
         <p className="small muted">{t('按 {offset} 的日期登记中国法定节假日；调休上班日不在此登记，按星期判断。', { offset: utcOffset(draft.holiday_utc_offset_minutes) })}</p>
         <div style={grid}>
-          <label className="field" style={{ minWidth: 0 }}><span>{t('开始日期')}</span>
-            <input className="input" type="date" value={holiday.from} onChange={event => setHoliday({ ...holiday, from: event.target.value })} style={{ width: '100%', minWidth: 0 }} /></label>
-          <label className="field" style={{ minWidth: 0 }}><span>{t('结束日期（可选，最多 31 天）')}</span>
-            <input className="input" type="date" value={holiday.to} onChange={event => setHoliday({ ...holiday, to: event.target.value })} style={{ width: '100%', minWidth: 0 }} /></label>
-          <label className="field" style={{ minWidth: 0 }}><span>{t('节假日名称')}</span>
-            <input className="input" type="text" maxLength={40} value={holiday.name} onChange={event => setHoliday({ ...holiday, name: event.target.value })} style={{ width: '100%', minWidth: 0 }} /></label>
+          <label className="field" htmlFor={`${id}-from`} style={{ minWidth: 0 }}><span>{t('开始日期')}</span>
+            <input id={`${id}-from`} className="input" type="date" value={holiday.from} onChange={event => setHoliday({ ...holiday, from: event.target.value })} style={{ width: '100%', minWidth: 0 }} /></label>
+          <label className="field" htmlFor={`${id}-to`} style={{ minWidth: 0 }}><span>{t('结束日期（可选，最多 31 天）')}</span>
+            <input id={`${id}-to`} className="input" type="date" value={holiday.to} onChange={event => setHoliday({ ...holiday, to: event.target.value })} style={{ width: '100%', minWidth: 0 }} /></label>
+          <label className="field" htmlFor={`${id}-holiday-name`} style={{ minWidth: 0 }}><span>{t('节假日名称')}</span>
+            <input id={`${id}-holiday-name`} className="input" type="text" maxLength={40} value={holiday.name} onChange={event => setHoliday({ ...holiday, name: event.target.value })} style={{ width: '100%', minWidth: 0 }} /></label>
         </div>
         <div><button type="button" className="btn" onClick={addHolidays}>{t('添加节假日')}</button></div>
         {holidayProblem && <p className="notice err small" role="alert">{t(holidayProblem)}</p>}
@@ -305,8 +305,8 @@ export function ModelPriceCalendar({ manage, onDenied }: { manage: boolean; onDe
       </fieldset>
 
       <fieldset className="col gap8" style={fieldset} disabled={!canWrite || frozen}>
-        <label className="field" style={{ minWidth: 0, maxWidth: 480 }}><span>{t('依据引用（例如官方定价页与核对日期）')}</span>
-          <input className="input" type="text" maxLength={200} value={draft.source_ref} onChange={event => change({ ...draft, source_ref: event.target.value })}
+        <label className="field" htmlFor={`${id}-source`} style={{ minWidth: 0, maxWidth: 480 }}><span>{t('依据引用（例如官方定价页与核对日期）')}</span>
+          <input id={`${id}-source`} className="input" type="text" maxLength={200} value={draft.source_ref} onChange={event => change({ ...draft, source_ref: event.target.value })}
             style={{ width: '100%', minWidth: 0 }} /></label>
       </fieldset>
       {(tried || problems.length > 0) && problems.length > 0 && <ul className="notice err small" role="alert">{problems.map(p => <li key={p}>{t(PROBLEMS[p])}</li>)}</ul>}
