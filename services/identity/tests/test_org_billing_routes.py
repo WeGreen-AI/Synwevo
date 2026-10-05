@@ -81,20 +81,22 @@ def test_only_a_billing_manager_sets_who_may_charge_the_organization(world):
     assert json.loads(audit["meta"])["monthly_limit_minor"] == 5000
 
 
-def test_a_custom_role_can_delegate_billing_and_workspace_limits_are_kept(world):
+def test_a_custom_role_can_delegate_billing_and_no_workspace_limit_is_offered(world):
+    """A per-workspace monthly limit binds nothing until organization-paid Agent runs are attributed
+    to a workspace (the ledger applies one only to a call that carries its workspace, and no run
+    does). So none is offered: no route sets one, the view lists none, nothing is stored."""
     roles, store = OrgRoles(world["store"]), world["store"]
     role = roles.create(world["oid"], world["people"]["owner"], name="Treasurer", permissions=["org.billing.manage"])
     roles.assign(world["oid"], world["people"]["owner"], world["people"]["admin"], [role["id"]])
     admin = world["login"]("admin")
     base = f"/api/auth/organizations/{world['oid']}/billing"
+    view = admin.get(base)
+    assert view.status_code == 200 and "workspaces" not in view.json()
+    r = put(admin, f"{base}/members/{world['people']['member']}",
+            {"enabled": True, "monthly_limit_minor": 100, "expected_revision": 0})
+    assert r.status_code == 200 and "workspaces" not in r.json()
     r = put(admin, f"{base}/workspaces/{world['wid']}", {"monthly_limit_minor": 2000, "expected_revision": 0})
-    assert r.status_code == 200, r.text
-    ws = next(w for w in r.json()["workspaces"] if w["workspace_id"] == world["wid"])
-    assert ws["monthly_limit"] == str(2000 * 10**4) and ws["revision"] == 1
-    r = put(admin, f"{base}/workspaces/{world['wid']}", {"monthly_limit_minor": None, "expected_revision": 1})
-    assert next(w for w in r.json()["workspaces"] if w["workspace_id"] == world["wid"])["monthly_limit"] is None
-    r = put(admin, f"{base}/workspaces/ws_not_in_org", {"monthly_limit_minor": 1, "expected_revision": 0})
-    assert r.status_code == 404
+    assert r.status_code in (404, 405), r.text
+    assert store.one("SELECT COUNT(*) AS n FROM billing_org_workspace_limits")["n"] == 0
     statement = admin.get(f"{base}/statement").json()
     assert statement["items"] == [] and statement["unit"] == {"code": "CNY", "scale": 6}
-    assert store.one("SELECT COUNT(*) AS n FROM billing_org_workspace_limits")["n"] == 2

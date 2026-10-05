@@ -4,7 +4,8 @@
   a monthly limit (wallet units, UTC calendar month). Immutable revisions; the latest revision of
   (organization, member) is in force; ``enabled=0`` withdraws it.
 * ``billing_org_workspace_limits`` — an optional monthly limit per organization workspace (the
-  Agent call's attributed workspace). ``monthly_limit`` NULL means "no workspace limit".
+  Agent call's attributed workspace). ``monthly_limit`` NULL means "no workspace limit". Nothing
+  writes it yet: no organization-paid run is attributed to a workspace, so no limit is offered.
 * ``billing_org_admissions`` — which member/workspace/grant revision admitted each organization-paid
   call, written in the reservation transaction; the monthly exposure is read from it.
 

@@ -45,17 +45,10 @@ export const messages = {
   "每月额度（元）": { en: "Monthly limit (CNY)", "zh-Hant": "每月額度（元）" },
   "保存": { en: "Save", "zh-Hant": "儲存" },
   "保存「{name}」的付费设置": { en: "Save the payment settings for “{name}”", "zh-Hant": "儲存「{name}」的付費設定" },
-  "工作空间额度": { en: "Workspace limits", "zh-Hant": "工作空間額度" },
-  "可选：限制归属到某个工作空间的组织付费调用每月合计。留空表示不单独限制。": {
-    en: "Optional: cap the monthly total of organization-paid calls attributed to a workspace. Leave empty for no separate limit.",
-    "zh-Hant": "可選：限制歸屬到某個工作空間的組織付費呼叫每月合計。留空表示不單獨限制。" },
-  "已保存「{name}」的每月额度。": { en: "Saved the monthly limit for “{name}”.", "zh-Hant": "已儲存「{name}」的每月額度。" },
-  "每月额度（元，留空不限）": { en: "Monthly limit (CNY, empty for none)", "zh-Hant": "每月額度（元，留空不限）" },
-  "保存「{name}」的每月额度": { en: "Save the monthly limit for “{name}”", "zh-Hant": "儲存「{name}」的每月額度" },
   "组织账单": { en: "Organization statement", "zh-Hant": "組織帳單" },
-  "组织钱包的每一笔入账与扣费；消费注明成员与工作空间，不包含任何对话内容。": {
-    en: "Every credit and charge of the organization wallet; charges name the member and workspace, never any conversation content.",
-    "zh-Hant": "組織錢包的每一筆入帳與扣費；消費註明成員與工作空間，不包含任何對話內容。" },
+  "组织钱包的每一笔入账与扣费；消费注明成员，不包含任何对话内容。": {
+    en: "Every credit and charge of the organization wallet; charges name the member, never any conversation content.",
+    "zh-Hant": "組織錢包的每一筆入帳與扣費；消費註明成員，不包含任何對話內容。" },
   "还没有账单记录。": { en: "No statement entries yet.", "zh-Hant": "還沒有帳單記錄。" },
   "充值到账": { en: "Top-up received", "zh-Hant": "充值到帳" },
   "测试到账": { en: "Test credit", "zh-Hant": "測試到帳" },
