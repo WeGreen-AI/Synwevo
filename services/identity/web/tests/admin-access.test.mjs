@@ -161,3 +161,16 @@ test("why a grant cannot be revoked, or nothing granted, is a visible sentence f
     }
   });
 });
+
+test("money pages are offered to exactly the roles that hold platform.billing.view", () => {
+  assert.equal(access.TAB_PERMISSION.finance, "platform.billing.view");
+  assert.equal(access.TAB_PERMISSION.payments, "platform.billing.view");
+  const offered = Object.fromEntries(Object.entries(ROLES).map(([role, held]) =>
+    [role, access.visibleTabs(held).filter((tab) => tab === "finance" || tab === "payments")]));
+  assert.deepEqual(offered, { super_admin: ["payments", "finance"], access_admin: [], support: [], auditor: [],
+    api_platform_admin: [], finance: ["payments", "finance"] });
+  // the finance role reaches nothing but money and the overview
+  assert.deepEqual(access.visibleTabs(ROLES.finance), ["overview", "payments", "finance"]);
+  assert.equal(access.permitted(ROLES.finance, "platform.billing.manage").disabled, false);
+  assert.equal(access.permitted(ROLES.auditor, "platform.billing.manage").disabled, true);
+});
