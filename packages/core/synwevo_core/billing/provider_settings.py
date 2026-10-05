@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
+import re
 import time
 from typing import Literal
 
@@ -32,6 +33,8 @@ ADMIN_TARGET = {"origin": "accounts", "path": "/admin?tab=model-provider"}
 #: DeepSeek reasoning_effort values; "none" is thinking off (docs/deepseek-provider.md).
 REASONING_EFFORTS = ("none", "low", "high", "max")
 Effort = Literal["none", "low", "high", "max"]
+#: What follows ``deepseek:<env>:`` in a resolved route version (ASCII digits only).
+_ROUTE_VERSION = re.compile(r"([1-9][0-9]{0,17})(?::bands:[1-9][0-9]{0,17})?")
 
 
 class RouteSpec(BaseModel):
@@ -192,11 +195,14 @@ class ProviderSettings:
                 "requested_model": found["requested_model"], "since": found["created_at"]}
 
     def route_revision(self, version: str) -> int | None:
-        """The provider revision a resolved route version (``deepseek:<env>:<revision>``) names."""
+        """The provider revision a resolved route version names: ``deepseek:<env>:<revision>``, or
+        ``deepseek:<env>:<revision>:bands:<schedule revision>`` when a price is banded (resolve).
+        None for anything else; callers must treat that as closed, never as revision 0."""
         prefix = f"{PROVIDER}:{self.environment}:"
-        if not isinstance(version, str) or not version.startswith(prefix) or not version[len(prefix):].isdigit():
+        if not isinstance(version, str) or not version.startswith(prefix):
             return None
-        return int(version[len(prefix):])
+        match = _ROUTE_VERSION.fullmatch(version[len(prefix):])
+        return int(match.group(1)) if match else None
 
     def health(self, revision: int) -> dict:
         last = self.store.one("SELECT state,created_at FROM model_provider_health WHERE environment=? AND revision=? "

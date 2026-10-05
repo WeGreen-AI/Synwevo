@@ -3,6 +3,7 @@
 FIXTURE transports only (httpx.MockTransport); synthetic prices, funds and keys. No real
 DeepSeek endpoint is contacted and no real key exists anywhere in these tests.
 """
+import dataclasses
 import json
 import sys
 import time
@@ -130,6 +131,44 @@ def test_missing_model_id_closes_the_route_alerts_admins_and_refuses_unsent_unti
     with pytest.raises(Exception) as err:
         publish(g, {'action': 'keep'})
     assert getattr(err.value, 'code', None) == 'model_no_change'
+
+
+def test_a_missing_model_id_also_closes_a_route_with_time_banded_prices(governed):
+    # Production routes carry peak/off-peak cost prices, so their version names the calendar
+    # revision too ('deepseek:<env>:<revision>:bands:<n>'). The closure is recorded against the
+    # provider revision and must stop those routes exactly like flat ones.
+    g = governed; configure(g, banded=True); fund(g)
+    route = g.provider.route()
+    revision = g.provider.settings.read()['revision']
+    assert route.version == f'deepseek:test:{revision}:bands:1'
+    settings = g.provider.settings
+    assert settings.route_revision(route.version) == revision
+    assert settings.route_revision(f'deepseek:test:{revision}') == revision
+    for malformed in (f'deepseek:test:{revision}:bands:', f'deepseek:test:{revision}:other:1',
+                      f'deepseek:live:{revision}:bands:1', 'deepseek:test:²', f'deepseek:test:{revision}:bands:1:x'):
+        assert settings.route_revision(malformed) is None
+
+    tid = start(g); g.agent._run(tid)
+    assert g.store.one('SELECT status FROM agent_turns WHERE id=?', (tid,))['status'] == 'succeeded'
+    calls = len(g.store.all('SELECT * FROM billing_calls'))
+
+    assert check(g, lambda r: listing('other-model'))['closure']['state'] == 'model_missing'
+    tid = start(g); g.agent._run(tid)
+    turn = g.store.one('SELECT * FROM agent_turns WHERE id=?', (tid,))
+    assert turn['status'] == 'failed' and turn['error_code'] == 'billing_provider_model_missing'
+    assert turn['error_message'] == UNAVAILABLE
+    assert len(g.seen) == 1 and len(g.store.all('SELECT * FROM billing_calls')) == calls  # Unsent, unreserved.
+
+
+def test_a_route_version_this_service_did_not_resolve_is_refused_unsent(governed):
+    # Fail closed: a version whose provider revision cannot be read is never treated as open.
+    g = governed; configure(g)
+    route = g.provider.route()
+    for version in ('deepseek:test:x', route.version + ':bands:', 'fixture-unknown-version'):
+        with pytest.raises(Exception) as err:
+            g.provider.route_open(dataclasses.replace(route, version=version))
+        assert getattr(err.value, 'code', None) == 'model_configuration_changed'
+    g.provider.route_open(route)  # The resolved version itself is open.
 
 
 def test_a_failed_check_closes_nothing_and_a_stale_revision_is_ignored(governed):
