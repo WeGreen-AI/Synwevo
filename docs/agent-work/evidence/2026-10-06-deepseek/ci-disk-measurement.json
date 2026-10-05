@@ -1,0 +1,72 @@
+{
+  "source_sha": "734736a2fef5788152343707126aa5b4f8e55462",
+  "kind": "bounded isolated comparison, not actual failed runner disk measurement",
+  "samples": {
+    "default-measure.json": {
+      "policy": "default",
+      "exit_code": 0,
+      "seconds": 1.0385512080974877,
+      "after": {
+        "logical": 70467584,
+        "allocated": 70467584,
+        "sqlite": 70467584,
+        "wal": 0,
+        "files": 22,
+        "testdirs": 20
+      },
+      "peak_logical": 74778160,
+      "source_sha256": "f163c40596a8e5d5d43a1d075f27d21f03c67d802ef228b0974d8434c150f933",
+      "test_count": 20
+    },
+    "failed-measure.json": {
+      "policy": "failed",
+      "exit_code": 0,
+      "seconds": 0.9461202500388026,
+      "after": {
+        "logical": 6406144,
+        "allocated": 6406144,
+        "sqlite": 6406144,
+        "wal": 0,
+        "files": 2,
+        "testdirs": 0
+      },
+      "peak_logical": 14035312,
+      "source_sha256": "506098e2748f3802fc86490289a785f022db0a55bdb49584a2a3ef8e24b7589a",
+      "test_count": 20
+    }
+  },
+  "failure_retention_probe": {
+    "intentional_fixture_failures": true,
+    "pytest_exit": 1,
+    "validation": "PASS: successful case removed; call/setup/teardown failures retained",
+    "retained": [
+      "test_call_failure0",
+      "test_setup_failure0",
+      "test_teardown_failure0"
+    ],
+    "removed": [
+      "test_retention_fixture.py::test_pass"
+    ],
+    "reports": {
+      "test_retention_fixture.py::test_pass": {
+        "setup": true,
+        "call": true,
+        "teardown": true
+      },
+      "test_retention_fixture.py::test_call_failure": {
+        "setup": true,
+        "call": false,
+        "teardown": true
+      },
+      "test_retention_fixture.py::test_setup_failure": {
+        "setup": false,
+        "teardown": true
+      },
+      "test_retention_fixture.py::test_teardown_failure": {
+        "setup": true,
+        "call": true,
+        "teardown": false
+      }
+    }
+  }
+}

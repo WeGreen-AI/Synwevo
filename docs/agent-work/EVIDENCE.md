@@ -362,3 +362,18 @@
 - Forms列表来源新增稳定原条目ID证明，复查只投影原集合并核对原完整哈希；任一原项删除、改变、权限或字段被过滤仍拒绝。其他操作与历史仅哈希证明保持严格检查，不迁移猜测旧集合。新增18项、关联153项通过；Python3.12新增来源+机器契约+公开状态26项通过。日志 `/private/tmp/synwevo-agent-provenance-ptp1zkv8/`、`/private/tmp/synwevo-final-source-targeted.log`。
 - 新隔离会话 `conv_b61622672e73`，真实DeepSeek先读Forms列表，具体确认后新建含名称/备注字段的草稿 `frm_69612e61a3f8`，最终turn_f190d1050d64成功；可从产物卡打开Forms编辑器。刷新后同名草稿仍仅1份、余额不变、无浏览器警告/错误。此会话4次真实模型调用；隔离Agent累计16调用/16结算，另4次适配器调用。测试钱包累计余额1.901426 CNY（初始2），不是支付收款凭据。
 - `evidence/2026-10-06-deepseek/agent-write-recovery.json` 绑定engine源码SHA256，真实模型输出的步骤说明仍可能英文，最终回答简体中文；未承诺模型语言完全一致。未发布草稿、未发客户通知。
+
+- 最终修复提交 `734736a2fef5788152343707126aa5b4f8e55462` 已推送main。GitHub同时出现同一SHA/main/push/workflow生产流水线37355089828（执行）与37355090298（排队）；已取消后者并核实completed/cancelled，保留前者完整验收和部署。未改变工作流门槛。
+- 独立发布复核24项通过（契约15、三语言文案3、guards3、未配置密钥的隔离启动3），无网络请求或计费记录；证据 `/private/tmp/synwevo-release-review-e4a782e-dr3x0add/summary.json`。
+
+- 官方 API 联系页核实支持邮箱；已在 DEEPSEEK_ENABLEMENT.md 准备不含密钥/客户数据的书面询证草稿，未发送。公开页面没有承诺已获答复。
+
+- 对既有16次真实调用做只读测量，未增加付费请求：账本的派发→用量证据时间戳差中位1秒、最大2秒，时间戳分辨率1秒（0不是零延迟），仅小样本串行验收，不等同首token/请求端到端/生产压测。`evidence/2026-10-06-deepseek/call-latency.json` 明确测量口径和限制。
+
+### 2026-10-06 CI 容量门槛
+
+- Actions37355089828 / 734736a：Verify and build通过；完整镜像pytest在81%处因runner磁盘耗尽中断（No space left on device，2026-10-05T18:58:17Z），不是完整测试通过，deploy skipped。精确日志 `/private/tmp/synwevo-ci-37355089828-failed.log`。准备有证据的临时目录/构建占用修复；不删测试、禁检查或将重跑当修复。
+
+- 容量根因对照（同一20项真实Identity测试，均20 PASS）：默认all保留策略结束67.20MiB/峰值71.31MiB/20个目录；原生failed结束6.11MiB/峰值13.39MiB/0目录。空Store含868个schema对象、checkpoint后3.05MiB；每项一个Store的4176项容量推算约12.46GiB，明确不是故障runner实测。测量 `/private/tmp/synwevo-ci-disk-734736a-9slw2fr1/`。原生failed会丢setup/teardown失败现场，故采用完整三阶段成功后清理的方向，不减测试。
+
+- CI容量修复：新 `--ci-clean-passed-tmp` 仅在 CI=true/native retention=all 时启用，完整三阶段全通过后才删除 pytest 原生函数级目录；失败、跳过、自定义、符号链接及会话数据不删。独立测试覆盖根清理失败、setup/call/teardown失败及本机默认不变。Python3.12.6/pytest9.1.1运行infra共11项通过，证据 `/private/tmp/synwevo-ci-disk-u6bwuik9/production312-infra.{log,json}`；只读独立复核3项通过，`/private/tmp/synwevo-retention-review-zqkr65kf/{retention-tests.log,binding.json}`，前后源码哈希一致。CI专属合成数据挂载提供有限磁盘诊断；保留全量测试、网络隔离、2CPU/3GiB门槛，未扩大机器清理范围。失败数据只保留至runner销毁，无 artifact 上传声明。

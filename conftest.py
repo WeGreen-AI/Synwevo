@@ -19,6 +19,7 @@ from __future__ import annotations
 import functools
 import os
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -58,11 +59,76 @@ def platform_root() -> Path:
     return ROOT
 
 
+def pytest_addoption(parser):
+    parser.addoption("--ci-clean-passed-tmp", action="store_true",
+                     help="Ephemeral CI only: remove owned tmp_path directories after all test phases pass")
+
+
 def pytest_configure(config):
+    if config.getoption("ci_clean_passed_tmp"):
+        if os.environ.get("CI") != "true" or config.getini("tmp_path_retention_policy") != "all":
+            raise pytest.UsageError("--ci-clean-passed-tmp requires CI=true and tmp_path_retention_policy=all")
+        config.stash[_CI_TMP_REMOVED] = 0
     config.addinivalue_line("markers", "production_password_hash: use the deployed Argon2 parameters "
                             "(tests of the parameters themselves, rehash upgrades and hash timing)")
     config.addinivalue_line("markers", "fresh_store_schema: build a new database from nothing instead "
                             "of starting from the session's migrated template")
+
+
+_CI_TMP_PATH = pytest.StashKey[tuple[Path, Path]]()
+_CI_TMP_PHASES = pytest.StashKey[dict[str, bool]]()
+_CI_TMP_REMOVED = pytest.StashKey[int]()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_fixture_setup(fixturedef, request):
+    path = yield
+    if (request.config.getoption("ci_clean_passed_tmp") and fixturedef.argname == "tmp_path"
+            and fixturedef.func.__module__ == "_pytest.tmpdir"):
+        # Only pytest's own function-scoped allocation qualifies, never an overridden fixture
+        # or an inferred directory name. Session templates and other tmpdirs stay untouched.
+        base = request.getfixturevalue("tmp_path_factory").getbasetemp()
+        request.node.stash[_CI_TMP_PATH] = (path, base)
+    return path
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_makereport(item, call):
+    report = yield
+    if item.config.getoption("ci_clean_passed_tmp") and _CI_TMP_PATH in item.stash:
+        phases = item.stash.setdefault(_CI_TMP_PHASES, {})
+        phases[report.when] = report.passed and not getattr(report, "wasxfail", False)
+        if report.when == "teardown":
+            path, base = item.stash[_CI_TMP_PATH]
+            del item.stash[_CI_TMP_PATH]
+            del item.stash[_CI_TMP_PHASES]
+            # This report follows ALL fixture finalizers, including release_factory_resources.
+            # Built-in retention_policy=failed runs too early and checks only the call phase.
+            if (phases == {"setup": True, "call": True, "teardown": True}
+                    and path.parent == base and not base.is_symlink() and not path.is_symlink()
+                    and path.is_dir() and path.resolve().parent == base):
+                try:
+                    shutil.rmtree(path)
+                except OSError as exc:
+                    item.warn(pytest.PytestWarning(f"CI tmp_path cleanup failed: {exc}"))
+                else:
+                    item.config.stash[_CI_TMP_REMOVED] += 1
+                    if item.config.stash[_CI_TMP_REMOVED] % 250 == 0:
+                        _ci_tmp_diagnostic(item.config)
+    return report
+
+
+def _ci_tmp_diagnostic(config):
+    reporter = config.pluginmanager.get_plugin("terminalreporter")
+    if reporter:
+        base = config._tmp_path_factory.getbasetemp()
+        reporter.write_line(f"CI tmp_path: removed={config.stash[_CI_TMP_REMOVED]}, "
+                            f"disk_free_MiB={shutil.disk_usage(base).free // (1024 * 1024)}, base={base}")
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    if config.getoption("ci_clean_passed_tmp"):
+        _ci_tmp_diagnostic(config)
 
 
 def pytest_collection_finish(session):

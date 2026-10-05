@@ -1,0 +1,21 @@
+{
+  "environment": "isolated test wallet; official DeepSeek; serial acceptance, not a load benchmark",
+  "system": "Darwin",
+  "architecture": "arm64",
+  "python": "3.12.6",
+  "sample_count": 16,
+  "metric": "Recorded dispatch-to-usage-metering timestamp difference, in integer seconds; not full request latency",
+  "minimum_seconds": 0,
+  "median_seconds": 1.0,
+  "maximum_seconds": 2,
+  "concurrency_limit": 1,
+  "limitations": [
+    "small synthetic business fixtures",
+    "mixed reads, write preparation and final answers",
+    "does not measure first-token latency or production performance",
+    "adapter-only checks are excluded",
+    "zero means timestamps fell in the same integer-second bucket, not zero latency",
+    "settlement processing after the usage evidence timestamp is excluded"
+  ],
+  "timestamp_resolution_seconds": 1
+}

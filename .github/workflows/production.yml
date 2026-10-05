@@ -57,6 +57,8 @@ jobs:
           node --test apps/docs/sdk/typescript/test/*.test.mjs
       - name: Verify the deployment runtime
         run: |
+          df -h "$RUNNER_TEMP"
+          df -i "$RUNNER_TEMP"
           # Reproduce the receiver's private source extraction, including 0700 directories.
           git archive --format=tar HEAD > "$RUNNER_TEMP/source.tar"
           (
@@ -73,7 +75,24 @@ jobs:
           docker run --rm --init --network none --read-only --tmpfs /tmp:rw,uid=1000,gid=1000,mode=1770 synwevo:ci \
             python -c "from synwevo_server.app import create_app; create_app('/tmp/import-check', role='accounts', start_jobs=False)"
           docker build -f infra/production/Dockerfile.verify -t synwevo:verify .
-          docker run --rm --init --network none --memory 3g --cpus 2 synwevo:verify
+          docker image inspect --format '{{.RepoTags}} bytes={{.Size}}' synwevo:ci synwevo:verify
+          du -sh "$RUNNER_TEMP/private-source" "$RUNNER_TEMP/source.tar"
+          df -h "$RUNNER_TEMP"
+          # Only this job's synthetic pytest data is mounted. Keep failed fixtures after --rm;
+          # root conftest removes passing tmp_path allocations after complete teardown.
+          mkdir -m 0777 "$RUNNER_TEMP/ci-test-artifacts"
+          docker run --rm --init --network none --memory 3g --cpus 2 \
+            --mount "type=bind,source=$RUNNER_TEMP/ci-test-artifacts,target=/tmp/ci-test-artifacts" synwevo:verify
+      - name: Runtime test disk diagnostics
+        if: always()
+        run: |
+          df -h "$RUNNER_TEMP"
+          df -i "$RUNNER_TEMP"
+          if [ -d "$RUNNER_TEMP/ci-test-artifacts" ]; then
+            # At most 40 size/path lines, only under this job's dedicated test mount.
+            # Never dump database contents, environment values or unrelated host directories.
+            sudo du -h --max-depth=2 "$RUNNER_TEMP/ci-test-artifacts" | sort -hr | sed -n '1,40p'
+          fi
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: verify
