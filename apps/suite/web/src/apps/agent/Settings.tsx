@@ -4,6 +4,7 @@ import { useDialog, useI18n } from "@synwevo/ui";
 import { newKey, op, read, type RunStatus } from "../../shared/ops";
 import { Empty, Failure, Loading, RunBadge } from "../../shared/states";
 import PayerBudget from "./PayerBudget";
+import ProviderConsent from "./ProviderConsent";
 import "./settings/messages";
 import "./messages";
 
@@ -536,6 +537,7 @@ export default function Settings() {
   return <div className="ag-settings col gap16">
     <header className="suite-head"><div><h1>{t("Agent 设置")}</h1>
       <p className="lede">{t("管理你的模型访问、个人记忆，以及获授权管理的工作空间处理政策。")}</p></div></header>
+    <ProviderConsent />
     <AccessSettings />
     <Memories />
     <WorkspacePolicies />

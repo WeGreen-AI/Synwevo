@@ -70,3 +70,10 @@ dl.ag-values { padding: 0; }
   .ag-values > div { grid-template-columns: 1fr; gap: var(--sp-1); }
 }
 @media (prefers-reduced-motion: reduce) { .ag-app * { scroll-behavior: auto; } }
+
+/* The DeepSeek data-sharing consent (ProviderConsent.tsx): label above value on phones, two columns wider. */
+.ag-consent-facts { display: grid; gap: var(--sp-2); margin: 0; }
+.ag-consent-facts > div { display: grid; gap: var(--sp-1); }
+.ag-consent-facts dt { font-weight: 600; }
+.ag-consent-facts dd { margin: 0; overflow-wrap: anywhere; }
+@media (min-width: 720px) { .ag-consent-facts > div { grid-template-columns: 12rem 1fr; } }
