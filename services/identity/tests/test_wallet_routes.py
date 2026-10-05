@@ -194,8 +194,9 @@ def test_atomic_overview_multiple_units_settled_held_and_empty(wallet):
     journal(wallet, 777, uid=wallet.users[1]["id"])
 
     result = projected(wallet)
-    assert set(result) == {"environment", "payer_user_id", "balances", "used_through_seq"}
+    assert set(result) == {"environment", "payer", "payer_user_id", "balances", "used_through_seq"}
     assert result["environment"] == "test" and result["payer_user_id"] == wallet.uid
+    assert result["payer"] == {"kind": "user", "id": wallet.uid}
     assert result["balances"] == [
         {"unit": UNIT.code, "scale": 6, "booked": "93", "used": "7", "held": "20", "available": "73", "frozen": False},
         {"unit": OTHER_UNIT.code, "scale": 2, "booked": "36", "used": "9", "held": "0", "available": "36", "frozen": False},
@@ -284,7 +285,8 @@ def test_stable_pagination_across_namespaces_units_gaps_and_appends(wallet):
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "private, no-store"
     page = response.json()
-    assert set(page) == {"environment", "payer_user_id", "items", "next_after_seq"}
+    assert set(page) == {"environment", "payer", "payer_user_id", "items", "next_after_seq", "next_before_seq"}
+    assert page["next_before_seq"] is None  # set only on a newest-first page
     assert [row["id"] for row in page["items"]] == [first, second]
     assert [row["seq"] for row in page["items"]] == ["1", "3"]
     assert page["next_after_seq"] == "3"

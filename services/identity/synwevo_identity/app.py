@@ -37,6 +37,8 @@ class Sweeper:
         import threading
         self.store, self.sessions, self.tickets, self.passkeys = store, sessions, tickets, passkeys
         self.topups = None   # payments.TopupService: replays webhook events a crash left unprocessed
+        #: (LowBalanceReminders, notify) once install() has a configured wallet; None means off.
+        self.wallet_reminders = None
         self._stop = threading.Event()
         self._thread = None
         if start:
@@ -54,7 +56,14 @@ class Sweeper:
                 "rp_auth_requests": Rp(self.store).sweep(),
                 "account_deletions": finalize_deletions(self.store),
                 "member_imports": self._member_imports(),
-                "payment_events": self.topups.process_pending() if self.topups and self.topups.environment else 0}
+                "payment_events": self.topups.process_pending() if self.topups and self.topups.environment else 0,
+                "wallet_reminders": self._wallet_reminders()}
+
+    def _wallet_reminders(self) -> dict:
+        if self.wallet_reminders is None:
+            return {"enabled": False}
+        reminders, notify = self.wallet_reminders
+        return {"enabled": True, **reminders.sweep(notify)}
 
     def _member_imports(self) -> dict:
         from synwevo_core.identity import Identity
@@ -216,6 +225,11 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.state.topups = TopupService.from_host(store, return_base=_issuer())
     api.state.auth_sweeper.topups = api.state.topups
     api.include_router(build_payment_router(identity, sessions, audit, api.state.topups))
+    if wallet_ledger is not None:
+        # Each person's own low-balance reminder, checked on the sweeper's schedule.
+        from synwevo_core.billing.reminders import LowBalanceReminders, notice
+        api.state.auth_sweeper.wallet_reminders = (
+            LowBalanceReminders(store, environment=wallet_ledger.environment), notice(api.state.notifier))
     from .admin_handover import build_router as build_handover_router
     api.include_router(build_handover_router(identity, sessions, passkeys, audit))
 

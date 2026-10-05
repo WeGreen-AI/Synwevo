@@ -1,16 +1,105 @@
 .wallet-scroll { overflow: auto; flex: 1; }
-.wallet-unit { padding: 16px 0; border-bottom: 1px solid var(--line); min-width: 0; }
-.wallet-amounts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin: 16px 0 0; }
+.wallet-page { min-width: 0; }
+.wallet-page h1 { margin: 0 0 6px; }
+.wallet-head { align-items: flex-end; }
+.wallet-payer { min-width: min(260px, 100%); }
+.wallet-unit { padding: 4px 0 16px; border-bottom: 1px solid var(--line); min-width: 0; }
+.wallet-available-label { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
+/* Keyed by the amount: a changed balance re-enters once with the shared motion tokens
+   (zero under prefers-reduced-motion, see packages/ui/src/styles.css). */
+.wallet-available { margin: 4px 0 0; font-size: clamp(26px, 6vw, 34px); font-weight: 650; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere; animation: wallet-figure-in var(--dur-3) var(--ease); }
+@keyframes wallet-figure-in { from { opacity: .35; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.wallet-amounts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 24px; margin: 16px 0 0; }
 .wallet-amounts dt { color: var(--text-2); font-size: 12px; margin-bottom: 6px; }
-.wallet-amounts dd { margin: 0; font-size: 20px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.wallet-amounts small { color: var(--text-2); font-size: 12px; }
+.wallet-amounts dd { margin: 0; font-size: 16px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .wallet-history { margin: 0; padding: 0; list-style: none; }
-.wallet-history li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line); }
-.wallet-history details { margin-top: 8px; }
-.wallet-history summary { cursor: pointer; }
-.wallet-history code { display: block; overflow-wrap: anywhere; margin-top: 8px; }
+.wallet-history li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.wallet-history li:last-child { border-bottom: 0; }
+.wallet-history p { margin: 2px 0 0; }
 .wallet-delta { text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-@media (max-width: 480px) {
-  .wallet-amounts, .wallet-history li { grid-template-columns: minmax(0, 1fr); }
-  .wallet-delta { text-align: left; }
+.wallet-delta.in { color: var(--ok); }
+.wallet-setting { border-top: 1px solid var(--line); padding-top: 12px; }
+.wallet-check { align-items: center; font-size: var(--fs-4); }
+.wallet-limit-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.wallet-limit-grid meter { inline-size: 100%; block-size: 8px; }
+.err-text { color: var(--err); }
+
+/* top-up */
+.topup-packages { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+.topup-packages legend { font-size: var(--fs-3); color: var(--text-2); margin-bottom: 8px; padding: 0; }
+.topup-package { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line-strong);
+  border-radius: var(--radius); cursor: pointer; transition: border-color var(--dur-1) var(--ease), background var(--dur-1) var(--ease); }
+.topup-package.on { border-color: var(--accent); background: var(--accent-weak); }
+.topup-package:focus-within { box-shadow: var(--focus); }
+.topup-package b { font-variant-numeric: tabular-nums; }
+.topup-status.tone-ok { border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.topup-status.tone-err { border-color: var(--err-line); }
+.topup-status h2 { margin: 0; font-size: var(--fs-6); }
+.topup-status h2:focus { outline: none; }
+.topup-status h2:focus-visible { box-shadow: var(--focus); border-radius: var(--radius-sm); }
+.topup-status p { margin: 4px 0 0; }
+.topup-facts { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 0; }
+.topup-facts dt { font-size: 12px; color: var(--text-2); }
+.topup-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.topup-mark { flex: none; inline-size: 28px; block-size: 28px; color: var(--accent); }
+.topup-mark.paid { color: var(--ok); }
+.topup-mark.failed, .topup-mark.expired, .topup-mark.slow { color: var(--warn); }
+.topup-mark svg { display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* The success mark draws its circle, then its tick, once; reduced motion shows it drawn. */
+.topup-mark.paid circle { stroke-dasharray: 70; stroke-dashoffset: 0; animation: topup-draw calc(var(--dur-3) * 2) var(--ease) both; }
+.topup-mark.paid path { stroke-dasharray: 16; stroke-dashoffset: 0; animation: topup-draw var(--dur-3) var(--ease) calc(var(--dur-3) * 1.5) both; }
+@keyframes topup-draw { from { stroke-dashoffset: 70; } }
+.topup-spinner { display: block; inline-size: 24px; block-size: 24px; margin: 2px; border-radius: 50%;
+  border: 2px solid var(--accent-line); border-top-color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .topup-spinner { animation: topup-spin 900ms linear infinite; }
+}
+@keyframes topup-spin { to { transform: rotate(360deg); } }
+
+/* usage */
+.usage-controls { align-items: flex-end; }
+.usage-controls .field, .usage-filters .field { min-width: min(180px, 100%); }
+.usage-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 24px; margin: 0; }
+.usage-totals dt { font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+.usage-totals dd { margin: 0; font-size: var(--fs-6); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.usage-totals .usage-token-total { grid-column: 1 / -1; }
+.usage-totals .usage-token-total dd { font-size: var(--fs-3); }
+.usage-chart { margin: 0; min-width: 0; position: relative; }
+.usage-columns { display: block; inline-size: 100%; block-size: 160px; }
+.usage-column { fill: var(--accent); transition: fill var(--dur-1) var(--ease); }
+.usage-column:hover { fill: var(--accent-strong); }
+.usage-axis { stroke: var(--line-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.usage-ticks { position: relative; block-size: 18px; margin-top: 4px; }
+.usage-ticks span { position: absolute; transform: translateX(-50%); font-size: var(--fs-1); color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-chart-empty { padding: 24px 0; text-align: center; }
+.usage-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.usage-rows li { display: grid; grid-template-columns: minmax(0, 11rem) minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: var(--fs-3); }
+.usage-row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-row-track { block-size: 10px; background: var(--panel-2); border-radius: 5px; overflow: hidden; }
+.usage-row-bar { display: block; block-size: 100%; background: var(--accent); border-radius: 5px; transition: inline-size var(--dur-3) var(--ease); }
+.usage-row-value, .usage-money { font-variant-numeric: tabular-nums; text-align: right; }
+.usage-who { max-width: 16rem; overflow-wrap: anywhere; }
+.usage-calls td { vertical-align: top; }
+
+/* receipt */
+.receipt-page { max-width: 720px; }
+.receipt h1 { margin: 0; }
+.receipt-amount { margin: 0; font-size: clamp(24px, 6vw, 32px); font-weight: 650; font-variant-numeric: tabular-nums; }
+.receipt-lines { display: grid; gap: 10px; margin: 0; }
+.receipt-lines div { display: grid; grid-template-columns: minmax(0, 10rem) minmax(0, 1fr); gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.receipt-lines dt { color: var(--text-2); }
+.receipt-lines dd { margin: 0; overflow-wrap: anywhere; }
+@media print {
+  .acct-topbar, .receipt-actions, .notice { display: none !important; }
+  .wallet-scroll { overflow: visible; }
+  .receipt { border: 0; box-shadow: none; }
+}
+
+@media (max-width: 560px) {
+  .wallet-amounts, .wallet-limit-grid, .usage-totals { grid-template-columns: minmax(0, 1fr); }
+  .wallet-head { align-items: stretch; }
+  .usage-rows li { grid-template-columns: minmax(0, 1fr) auto; }
+  .usage-row-track { grid-column: 1 / -1; grid-row: 2; }
+  .receipt-lines div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }

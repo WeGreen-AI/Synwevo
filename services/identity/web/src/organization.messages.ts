@@ -830,6 +830,12 @@ export const messages = {
     "en": "Choose a valid content export cap.",
     "zh-Hant": "請選擇有效的資料外發上限"
   },
+  "组织钱包": { en: "Organization wallet", "zh-Hant": "組織錢包" },
+  "组织的余额、充值、成员用量与调用明细。成员的对话内容不会显示。": {
+    en: "The organization's balance, top-ups, usage by member and call details. Members' conversations are never shown.",
+    "zh-Hant": "組織的餘額、充值、成員用量與呼叫明細。成員的對話內容不會顯示。"
+  },
+  "打开组织钱包": { en: "Open organization wallet", "zh-Hant": "開啟組織錢包" },
   "更改内容外发上限需要提供当前的组织设置版本": {
     "en": "Changing the content export cap needs the current version of the organization settings.",
     "zh-Hant": "更改內容外發上限需要提供目前的組織設定版本"
