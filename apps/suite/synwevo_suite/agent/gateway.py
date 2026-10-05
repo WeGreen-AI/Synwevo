@@ -27,7 +27,8 @@ from synwevo_core.billing.provider_settings import INCOMPLETE_KINDS
 from synwevo_core.billing.traffic import TrafficCancelled
 
 from .deepseek import (BASE_URL, EFFORTS, Attempt, DeepSeekCancelled, DeepSeekError, DeepSeekProvider,
-                       DeepSeekResult, Limits, allowed_efforts, deepseek_effort, normalize_usage, upstream_base)
+                       DeepSeekResult, Limits, allowed_efforts, deepseek_effort, normalize_usage, route_effort,
+                       upstream_base)
 from .provider import Credential, ProviderError
 
 log = logging.getLogger("synwevo.agent.gateway")
@@ -354,12 +355,16 @@ class MeteredDeepSeek:
         except BillingError as exc:
             exc.not_dispatched = True
             raise
-        if deepseek_effort(effort) not in route.reasoning_efforts:
-            # Refused before any reservation or send: the route does not offer this level.
+        wanted = deepseek_effort(effort)
+        if wanted is None:
+            # Refused before any reservation or send: not a level any setting can name.
             error = ProviderError("model_effort_unavailable",
                                   "当前模型路线不支持所选的推理投入，请在 Agent 设置中更换。本次没有发送，也不扣费。")
             error.metered_usage, error.usage_reliability = {"input_tokens": 0, "output_tokens": 0}, "not_dispatched"
             raise error
+        # The route's nearest offered level (docs/deepseek-provider.md "Reasoning effort"): a
+        # thinking-off route ("none" only) serves every setting instead of refusing them all.
+        effort = route_effort(wanted, route.reasoning_efforts)
         identifier(logical_call_id)
         self._await_upstream(should_stop, run["deadline"])  # Provably unsent while waiting.
         sale, cost = self._prices(route)

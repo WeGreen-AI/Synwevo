@@ -114,7 +114,7 @@ registerMessages({
   '低': { en: 'Low', 'zh-Hant': '低' },
   '高（默认）': { en: 'High (default)', 'zh-Hant': '高（預設）' },
   '最高': { en: 'Max', 'zh-Hant': '最高' },
-  '用户只能选择这里允许的级别；选择“不思考”时请求关闭思考模式。': { en: 'People can only choose the levels allowed here. “None” sends the request with thinking turned off.', 'zh-Hant': '使用者只能選擇這裡允許的級別；選擇「不思考」時請求關閉思考模式。' },
+  '每次调用使用这里允许的、最接近用户设置的级别（同样接近时取较低者）；只允许“不思考”时，所有请求都关闭思考模式。': { en: 'Each call uses the allowed level nearest to the person’s setting (the lower one when two are equally near). If only “None” is allowed, every request turns thinking off.', 'zh-Hant': '每次呼叫使用這裡允許的、最接近使用者設定的級別（同樣接近時取較低者）；只允許「不思考」時，所有請求都關閉思考模式。' },
   '请至少允许一种推理投入。': { en: 'Allow at least one reasoning effort.', 'zh-Hant': '請至少允許一種推理投入。' },
   '未完成调用的计费': { en: 'Charging for incomplete calls', 'zh-Hant': '未完成呼叫的計費' },
   '未完成调用向付款人收费': { en: 'Incomplete calls charged to the payer', 'zh-Hant': '未完成呼叫向付款人收費' },

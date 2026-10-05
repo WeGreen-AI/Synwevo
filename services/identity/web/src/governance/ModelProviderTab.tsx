@@ -298,7 +298,7 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
           {form.route_mode === 'route' && <div style={grid}>{routeTextKeys.map(field)}{field('input_token_ceiling')}{field('output_token_ceiling')}{field('valid_until')}</div>}
           {form.route_mode === 'route' && <fieldset className="col gap8" style={fieldset} aria-describedby={`${id}-efforts-help${tried && validation.errors.reasoning_efforts ? ` ${id}-efforts-error` : ''}`}>
             <legend>{t('允许的推理投入')}</legend>
-            <p className="small muted" id={`${id}-efforts-help`}>{t('用户只能选择这里允许的级别；选择“不思考”时请求关闭思考模式。')}</p>
+            <p className="small muted" id={`${id}-efforts-help`}>{t('每次调用使用这里允许的、最接近用户设置的级别（同样接近时取较低者）；只允许“不思考”时，所有请求都关闭思考模式。')}</p>
             <div className="row wrap gap12">{efforts.map(effort => <label key={effort} className="row gap8">
               <input id={`${id}-effort_${effort}`} type="checkbox" checked={form[`effort_${effort}`]} onChange={event => edit(`effort_${effort}`, event.target.checked)} />
               <span>{t(effortLabels[effort])}</span></label>)}</div>

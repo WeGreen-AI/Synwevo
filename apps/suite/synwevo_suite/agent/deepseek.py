@@ -40,6 +40,14 @@ def deepseek_effort(effort: object) -> str | None:
     return _EFFORT.get(effort) if isinstance(effort, str) else None
 
 
+def route_effort(wanted: str, allowed) -> str:
+    """The level a governed route serves for a wanted DeepSeek effort: the allowed level nearest
+    to it in EFFORTS order, the lower (cheaper) one on a tie; "none" when that is all the route
+    offers. The person's setting is a preference; the route decides which levels exist."""
+    order = EFFORTS.index(wanted)
+    return min(allowed_efforts(allowed), key=lambda value: (abs(EFFORTS.index(value) - order), EFFORTS.index(value)))
+
+
 def allowed_efforts(values) -> tuple[str, ...]:
     """A route's allowed DeepSeek efforts in canonical order; refuses empty/unknown/duplicates."""
     if not isinstance(values, (list, tuple)) or not values or len(set(values)) != len(values) \
