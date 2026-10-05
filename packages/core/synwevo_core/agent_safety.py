@@ -16,6 +16,7 @@ backup cannot bring the consent back (`journal.py`).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -246,7 +247,10 @@ class SafetyRules:
     """The administrators' published keyword/pattern lists. Each publication is a new immutable
     version with its author and reason; the newest is in force."""
 
-    _cache: dict[int, tuple[int, _Compiled]] = {}
+    #: Compiled lists by version and content digest. Keyed by what is compiled, never by the store
+    #: object: a recycled id() of another (or a restored) database must not hand over its rules.
+    _cache: dict[str, _Compiled] = {}
+    _CACHE_MAX = 16
     _lock = threading.Lock()
 
     def __init__(self, store: Store):
@@ -282,14 +286,16 @@ class SafetyRules:
         row = self.store.one("SELECT version, rules_json FROM agent_safety_rule_versions ORDER BY version DESC LIMIT 1")
         if not row:
             return _Compiled(0, [])
-        key = id(self.store)
+        key = f'{row["version"]}:{hashlib.sha256(row["rules_json"].encode()).hexdigest()}'
         with self._lock:
             hit = self._cache.get(key)
-            if hit and hit[0] == row["version"]:
-                return hit[1]
+            if hit is not None:
+                return hit
         compiled = _Compiled(row["version"], json.loads(row["rules_json"]))
         with self._lock:
-            self._cache[key] = (row["version"], compiled)
+            while len(self._cache) >= self._CACHE_MAX:
+                self._cache.pop(next(iter(self._cache)))
+            self._cache[key] = compiled
         return compiled
 
 

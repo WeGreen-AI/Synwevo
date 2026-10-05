@@ -517,3 +517,23 @@ def test_an_unpaid_run_records_no_terms(agent):
     _, r = _start(agent, [say("free")])
     assert wait_turn(agent.people.store, r.json()["output"]["turn_id"]) == "succeeded"
     assert TermsAcceptances(agent.people.store).history(agent.people.uid("alice")) == []
+
+
+def test_compiled_rules_follow_the_database_not_a_reused_object_identity():
+    """The compiled lists are cached; the cache must never hand one database's rules to another.
+    Fixture: a store stand-in whose newest version keeps its number but changes its content, as a
+    second database (or a restored one) sharing a recycled object identity would."""
+    from synwevo_core.agent_safety import SafetyRules
+
+    class Rows:
+        def __init__(self):
+            self.rules = [{"id": "r1", "kind": "keyword", "pattern": "first-fixture-term", "applies_to": "output"}]
+
+        def one(self, sql, *args):
+            return {"version": 1, "rules_json": json.dumps(self.rules)}
+
+    rows = Rows()
+    assert SafetyRules(rows).compiled().match("first-fixture-term here", "output")
+    rows.rules = [{"id": "r1", "kind": "keyword", "pattern": "second-fixture-term", "applies_to": "output"}]
+    assert SafetyRules(rows).compiled().match("second-fixture-term here", "output")
+    assert not SafetyRules(rows).compiled().match("first-fixture-term here", "output")
