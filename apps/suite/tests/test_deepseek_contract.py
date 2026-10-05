@@ -86,3 +86,33 @@ def test_thinking_requests_give_every_assistant_message_a_reasoning_string():
     provider_for(complete(), seen, thinking=False).step(**arguments(messages=history, tools=[TOOL]))
     sent = [m for m in json.loads(seen[0].content)["messages"] if m["role"] == "assistant"]
     assert "reasoning_content" not in sent[0] and sent[1]["reasoning_content"] == "fixture kept"
+
+
+# ------------------------------------------------------------------ 2. reasoning_effort
+
+@pytest.mark.parametrize("effort, thinking, value", [
+    ("none", {"type": "disabled"}, None), ("low", {"type": "enabled"}, "low"),
+    ("medium", {"type": "enabled"}, "high"), ("max", {"type": "enabled"}, "max")])
+def test_effort_values_keep_thinking_type_consistent(effort, thinking, value):
+    seen = []
+    history = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}, {"role": "user", "content": "c"}]
+    provider_for(complete(), seen).step(**arguments(effort=effort, messages=history, tools=[TOOL]))
+    body = json.loads(seen[0].content)
+    assert body["thinking"] == thinking and body.get("reasoning_effort") == value
+    # Thinking off invents no empty reasoning for history either.
+    assert ("reasoning_content" in body["messages"][2]) is (value is not None)
+
+
+def test_effort_outside_the_route_is_refused_before_any_send():
+    seen = []
+    provider = provider_for(complete(), seen, efforts=("none", "high"))
+    with pytest.raises(DeepSeekError) as exc:
+        provider.step(**arguments(effort="max"))
+    assert exc.value.code == "model_effort_unavailable" and exc.value.attempt.dispatch == "definitely_not_requested"
+    assert seen == []
+    with pytest.raises(DeepSeekError) as unknown:
+        provider.step(**arguments(effort="extreme"))
+    assert unknown.value.code == "provider_invalid_request" and seen == []
+    for invalid in ((), ("medium",), ("high", "high"), "high"):
+        with pytest.raises(ValueError):
+            DeepSeekProvider(efforts=invalid)

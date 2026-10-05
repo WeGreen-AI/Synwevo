@@ -17,8 +17,8 @@ from synwevo_core.billing import BillingError, ChargeContext, Ledger, PriceSnaps
 from synwevo_core.billing.models import identifier, integer
 from synwevo_core.billing.traffic import TrafficCancelled
 
-from .deepseek import (Attempt, DeepSeekCancelled, DeepSeekError,
-                       DeepSeekProvider, DeepSeekResult, Limits, normalize_usage)
+from .deepseek import (EFFORTS, Attempt, DeepSeekCancelled, DeepSeekError, DeepSeekProvider,
+                       DeepSeekResult, Limits, allowed_efforts, deepseek_effort, normalize_usage)
 from .provider import Credential, ProviderError
 
 
@@ -45,6 +45,7 @@ class Route:
     input_token_ceiling: int
     output_token_ceiling: int
     valid_until: int
+    reasoning_efforts: tuple = EFFORTS  # Governed per route; older snapshots allowed every value.
 
     def __post_init__(self):
         for value in (self.version, self.requested_model, self.confirmed_route, self.confirmation_ref,
@@ -53,6 +54,11 @@ class Route:
         integer(self.input_token_ceiling, positive=True, maximum=2_000_000)
         integer(self.output_token_ceiling, positive=True, maximum=32768)
         integer(self.valid_until, positive=True)
+        try:
+            # Canonical tuple, so a JSON-restored snapshot compares equal to the current route.
+            object.__setattr__(self, "reasoning_efforts", allowed_efforts(self.reasoning_efforts))
+        except ValueError:
+            raise BillingError("invalid_route") from None
 
 
 def _raw_counters(raw):
@@ -179,6 +185,12 @@ class MeteredDeepSeek:
             raise BillingError("model_configuration_changed")
         if route.valid_until <= self.ledger._now():
             raise BillingError("route_confirmation_expired")
+        if deepseek_effort(effort) not in route.reasoning_efforts:
+            # Refused before any reservation or send: the route does not offer this level.
+            error = ProviderError("model_effort_unavailable",
+                                  "当前模型路线不支持所选的推理投入，请在 Agent 设置中更换。本次没有发送，也不扣费。")
+            error.metered_usage, error.usage_reliability = {"input_tokens": 0, "output_tokens": 0}, "not_dispatched"
+            raise error
         identifier(logical_call_id)
         sale, cost = self._prices(route)
         request = _json({"route": asdict(route), "context": asdict(context), "system": system,
@@ -258,7 +270,7 @@ class MeteredDeepSeek:
                     raise
 
             provider = DeepSeekProvider(limits=replace(self.limits, max_tokens=route.output_token_ceiling),
-                                        transport=self.transport)
+                                        transport=self.transport, efforts=route.reasoning_efforts)
             # A scoped pseudonym, stable per platform/environment/payer, reveals no account ID.
             pseudonym = hashlib.sha256((self.ledger.environment + ":" + self.ledger.namespace + ":" +
                                        context.payer_user_id).encode()).hexdigest()

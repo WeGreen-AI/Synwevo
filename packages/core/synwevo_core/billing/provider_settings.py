@@ -20,6 +20,9 @@ from .cost_settings import ACCOUNT_REF, PROVIDER, CostSettings
 from .models import BillingError, PriceSnapshot, identifier
 
 KEY_PURPOSE = "platform-model-key"
+#: DeepSeek reasoning_effort values; "none" is thinking off (docs/deepseek-provider.md).
+REASONING_EFFORTS = ("none", "low", "high", "max")
+Effort = Literal["none", "low", "high", "max"]
 
 
 class RouteSpec(BaseModel):
@@ -34,12 +37,22 @@ class RouteSpec(BaseModel):
     input_token_ceiling: int = Field(ge=1, le=2_000_000)
     output_token_ceiling: int = Field(ge=1, le=32768)
     valid_until: int = Field(ge=1, le=253402300799)
+    # Which thinking levels this route offers. Versions published before the field existed
+    # allowed every level, so the default keeps their meaning unchanged.
+    reasoning_efforts: list[Effort] = Field(default_factory=lambda: list(REASONING_EFFORTS), min_length=1, max_length=4)
 
     @field_validator("requested_model", "confirmed_route", "confirmation_ref", "cost_basis_ref",
                      "account_confirmation_ref", "sale_price_id", "cost_price_id")
     @classmethod
     def bounded_identifier(cls, value):
         return identifier(value)
+
+    @field_validator("reasoning_efforts")
+    @classmethod
+    def canonical_efforts(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError("duplicate reasoning effort")
+        return [effort for effort in REASONING_EFFORTS if effort in value]
 
 
 class ProviderSpec(BaseModel):

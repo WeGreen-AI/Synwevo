@@ -22,7 +22,24 @@ ENDPOINT = "https://api.deepseek.com/chat/completions"
 CAPABILITY_VERSION = "deepseek-chat-2026-09-30"
 _NAME = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,200}\Z")
-_EFFORT = {"low": "low", "medium": "high", "high": "high", "xhigh": "high", "max": "max"}
+#: DeepSeek reasoning_effort values (thinking-mode guide, re-read 2026-10-05). "none" means
+#: thinking off: the request then says thinking.type=disabled and sends no reasoning_effort.
+EFFORTS = ("none", "low", "high", "max")
+#: The Agent's effort setting -> DeepSeek value (the provider has no medium/xhigh level).
+_EFFORT = {"none": "none", "low": "low", "medium": "high", "high": "high", "xhigh": "high", "max": "max"}
+
+
+def deepseek_effort(effort: object) -> str | None:
+    """The DeepSeek reasoning_effort for an Agent effort setting, or None when unknown."""
+    return _EFFORT.get(effort) if isinstance(effort, str) else None
+
+
+def allowed_efforts(values) -> tuple[str, ...]:
+    """A route's allowed DeepSeek efforts in canonical order; refuses empty/unknown/duplicates."""
+    if not isinstance(values, (list, tuple)) or not values or len(set(values)) != len(values) \
+            or any(value not in EFFORTS for value in values):
+        raise ValueError("Invalid DeepSeek reasoning efforts")
+    return tuple(value for value in EFFORTS if value in values)
 _FINISH = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens",
            "content_filter": "refusal", "aborted": "aborted",
            "insufficient_system_resource": "insufficient_system_resource"}
@@ -441,10 +458,11 @@ class DeepSeekProvider:
     name = "deepseek"
 
     def __init__(self, *, limits: Limits | None = None, thinking: bool = True,
-                 transport: httpx.AsyncBaseTransport | None = None):
+                 transport: httpx.AsyncBaseTransport | None = None, efforts=EFFORTS):
         _require(type(thinking) is bool)
         self.limits = limits or Limits()
         self.thinking = thinking
+        self.efforts = allowed_efforts(efforts)  # The governed route's allowed values.
         self._transport = transport  # Trusted dependency injection for isolated tests only.
 
     def step(self, **kwargs) -> DeepSeekResult:
@@ -469,6 +487,10 @@ class DeepSeekProvider:
         a = Attempt()
         limits = self.limits
         deadline = time.monotonic() + limits.timeout_s
+        value = deepseek_effort(effort)
+        if value is not None and value not in self.efforts:
+            raise DeepSeekError("model_effort_unavailable", a)  # Refused before any send.
+        thinking = self.thinking and value != "none"
         try:
             if should_stop():
                 raise DeepSeekCancelled(a)
@@ -490,15 +512,17 @@ class DeepSeekProvider:
                 names.add(name)
                 definitions.append({"type": "function", "function": {"name": name,
                     "description": tool.get("description", ""), "parameters": tool["input_schema"]}})
-            history = _history(messages, limits, thinking=self.thinking)
+            history = _history(messages, limits, thinking=thinking)
             prompt = _text(system)
             if prompt:
                 history.insert(0, {"role": "system", "content": prompt})
+            # thinking.type and reasoning_effort always agree: effort "none" (or thinking
+            # switched off) sends disabled and no effort, never "enabled" + "none".
             payload = {"model": credential.model, "messages": history, "stream": True,
                        "stream_options": {"include_usage": True}, "max_tokens": limits.max_tokens,
-                       "thinking": {"type": "enabled" if self.thinking else "disabled"}}
-            if self.thinking:
-                payload["reasoning_effort"] = _EFFORT[effort]
+                       "thinking": {"type": "enabled" if thinking else "disabled"}}
+            if thinking:
+                payload["reasoning_effort"] = value
             if definitions:
                 payload["tools"] = definitions
             if user_id is not None:

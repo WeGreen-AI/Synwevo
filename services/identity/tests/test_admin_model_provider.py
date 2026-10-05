@@ -74,7 +74,7 @@ def spec_for(prices):
         "confirmation_ref": "fixture-route-confirmation", "cost_basis_ref": "fixture-cost-evidence",
         "account_confirmation_ref": "fixture-account-confirmation", "sale_price_id": prices["sale"],
         "cost_price_id": prices["cost"], "input_token_ceiling": 1000, "output_token_ceiling": 32,
-        "valid_until": int(time.time()) + 3600}}
+        "valid_until": int(time.time()) + 3600, "reasoning_efforts": ["none", "low", "high", "max"]}}
 
 
 @pytest.fixture()
