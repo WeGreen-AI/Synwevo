@@ -14,6 +14,8 @@ from synwevo_core.billing.cost_settings import CostSettings
 from synwevo_core.billing.provider_settings import ProviderSettings
 from synwevo_core.billing.payer_budgets import PayerBudgets
 from synwevo_core.billing.traffic import ModelTraffic
+from synwevo_core.billing.wallet_config import units_from_env
+from synwevo_core.billing.welcome import WelcomeAllowance
 from synwevo_core.errors import ServiceError
 
 from .gateway import MeteredDeepSeek, MeteredTurnProvider, Route
@@ -33,6 +35,10 @@ class GovernedDeepSeek(MeteredTurnProvider):
             traffic=ModelTraffic(ledger, current_policy=costs.policy))
         quotes = RunQuotes(gateway, current_route=self.route, current_authority=self.authorized)
         ledger.authorize = quotes.authorize
+        # The one-time welcome allowance (off unless SYNWEVO_BILLING_WELCOME_MINOR and a CNY
+        # wallet unit are configured), granted at the person's first Agent use.
+        self.wallet_units = units_from_env()
+        quotes.welcome = WelcomeAllowance.from_host(ledger, self.wallet_units)
         super().__init__(gateway, quotes=quotes, credential_resolver=self.credential)
 
     def bind(self, agent):

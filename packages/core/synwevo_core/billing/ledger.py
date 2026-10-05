@@ -288,6 +288,7 @@ class Ledger:
         checked in the same request. Idempotent by ``grant_id``: a replay with the same facts
         returns the first result, changed facts conflict. The row is the audit record (actor,
         reason, time); the journal entry is kind ``grant`` from the platform grant account.
+        ``created`` in the result says whether this call made the grant or found it.
         """
         identifier(grant_id)
         identifier(actor_id)
@@ -311,7 +312,7 @@ class Ledger:
                 if tuple(row[k] for k in ("kind", "payer_kind", "payer_id", "unit", "amount", "reason",
                                           "actor_id", "abuse_key")) != facts:
                     raise BillingError("idempotency_conflict")
-                return self._grant_row(row)
+                return {**self._grant_row(row), "created": False}
             if payer_kind == "user":
                 self._active_user(t, payer_id)
             else:
@@ -329,7 +330,8 @@ class Ledger:
                       "amount,reason,actor_id,abuse_key,journal_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                       (key, self.environment, grant_id, kind, payer_kind, payer_id, wallet, unit.code, amount,
                        reason, actor_id, abuse_key, journal, self._now()))
-            return self._grant_row(t.execute("SELECT * FROM billing_grants WHERE id=?", (key,)).fetchone())
+            return {**self._grant_row(t.execute("SELECT * FROM billing_grants WHERE id=?", (key,)).fetchone()),
+                    "created": True}
 
     @staticmethod
     def _grant_row(row) -> dict:
@@ -837,8 +839,10 @@ class Ledger:
                                     "AND owner=? AND kind='wallet'",
                                     (self.environment, unit.code, payer_user_id)).fetchone()
                 booked = held = used = 0
+                frozen = False
                 if account:
                     booked, held = self._balance(t, account[0])
+                    frozen = self._frozen(t, account[0])
                     latest = t.execute("SELECT COALESCE(MAX(rowid),0) FROM billing_journal WHERE environment=? "
                                        "AND (debit_account=? OR credit_account=?)",
                                        (self.environment, account[0], account[0])).fetchone()[0]
@@ -847,7 +851,7 @@ class Ledger:
                                      "WHERE environment=? AND debit_account=? AND kind='sale'",
                                      (self.environment, account[0])).fetchone()[0]
                 balances.append({"unit": unit.code, "scale": unit.scale, "booked": booked,
-                                 "used": used, "held": held, "available": booked-held})
+                                 "used": used, "held": held, "available": booked-held, "frozen": frozen})
             return {"balances": balances, "used_through_seq": through}
 
     def overview_for_payer(self, *, payer_kind: str, payer_id: str, units) -> dict:

@@ -25,6 +25,7 @@ class RunQuotes:
         self.gateway, self.ledger, self.store = gateway, gateway.ledger, gateway.store
         self.current_route, self.current_authority = current_route, current_authority
         self.consents = ModelConsents(self)
+        self.welcome = None  # billing.welcome.WelcomeAllowance, installed by composition when configured
 
     @staticmethod
     def binding(conversation, *, text, parent_id, regenerate_of):
@@ -70,6 +71,8 @@ class RunQuotes:
         hold = self.gateway.upper_bound(route, sale)
         if budget < hold:
             raise BillingError("run_budget_exceeded")
+        if self.welcome is not None:
+            self.welcome.ensure(user_id)   # first Agent use; a no-op once granted or when ineligible
         with self.store.tx():
             current = self._conversation(user_id, conversation["id"])
             digest = self.binding(conversation, text=text, parent_id=parent_id, regenerate_of=regenerate_of)

@@ -118,8 +118,9 @@ def test_an_admin_grant_is_its_own_audited_kind_with_actor_and_reason(money):
     row = store.one("SELECT * FROM billing_grants WHERE id=?", (result["id"],))
     assert (row["actor_id"], row["reason"], row["kind"]) == (users[1], REASON, "admin")
     # the same grant replayed is the same grant; changed facts under the same id conflict
+    assert result["created"] is True
     assert ledger.grant(grant_id="g-1", kind="admin", payer_kind="user", payer_id=users[0], unit=UNIT,
-                        amount=250, reason=REASON, actor_id=users[1]) == result
+                        amount=250, reason=REASON, actor_id=users[1]) == {**result, "created": False}
     with pytest.raises(BillingError, match="idempotency_conflict"):
         ledger.grant(grant_id="g-1", kind="admin", payer_kind="user", payer_id=users[0], unit=UNIT,
                      amount=999, reason=REASON, actor_id=users[1])

@@ -17,14 +17,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-import json
-import os
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from synwevo_core.billing import BillingError, Ledger, Unit
+from synwevo_core.billing.wallet_config import environment_from_env, units_from_env
 from synwevo_core.billing.models import MAX_INTEGER
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
@@ -54,6 +53,8 @@ class UnitBalance(WalletUnit):
     used: str
     held: str
     available: str
+    #: A dispute (chargeback) froze this wallet: it cannot start new paid calls.
+    frozen: bool
 
 
 class WalletBalance(WalletModel):
@@ -66,7 +67,7 @@ class WalletBalance(WalletModel):
 class WalletEntry(WalletUnit):
     seq: str
     id: str
-    kind: Literal["paid", "test_payment", "sale"]
+    kind: Literal["paid", "test_payment", "sale", "grant", "chargeback"]
     delta: str
     created_at: int
 
@@ -85,36 +86,16 @@ def _unavailable() -> ServiceError:
 def from_host(store: Store) -> tuple[Ledger | None, tuple[Unit, ...]]:
     """Capture explicit host settings at installation; missing/invalid means unavailable.
 
-    SYNWEVO_BILLING_WALLET_UNITS is a JSON array of 1..16 {code, scale} objects. This
-    registers/funds nothing. The composition root can instead inject its governed Ledger
-    and units into build_router; no caller can override either via the HTTP request.
+    SYNWEVO_BILLING_WALLET_UNITS is a JSON array of 1..16 {code, scale} objects
+    (synwevo_core.billing.wallet_config). This registers/funds nothing. The composition root
+    can instead inject its governed Ledger and units into build_router; no caller can override
+    either via the HTTP request.
     """
-    mode = os.environ.get("SYNWEVO_BILLING_ENVIRONMENT")
-    raw = os.environ.get("SYNWEVO_BILLING_WALLET_UNITS")
-    if mode not in ("test", "live") or not raw or len(raw) > 16384:
+    mode = environment_from_env()
+    units = units_from_env()
+    if mode is None or not units:
         return None, ()
-
-    def unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        result: dict[str, object] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError("duplicate_field")
-            result[key] = value
-        return result
-
-    try:
-        records = json.loads(raw, object_pairs_hook=unique_fields)
-        if not isinstance(records, list) or not 1 <= len(records) <= 16:
-            return None, ()
-        if any(not isinstance(record, dict) or set(record) != {"code", "scale"} for record in records):
-            return None, ()
-        units = tuple(Unit(record["code"], record["scale"]) for record in records)
-        if len({unit.code for unit in units}) != len(units):
-            return None, ()
-        return Ledger(store, environment=mode, namespace="personal-agent"), units
-    except (ValueError, TypeError, RecursionError):
-        # Do not echo or log raw host configuration, including parser exception messages.
-        return None, ()
+    return Ledger(store, environment=mode, namespace="personal-agent"), units
 
 
 @contextmanager
@@ -191,7 +172,8 @@ def build_router(ident: Identity, sessions: Sessions, mailer: Mailer,
                                                  units=wallet_units)
             balances = [UnitBalance(unit=row["unit"], scale=row["scale"],
                                     booked=str(row["booked"]), used=str(row["used"]),
-                                    held=str(row["held"]), available=str(row["available"]))
+                                    held=str(row["held"]), available=str(row["available"]),
+                                    frozen=row["frozen"])
                         for row in overview["balances"]]
             result = WalletBalance(environment=mode, payer_user_id=uid, balances=balances,
                                    used_through_seq=str(overview["used_through_seq"]))
