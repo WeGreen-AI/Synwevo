@@ -652,6 +652,14 @@ def register(registry, agent: Agent, store, identity) -> None:
         providers = i.providers if i.providers is not None else (
             current["providers"] if current["providers_explicit"] else ["anthropic"])
         ts = now()
+        order = ("none", "platform", "any")
+        if (order.index(i.processing) < order.index(current["processing"])
+                or set(current["providers"]) - set(providers)):
+            # A narrowing is a withdrawal: journalled ahead of the change so a restored backup
+            # cannot reopen the workspace's content to a model (synwevo_core.journal).
+            from synwevo_core import journal
+            journal.record(store, "ai_policy_narrowed", workspace_id=c.workspace_id,
+                           processing=i.processing, providers=sorted(providers))
         store.execute("INSERT INTO agent_workspace_policies (workspace_id, processing, updated_by, updated_at) VALUES (?,?,?,?) "
                       "ON CONFLICT(workspace_id) DO UPDATE SET processing=excluded.processing, updated_by=excluded.updated_by, "
                       "updated_at=excluded.updated_at", (c.workspace_id, i.processing, c.user_id, ts))

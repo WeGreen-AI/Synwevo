@@ -171,6 +171,16 @@ class ProviderSettings:
                 raise ServiceError(400, "missing_reason", "请写明理由（8 至 500 个字）")
             credential = _valid(CredentialChange, credential)
             plan = self.preview(spec, credential, expected_revision=expected_revision)
+            # Withdrawals are journalled ahead of the change (journal.py), so restoring an older
+            # backup can bring back neither a revoked/replaced key nor a provider switched off.
+            from .. import journal
+            before = plan["before"]
+            if credential.action != "keep" and before["credential_configured"] and before["credential_revision"] > 0:
+                journal.record(self.store, "model_credential_withdrawn", environment=self.environment,
+                               credential_revision=before["credential_revision"])
+            if (before["spec"] or {}).get("enabled") and not plan["after"]["enabled"]:
+                journal.record(self.store, "model_provider_disabled", event_id=identifier(operation_id),
+                               environment=self.environment)
             if credential.action != "keep":
                 token = (sealed.seal(self.store, KEY_PURPOSE, credential.api_key.get_secret_value())
                          if credential.action == "replace" else None)

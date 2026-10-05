@@ -305,3 +305,56 @@ def test_deepseek_content_filter_finish_is_named_on_the_step():
     assert refused(result.step).code == "content_filtered_output"
     plain, _, _, _ = run(complete(finish="stop"))
     assert plain.step.stop_details is None
+
+
+# ------------------------------------------------------------------ restore (security journal)
+def test_a_restore_cannot_bring_back_a_withdrawn_consent_but_keeps_a_later_one(agent):
+    from synwevo_core.agent_safety import ProviderConsents
+    store, uid = agent.people.store, agent.people.uid("alice")
+    agent.sign_in("alice")
+    _consent(agent)
+    op(agent, "agent.provider_consent.withdraw", {})
+    entries = _journal(agent)
+    # An older backup still holds the consent as given.
+    store.execute("UPDATE agent_provider_consents SET withdrawn_at=NULL")
+    assert journal.apply(store, entries)["agent_provider_consent_withdrawn"] == 1
+    assert ProviderConsents(store).status(uid, "deepseek")["accepted"] is False
+    assert journal.apply(store, entries)["agent_provider_consent_withdrawn"] == 0
+    # A consent the person gave again after the withdrawal (and the backup holds) stands.
+    _consent(agent)
+    store.execute("UPDATE agent_provider_consents SET accepted_at=accepted_at+5")
+    journal.apply(store, entries)
+    assert ProviderConsents(store).status(uid, "deepseek")["accepted"] is True
+
+
+def test_a_restore_cannot_lift_an_agent_suspension(agent):
+    store, uid = agent.people.store, agent.people.uid("alice")
+    AgentAccess(store).suspend(uid, "admin-fixture", reason="fixture abuse")
+    entries = _journal(agent)
+    store.execute("DELETE FROM agent_access_suspensions")            # a backup from before it
+    assert journal.apply(store, entries)["agent_access_suspended"] == 1
+    assert AgentAccess(store).active(uid) is not None
+    assert journal.apply(store, entries)["agent_access_suspended"] == 0
+
+
+def test_a_restore_cannot_reopen_a_workspace_to_the_model(agent):
+    from synwevo_suite.agent.tools import workspace_policy
+    store, a = agent.people.store, agent.people.a
+    agent.sign_in("alice")
+    op(agent, "agent.workspace_policy.set", {"processing": "any", "providers": ["anthropic", "deepseek"]}, ws=a)
+    narrowed = lambda: [e for e in journal.read(store.root) if e["kind"] == "ai_policy_narrowed"]  # noqa: E731
+    assert narrowed() == []                                                  # widening: nothing
+    op(agent, "agent.workspace_policy.set", {"processing": "platform", "providers": ["anthropic"]}, ws=a)
+    entries = narrowed()
+    assert [(e["processing"], e["providers"]) for e in entries] == [("platform", ["anthropic"])]
+    # A backup from before the narrowing.
+    store.execute("UPDATE agent_workspace_policies SET processing='any' WHERE workspace_id=?", (a,))
+    store.execute("UPDATE agent_workspace_model_providers SET providers_json='[\"anthropic\",\"deepseek\"]' WHERE workspace_id=?", (a,))
+    assert journal.apply(store, entries)["ai_policy_narrowed"] == 1
+    policy = workspace_policy(store, a)
+    assert policy["processing"] == "platform" and policy["providers"] == ["anthropic"]
+    assert journal.apply(store, entries)["ai_policy_narrowed"] == 0
+    # A policy narrowed further later (and in the backup) is never widened by the replay.
+    store.execute("UPDATE agent_workspace_policies SET processing='none' WHERE workspace_id=?", (a,))
+    journal.apply(store, entries)
+    assert workspace_policy(store, a)["processing"] == "none"
