@@ -506,6 +506,9 @@ test('a one-step re-confirmation reuses the previous limits only when they fit t
   assert.equal(composer.renewalParams({ ...previous, run_seconds: 601 }, offer, previousTerms.unit), null);
   assert.equal(composer.renewalParams(previous, offer, { code: 'USD', scale: 6 }), null);
   assert.equal(composer.renewalParams(previous, { ...offer, unit: { code: 'CNY', scale: 2 } }, previousTerms.unit), null);
+  // A previous run time below the server's current minimum (one whole call) is not reused.
+  assert.equal(composer.renewalParams(previous, { ...offer, run_seconds_min: 301 }, previousTerms.unit), null);
+  assert.deepEqual(composer.renewalParams(previous, { ...offer, run_seconds_min: 300 }, previousTerms.unit), previous);
 });
 
 // ---------------------------------------------------------------- the AI-content label

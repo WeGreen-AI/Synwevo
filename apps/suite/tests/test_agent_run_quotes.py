@@ -191,7 +191,7 @@ def test_http_session_csrf_privacy_and_exact_large_budget(paid):
         assert client.post(base+'agent.billing.offer',json={'input':{}}).status_code==401
         raw,_=g.api.state.sessions.create(g.user['id'],workspace_id=None,amr='password')
         client.cookies.set(COOKIE_NAME,raw);client.cookies.set(CSRF_COOKIE,'quote-fixture-csrf')
-        args={'conversation_id':g.conversation['id'],'text':'fixture question','budget':'9007199254740993','max_calls':1,'run_seconds':60}
+        args={'conversation_id':g.conversation['id'],'text':'fixture question','budget':'9007199254740993','max_calls':1,'run_seconds':300}
         assert client.post(base+'agent.turn.quote',json={'input':args}).status_code==403
         headers={'X-Synwevo-CSRF':'quote-fixture-csrf'}
         result=client.post(base+'agent.turn.quote',json={'input':args,'idempotency_key':'http-quote-fixture'},headers=headers)

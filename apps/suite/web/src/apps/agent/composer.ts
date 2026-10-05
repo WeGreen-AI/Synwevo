@@ -114,13 +114,14 @@ export function samePricing(a: Pricing, b: Pricing): boolean {
 /** The limits a re-confirmation in one step reuses: the previous per-run budget, call count and
  *  time limit, but only when they still fit the new offer; otherwise null (fill them in again). */
 export function renewalParams(previous: { budget: string; max_calls: number; run_seconds: number },
-                              offer: Pick<Offer, 'per_call_hold' | 'max_calls_limit' | 'run_seconds_limit' | 'unit'>,
+                              offer: Pick<Offer, 'per_call_hold' | 'max_calls_limit' | 'run_seconds_limit' | 'run_seconds_min' | 'unit'>,
                               previousUnit: { code: string; scale: number }): { budget: string; max_calls: number; run_seconds: number } | null {
   const budget = big(previous.budget), hold = big(offer.per_call_hold);
   if (budget === null || hold === null || budget <= 0n || budget < hold
     || previousUnit.code !== offer.unit.code || previousUnit.scale !== offer.unit.scale
     || !Number.isSafeInteger(previous.max_calls) || previous.max_calls < 1 || previous.max_calls > offer.max_calls_limit
-    || !Number.isSafeInteger(previous.run_seconds) || previous.run_seconds < 1 || previous.run_seconds > offer.run_seconds_limit) return null;
+    || !Number.isSafeInteger(previous.run_seconds) || previous.run_seconds < (offer.run_seconds_min ?? 1)
+    || previous.run_seconds > offer.run_seconds_limit) return null;
   return { budget: previous.budget, max_calls: previous.max_calls, run_seconds: previous.run_seconds };
 }
 

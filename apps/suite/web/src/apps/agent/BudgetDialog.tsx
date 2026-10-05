@@ -4,7 +4,7 @@ import { Modal, useI18n, type Params } from '@synwevo/ui';
 import { read } from '../../shared/ops';
 import { Failure, Loading } from '../../shared/states';
 import {
-  boundedCount, formatAmount, formatRate, parseBudget, quoteExpired, sameIntent, validateOffer, validateQuote,
+  boundedCount, formatAmount, formatRate, parseBudget, quoteExpired, runSecondsMin, sameIntent, validateOffer, validateQuote,
   type BudgetIntent, type Offer, type Pricing, type Quote, type QuoteParams,
 } from './budget';
 import { PriceChangeList, useChatText } from './ChatParts';
@@ -143,7 +143,7 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
         setSeconds(String(reuse.run_seconds));
       }
       setCalls((value) => { try { boundedCount(value, result.max_calls_limit); return value; } catch { return '1'; } });
-      setSeconds((value) => { try { boundedCount(value, result.run_seconds_limit); return value; } catch { return String(Math.min(300, result.run_seconds_limit)); } });
+      setSeconds((value) => { try { boundedCount(value, result.run_seconds_limit, runSecondsMin(result)); return value; } catch { return String(Math.max(runSecondsMin(result), Math.min(300, result.run_seconds_limit))); } });
       setPhase('editing');
     } catch (failure) {
       if (!alive.current || generation.current !== ticket) return;
@@ -209,7 +209,7 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
       }
       if (BigInt(amount) < BigInt(offer.per_call_hold)) { setIssue({ field: 'budget', text: 'belowHold' }); return; }
       try {
-        params = { budget: amount, max_calls: boundedCount(calls, offer.max_calls_limit), run_seconds: boundedCount(seconds, offer.run_seconds_limit) };
+        params = { budget: amount, max_calls: boundedCount(calls, offer.max_calls_limit), run_seconds: boundedCount(seconds, offer.run_seconds_limit, runSecondsMin(offer)) };
       } catch { setIssue({ field: 'counts', text: 'invalidCounts' }); return; }
     }
     locked.current = true;
@@ -416,11 +416,11 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
               aria-invalid={issue?.field === 'counts'} aria-describedby={`${id}-limits${issue ? ` ${id}-issue` : ''}`} />
           </label>
           <label className="field" htmlFor={`${id}-seconds`}>{m('seconds')}
-            <input id={`${id}-seconds`} className="input" type="number" inputMode="numeric" min={1} max={offer.run_seconds_limit} step={1} required value={seconds}
+            <input id={`${id}-seconds`} className="input" type="number" inputMode="numeric" min={runSecondsMin(offer)} max={offer.run_seconds_limit} step={1} required value={seconds}
               disabled={phase !== 'editing' || changed} onChange={(event) => { setSeconds(event.target.value); setIssue(null); }}
               aria-invalid={issue?.field === 'counts'} aria-describedby={`${id}-limits${issue ? ` ${id}-issue` : ''}`} />
           </label>
-          <p id={`${id}-limits`} className="muted small">{m('limits', { calls: offer.max_calls_limit, seconds: offer.run_seconds_limit })}</p>
+          <p id={`${id}-limits`} className="muted small">{m('limits', { calls: offer.max_calls_limit, min: runSecondsMin(offer), seconds: offer.run_seconds_limit })}</p>
           {issue && <p className="notice err" id={`${id}-issue`} role="alert">{m(issue.text)}</p>}
         </form>}
         {quote && <dl ref={reviewFocus} tabIndex={-1} aria-label={m('total')} style={{ ...stack, margin: 0 }}>

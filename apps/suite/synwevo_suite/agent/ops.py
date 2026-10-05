@@ -157,6 +157,7 @@ MODEL_CAPABILITIES = {
 class ModelOffer(ModelTerms):
     max_calls_limit: int
     run_seconds_limit: int
+    run_seconds_min: int
     capabilities: ModelCapabilities | None = None
 
 

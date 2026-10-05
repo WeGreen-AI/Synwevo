@@ -218,17 +218,20 @@ def test_each_run_is_bounded_by_the_consent_and_route_lifetimes(governed):
     ledger = g.provider.gateway.ledger
     now = int(time.time())
     ledger.clock = lambda: now
-    consent = create(g, quote(g)['id'], max_runs=3, expires_at=now+100, until_revoked=False)
+    # A run is bounded by the consent's remaining lifetime, which must still fit one whole
+    # model call (gateway.send_window): usage after a hold's deadline is never charged.
+    window = g.provider.gateway.send_window
+    consent = create(g, quote(g)['id'], max_runs=3, expires_at=now+window+10, until_revoked=False)
     assert consent['run_seconds'] == 300
     turn = send(g, consent['id'])['turn_id']
     issued = g.store.one('SELECT q.terms_json FROM agent_model_quotes q JOIN agent_quote_consents c '
                          'ON c.quote_id=q.id WHERE q.accepted_turn_id=?', (turn,))
-    assert json.loads(issued['terms_json'])['deadline'] == now+100
+    assert json.loads(issued['terms_json'])['deadline'] == now+window+10
 
     other = g.agent.create_conversation(g.user['id'], 'Route window fixture', [g.wid])
     long_lived = create(g, quote(g, other)['id'], conversation=other)
     valid_until = g.spec['route']['valid_until']
-    ledger.clock = lambda: valid_until - 120
+    ledger.clock = lambda: valid_until - window - 10
     turn = send(g, long_lived['id'], conversation=other)['turn_id']
     issued = g.store.one('SELECT terms_json FROM agent_model_quotes WHERE accepted_turn_id=?', (turn,))
     assert json.loads(issued['terms_json'])['deadline'] == valid_until

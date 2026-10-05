@@ -56,7 +56,9 @@ class RunQuotes:
                 "rates": {key: {"numerator": str(raw[key]["numerator"]), "denominator": str(raw[key]["denominator"])}
                           for key in ("input_uncached", "input_cached", "output")},
                 "off_peak_rates": off_peak_rates(raw), "per_tokens": sale.per_tokens, "per_call_hold": str(self.gateway.upper_bound(route, sale)),
-                "max_calls_limit": 12, "run_seconds_limit": min(3600, route.valid_until - self.ledger._now())}
+                "max_calls_limit": 12, "run_seconds_limit": min(3600, route.valid_until - self.ledger._now()),
+                # A shorter run could not finish even one call inside its hold (gateway.send_window).
+                "run_seconds_min": self.gateway.send_window}
 
     @staticmethod
     def payer_of(terms) -> dict:
@@ -89,6 +91,10 @@ class RunQuotes:
         integer(budget, positive=True)
         integer(max_calls, positive=True, maximum=12)
         integer(run_seconds, positive=True, maximum=3600)
+        if run_seconds < self.gateway.send_window:
+            # Every call's hold ends at the run deadline and usage after it is never charged:
+            # a run too short for one whole send would only be refused at its first call.
+            raise BillingError("run_time_too_short")
         route = self.current_route()
         if not isinstance(route, Route):
             raise BillingError("model_route_unavailable")

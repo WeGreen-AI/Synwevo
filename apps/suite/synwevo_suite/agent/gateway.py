@@ -49,6 +49,12 @@ THROTTLED_MESSAGE = "模型服务繁忙，本次没有发送，也没有扣费�
 #: template's fixed special tokens, and its tool-use instructions when tools are offered.
 TEMPLATE_TOKENS = 64
 TOOLS_TEMPLATE_TOKENS = 1024
+#: Seconds a call's hold must still have after the longest possible send, to record the
+#: observation and settle it: one SQLite busy timeout (Store waits up to 30 s for the writer
+#: lock) covers the ledger's whole-second clock as well. See MeteredDeepSeek.send_window.
+SETTLE_MARGIN_S = 30
+#: What a person sees when the run has too little time left for one more model call.
+RUN_TIME_TOO_SHORT = "本次运行剩余的时间不足以完成一次模型调用，本次没有发送，也不扣费。请重新确认运行时间后继续。"
 
 
 def _json(value):
@@ -187,6 +193,27 @@ class MeteredDeepSeek:
         self._throttle = threading.Lock()
         self._cool_until, self._strikes, self._cool_code = 0.0, 0, None
         self._clock, self._sleep, self._random = time.monotonic, time.sleep, random.random
+
+    @property
+    def send_window(self) -> int:
+        """The least hold time a send needs, in whole seconds: the transport's total timeout
+        (a stream never lasts longer, deepseek.Limits.timeout_s) plus SETTLE_MARGIN_S.
+
+        A call's hold deadline is final: usage settled after it is recorded as the platform's
+        cost and never charged. So a call is reserved only when its hold has this much time
+        left, and the ledger refuses the dispatch itself (under its writer lock) when it no
+        longer has; a quote cannot choose a run shorter than this. Nothing is ever charged
+        after the deadline, beyond the hold the person consented to."""
+        return math.ceil(self.limits.timeout_s) + SETTLE_MARGIN_S
+
+    def _require_send_window(self, run) -> None:
+        """Before reserving: refuse, unsent and unreserved, a call whose hold (bounded by the run
+        deadline and the ledger's longest hold) could end before the send does."""
+        now = self.ledger._now()
+        if min(run["deadline"], now + self.ledger.max_hold_seconds) - now < self.send_window:
+            error = BillingError("run_time_too_short")
+            error.not_dispatched = True
+            raise error
 
     def pseudonym(self, payer_user_id: str) -> str:
         """The provider's user_id for a payer: HMAC-SHA256 under a key derived from the server
@@ -361,6 +388,7 @@ class MeteredDeepSeek:
             error.metered_usage, error.usage_reliability = {"input_tokens": 0, "output_tokens": 0}, "not_dispatched"
             raise error
         identifier(logical_call_id)
+        self._require_send_window(run)  # No point waiting for a call that could not finish.
         self._await_upstream(should_stop, run["deadline"])  # Provably unsent while waiting.
         sale, cost = self._prices(route)
         request = _json({"route": asdict(route), "context": asdict(context), "system": system,
@@ -383,6 +411,8 @@ class MeteredDeepSeek:
                 exc.not_dispatched = True  # Waiting never reserves money or sends anything.
                 raise
         try:
+            # Again after waiting, before anything is recorded or reserved.
+            self._require_send_window(run)
             return self._step(context, logical_call_id, credential, system, tools, messages, effort, on_text,
                               should_stop, validate_result, run, route, sale, cost, digest, claim, bound)
         finally:
@@ -436,13 +466,14 @@ class MeteredDeepSeek:
                         admission_refusal = exc
                         raise
                 try:
-                    self.ledger.dispatch(ticket, block_unresolved_run=True,
+                    self.ledger.dispatch(ticket, block_unresolved_run=True, send_window=self.send_window,
                                          admission=admit if self.cost_admission is not None
                                          or self.route_guard is not None else None)
                 except BillingError as exc:
                     # Preserve the existing transport contract for fencing/unknown usage;
-                    # only our typed payer-policy refusal needs the new user-facing reason.
-                    if exc.code.startswith("payer_"):
+                    # only our typed payer-policy and send-window refusals need their own
+                    # user-facing reason.
+                    if exc.code.startswith("payer_") or exc.code == "run_time_too_short":
                         admission_refusal = exc
                     raise
 
@@ -624,6 +655,7 @@ class MeteredTurnProvider:
             raise
         except BillingError as exc:
             error = ProviderError("billing_" + exc.code, UNAVAILABLE if exc.code in CLOSED_CODES
+                                  else RUN_TIME_TOO_SHORT if exc.code == "run_time_too_short"
                                   else "本次运行的预算或用量状态暂不允许继续，请查看费用记录")
             if getattr(exc, "not_dispatched", False):
                 error.metered_usage = {"input_tokens": 0, "output_tokens": 0}

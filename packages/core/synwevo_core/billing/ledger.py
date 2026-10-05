@@ -638,7 +638,7 @@ class Ledger:
             return AttemptTicket(attempt_key, owner, fence)
 
     def dispatch(self, ticket: AttemptTicket, *, block_unresolved_run: bool = False,
-                 admission=None) -> None:
+                 admission=None, send_window: int | None = None) -> None:
         """Commit the one-shot send boundary; a replay is REFUSED, never permission to resend.
 
         Success means 'may have been sent' even if the process crashes before network I/O.
@@ -646,9 +646,17 @@ class Ledger:
         A trusted local admission callback may reserve provider-account capacity/cost in
         this same writer transaction. It must not perform network I/O. Its writes and
         the dispatch fence either commit together with FULL durability or both roll back.
+
+        ``send_window`` is the dispatcher's bound, in seconds, on how long the send may take
+        until its usage is settled (transport timeout plus settlement margin). A network
+        dispatcher MUST pass it: the hold deadline is final (usage after it is the platform's
+        cost, never the payer's), so a send that could outlive its hold is refused here,
+        under the writer lock, before anything is sent (``run_time_too_short``).
         """
         if admission is not None and not callable(admission):
             raise BillingError("invalid_dispatch_admission")
+        if send_window is not None:
+            integer(send_window, positive=True, maximum=86400)
         with self._tx() as t:
             self._expire(t)
             attempt = self._attempt(t, ticket.attempt_key)
@@ -658,6 +666,8 @@ class Ledger:
                     or attempt["status"] != "prepared" or attempt["lease_until"] <= self._now()
                     or call["status"] != "reserved" or call["cancel_requested"]):
                 raise BillingError("dispatch_fenced")
+            if send_window is not None and call["deadline"] - self._now() < send_window:
+                raise BillingError("run_time_too_short")
             context = ChargeContext(**json.loads(call["context"]))
             if self._frozen(t, call["account_id"]):
                 raise BillingError("wallet_frozen")
