@@ -1,6 +1,8 @@
 import { ModelCostsTab } from "./governance/ModelCostsTab";
 import { ModelProviderTab } from "./governance/ModelProviderTab";
 import { ModelPricesTab } from "./governance/ModelPricesTab";
+import { FinanceTab } from "./governance/FinanceTab";
+import { PaymentsTab } from "./governance/PaymentsTab";
 import { SettingsTab } from "./governance/SettingsTab";
 import { AppRunsTab, FlowRunsTab } from "./governance/RunsTab";
 import { SuperAdminOffersAdmin, SuperAdminReadiness } from "./governance/SuperAdminHandover";
@@ -95,6 +97,8 @@ function AdminViews({ held, tab }: { held: Held; tab: Tab }) {
     {tab === "model-provider" && <ModelProviderTab onDenied={onDenied}
       canRead={!permitted(held, "platform.config.view").disabled}
       canManage={!permitted(held, "platform.config.manage").disabled} />}
+    {tab === "finance" && <FinanceTab onDenied={onDenied} canManage={!permitted(held, "platform.billing.manage").disabled} />}
+    {tab === "payments" && <PaymentsTab onDenied={onDenied} canManage={!permitted(held, "platform.billing.manage").disabled} />}
     {tab === "registration" && <SettingsTab onDenied={onDenied} held={held} />}
     {tab === "identity" && <IdentityProvidersTab onDenied={onDenied} />}
     {tab === "mail" && <MailTab onDenied={onDenied} held={held} />}

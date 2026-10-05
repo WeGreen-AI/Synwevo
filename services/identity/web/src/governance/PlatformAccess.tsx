@@ -20,10 +20,10 @@ import "./runs.messages";
  * and shows the server's refusal in the reader's language when it does not.
  */
 
-export const ROLE_ORDER = ["super_admin", "access_admin", "support", "auditor", "api_platform_admin"] as const;
+export const ROLE_ORDER = ["super_admin", "access_admin", "support", "auditor", "api_platform_admin", "finance"] as const;
 const ROLE_LABEL: Record<string, string> = {
   super_admin: "最高管理员", access_admin: "账户与访问管理员", support: "支持", auditor: "审计查看",
-  api_platform_admin: "API 平台管理员",
+  api_platform_admin: "API 平台管理员", finance: "财务",
 };
 const ROLE_SUMMARY: Record<string, string> = {
   super_admin: "全部平台管理能力，包括授予和撤销管理员角色。",
@@ -31,6 +31,7 @@ const ROLE_SUMMARY: Record<string, string> = {
   support: "查看账户、工作空间与应用运行记录，发送找回邮件、结束会话；不能停用账户。",
   auditor: "只读：概览、账户、工作空间、组织、配置、邮件、应用运行记录、审计与管理员名册。",
   api_platform_admin: "只使用 API 管理平台和概览；不含账户管理。",
+  finance: "只处理资金：支付设置、充值与赠送记录、拒付与冻结；看不到对话内容，也不能管理账户。",
 };
 const PERMISSION_LABEL: Record<string, string> = {
   "platform.overview.view": "查看平台概览", "platform.users.view": "查看账户", "platform.users.manage": "停用与恢复账户",
@@ -40,6 +41,8 @@ const PERMISSION_LABEL: Record<string, string> = {
   "platform.orgs.manage": "在管理后台管理自己拥有的组织", "platform.config.view": "查看平台配置与登录方式",
   "platform.config.manage": "修改注册策略与非秘密平台配置", "platform.mail.view": "查看邮件投递", "platform.mail.manage": "重试失败的找回与验证邮件",
   "platform.apps.view": "查看业务应用与流程的运行记录（不含内容）",
+  "platform.billing.view": "查看充值、赠送、拒付与未用余额（只含金额与元数据）",
+  "platform.billing.manage": "配置支付渠道、带理由赠送额度、解除拒付冻结",
   "platform.audit.view": "查看审计记录", "platform.roles.view": "查看平台管理员与权限说明",
   "platform.roles.assign": "授予和撤销委派角色", "platform.roles.assign_super": "授予和撤销最高管理员",
   "api_platform.manage": "使用 API 管理平台",

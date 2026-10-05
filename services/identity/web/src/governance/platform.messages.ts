@@ -14,6 +14,8 @@ export const platformMessages = {
   "查看账户、工作空间与应用运行记录，发送找回邮件、结束会话；不能停用账户。": { en: "Views accounts, workspaces and application run records, sends recovery mail and ends sessions; cannot suspend accounts.", "zh-Hant": "檢視帳戶、工作空間與應用執行記錄，傳送找回郵件、結束工作階段；不能停用帳戶。" },
   "只读：概览、账户、工作空间、组织、配置、邮件、应用运行记录、审计与管理员名册。": { en: "Read-only: overview, accounts, workspaces, organizations, settings, mail, application run records, audit and the administrator roster.", "zh-Hant": "唯讀：概覽、帳戶、工作空間、組織、設定、郵件、應用執行記錄、稽核與管理員名冊。" },
   "只使用 API 管理平台和概览；不含账户管理。": { en: "Uses the API management console and the overview only; no account management.", "zh-Hant": "只使用 API 管理平台和概覽；不含帳戶管理。" },
+  "财务": { en: "Finance", "zh-Hant": "財務" },
+  "只处理资金：支付设置、充值与赠送记录、拒付与冻结；看不到对话内容，也不能管理账户。": { en: "Money only: payment settings, top-up and grant records, chargebacks and freezes; never sees conversation content and cannot manage accounts.", "zh-Hant": "只處理資金：支付設定、儲值與贈送紀錄、拒付與凍結；看不到對話內容，也不能管理帳戶。" },
 
   // ---- permissions
   "查看平台概览": { en: "View the platform overview", "zh-Hant": "檢視平台概覽" },
@@ -30,6 +32,8 @@ export const platformMessages = {
   "查看邮件投递": { en: "View mail delivery", "zh-Hant": "檢視郵件投遞" },
   "重试失败的找回与验证邮件": { en: "Retry failed recovery and verification mail", "zh-Hant": "重試失敗的找回與驗證郵件" },
   "查看审计记录": { en: "View the audit log", "zh-Hant": "檢視稽核記錄" },
+  "查看充值、赠送、拒付与未用余额（只含金额与元数据）": { en: "View top-ups, grants, chargebacks and unused balances (amounts and metadata only)", "zh-Hant": "檢視儲值、贈送、拒付與未用餘額（只含金額與中繼資料）" },
+  "配置支付渠道、带理由赠送额度、解除拒付冻结": { en: "Configure the payment provider, grant credit with a reason and lift chargeback freezes", "zh-Hant": "設定支付管道、附理由贈送額度、解除拒付凍結" },
   "查看平台管理员与权限说明": { en: "View platform administrators and permission explanations", "zh-Hant": "檢視平台管理員與權限說明" },
   "授予和撤销委派角色": { en: "Grant and revoke delegated roles", "zh-Hant": "授予和撤銷委派角色" },
   "授予和撤销最高管理员": { en: "Grant and revoke the super administrator role", "zh-Hant": "授予和撤銷最高管理員" },

@@ -980,6 +980,10 @@ class Store:
                 if column not in {r["name"] for r in t.execute(f"PRAGMA table_info({table})")}:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
             t.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_platform_grant_offer ON platform_role_grants(offer_id)")
+        # Org-payments: the finance role widens the grants table's role CHECK (a table rebuild,
+        # outside any transaction; platform_access.widen_roles).
+        from .platform_access import widen_roles
+        widen_roles(c)
         with self.tx():
             first = not self.one("SELECT 1 AS x FROM meta WHERE key='platform_grants.migrated'")
             reconcile_mirror(self, source="migration:v27" if first else "reconcile:mirror")
