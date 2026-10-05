@@ -18,6 +18,7 @@ import ConnectedAppsSection from './account/ConnectedAppsSection';
 import NotificationsSection from './account/NotificationsSection';
 import { ErrorNotice, errorText, timeText, type Profile } from './account/common';
 import './account/account.css';
+import './account/topup.messages';
 export { default as AccountRecovery } from './account/Recovery';
 interface SessionRow { id: string; current: boolean; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string; client_parts?: { browser: string | null; platform: string | null }; ip: string | null; persistent?: boolean; auth_provider?: string | null }
 /** "Chrome on macOS" in the reader's language; the server sends product names, not a sentence. */

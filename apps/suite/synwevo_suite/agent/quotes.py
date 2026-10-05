@@ -1,4 +1,7 @@
-"""Personal, single-run price consent. Payment authority is separate from tool permission.
+"""Single-run price consent. Payment authority is separate from tool permission.
+
+The person pays by default; an organization pays when the person chose it for this quote and
+the organization's current grant lets them charge it (billing.org_payers; org-payments).
 
 Composition supplies an approved route, a current policy checker and the ledger; no route,
 price, secret, budget or funds are inferred from the host or from a model response. The quote
@@ -25,6 +28,7 @@ class RunQuotes:
         self.gateway, self.ledger, self.store = gateway, gateway.ledger, gateway.store
         self.current_route, self.current_authority = current_route, current_authority
         self.consents = ModelConsents(self)
+        self.welcome = None  # billing.welcome.WelcomeAllowance, installed by composition when configured
 
     @staticmethod
     def binding(conversation, *, text, parent_id, regenerate_of):
@@ -54,8 +58,34 @@ class RunQuotes:
                 "per_tokens": sale.per_tokens, "per_call_hold": str(self.gateway.upper_bound(route, sale)),
                 "max_calls_limit": 12, "run_seconds_limit": min(3600, route.valid_until - self.ledger._now())}
 
+    @staticmethod
+    def payer_of(terms) -> dict:
+        """The payer a quote/consent was issued for. Older terms (before org-payments) are personal."""
+        payer = terms.get("payer") or {"kind": "user"}
+        return {"kind": payer["kind"], "id": payer.get("id")}
+
+    def _payer(self, user_id, payer) -> dict:
+        """Normalize the requested payer. A person is the default; an organization only when its
+        current grant lets this member charge it (rechecked at every reservation and send)."""
+        if payer is None or payer.get("kind") in (None, "user"):
+            if payer is not None and payer.get("id") not in (None, user_id):
+                raise BillingError("payer_forbidden")
+            return {"kind": "user", "id": user_id}
+        oid = payer.get("id")
+        if payer.get("kind") != "organization" or not isinstance(oid, str) or not oid:
+            raise BillingError("invalid_payer")
+        org_payers = self.ledger.org_payers
+        if org_payers is None:
+            raise BillingError("organization_billing_not_configured")
+        with self.store.tx() as t:
+            grant = org_payers._grant(t, oid, user_id)
+            if (not grant or not grant["enabled"] or not org_payers._org_active(t, oid)
+                    or not org_payers._member(t, oid, user_id)):
+                raise BillingError("org_payer_not_granted")
+        return {"kind": "organization", "id": oid}
+
     def issue(self, user_id, conversation, *, text, parent_id, regenerate_of,
-              budget: int, max_calls: int, run_seconds: int) -> dict:
+              budget: int, max_calls: int, run_seconds: int, payer=None) -> dict:
         integer(budget, positive=True)
         integer(max_calls, positive=True, maximum=12)
         integer(run_seconds, positive=True, maximum=3600)
@@ -70,6 +100,9 @@ class RunQuotes:
         hold = self.gateway.upper_bound(route, sale)
         if budget < hold:
             raise BillingError("run_budget_exceeded")
+        if self.welcome is not None:
+            self.welcome.ensure(user_id)   # first Agent use; a no-op once granted or when ineligible
+        payer = self._payer(user_id, payer)
         with self.store.tx():
             current = self._conversation(user_id, conversation["id"])
             digest = self.binding(conversation, text=text, parent_id=parent_id, regenerate_of=regenerate_of)
@@ -81,7 +114,7 @@ class RunQuotes:
                 raise BillingError("quote_limit_exceeded")
             quote_id = new_id("quote")
             terms = {"route": asdict(route), "sale": asdict(sale), "budget": budget,
-                     "max_calls": max_calls, "deadline": deadline, "per_call_hold": hold}
+                     "max_calls": max_calls, "deadline": deadline, "per_call_hold": hold, "payer": payer}
             self.store.execute("INSERT INTO agent_model_quotes(id,environment,namespace,user_id,conversation_id,"
                 "binding_digest,scope_json,terms_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (quote_id, self.ledger.environment, self.ledger.namespace, user_id, current["id"], digest,
@@ -110,6 +143,7 @@ class RunQuotes:
                 "per_tokens": sale["per_tokens"], "terms_ref": sale["terms_ref"],
                 "budget": str(terms["budget"]), "per_call_hold": str(terms["per_call_hold"]),
                 "max_calls": terms["max_calls"], "deadline": terms["deadline"],
+                "payer": self.payer_of(terms) | ({"id": user_id} if self.payer_of(terms)["kind"] == "user" else {}),
                 "expires_at": row["expires_at"], "turn_id": row["accepted_turn_id"],
                 "status": "revoked" if row["revoked_at"] is not None else "accepted" if row["accepted_turn_id"]
                     else "expired" if row["expires_at"] <= self.ledger._now() else "quoted"}
@@ -138,8 +172,7 @@ class RunQuotes:
         Business/policy authority is explicitly delegated to composition. The same payer and
         turn must remain authorized; a balance or admin role never supplies that authority.
         """
-        if (context.actor_user_id != context.payer_user_id or context.delegation_id is not None
-                or context.payer_kind != "personal"):
+        if context.actor_user_id != context.payer_user_id or context.delegation_id is not None:
             return False
         row = transaction.execute("SELECT q.* FROM agent_model_quotes q JOIN agent_turns t ON t.id=q.accepted_turn_id "
             "JOIN agent_conversations c ON c.id=t.conversation_id WHERE q.id=? AND q.user_id=? "
@@ -152,6 +185,10 @@ class RunQuotes:
         if not self.consents.authorize(transaction, context.actor_user_id, row["id"]):
             return False
         terms = json.loads(row["terms_json"])
+        payer = self.payer_of(terms)
+        # The run's payer is the one the person chose for this quote, never another.
+        if context.payer != ((payer["kind"], payer["id"]) if payer["kind"] == "organization" else ("user", context.actor_user_id)):
+            return False
         return (terms["deadline"] > self.ledger._now() and self.current_route() == Route(**terms["route"])
                 and self.current_authority(context) is True)
 
@@ -162,7 +199,12 @@ class RunQuotes:
         if not row:
             raise BillingError("authorization_required")
         terms = json.loads(row["terms_json"])
-        context = ChargeContext(turn["user_id"], turn["user_id"], turn["id"], row["id"])
+        payer = self.payer_of(terms)
+        if payer["kind"] == "organization":
+            context = ChargeContext(turn["user_id"], turn["user_id"], turn["id"], row["id"],
+                                    payer_kind="organization", organization_id=payer["id"])
+        else:
+            context = ChargeContext(turn["user_id"], turn["user_id"], turn["id"], row["id"])
         return self.gateway.open_run(context, route=Route(**terms["route"]), budget=terms["budget"],
                                      max_calls=terms["max_calls"], deadline=terms["deadline"])
 

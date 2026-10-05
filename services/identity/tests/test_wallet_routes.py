@@ -197,9 +197,9 @@ def test_atomic_overview_multiple_units_settled_held_and_empty(wallet):
     assert set(result) == {"environment", "payer_user_id", "balances", "used_through_seq"}
     assert result["environment"] == "test" and result["payer_user_id"] == wallet.uid
     assert result["balances"] == [
-        {"unit": UNIT.code, "scale": 6, "booked": "93", "used": "7", "held": "20", "available": "73"},
-        {"unit": OTHER_UNIT.code, "scale": 2, "booked": "36", "used": "9", "held": "0", "available": "36"},
-        {"unit": EMPTY_UNIT.code, "scale": 18, "booked": "0", "used": "0", "held": "0", "available": "0"},
+        {"unit": UNIT.code, "scale": 6, "booked": "93", "used": "7", "held": "20", "available": "73", "frozen": False},
+        {"unit": OTHER_UNIT.code, "scale": 2, "booked": "36", "used": "9", "held": "0", "available": "36", "frozen": False},
+        {"unit": EMPTY_UNIT.code, "scale": 18, "booked": "0", "used": "0", "held": "0", "available": "0", "frozen": False},
     ]
     assert result["used_through_seq"] == "4"
     assert PRIVATE not in str(result) and COST_UNIT.code not in str(result)
@@ -327,7 +327,7 @@ def test_big_integer_amounts_and_cursors_round_trip_as_decimal_strings(wallet):
     result = projected(wallet)
     assert result["balances"][0] == {
         "unit": UNIT.code, "scale": 6, "booked": str(amount - used), "used": str(used),
-        "held": "17", "available": str(amount - used - 17),
+        "held": "17", "available": str(amount - used - 17), "frozen": False,
     }
     assert result["used_through_seq"] == str(base + 1)
     first = wallet.client.get(STATEMENT, params={"limit": "1"}).json()
@@ -447,6 +447,7 @@ def test_overview_uses_one_locked_snapshot_and_route_does_not_reread_money(walle
     result = projected(wallet)
     assert result["balances"][0] == {
         "unit": UNIT.code, "scale": 6, "booked": "95", "used": "5", "held": "20", "available": "75",
+        "frozen": False,
     }
     assert result["used_through_seq"] == "2"
     assert len(lock_checks) == 1
@@ -534,5 +535,5 @@ def test_default_factory_exposes_host_bound_wallet_without_fixture_router(wallet
         overview = client.get(ROOT)
         assert overview.status_code == 200, overview.text
         assert overview.json()["balances"] == [{"unit": UNIT.code, "scale": 6, "booked": "765",
-                                                "used": "0", "held": "0", "available": "765"}]
+                                                "used": "0", "held": "0", "available": "765", "frozen": False}]
         assert client.get(STATEMENT).json()["items"][0]["delta"] == "765"

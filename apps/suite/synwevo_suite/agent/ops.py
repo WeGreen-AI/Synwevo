@@ -74,6 +74,14 @@ class QuoteTurn(_In):
     budget: str = F(pattern=r"^[1-9][0-9]{0,18}$")
     max_calls: int = F(strict=True, ge=1, le=12)
     run_seconds: int = F(strict=True, ge=1, le=3600)
+    #: Who pays (shared contract): the person (default) or an organization that granted them.
+    payer_kind: Literal["user", "organization"] = "user"
+    payer_id: str | None = F(default=None, max_length=200)
+
+
+class Payer(_In):
+    kind: Literal["user", "organization"]
+    id: str
 
 
 class QuoteRef(_In):
@@ -127,6 +135,7 @@ class ConsentRef(_In):
 
 class ConsentResult(ModelTerms):
     id: str
+    payer: Payer
     conversation_id: str
     scope: list[str]
     max_runs: int
@@ -200,6 +209,7 @@ class PayerBudgetList(_In):
 class QuoteResult(ModelTerms):
     id: str
     payer_user_id: str
+    payer: Payer
     conversation_id: str
     budget: str = F(pattern=r"^[0-9]+$")
     max_calls: int
@@ -454,7 +464,8 @@ def register(registry, agent: Agent, store, identity) -> None:
        summary="Bind this message and conversation to a personal price, deadline and maximum budget; no model call or funds held.",
        input=QuoteTurn, output=QuoteResult, side_effect="write", agent="never", unattended=False,
        handler=lambda c, i: agent.quote_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
-           regenerate_of=i.regenerate_of, budget=int(i.budget), max_calls=i.max_calls, run_seconds=i.run_seconds))
+           regenerate_of=i.regenerate_of, budget=int(i.budget), max_calls=i.max_calls, run_seconds=i.run_seconds,
+           payer={"kind": i.payer_kind, "id": i.payer_id}))
     op(id="agent.quote.get", title=T("查看报价", "查看報價", "Read a quote"), input=QuoteRef,
        summary="Read the person's own fixed price and budget.", agent="never", output=QuoteResult, handler=quote_read)
     op(id="agent.quote.revoke", title=T("撤销运行预算", "撤銷執行預算", "Revoke a run budget"), input=QuoteRef,

@@ -41,6 +41,9 @@ def install(ctx) -> None:
         provider.bind(agent)
     ctx.api.state.agent = agent
     register(ctx.registry, agent, ctx.store, ctx.identity)
+    # The payers this person may charge (shared contract with the chat; org-payments).
+    from .payers import install as install_payers
+    install_payers(ctx, agent)
     hooks = getattr(ctx.api.state, "shutdown_hooks", None)
     if hooks is not None:
         hooks.append(agent.close)

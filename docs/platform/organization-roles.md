@@ -39,6 +39,7 @@
 | `org.audit.read` | governance | 组织审计 | ✓ | ✓ |
 | `org.approvals.decide` | governance | 复制审批（CI-27，还需目标空间管理员；见 project-copy.md） | ✓ | ✓ |
 | `org.messaging.manage` | governance | 群聊治理（CI-26） | ✓ | ✓ |
+| `org.billing.manage` | governance | 组织付费：为组织钱包充值、授权成员用组织付费并设每月额度、读组织账单（org-payments；见 wallet-payments.md §5）。管理员默认**不**持有 | — | ✓ |
 | `org.ownership.transfer` / `org.lifecycle.manage` | owner | 交接所有权 / 冻结删除恢复 | — | ✗ 仅所有者 |
 
 有效权限 = 基础角色集合 ∪ 已分配角色的并集。普通成员默认为空集（与实现前一致：成员看不到成员列表）。

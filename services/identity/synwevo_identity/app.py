@@ -36,6 +36,7 @@ class Sweeper:
     def __init__(self, store, sessions, tickets, passkeys, *, start: bool = True):
         import threading
         self.store, self.sessions, self.tickets, self.passkeys = store, sessions, tickets, passkeys
+        self.topups = None   # payments.TopupService: replays webhook events a crash left unprocessed
         self._stop = threading.Event()
         self._thread = None
         if start:
@@ -52,7 +53,8 @@ class Sweeper:
                 "webauthn_challenges": self.passkeys.sweep(),
                 "rp_auth_requests": Rp(self.store).sweep(),
                 "account_deletions": finalize_deletions(self.store),
-                "member_imports": self._member_imports()}
+                "member_imports": self._member_imports(),
+                "payment_events": self.topups.process_pending() if self.topups and self.topups.environment else 0}
 
     def _member_imports(self) -> dict:
         from synwevo_core.identity import Identity
@@ -137,6 +139,9 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     from .api_platform import build_router as build_api_platform_router
     api.include_router(build_account_router(identity, sessions, mailer, audit))
     api.include_router(build_organization_router(store, identity, sessions, audit, invites, mailer))
+    # An organization paying for its members (org-payments): wallet, grants, limits, statement.
+    from .org_billing_routes import build_router as build_org_billing_router
+    api.include_router(build_org_billing_router(identity, sessions, audit))
     from synwevo_core.member_import import BasicIngest
     from .member_import_routes import build_router as build_member_import_router
     api.state.ingest = ingest or BasicIngest()
@@ -195,12 +200,22 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.include_router(build_model_costs_router(store, audit))
     from .admin_model_provider import build_router as build_model_provider_router
     api.include_router(build_model_provider_router(store, audit))
+    from .admin_payments import build_router as build_admin_payments_router
+    api.include_router(build_admin_payments_router(store, audit))
     from .admin_runs import build_router as build_runs_router
     api.include_router(build_runs_router(store, audit))
     from .wallet_routes import build_router as build_wallet_router, from_host as wallet_from_host
     wallet_ledger, wallet_units = wallet_from_host(store)
     api.include_router(build_wallet_router(identity, sessions, mailer, audit,
                                           ledger=wallet_ledger, units=wallet_units))
+    # Wallet top-ups and the payment provider's webhook (org-payments). Off until Admin publishes
+    # payment settings with sealed credentials; topup-options then says available:false.
+    from synwevo_core.oidc import issuer as _issuer
+    from .payment_routes import build_router as build_payment_router
+    from .payments import TopupService
+    api.state.topups = TopupService.from_host(store, return_base=_issuer())
+    api.state.auth_sweeper.topups = api.state.topups
+    api.include_router(build_payment_router(identity, sessions, audit, api.state.topups))
     from .admin_handover import build_router as build_handover_router
     api.include_router(build_handover_router(identity, sessions, passkeys, audit))
 

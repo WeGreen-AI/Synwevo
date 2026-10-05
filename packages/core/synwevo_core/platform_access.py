@@ -120,6 +120,8 @@ PERMISSIONS: dict[str, str] = {
     "platform.mail.view": "read the mail outbox metadata",
     "platform.mail.manage": "retry a failed reset or verification mail",
     "platform.apps.view": "read business application run and flow run metadata (operation, state, timing, error code; never inputs, outputs or content)",
+    "platform.billing.view": "read payments, grants, chargebacks and outstanding wallet balances (amounts and metadata, never conversation content)",
+    "platform.billing.manage": "configure the payment provider, grant credit with a reason and lift a dispute freeze",
     "platform.audit.view": "read the platform audit log",
     "platform.roles.view": "read the role catalogue, the administrator roster and permission explanations",
     "platform.roles.assign": "grant and revoke delegated platform roles",
@@ -148,8 +150,11 @@ ROLES: dict[str, frozenset[str]] = {
         "platform.config.view", "platform.mail.view", "platform.apps.view", "platform.audit.view",
         "platform.roles.view"}),
     "api_platform_admin": frozenset({"platform.overview.view", "api_platform.manage"}),
+    # Money only: payments, grants, chargebacks, payment settings. No account, workspace or
+    # model-configuration power, and no business content (docs/platform/wallet-payments.md).
+    "finance": frozenset({"platform.overview.view", "platform.billing.view", "platform.billing.manage"}),
 }
-ROLE_ORDER = (SUPER_ADMIN, "access_admin", "support", "auditor", "api_platform_admin")
+ROLE_ORDER = (SUPER_ADMIN, "access_admin", "support", "auditor", "api_platform_admin", "finance")
 assert set(ROLE_ORDER) == set(ROLES) and all(r <= set(PERMISSIONS) for r in ROLES.values())
 
 #: Grants made under host authority rather than by another administrator. Reconciliation only
@@ -184,7 +189,7 @@ CREATE TABLE IF NOT EXISTS platform_role_grants (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
   role TEXT NOT NULL
-    CHECK (role IN ('super_admin','access_admin','support','auditor','api_platform_admin')),
+    CHECK (role IN ('super_admin','access_admin','support','auditor','api_platform_admin','finance')),
   -- a user id, or a host authority ('migration:v27', 'bootstrap:web', 'bootstrap:cli'),
   -- or 'reconcile:mirror' for a change carried over from the previous release (platform_access.py)
   granted_by TEXT NOT NULL,
@@ -198,6 +203,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_platform_grants_live
   ON platform_role_grants(user_id, role) WHERE revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS ix_platform_grants_role ON platform_role_grants(role, revoked_at);
 """
+
+#: The role CHECK of releases before the finance role, and its replacement (widen_roles).
+ROLE_CHECK_WIDENED = {"platform_role_grants": (
+    ("CHECK (role IN ('super_admin','access_admin','support','auditor','api_platform_admin'))",
+     "CHECK (role IN ('super_admin','access_admin','support','auditor','api_platform_admin','finance'))"),)}
+
+
+def widen_roles(c) -> list[str]:
+    """Let an existing grants table hold the finance role (org-payments). SQLite cannot alter a
+    CHECK: the table is rebuilt with every grant, index and offer link kept (schema_widen).
+    Idempotent; a fresh database is created with the wide CHECK. Rollback: the previous release
+    reads the table unchanged and does not know a finance grant (it confers nothing there)."""
+    from .schema_widen import widen_checks
+    return widen_checks(c, ROLE_CHECK_WIDENED)
+
 
 _log = logging.getLogger("synwevo.platform_access")
 

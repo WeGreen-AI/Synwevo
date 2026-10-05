@@ -809,7 +809,10 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                        "/api/auth/external/providers",
                        # A verified provider e-mail that matches an existing account: the offer
                        # token identifies the pending link, the password proves the account.
-                       "/api/auth/external/offer/preview", "/api/auth/external/offer/confirm"}
+                       "/api/auth/external/offer/preview", "/api/auth/external/offer/confirm",
+                       # The payment provider's webhook delivery: no session and no cookie; the
+                       # Stripe-Signature HMAC over the raw body is the authority (payments.py).
+                       "/api/auth/payments/stripe/webhook"}
     PENDING_PATHS = frozenset({"/api/auth/me", "/api/auth/profile", "/api/auth/verify-email/send"})
     # The SPA shell and its assets must load so the login screen can render; every /api/ route
     # behind them still requires the session, so no data rides along with the HTML.

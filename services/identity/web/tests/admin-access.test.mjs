@@ -58,7 +58,7 @@ function inEnglish(run) { ui.setLocale("en"); try { return run(); } finally { ui
 // ------------------------------------------------------------------------------------ tests
 test("the catalogue read from platform_access.py is the one the pages decide on", () => {
   assert.ok(PERMISSIONS.includes("platform.workspaces.claim") && PERMISSIONS.includes("api_platform.manage"));
-  assert.deepEqual(Object.keys(ROLES).sort(), ["access_admin", "api_platform_admin", "auditor", "super_admin", "support"]);
+  assert.deepEqual(Object.keys(ROLES).sort(), ["access_admin", "api_platform_admin", "auditor", "finance", "super_admin", "support"]);
   for (const perms of Object.values(ROLES)) for (const p of perms) assert.ok(PERMISSIONS.includes(p), p);
   // every view's permission is a catalogued one
   for (const p of Object.values(access.TAB_PERMISSION)) assert.ok(PERMISSIONS.includes(p), p);
@@ -68,7 +68,7 @@ test("the historical data is offered only to whoever may assign it and search fo
   const offered = Object.fromEntries(Object.entries(ROLES).map(([role, perms]) => [role, access.mayClaim(perms)]));
   // an API platform administrator's overview used to draw the picker, whose account search it may
   // not run; an account and access administrator used to be offered a claim it can no longer make
-  assert.deepEqual(offered, { super_admin: true, access_admin: false, support: false, auditor: false, api_platform_admin: false });
+  assert.deepEqual(offered, { super_admin: true, access_admin: false, support: false, auditor: false, api_platform_admin: false, finance: false });
   assert.deepEqual(access.visibleTabs(ROLES.api_platform_admin), ["overview"]);
   assert.deepEqual(access.visibleTabs(ROLES.super_admin), Object.keys(access.TAB_PERMISSION));
 });
@@ -160,4 +160,17 @@ test("why a grant cannot be revoked, or nothing granted, is a visible sentence f
       assert.equal(text(null), "");
     }
   });
+});
+
+test("money pages are offered to exactly the roles that hold platform.billing.view", () => {
+  assert.equal(access.TAB_PERMISSION.finance, "platform.billing.view");
+  assert.equal(access.TAB_PERMISSION.payments, "platform.billing.view");
+  const offered = Object.fromEntries(Object.entries(ROLES).map(([role, held]) =>
+    [role, access.visibleTabs(held).filter((tab) => tab === "finance" || tab === "payments")]));
+  assert.deepEqual(offered, { super_admin: ["payments", "finance"], access_admin: [], support: [], auditor: [],
+    api_platform_admin: [], finance: ["payments", "finance"] });
+  // the finance role reaches nothing but money and the overview
+  assert.deepEqual(access.visibleTabs(ROLES.finance), ["overview", "payments", "finance"]);
+  assert.equal(access.permitted(ROLES.finance, "platform.billing.manage").disabled, false);
+  assert.equal(access.permitted(ROLES.auditor, "platform.billing.manage").disabled, true);
 });

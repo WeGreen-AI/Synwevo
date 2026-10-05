@@ -263,8 +263,13 @@ def test_payer_is_explicit_and_fixed_but_workspaces_are_attribution(money):
     assert balance(money).held == 60
     assert {json.loads(r["context"])["workspace_id"] for r in money[0].all("SELECT context FROM billing_calls")} == {"workspace-A", "workspace-B"}
     assert call_a != call_b
-    with pytest.raises(BillingError, match="organization_billing_not_supported"):
+    # An organization payer names its organization and stays the acting member; without the
+    # organization policy installed (org_payers) the ledger refuses it at reservation.
+    with pytest.raises(BillingError, match="invalid_payer"):
         replace(ctx, payer_kind="organization")
+    with pytest.raises(BillingError, match="organization_billing_not_configured"):
+        reserve(money, ctx=replace(ctx, run_id="run-org", payer_kind="organization", organization_id="org-fixture"),
+                call="org-call", amount=0)
     with pytest.raises(BillingError, match="payment_delegation_required"):
         replace(ctx, payer_user_id=money[2][1])
     with pytest.raises(BillingError, match="run_context_conflict"):

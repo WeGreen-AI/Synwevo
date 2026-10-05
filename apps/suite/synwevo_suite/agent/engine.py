@@ -96,7 +96,7 @@ class Agent:
         resolver = getattr(self.provider, "resolve_credential", resolve_credential)
         return resolver(self.store, user_id)
 
-    def quote_turn(self, user, cid, text, *, parent_id, regenerate_of, budget, max_calls, run_seconds):
+    def quote_turn(self, user, cid, text, *, parent_id, regenerate_of, budget, max_calls, run_seconds, payer=None):
         quotes = getattr(self.provider, "quotes", None)
         if quotes is None:
             raise ServiceError(503, "billing_not_configured", "付费模型服务尚未配置")
@@ -105,7 +105,8 @@ class Agent:
             raise ServiceError(409, "conversation_sealed", "来源权限已变化，请新建会话")
         try:
             return quotes.issue(user["id"], conv, text=text, parent_id=parent_id,
-                regenerate_of=regenerate_of, budget=budget, max_calls=max_calls, run_seconds=run_seconds)
+                regenerate_of=regenerate_of, budget=budget, max_calls=max_calls, run_seconds=run_seconds,
+                payer=payer)
         except BillingError as exc:
             raise ServiceError(409, "billing_" + exc.code, "无法生成本次运行的报价，请检查预算与模型配置") from None
 

@@ -81,7 +81,7 @@ test("the run pages are offered to exactly the roles that hold platform.apps.vie
   const offered = Object.fromEntries(Object.entries(ROLES).map(([role, held]) =>
     [role, nav.adminGroups(held).flatMap((g) => g.items.map((i) => i.id)).filter((id) => id.endsWith("-runs"))]));
   assert.deepEqual(offered, { super_admin: ["app-runs", "flow-runs"], access_admin: ["app-runs", "flow-runs"],
-    support: ["app-runs", "flow-runs"], auditor: ["app-runs", "flow-runs"], api_platform_admin: [] });
+    support: ["app-runs", "flow-runs"], auditor: ["app-runs", "flow-runs"], api_platform_admin: [], finance: [] });
   // nothing but the permission opens them: not a role name, not another permission's "manage"
   for (const held of [new Set(), new Set(["platform.config.manage"]), new Set(["api_platform.manage"]), new Set(["owner", "admin"])]) {
     assert.equal(nav.resolveAdminPage("/admin", "app-runs", held) === "app-runs", false);

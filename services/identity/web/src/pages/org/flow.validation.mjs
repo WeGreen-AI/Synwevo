@@ -21,13 +21,15 @@ try {
   const ui = await server.ssrLoadModule('@synwevo/ui');
   const auth = await server.ssrLoadModule('/src/auth-flow.messages.ts');
   const org = await server.ssrLoadModule('/src/organization.messages.ts');
+  const orgBilling = await server.ssrLoadModule('/src/org-billing.messages.ts');
+  const billingView = await server.ssrLoadModule('/src/pages/org/OrganizationBilling.tsx');
   const flow = await server.ssrLoadModule('/src/pages/org/AuthFlow.tsx');
   const creation = await server.ssrLoadModule('/src/pages/org/OrganizationCreate.tsx');
   const verify = await server.ssrLoadModule('/src/pages/VerifyEmail.tsx');
   const workspaceView = await server.ssrLoadModule('/src/pages/org/OrganizationWorkspaces.tsx');
   const avatarView = await server.ssrLoadModule('/src/pages/org/OrganizationAvatar.tsx');
   const client = await server.ssrLoadModule('@synwevo/auth-client');
-  const catalogs = { ...auth.messages, ...org.messages };
+  const catalogs = { ...auth.messages, ...org.messages, ...orgBilling.messages };
   check('catalogs contain both translations and preserve every parameter', () => assert.deepEqual(ui.validateMessages(catalogs), []));
   check('all three locales interpolate user data without interpreting markup', () => {
     for (const locale of ['zh-Hans', 'zh-Hant', 'en']) {
@@ -140,6 +142,27 @@ try {
     assert.match(member, /<img/); assert.ok(!member.includes('type="file"')); assert.ok(!member.includes('移除组织头像'));
     assert.match(render({ ...organization, role: 'admin' }), /type="file"/);
     assert.ok(!render({ ...organization, role: 'owner', status: 'frozen' }).includes('type="file"'));
+  });
+  check('organization payments are shown only to holders of org.billing.manage', () => {
+    const organization = { id: 'fixture-org', name: 'Fixture organization', role: 'admin', status: 'active' };
+    const render = (mine, entry = '/organizations/fixture-org') => renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: [entry] },
+      React.createElement(billingView.default, { organization, mine })));
+    assert.equal(render(['org.members.view', 'org.settings.manage']), '');
+    const manager = render(['org.billing.manage']);
+    assert.match(manager, /<section[^>]*aria-labelledby=/); assert.ok(manager.includes('组织付费'));
+    assert.ok(!manager.includes('前往支付')); // no checkout control before the server has priced the options
+    assert.ok(!manager.includes('充值订单'));
+  });
+  check('the return from the checkout never reads as paid until the server says so', () => {
+    const organization = { id: 'fixture-org', name: 'Fixture organization', role: 'owner', status: 'active' };
+    const render = entry => renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: [entry] },
+      React.createElement(billingView.default, { organization, mine: ['org.billing.manage'] })));
+    const success = render('/organizations/fixture-org?topup=top_fixture1&result=success');
+    assert.match(success, /role="status"/); assert.ok(success.includes('正在等待支付服务确认到账'));
+    assert.ok(!success.includes('充值已到账'));
+    const cancelled = render('/organizations/fixture-org?topup=top_fixture1&result=cancel');
+    assert.ok(cancelled.includes('你已取消支付，没有扣款'));
+    assert.ok(!render('/organizations/fixture-org?topup=..%2Fadmin&result=success').includes('充值订单'), 'a malformed order id is not requested');
   });
   check('MFA errors preserve remaining attempts in all three languages', () => {
     const error = new client.ApiError(401, 'bad_code', '验证码不正确，还可尝试 2 次');

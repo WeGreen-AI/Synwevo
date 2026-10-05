@@ -11,9 +11,12 @@ import os
 from synwevo_core.billing import BillingError, Ledger
 from synwevo_core.billing.admission import CostAdmission
 from synwevo_core.billing.cost_settings import CostSettings
+from synwevo_core.billing.org_payers import OrgPayers
 from synwevo_core.billing.provider_settings import ProviderSettings
 from synwevo_core.billing.payer_budgets import PayerBudgets
 from synwevo_core.billing.traffic import ModelTraffic
+from synwevo_core.billing.wallet_config import units_from_env
+from synwevo_core.billing.welcome import WelcomeAllowance
 from synwevo_core.errors import ServiceError
 
 from .gateway import MeteredDeepSeek, MeteredTurnProvider, Route
@@ -27,12 +30,18 @@ class GovernedDeepSeek(MeteredTurnProvider):
         self.agent = None
         ledger = Ledger(store, environment=environment, namespace="agent")
         ledger.payer_budgets = PayerBudgets(ledger)
+        # Organization payers: the organization's grant and monthly limits, checked by the ledger.
+        ledger.org_payers = OrgPayers(ledger)
         costs = CostSettings(store, environment=environment)
         gateway = MeteredDeepSeek(ledger, current_authority=self.authorized,
             cost_admission=CostAdmission(ledger, current_policy=costs.policy),
             traffic=ModelTraffic(ledger, current_policy=costs.policy))
         quotes = RunQuotes(gateway, current_route=self.route, current_authority=self.authorized)
         ledger.authorize = quotes.authorize
+        # The one-time welcome allowance (off unless SYNWEVO_BILLING_WELCOME_MINOR and a CNY
+        # wallet unit are configured), granted at the person's first Agent use.
+        self.wallet_units = units_from_env()
+        quotes.welcome = WelcomeAllowance.from_host(ledger, self.wallet_units)
         super().__init__(gateway, quotes=quotes, credential_resolver=self.credential)
 
     def bind(self, agent):
@@ -63,7 +72,7 @@ class GovernedDeepSeek(MeteredTurnProvider):
     def authorized(self, context):
         agent = self.agent
         if (agent is None or agent._closed or context.actor_user_id != context.payer_user_id
-                or context.payer_kind != "personal" or context.delegation_id is not None):
+                or context.payer_kind not in ("personal", "organization") or context.delegation_id is not None):
             return False
         store = self.settings.store
         turn = store.one("SELECT * FROM agent_turns WHERE id=? AND user_id=?",

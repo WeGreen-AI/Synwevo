@@ -76,6 +76,11 @@ ROUTES = [
     ("GET", "/api/admin/billing/cost-policy/traffic", "platform.config.view", False),
     ("POST", "/api/admin/billing/cost-policy/preview", "platform.config.manage", False),
     ("POST", "/api/admin/billing/cost-policy/publish", "platform.config.manage", True),
+    ("GET", "/api/admin/billing/payments", "platform.billing.view", False),
+    ("POST", "/api/admin/billing/payments/publish", "platform.billing.manage", True),
+    ("GET", "/api/admin/billing/finance", "platform.billing.view", False),
+    ("POST", "/api/admin/billing/grants", "platform.billing.manage", True),
+    ("POST", "/api/admin/billing/freezes/{freeze_id}/lift", "platform.billing.manage", True),
     ("GET", "/api/admin/billing/model-provider", "platform.config.view", False),
     ("GET", "/api/admin/billing/model-provider/history", "platform.config.view", False),
     ("POST", "/api/admin/billing/model-provider/preview", "platform.config.manage", False),
@@ -193,12 +198,17 @@ def _path(template, w, *, legacy: str | None = None):
     wid = legacy if legacy and template.endswith(HISTORICAL) else w["wid"]
     return template.format(uid=w["plain"]["id"], wid=wid, mid="mail_fixture_missing",
                            draft_id=w["draft_id"], run_id="run_matrix_fixture", flow_run_id="fr_matrix_fixture",
-                           oid="org_fixture_missing", action="freeze", gid="pg_fixture_missing")
+                           oid="org_fixture_missing", action="freeze", gid="pg_fixture_missing",
+                           freeze_id="freeze_fixture_missing")
 
 
 def _call(client, method, path):
     if method == "GET":
         return client.get(path)
+    if path.startswith(("/api/admin/billing/payments", "/api/admin/billing/grants", "/api/admin/billing/freezes")):
+        # Money administration: a well-formed but unconfirmed request (no strict re-authentication).
+        return client.request(method, path, json={"reason": REASON, "idempotency_key": "matrix_billing_admin_0001"},
+                              headers={CSRF_HEADER: client.cookies.get(CSRF_COOKIE) or ""})
     if path.startswith("/api/admin/billing/"):
         if path.endswith("/drafts"):
             body = {"spec": PRICE_SPEC, "idempotency_key": "matrix_http_draft"}
@@ -235,6 +245,9 @@ def test_catalogue_roles_are_sets_of_catalogued_permissions_and_super_admin_is_a
     assert [r for r in ROLES if ROLES[r] & {"platform.roles.assign", "platform.roles.assign_super"}] == [SUPER_ADMIN]
     assert [r for r in ROLES if "api_platform.manage" in ROLES[r]] == [SUPER_ADMIN, "api_platform_admin"]
     assert ROLES["api_platform_admin"] == {"platform.overview.view", "api_platform.manage"}
+    # money is its own role's: no other delegated role reads or moves it, and finance holds nothing else
+    assert [r for r in ROLES if ROLES[r] & {"platform.billing.view", "platform.billing.manage"}] == [SUPER_ADMIN, "finance"]
+    assert ROLES["finance"] == {"platform.overview.view", "platform.billing.view", "platform.billing.manage"}
     assert [r["id"] for r in catalogue()["roles"]] == list(ROLE_ORDER)
 
 

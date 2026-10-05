@@ -782,7 +782,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                    offset: int = Query(0, ge=0, le=2**63 - 1),
                    snapshot: int | None = Query(None, ge=0, le=2**63 - 1),
                    status: str = Query("", pattern="^(|pending|active|suspended|pending_delete|deleted)$"),
-                   role: str = Query("", pattern="^(|none|any|admin|super_admin|access_admin|support|auditor|api_platform_admin)$")):
+                   role: str = Query("", pattern="^(|none|any|admin|super_admin|access_admin|support|auditor|api_platform_admin|finance)$")):
         """`role`: '' every account, `none` no live platform grant, `any` at least one, a built-in
         role id its holders, `admin` the super administrators by the rollback mirror (older links).
         The retired `operator` is not a filter any more (422)."""

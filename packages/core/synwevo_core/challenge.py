@@ -46,7 +46,9 @@ TOKEN_TTL_S = 300
 RETRY_AFTER_S = 30
 #: The actions this platform challenges. ``always`` = every request; ``risk`` = once the
 #: server's own signals say so (for ``login``: repeated failures from the source address).
-ACTIONS = {"register": "always", "resend": "always", "forgot": "always", "login_email": "always", "login": "risk"}
+ACTIONS = {"register": "always", "resend": "always", "forgot": "always", "login_email": "always", "login": "risk",
+           # a wallet top-up order (synwevo_identity.payments): card testing costs a real browser
+           "topup": "always"}
 
 
 class ChallengeUnavailable(Exception):
