@@ -41,6 +41,7 @@
 | kind | 类别 / 严重度 | 接收者 | 触发点 | 邮件缺省 | 点击目标 |
 |---|---|---|---|---|---|
 | `security.change{what}` | security / critical | 账户持有人 | 改口令、重置口令、改邮箱、Passkey 增删、两步验证开关、恢复码重生成、外部登录关联/解除 | 立即，不可关 | 账户页 → 登录与安全 |
+| `wallet.low_balance` | platform / info | 钱包持有人本人 | 账户服务后台清扫发现可用余额（已入账余额减未过期预留）低于本人在钱包页设的提醒线；每次跌破一次，回到提醒线以上后重新生效；认领与通知同一事务（`billing/reminders.py`，见 `docs/personal-wallet.md`） | 立即 | 账户 → 钱包 |
 | `invitation.received` | organization / action | 受邀者（已有账户） | 发出/重发邀请（`dedupe_key=invite:{id}`，待处理） | 立即 | 引导页（列出等待接受的邀请，链接仍在邮件里） |
 | `invitation.accepted` / `invitation.declined` | organization / info | 邀请人 | 受邀者接受 / 拒绝；同时把受邀者的待办置为 done / void | 汇总 | 空间成员页 |
 | `invitation.revoked` | organization / info | 受邀者（已有账户） | 邀请被撤回；待办置为 void | 不发 | 引导页 |
