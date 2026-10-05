@@ -49,6 +49,28 @@ registered operation produces a different projection. Mutation snapshots require
 the mutation. `run_result_unavailable` carries the original run ID for reconciliation.
 This conservative version comparison can also hide content after ordinary source edits.
 
+## Cost transparency in the chat
+
+Each assistant turn in `agent.conversation.get` carries `turn.cost`, read only from the money
+ledger (`synwevo_suite.agent.turn_cost`): `charged_minor` is the sum of the run's `sale` journal
+entries (decimal string, smallest unit of `currency` at `scale`), `tokens` are the settled usage
+facts those entries charged for (`input_cached`, `input_uncached`, `output`, and `reasoning`,
+which is part of output and never added twice), `model`, `band` (the time band pinned on the
+charged attempts, `mixed` when they differ, `null` while no band column exists), `state` and
+`held_minor`. `state` is `pending` while a call's usage is unknown (never a guessed charge),
+`held` while a call of the running turn still holds funds, otherwise `settled`. A turn without
+a ledger run has `cost: null`; the engine's own token counters are never the bill. Another
+person, or another ledger environment, never sees the figure. No cost price, margin, provider
+request ID, credential or prompt leaves this read.
+
+`agent.billing.status` (read-only, personal) gives the composer the governed offer's unit and
+per-call hold, the person's wallet balance (`booked`, `held`, `available`) in that unit, and the
+tightest remaining UTC spending limit (or that no limit is configured or spending is paused).
+Without the paid provider it answers `available: false, reason: "not_configured"`; when the
+offer or wallet cannot be read, `reason: "unavailable"`. `agent.billing.offer` adds the
+documented capabilities of the two governed DeepSeek models (`vision` only for
+`deepseek-flash`); an unregistered model ID is shown without capability claims.
+
 ## Verification and remaining gates
 
 Use isolated test identities/data and the worktree's import paths, never the real `data/`.
