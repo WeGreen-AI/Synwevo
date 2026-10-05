@@ -22,10 +22,13 @@ before(async () => {
       if (id.endsWith('/ui/src/i18n.tsx')) return code.replace("() => 'zh-Hans' as const", 'getLocale');
     } }],
   });
-  [model, components, copy, ui, client, core] = await Promise.all([
+  // The shared i18n modules load first and once: loading them concurrently with the catalogues
+  // could evaluate them twice, leaving a catalogue registered in an instance the tests do not read.
+  ui = await server.ssrLoadModule('@synwevo/ui');
+  core = await server.ssrLoadModule('@synwevo/ui/i18n-core');
+  [model, components, copy, client] = await Promise.all([
     server.ssrLoadModule('/src/apps/agent/payer-budget.ts'), server.ssrLoadModule('/src/apps/agent/PayerBudget.tsx'),
-    server.ssrLoadModule('/src/apps/agent/payer-budget.messages.ts'), server.ssrLoadModule('@synwevo/ui'),
-    server.ssrLoadModule('@synwevo/auth-client'), server.ssrLoadModule('@synwevo/ui/i18n-core'),
+    server.ssrLoadModule('/src/apps/agent/payer-budget.messages.ts'), server.ssrLoadModule('@synwevo/auth-client'),
   ]);
 });
 after(async () => { ui?.setLocale('zh-Hans'); await server?.close(); });
