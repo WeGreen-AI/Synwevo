@@ -330,6 +330,7 @@ function AgentApp() {
           return quote;
         }}
         payerLabel={organizationPayer ? t(chatCopy.payerOrganization[0], { name: payer.name }) : undefined}
+        siteUrl={auth?.site_url}
         previous={budgetIntent.conversation_id === id && staleConsent && !organizationPayer ? { terms: staleConsent, budget: staleConsent.budget,
           max_calls: staleConsent.max_calls, run_seconds: staleConsent.run_seconds } : undefined}
         onConfirm={async (quote) => {

@@ -13,6 +13,13 @@ export const budgetCopy = {
   missing: ['没有可确认的消息或重新生成请求，请关闭后重新选择。', 'No message or regeneration request is available. Close and select it again.', '沒有可確認的訊息或重新產生請求，請關閉後重新選擇。'],
   changed: ['消息或会话已变化，请关闭后重新获取报价。', 'The message or conversation changed. Close and request a quote again.', '訊息或會話已變更，請關閉後重新取得報價。'],
   wallet: ['付款钱包', 'Payment wallet', '付款錢包'],
+  // The published terms (synwevo_core.terms): a confirmed paid run records the versions in force.
+  termsAccept: ['确认付费运行，即表示你接受当前生效版本的服务条款、AI 使用规范与定价。首次付费运行会记录这些版本；文件更新后，下一次付费运行会记录新版本。', 'By confirming a paid run you accept the versions in force of the Terms of Service, the AI use rules and Pricing. Your first paid run records those versions; after a document is updated, your next paid run records the new version.', '確認付費執行，即表示你接受目前生效版本的服務條款、AI 使用規範與定價。首次付費執行會記錄這些版本；文件更新後，下一次付費執行會記錄新版本。'],
+  termsLinks: ['适用的条款', 'Terms that apply', '適用的條款'],
+  termsOfService: ['服务条款', 'Terms of Service', '服務條款'],
+  aiUseRules: ['AI 使用规范', 'AI use rules', 'AI 使用規範'],
+  pricingPage: ['定价', 'Pricing', '定價'],
+  newTab: ['（在新标签页打开）', ' (opens in a new tab)', '（在新分頁開啟）'],
   personal: ['本人个人钱包', 'My personal wallet', '本人個人錢包'],
   payer: ['付款账户：{id}', 'Payer account: {id}', '付款帳戶：{id}'],
   model: ['模型', 'Model', '模型'],

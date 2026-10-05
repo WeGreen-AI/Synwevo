@@ -680,6 +680,50 @@ test('the top-up link points at the account service\'s wallet page and nowhere e
   assert.equal(composer.walletHref('https://accounts.fixture.test/account#x?y', null, origin), 'https://accounts.fixture.test/account/wallet');
 });
 
+test('the terms, AI use rules and pricing are the portal\'s pages on the configured public site', async () => {
+  const site = 'https://site.fixture.test';
+  assert.equal(composer.publicHref(site, 'terms', 'zh-Hans', 'https://docwave.fixture.test'), 'https://site.fixture.test/terms');
+  assert.equal(composer.publicHref(`${site}/ignored/path?x=1`, 'ai-use', 'en', 'https://docwave.fixture.test'), 'https://site.fixture.test/en/ai-use');
+  assert.equal(composer.publicHref(site, 'pricing', 'zh-Hant', 'https://docwave.fixture.test'), 'https://site.fixture.test/zh-Hant/pricing');
+  // A single-host install (no separate site, or the site is this host) stays on this host.
+  assert.equal(composer.publicHref(undefined, 'terms', 'en', 'https://docwave.fixture.test'), '/en/terms');
+  assert.equal(composer.publicHref(site, 'terms', 'en', site), '/en/terms');
+  for (const bad of ['javascript:alert(1)', 'not a url', 'ftp://site.fixture.test']) {
+    assert.equal(composer.publicHref(bad, 'terms', 'zh-Hans', 'https://docwave.fixture.test'), '/terms', bad);
+  }
+  // The same addresses the portal itself links (its publicPath) and the server renders (PUBLIC_PATHS).
+  const portal = await server.ssrLoadModule(ROOT + 'apps/portal/web/src/publicRoutes.ts');
+  for (const page of ['terms', 'ai-use', 'pricing', 'privacy'] as const) for (const locale of LOCALES) {
+    assert.equal(composer.publicHref(site, page, locale, 'https://docwave.fixture.test'), site + portal.publicPath(page, locale), `${page} ${locale}`);
+    assert.deepEqual(portal.publicRoute(portal.publicPath(page, locale)), { page, locale });
+  }
+  const served = readFileSync(ROOT + 'apps/portal/synwevo_portal/public.py', 'utf8');
+  assert.match(served, /PAGES = \("home", "privacy", "service", "terms", "ai-use", "pricing"\)/);
+});
+
+test('the cost dialog links the terms in force and says the first paid run accepts them', async () => {
+  const dialog = await server.ssrLoadModule('/src/apps/agent/BudgetDialog.tsx');
+  const words = { 'zh-Hans': ['即表示你接受当前生效版本的服务条款、AI 使用规范与定价', '首次付费运行会记录这些版本', '>服务条款<', '>AI 使用规范<', '>定价<', '在新标签页打开'],
+    en: ['By confirming a paid run you accept the versions in force', 'Your first paid run records those versions', '>Terms of Service<', '>AI use rules<', '>Pricing<', 'opens in a new tab'],
+    'zh-Hant': ['即表示你接受目前生效版本的服務條款、AI 使用規範與定價', '首次付費執行會記錄這些版本', '>服務條款<', '>AI 使用規範<', '>定價<', '在新分頁開啟'] } as const;
+  const prefix = { 'zh-Hans': '', en: '/en', 'zh-Hant': '/zh-Hant' } as const;
+  for (const locale of LOCALES) {
+    const html = render(locale, React.createElement(dialog.default, { intent: { conversation_id: 'conv_fixture', text: 'Fixture question' },
+      onQuote: async () => { throw new Error('fixture'); }, onConfirm: async () => {}, onClose() {}, siteUrl: 'https://site.fixture.test' }));
+    for (const text of words[locale]) assert.ok(html.includes(text), `${locale}: ${text}`);
+    for (const page of ['terms', 'ai-use', 'pricing']) {
+      assert.ok(html.includes(`href="https://site.fixture.test${prefix[locale]}/${page}" target="_blank" rel="noopener noreferrer"`), `${locale} ${page}`);
+    }
+    assert.ok(!html.includes('localhost'), html);
+    assert.match(html, /<section class="notice"[^>]*aria-labelledby="([^"]+-terms)"[\s\S]*<p id="\1"/);
+  }
+  // The data-sharing consent's privacy and AI-use links go to the public site too, never this host.
+  const consent = readFileSync(new URL('../src/apps/agent/ProviderConsent.tsx', import.meta.url), 'utf8');
+  assert.ok(!/href="\/(privacy|ai-use)"/.test(consent) && consent.includes('publicHref(auth?.site_url, "privacy", locale)'), 'ProviderConsent links');
+  const index = readFileSync(new URL('../src/apps/agent/index.tsx', import.meta.url), 'utf8');
+  assert.ok(index.includes('siteUrl={auth?.site_url}'), 'the dialog gets the server-controlled site origin');
+});
+
 test('Enter sends, Shift+Enter breaks a line, and an input method composition is never cut short', () => {
   assert.equal(composer.shouldSubmit({ key: 'Enter', shiftKey: false }, false), true);
   assert.equal(composer.shouldSubmit({ key: 'Enter', shiftKey: true }, false), false);

@@ -66,6 +66,22 @@ export function accountHref(accountUrl: string | undefined | null, appId?: strin
   return url.origin === origin ? url.pathname + url.search : url.href;
 }
 
+/** A page of the public site: the versioned terms of service, AI use rules and pricing (and the
+ *  privacy notice) that the portal serves — zh-Hans unprefixed, the other languages under `/en`
+ *  and `/zh-Hant` (apps/portal/web/src/publicRoutes.ts `publicPath`). The site's origin is the
+ *  server-controlled `site_url` of the auth state (production: the public site host), never a
+ *  value from the page; without one (a single-host install) the address stays on this host. */
+export type PublicDocument = 'terms' | 'ai-use' | 'pricing' | 'privacy';
+export function publicHref(siteUrl: string | undefined | null, page: PublicDocument, locale: string,
+                           origin: string | undefined = globalThis.location?.origin): string {
+  const path = `${locale === 'en' || locale === 'zh-Hant' ? `/${locale}` : ''}/${page}`;
+  if (!siteUrl) return path;
+  let site: URL;
+  try { site = new URL(siteUrl); } catch { return path; }
+  if (site.protocol !== 'https:' && site.protocol !== 'http:') return path;
+  return site.origin === origin ? path : site.origin + path;
+}
+
 /** The account service's wallet page (top-up lives there). */
 export function walletHref(accountUrl: string | undefined | null, appId?: string | null, origin = globalThis.location?.origin ?? 'http://localhost'): string {
   return accountHref(accountUrl, appId, origin, 'wallet');

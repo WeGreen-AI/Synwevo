@@ -215,7 +215,12 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
   restore a person's Agent access with a reason: 403 `agent_access_suspended`, running turns are
   cancelled, journalled `agent_access_suspended`.
 * **Terms.** A paid run records the terms / AI use / pricing versions in force once per version
-  (`synwevo_core/terms.py`); the account export lists them, together with the Agent's visible
+  (`synwevo_core/terms.py`). The chat's cost dialog says so before the confirmation (its confirm
+  buttons are described by that sentence) and links the three pages on the public site: the
+  server-controlled `site_url` of the auth state plus the portal's localized path (`/terms`,
+  `/en/ai-use`, `/zh-Hant/pricing` …, `composer.ts` `publicHref`), opened in a new tab; on a
+  single-host install without a separate site the path stays on the same host. The data-sharing
+  consent's privacy and AI-use links use the same origin; the account export lists them, together with the Agent's visible
   conversation text, memories, settings, consents, quotes and the wallet statement
   (`synwevo_core/agent_records.py`); account deletion erases the Agent's content.
 

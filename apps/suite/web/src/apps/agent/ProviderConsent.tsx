@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError } from "@synwevo/auth-client";
+import { ApiError, useSession } from "@synwevo/auth-client";
 import { useDialog, useI18n } from "@synwevo/ui";
 import { newKey, op, read } from "../../shared/ops";
 import { Loading } from "../../shared/states";
+import { publicHref } from "./composer";
 import { providerConsentCopy, type ProviderConsentText } from "./provider-consent.messages";
 
 /** agent.provider_consent.get — the separate, versioned consent to send content to DeepSeek
@@ -22,6 +23,8 @@ interface ConsentState {
 
 export default function ProviderConsent() {
   const { t, locale } = useI18n();
+  // The privacy notice and AI use rules live on the public site, not on this app's host.
+  const { state: auth } = useSession();
   const dialog = useDialog();
   const c = (key: ProviderConsentText, params?: Record<string, string>) => t(providerConsentCopy[key][0], params);
   const [state, setState] = useState<ConsentState | null>(null);
@@ -64,7 +67,8 @@ export default function ProviderConsent() {
         </dl>
         <p className="muted small">{c("withdrawNote")}</p>
         <p className="muted small">{c("version", { version: state.version, date: state.effective_at })}
-          {" · "}<a href="/privacy">{c("privacy")}</a>{" · "}<a href="/ai-use">{c("rules")}</a></p>
+          {" · "}<a href={publicHref(auth?.site_url, "privacy", locale)}>{c("privacy")}</a>
+          {" · "}<a href={publicHref(auth?.site_url, "ai-use", locale)}>{c("rules")}</a></p>
         <div role="status" aria-live="polite">
           {state.accepted ? <p className="notice ok">{c("accepted", { date: when(state.accepted_at) })}</p>
             : changed ? <p className="notice warn">{c("changed", { version: state.accepted_version! })}</p>
