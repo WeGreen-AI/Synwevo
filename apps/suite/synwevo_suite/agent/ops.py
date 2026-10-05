@@ -15,6 +15,7 @@ from synwevo_core.store import new_id, now
 from .engine import Agent, _j
 from .provider import EFFORTS, KEY_PURPOSE, configured_model, resolve_credential
 from .tools import workspace_policy
+from .turn_cost import turn_costs
 
 CONV = r"^conv_[a-f0-9]{12}$"
 MSG = r"^msg_[a-f0-9]{12}$"
@@ -118,9 +119,52 @@ class ModelTerms(_In):
     per_call_hold: str = F(pattern=r"^[0-9]+$")
 
 
+class ModelCapabilities(_In):
+    vision: bool
+    tools: bool
+    thinking: bool
+
+
+#: What each governed DeepSeek model accepts, as DeepSeek documents it (docs/deepseek-provider.md,
+#: read 2026-10-05). Display metadata only: the model ID itself is governed configuration, and a
+#: model missing here is shown without capability claims rather than with guessed ones.
+MODEL_CAPABILITIES = {
+    "deepseek-flash": {"vision": True, "tools": True, "thinking": True},
+    "deepseek-v4-pro": {"vision": False, "tools": True, "thinking": True},
+}
+
+
 class ModelOffer(ModelTerms):
     max_calls_limit: int
     run_seconds_limit: int
+    capabilities: ModelCapabilities | None = None
+
+
+class WalletAmounts(_In):
+    booked: str
+    held: str
+    available: str
+
+
+class SpendingLimit(_In):
+    configured: bool
+    enabled: bool
+    usage_state: Literal["available", "capacity", "inconsistent"] | None
+    #: The tightest remaining UTC period (decimal smallest units) and which period it is.
+    remaining: str | None
+    period: Literal["daily", "weekly", "monthly"] | None
+
+
+class BillingStatus(_In):
+    available: bool
+    reason: Literal["not_configured", "unavailable"] | None = None
+    environment: Literal["test", "live"] | None = None
+    payer: dict | None = None
+    model: str | None = None
+    unit: MoneyUnit | None = None
+    per_call_hold: str | None = None
+    balance: WalletAmounts | None = None
+    limit: SpendingLimit | None = None
 
 
 class ConsentCreate(QuoteRef):
@@ -285,6 +329,64 @@ class PolicySet(_In):
         return sorted(value)
 
 
+def _ledger(agent):
+    gateway = getattr(getattr(agent, "provider", None), "gateway", None)
+    return getattr(gateway, "ledger", None)
+
+
+def with_costs(agent, user_id: str, conversation: dict) -> dict:
+    """Attach each answer's ledger cost (turn_cost.turn_costs) to its turn; None without a ledger run."""
+    ledger = _ledger(agent)
+    turns = [m["turn"] for m in conversation.get("messages", []) if m.get("turn")]
+    costs = {}
+    if ledger is not None and turns:
+        active = {t["id"] for t in turns if t["status"] in ("queued", "running", "waiting_confirmation")}
+        costs = turn_costs(agent.store, environment=ledger.environment, namespace=ledger.namespace,
+                           user_id=user_id, turn_ids=[t["id"] for t in turns], active=active)
+    for turn in turns:
+        turn["cost"] = costs.get(turn["id"])
+    return conversation
+
+
+def billing_status(agent, user_id: str) -> dict:
+    """The composer's money facts for the personal payer: balance and the tightest UTC limit.
+
+    The unit is the governed offer's sale unit; without a usable offer nothing is invented.
+    """
+    from synwevo_core.billing import Unit
+    quotes = getattr(agent.provider, "quotes", None)
+    if quotes is None:
+        return {"available": False, "reason": "not_configured"}
+    try:
+        offer = quotes.offer()
+        unit = Unit(**offer["unit"])
+        balance = quotes.ledger.balance_for_user(requester_user_id=user_id, payer_user_id=user_id, unit=unit)
+    except BillingError:
+        return {"available": False, "reason": "unavailable"}
+    limit = None
+    service = getattr(quotes.ledger, "payer_budgets", None)
+    if service is not None:
+        try:
+            view = next((b for b in service.read(user_id)["budgets"] if b["unit"]["code"] == unit.code), None)
+        except BillingError:
+            view = None
+        if view is None:
+            limit = {"configured": False, "enabled": False, "usage_state": None, "remaining": None, "period": None}
+        else:
+            # Without an enabled limit no paid call is admitted; a remaining figure would mislead.
+            periods = (view.get("periods") or {}) if view["configured"] and view["enabled"] else {}
+            tightest = min(periods.items(), key=lambda kv: int(kv[1]["remaining"]), default=None)
+            limit = {"configured": bool(view["configured"]), "enabled": bool(view["enabled"]),
+                     "usage_state": view["usage_state"],
+                     "remaining": tightest[1]["remaining"] if tightest else None,
+                     "period": tightest[0] if tightest else None}
+    return {"available": True, "environment": quotes.ledger.environment,
+            "payer": {"kind": "user", "id": user_id}, "model": offer["model"], "unit": offer["unit"],
+            "per_call_hold": offer["per_call_hold"],
+            "balance": {"booked": str(balance.booked), "held": str(balance.held), "available": str(balance.available)},
+            "limit": limit}
+
+
 def settings_json(store, user_id: str, agent=None) -> dict:
     row = store.one("SELECT * FROM agent_settings WHERE user_id=?", (user_id,))
     cred = agent._credential(user_id) if agent is not None else resolve_credential(store, user_id)
@@ -394,9 +496,13 @@ def register(registry, agent: Agent, store, identity) -> None:
     op(id="agent.conversation.create", title=T("新建会话", "新建會話", "New conversation"),
        summary="Start a conversation.", input=CreateConversation, side_effect="write", agent="never",
        handler=lambda c, i: agent.create_conversation(c.user_id, i.title, i.scope))
+    def conversation_get(c, i):
+        out = agent.conversation_json(c.user_id, agent.conversation(c.user_id, i.conversation_id), full=True)
+        return with_costs(agent, c.user_id, out)
+
     op(id="agent.conversation.get", title=T("打开会话", "開啟會話", "Open a conversation"),
-       summary="A conversation with its messages, branches and tool calls.", input=ConversationRef, agent="never",
-       handler=lambda c, i: agent.conversation_json(c.user_id, agent.conversation(c.user_id, i.conversation_id), full=True))
+       summary="A conversation with its messages, branches, tool calls and each answer's ledger cost.",
+       input=ConversationRef, agent="never", handler=conversation_get)
     op(id="agent.conversation.update", title=T("修改会话", "修改會話", "Update a conversation"),
        summary="Rename, archive or restore a conversation, set its workspace scope, or switch branch.",
        input=UpdateConversation, side_effect="write", agent="never",
@@ -413,13 +519,21 @@ def register(registry, agent: Agent, store, identity) -> None:
             raise ServiceError(503, "billing_not_configured", "付费模型服务尚未配置")
         from synwevo_core.billing import BillingError
         try:
-            return quotes.offer()
+            offer = quotes.offer()
         except BillingError as exc:
             raise ServiceError(503, "billing_" + exc.code, "模型价格暂不可用") from None
+        return {**offer, "capabilities": MODEL_CAPABILITIES.get(offer["model"])}
 
     op(id="agent.billing.offer", title=T("查看模型价格", "查看模型價格", "Model pricing"), input=Empty,
        summary="Current governed model offer, without starting a call or granting payment authority.",
        agent="never", output=ModelOffer, handler=billing_offer)
+
+    op(id="agent.billing.status", title=T("查看余额与额度", "查看餘額與額度", "Balance and limits"), input=Empty,
+       summary="The person's own wallet balance and tightest spending limit for the governed model's unit; "
+               "reads only, grants nothing.",
+       # The ledger reads in its own transaction (it refuses to nest in the operation's).
+       agent="never", unattended=False, transactional=False, output=BillingStatus,
+       handler=lambda c, i: billing_status(agent, c.user_id))
 
     def payer_budget(c, i, *, change=False):
         quotes = getattr(agent.provider, "quotes", None)

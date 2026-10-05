@@ -5,8 +5,12 @@ import { read } from '../../shared/ops';
 import { Failure, Loading } from '../../shared/states';
 import {
   boundedCount, formatAmount, formatRate, parseBudget, quoteExpired, sameIntent, validateOffer, validateQuote,
-  type BudgetIntent, type Offer, type Quote, type QuoteParams,
+  type BudgetIntent, type Offer, type Pricing, type Quote, type QuoteParams,
 } from './budget';
+import { PriceChangeList, useChatText } from './ChatParts';
+import { renewalParams, samePricing } from './composer';
+import { majorDecimal } from './cost';
+import { refusalOf } from './refusals';
 import { budgetCopy, type BudgetText } from './budget.messages';
 import { consentTotal, consentInput, type Consent, type ConsentInput, type ConsentWriteState, type ConsentWriter } from './consent';
 import { ConsentRecovery, ConsentScope, ConsentTerms, consentErrorKey, useConsentText } from './ConsentControls';
@@ -23,7 +27,13 @@ export interface BudgetDialogProps {
   onClose: () => void;
   /** Offered only when this conversation has no active continuing consent. */
   consent?: ConsentOption;
+  /** Who pays when it is not the person's own wallet (an organization that granted payment). */
+  payerLabel?: string;
+  /** The terms and limits the person last confirmed, when they no longer apply (a consent whose
+   *  model or price changed): the dialog says what changed and offers to re-confirm in one step. */
+  previous?: Previous;
 }
+export interface Previous { terms: Pricing; budget: string; max_calls: number; run_seconds: number }
 export interface ConsentOption {
   /** The conversation scope as shown now; null is global discovery and cannot back a consent. */
   scope: string[] | null;
@@ -53,6 +63,10 @@ function refused(error: unknown): boolean {
   return ['quote_expired_or_revoked', 'quote_context_changed', 'model_configuration_changed',
     'model_route_unavailable', 'route_confirmation_expired', 'quote_conversation_unavailable'].includes(errorCode(error));
 }
+// The terms themselves changed (not merely an expired or used quote): say what changed on renewal.
+function priceChanged(error: unknown): boolean {
+  return ['model_configuration_changed', 'route_confirmation_expired', 'consent_model_changed'].includes(errorCode(error));
+}
 function errorText(error: unknown, fallback: BudgetText): BudgetText {
   const code = errorCode(error);
   if (['unknown_operation', 'app_unavailable', 'model_route_unavailable', 'model_authority_required',
@@ -63,8 +77,12 @@ function errorText(error: unknown, fallback: BudgetText): BudgetText {
 }
 
 /** An isolated consent dialog. Only its read-only offer loads automatically. */
-export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, consent: offered }: BudgetDialogProps) {
+export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, consent: offered, payerLabel, previous }: BudgetDialogProps) {
   const { t, locale } = useI18n();
+  const { c: ct } = useChatText();
+  // Fixed when the dialog opens, and replaced only by a quote this dialog saw refused for a change.
+  const [prior, setPrior] = useState<Previous | null>(() => previous ?? null);
+  const [differs, setDiffers] = useState(false);
   const m = (key: BudgetText, params?: Params) => t(budgetCopy[key][0], params);
   const { m: c } = useConsentText();
   const id = useId();
@@ -85,6 +103,8 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
   const [issue, setIssue] = useState<{ field: 'budget' | 'counts'; text: BudgetText } | null>(null);
   const [now, setNow] = useState(Date.now);
   const alive = useRef(true);
+  const priorRef = useRef(prior);
+  priorRef.current = prior;
   const locked = useRef(false);
   const generation = useRef(0);
   const offerRequest = useRef<AbortController | null>(null);
@@ -116,6 +136,12 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
       validateOffer(result);
       if (!alive.current || generation.current !== ticket) return;
       setOffer(result);
+      const reuse = priorRef.current && renewalParams(priorRef.current, result, priorRef.current.terms.unit);
+      if (reuse) {
+        setBudget(majorDecimal(reuse.budget, result.unit.scale));
+        setCalls(String(reuse.max_calls));
+        setSeconds(String(reuse.run_seconds));
+      }
       setCalls((value) => { try { boundedCount(value, result.max_calls_limit); return value; } catch { return '1'; } });
       setSeconds((value) => { try { boundedCount(value, result.run_seconds_limit); return value; } catch { return String(Math.min(300, result.run_seconds_limit)); } });
       setPhase('editing');
@@ -154,6 +180,12 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
     if (locked.current || changed || phase === 'confirmed' || (phase === 'confirmError' && !refused(error))
       || created || consentPending) return;
     consent?.writer.dismiss();
+    if (quote && pendingParams && priceChanged(error)) {
+      const next = { terms: quote, budget: quote.budget, max_calls: quote.max_calls, run_seconds: pendingParams.run_seconds };
+      priorRef.current = next;
+      setPrior(next);
+    }
+    setDiffers(false);
     setConsentReview(null);
     setConsentIssue(null);
     setQuote(null);
@@ -223,6 +255,48 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
     }
   };
 
+  /** Re-confirm in one step: quote the previous limits at the new terms, and send only when the
+   *  quote matches exactly what is shown; otherwise stop at the review with the difference. */
+  const renewAndSend = async () => {
+    if (locked.current || !offer || !prior || !hasIntent || !sameIntent(fixedIntent, currentIntent.current) || phase !== 'editing') return;
+    const params = renewalParams(prior, offer, prior.terms.unit);
+    if (!params) return;
+    locked.current = true;
+    const ticket = ++generation.current;
+    setPendingParams(params);
+    setIssue(null);
+    setError(null);
+    setDiffers(false);
+    setPhase('quoting');
+    try {
+      let result: Quote;
+      try {
+        result = await onQuote(params);
+        validateQuote(result, fixedIntent, params);
+      } catch (failure) {
+        if (alive.current && generation.current === ticket) { setError(failure); setPhase('quoteError'); }
+        return;
+      }
+      if (!alive.current || generation.current !== ticket) return;
+      setQuote(result);
+      setNow(Date.now());
+      if (!samePricing(result, offer) || quoteExpired(result) || result.status !== 'quoted' || result.turn_id) {
+        setDiffers(true);
+        setPhase('review');
+        return;
+      }
+      setPhase('confirming');
+      try {
+        await onConfirm(result);
+        if (alive.current && generation.current === ticket) setPhase('confirmed');
+      } catch (failure) {
+        if (alive.current && generation.current === ticket) { setError(failure); setPhase('confirmError'); }
+      }
+    } finally {
+      if (generation.current === ticket) locked.current = false;
+    }
+  };
+
   const reviewConsent = () => {
     if (!consent || !quote || !pendingParams || changed || consentPending) return;
     try {
@@ -251,7 +325,15 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
     setConsentReview(null);
   };
 
+  /** A payment refusal the chat explains in its own words (organization payer, frozen wallet,
+   *  risk controls, consent); price changes and expired quotes keep the dialog's own wording. */
+  const paymentRefusal = (failure: unknown): string | null => {
+    const known = refusalOf(failure, { organization: payerLabel !== undefined });
+    return known && !['price_changed', 'funds'].includes(known.kind) ? ct(known.text) : null;
+  };
   const pricing = quote ?? offer;
+  const reuse = prior && offer ? renewalParams(prior, offer, prior.terms.unit) : null;
+  const renewal = Boolean(prior && offer && !quote && ['editing', 'quoting', 'quoteError'].includes(phase));
   const expired = quote ? quoteExpired(quote, now) : false;
   const used = Boolean(quote && (quote.status === 'accepted' || quote.turn_id));
   const recovery = phase === 'confirmError' && !refused(error);
@@ -272,8 +354,10 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
   return <Modal title={m('title')} onClose={close} describedBy={`${id}-intro`} footer={<div style={actions}>
     <button type="button" className="btn" style={action} onClick={close}>{m('close')}</button>
     {canRenew && <button type="button" className="btn" style={action} onClick={renew}>{m('renew')}</button>}
-    {['editing', 'quoting', 'quoteError'].includes(phase) && <button type="submit" form={`${id}-form`} className="btn primary" style={action}
+    {['editing', 'quoting', 'quoteError'].includes(phase) && <button type="submit" form={`${id}-form`} className={`btn${renewal && reuse ? '' : ' primary'}`} style={action}
       disabled={busy || changed || !hasIntent}>{m(phase === 'quoting' ? 'quoting' : phase === 'quoteError' ? 'retryQuote' : 'getQuote')}</button>}
+    {renewal && reuse && phase === 'editing' && <button type="button" className="btn primary" style={action}
+      disabled={busy || changed || !hasIntent} onClick={() => void renewAndSend()}>{ct('acceptNew')}</button>}
     {quote && phase !== 'confirmed' && !used && single && <button type="button" className="btn primary" style={action} disabled={!canConfirm}
       onClick={() => void confirm()}>{m(phase === 'confirming' ? 'confirming' : phase === 'confirmError' ? 'retryConfirm'
         : quote.environment === 'test' ? 'confirmTest' : 'confirm')}</button>}
@@ -302,14 +386,19 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
       {changed && <p className="notice warn" role="alert">{m('changed')}</p>}
       {!hasIntent && <p className="notice err" role="alert">{m('missing')}</p>}
       {phase === 'loading' && <Loading label={m('load')} />}
+      {renewal && prior && offer && <div className="notice info" style={stack}>
+        <PriceChangeList before={prior.terms} after={offer} />
+        <p className="small" style={{ margin: 0 }}>{reuse ? ct('acceptNewNote', { budget: formatAmount(reuse.budget, offer.unit) }) : ct('acceptNewBlocked')}</p>
+      </div>}
+      {differs && phase === 'review' && <p className="notice warn" role="alert">{ct('quoteDiffers')}</p>}
       {['offerError', 'quoteError', 'confirmError'].includes(phase) && <div>
-        <Failure error={new Error(m(errorText(error, phase === 'offerError' ? 'offerError' : phase === 'quoteError' ? 'quoteError' : 'confirmError')))}
+        <Failure error={new Error(paymentRefusal(error) ?? m(errorText(error, phase === 'offerError' ? 'offerError' : phase === 'quoteError' ? 'quoteError' : 'confirmError')))}
           onRetry={phase === 'offerError' ? () => void loadOffer() : undefined} />
         {error instanceof ApiError && error.requestId && <p className="muted small">{m('requestId', { id: error.requestId })}</p>}
       </div>}
       {pricing && <>
         <dl style={{ ...stack, margin: 0 }}>
-          {detail(m('wallet'), <>{m('personal')}{quote && <p className="muted small">{m('payer', { id: quote.payer_user_id })}</p>}</>)}
+          {detail(m('wallet'), <>{payerLabel ?? m('personal')}{quote && <p className="muted small">{m('payer', { id: quote.payer_user_id })}</p>}</>)}
           {detail(m('model'), pricing.model)}
           {detail(m('actualModel'), pricing.confirmed_route)}
           {detail(m('hold'), formatAmount(pricing.per_call_hold, pricing.unit))}

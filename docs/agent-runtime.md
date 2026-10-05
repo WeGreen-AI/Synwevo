@@ -68,6 +68,95 @@ registered operation produces a different projection. Mutation snapshots require
 the mutation. `run_result_unavailable` carries the original run ID for reconciliation.
 This conservative version comparison can also hide content after ordinary source edits.
 
+## Cost transparency in the chat
+
+Each assistant turn in `agent.conversation.get` carries `turn.cost`, read only from the money
+ledger (`synwevo_suite.agent.turn_cost`): `charged_minor` is the sum of the run's `sale` journal
+entries (decimal string, smallest unit of `currency` at `scale`), `tokens` are the settled usage
+facts those entries charged for (`input_cached`, `input_uncached`, `output`, and `reasoning`,
+which is part of output and never added twice), `model`, `band` (the time band pinned on the
+charged attempts, `mixed` when they differ, `null` while no band column exists), `state`,
+`held_minor` and `payer` (who the run's ledger context charges: `{"kind": "user", "id"}` or,
+for a run opened by organization payment, `{"kind": "organization", "id"}`; `null` when the
+context names neither consistently). `state` is `pending` while a call's usage is unknown (never a guessed charge),
+`held` while a call of the running turn still holds funds, otherwise `settled`. A turn without
+a ledger run has `cost: null`; the engine's own token counters are never the bill. Another
+person, or another ledger environment, never sees the figure. No cost price, margin, provider
+request ID, credential or prompt leaves this read.
+
+`agent.billing.status` (read-only, personal) gives the composer the governed offer's unit and
+per-call hold, the person's wallet balance (`booked`, `held`, `available`) in that unit, and the
+tightest remaining UTC spending limit (or that no limit is configured or spending is paused).
+Without the paid provider it answers `available: false, reason: "not_configured"`; when the
+offer or wallet cannot be read, `reason: "unavailable"`. `agent.billing.offer` adds the
+documented capabilities of the two governed DeepSeek models (`vision` only for
+`deepseek-flash`); an unregistered model ID is shown without capability claims.
+
+In the page (`apps/suite/web/src/apps/agent/`): each answer shows its settled cost with an
+expandable breakdown (cache hit/miss, output with reasoning, who paid, model, band, state); the
+composer shows the payer, the balance, the tightest remaining limit, the most this turn can cost
+(an active consent's per-run budget, else the per-call hold) and a low-balance prompt linking to
+the account service's `/account/wallet`.
+
+The payer choice reads `GET /api/suite/agent/payers` (organization payment) exactly as it is
+sent: `{configured, environment, currency, unit: {code, scale} | null, payers: [...], welcome:
+{state} | null}`, amounts being decimal strings of integer wallet units at `unit.scale`. The
+personal wallet is always first and the default; an organization entry is offered only with a
+valid `id` and `label`, and its figures (`available`, `frozen`, `monthly_limit`,
+`spent_this_month`, `held`, `remaining_this_month`) are shown only when every one is well formed.
+A 404 (organization payment not deployed) or `configured: false` means personal only. For an
+organization the composer shows its wallet balance and this member's remaining monthly
+allowance; "low" compares the smaller of the two with the per-call hold, and only when the units
+match. A member cannot top up an organization, so its low or frozen state offers "pay with my
+personal wallet" instead of a top-up link. A frozen personal wallet links to the wallet page.
+The welcome allowance is mentioned when the list says it was just `granted`, or that verifying
+the email address (`email_unverified`) would grant it. A quote is sent with `payer_kind` /
+`payer_id` for an organization (nothing extra for the personal default) and is confirmed only if
+it names that payer; a continuing consent is used only for the payer it names (terms without a
+`payer` are personal), and continuing consents are offered for the personal wallet only.
+Amounts are formatted with `Intl` from decimal strings, never through a float. The model picker
+lists the governed model(s) the server offers with their exact price per million tokens and
+capabilities; there is no client-side model switch.
+
+Every assistant answer carries the label "由 AI 生成，可能有误，仅供参考" (zh-Hant / en
+translated; DeepSeek Open Platform terms 8.1, owner decision: global). "Copy answer" and any
+selection copied from an answer append it once; the per-code-block copy button copies only the
+code so it pastes cleanly. "Export conversation" saves the branch on screen as Markdown in the
+browser (nothing is sent or stored): questions and answers as shown, each answer followed by the
+label, a hidden message as the hidden notice, and never reasoning, tool inputs or costs.
+
+### Refusals in the chat
+
+A refused send, or a model call refused later in a running answer, is put into one sentence and
+one next step (`refusals.ts`), never shown as a code: insufficient funds (top up; for an
+organization payer, pay personally instead), a frozen wallet (`wallet_frozen`: the wallet page,
+or for an organization pay personally), an organization's monthly limit for the member or the
+workspace (`org_*_monthly_limit_exceeded`) or a grant, membership or organization that no longer
+lets the person charge it (`org_payer_not_granted`, `org_payer_not_member`,
+`organization_unavailable`, `organization_billing_not_configured`, `payer_forbidden`; both: pay
+with the personal wallet), a personal
+limit reached, paused or missing (Agent settings), an automatic spending brake, a suspension, the
+paid-dispatch breaker or platform cost admission (`billing_cost_*`), the platform's per-call
+maximum cost (`cost_call_limit_exceeded`, its own sentence: a policy limit, not an outage), the
+staged-rollout allowlist, the paid service not configured, the separate DeepSeek data-sharing
+consent (`provider_consent_*`, Agent settings; `provider_consent_version_changed` asks to agree to
+the new version), a changed model or price (re-confirm), and content safety: a message blocked
+by an input rule (`content_blocked_input`, never sent, nothing charged, the text stays in the
+composer to edit) or an answer stopped by an output rule or the provider's filter
+(`content_*_output`, whose charge is whatever the answer's ledger line shows, because the
+admin's incomplete-call policy decides it). The risk, consent and content families are also
+recognised by their stems (`risk_*allowlist*`, `*breaker*`, `*brake*`, `*suspend*`,
+`content_(blocked|filtered)_(input|output)*`). An upstream 402 is the operator's DeepSeek
+balance and is shown as the service being unavailable, never as the person's balance. Every
+refusal before dispatch says that nothing was called or charged for the refused step.
+
+When a continuing consent's model or price no longer applies (`model_changed`), the consent
+panel and the quote dialog list what changed (model, route, price version, unit, each rate per
+million tokens, per-call hold). The dialog offers "confirm the new price and send" in one step:
+it quotes the previous per-run budget, call count and time limit at the new terms, and sends only
+when the quote equals the terms shown; otherwise it stops at the review and says the quote
+differs. The same applies after a confirmation is refused because the terms changed.
+
 ## Verification and remaining gates
 
 Use isolated test identities/data and the worktree's import paths, never the real `data/`.
