@@ -1,0 +1,72 @@
+{
+  "source_base_sha": "e4a782e537fb2624a920205e49a2f7d65649eafc",
+  "engine_sha256": "eb68121bc28161427d9ddff625f9dd1a3ebd4a1937a2e32855d3639cf9b25b52",
+  "environment": "isolated test wallet; official DeepSeek",
+  "conversation_id": "conv_b61622672e73",
+  "turn": {
+    "id": "turn_f190d1050d64",
+    "status": "succeeded",
+    "error_code": null
+  },
+  "tool_calls": [
+    {
+      "id": "tc_15cd334f7698",
+      "tool": "list_workspaces",
+      "operation": null,
+      "status": "succeeded",
+      "run_id": null
+    },
+    {
+      "id": "tc_c9e94478559c",
+      "tool": "run_operation",
+      "operation": "forms.form.list",
+      "status": "succeeded",
+      "run_id": "run_9cf2d542ce06"
+    },
+    {
+      "id": "tc_ea712b4477ea",
+      "tool": "find_operations",
+      "operation": null,
+      "status": "succeeded",
+      "run_id": null
+    },
+    {
+      "id": "tc_79369250dcbf",
+      "tool": "run_operation",
+      "operation": "forms.form.create",
+      "status": "succeeded",
+      "run_id": "run_66950483150b"
+    }
+  ],
+  "created_form": {
+    "id": "frm_69612e61a3f8",
+    "workspace_id": "w_c1d2a0e002aa",
+    "title": "DeepSeek 读后写恢复验收",
+    "published_version": null,
+    "public_version": null
+  },
+  "fields": [
+    {
+      "id": "f_name01",
+      "label": "名称",
+      "type": "text",
+      "required": true
+    },
+    {
+      "id": "f_note01",
+      "label": "备注",
+      "type": "textarea",
+      "required": false
+    }
+  ],
+  "same_title_count": 1,
+  "calls_total": 16,
+  "settlements_total": 16,
+  "browser_checks": [
+    "confirmed exact creation",
+    "answer completed with usable artifact link",
+    "refresh preserved answer and balance",
+    "artifact opened unpublished draft in original target workspace",
+    "no browser errors or warnings"
+  ]
+}

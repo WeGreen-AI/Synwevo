@@ -1,0 +1,66 @@
+{
+  "checked_at": "2026-10-05T17:31:56.920226+00:00",
+  "source_sha": "e4a782e537fb2624a920205e49a2f7d65649eafc",
+  "effort": "low",
+  "provider": "DeepSeek",
+  "live": true,
+  "tool_result_verified": true,
+  "calls": [
+    {
+      "attempt": {
+        "requested_model": "deepseek-flash",
+        "dispatch": "observed",
+        "provider_request_id": "32847121-f4b1-4f72-a8a4-6b1f4644861e",
+        "returned_model": "deepseek-flash",
+        "effective_route": null,
+        "capability_version": "deepseek-chat-2026-09-30",
+        "http_status": 200,
+        "finish_reason": "tool_calls",
+        "stream_complete": true,
+        "usage_reliability": "trusted_terminal",
+        "usage_reason": "terminal_usage_valid",
+        "usage": {
+          "prompt_tokens": 325,
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 325,
+          "completion_tokens": 49,
+          "total_tokens": 374,
+          "reasoning_tokens": 23
+        }
+      },
+      "visible_chunks": 0,
+      "stop_reason": "tool_use",
+      "tool_names": [
+        "read_utc_clock"
+      ],
+      "native_reasoning_replayed": true
+    },
+    {
+      "attempt": {
+        "requested_model": "deepseek-flash",
+        "dispatch": "observed",
+        "provider_request_id": "ff8221db-8095-4fc3-a7f7-66195f1a5bc8",
+        "returned_model": "deepseek-flash",
+        "effective_route": null,
+        "capability_version": "deepseek-chat-2026-09-30",
+        "http_status": 200,
+        "finish_reason": "stop",
+        "stream_complete": true,
+        "usage_reliability": "trusted_terminal",
+        "usage_reason": "terminal_usage_valid",
+        "usage": {
+          "prompt_tokens": 405,
+          "prompt_cache_hit_tokens": 256,
+          "prompt_cache_miss_tokens": 149,
+          "completion_tokens": 20,
+          "total_tokens": 425,
+          "reasoning_tokens": 0
+        }
+      },
+      "visible_chunks": 19,
+      "stop_reason": "end_turn",
+      "tool_names": [],
+      "native_reasoning_replayed": false
+    }
+  ]
+}

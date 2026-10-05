@@ -268,12 +268,30 @@ class Agent:
         ws = self.identity.get_workspace(wid)
         return ws["name"] if ws else None
 
+    @staticmethod
+    def _form_list_ids(operation: str, result) -> list[str] | None:
+        """Only this explicit list contract supports additions to a source snapshot.
+
+        Keep arbitrary reads (including other collections) exact. Unexpected envelopes or
+        ambiguous resource identities cannot prove which original items remain readable.
+        """
+        if (operation != "forms.form.list" or not isinstance(result, dict)
+                or set(result) != {"forms"} or not isinstance(result["forms"], list)):
+            return None
+        ids = [item.get("id") if isinstance(item, dict) else None for item in result["forms"]]
+        if not all(isinstance(i, str) and i for i in ids) or len(set(ids)) != len(ids):
+            return None
+        return ids
+
     def _lost_workspaces(self, user_id: str, cid: str) -> set[str]:
         """Current resource access, not merely continued workspace membership.
 
         No shared resource-ACL probe exists yet. Re-read registered read operations and compare
         snapshots conservatively: a changed/deleted/filtered result hides the whole generated
-        block. References are deduplicated within this check, never cached across requests.
+        block. A Forms list may gain items only when its original item IDs were recorded:
+        compare the entire original projection, retaining field ACL and content checks.
+        Legacy hash-only sources stay exact; never infer their item set from a later list.
+        References are deduplicated within this check, never cached across requests.
         """
         used = {r["workspace_id"] for r in self.store.all(
             "SELECT DISTINCT workspace_id FROM agent_tool_calls WHERE conversation_id=? AND workspace_id IS NOT NULL "
@@ -308,6 +326,19 @@ class Agent:
                             lost.add(wid)
                         continue
                     current = snapshot_read(self.caps, user_id, source["operation"], wid, source["input"])
+                    if "list_item_ids" in source:
+                        ids = self._form_list_ids(source["operation"], current)
+                        original = source["list_item_ids"]
+                        if (ids is None or not isinstance(original, list)
+                                or not all(isinstance(i, str) and i for i in original)
+                                or len(set(original)) != len(original) or not set(original) <= set(ids)):
+                            lost.add(wid)
+                            continue
+                        # Use the freshly authorized list, never cached rows or a get that
+                        # exposes different fields. Missing/filtered/changed originals fail;
+                        # even eviction by the list's limit stays conservative.
+                        keep = set(original)
+                        current = {"forms": [item for item in current["forms"] if item["id"] in keep]}
                     if fingerprint(current) != source["snapshot_hash"]:
                         lost.add(wid)
                 except (ServiceError, KeyError):
@@ -1169,6 +1200,9 @@ class Agent:
         source = {"workspace_id": wid}
         if op.side_effect == "none":
             source.update(operation=op.id, input=clean, snapshot_hash=fingerprint(result))
+            ids = self._form_list_ids(op.id, result)
+            if ids is not None:
+                source["list_item_ids"] = ids
         else:
             run = self.store.one("SELECT object_kind,object_id,workspace_id FROM op_runs WHERE id=?", (run_id,))
             # Revalidate the produced object, never rerun its creating operation. The read

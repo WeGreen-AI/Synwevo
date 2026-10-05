@@ -1,18 +1,18 @@
 # Agent / DeepSeek 计费：当前断点
 
-最后检查：2026-10-05T17:24:13.341386+00:00。协调者 Codex `01a0f104-e57f-7092-ab67-50359f43b547`。
+最后检查：2026-10-05T18:09:53.244709+00:00。协调者 Codex `01a0f104-e57f-7092-ab67-50359f43b547`。
 
 | 项目 | 现场核实 |
 |---|---|
-| 实施工作树 | `.claude/worktrees/agent-billing`，`claude/agent-billing@e0a22defdcc9bc91c0f05ce736095f35d1377512` 加本轮待提交修复 |
-| 基线 | 远端 main `3278dfd8ea3994f0fdef601aadd00990d7eff805` 是实施树祖先；此前 87 个计费提交未推送。旧 PR #1 已合并，无打开的 PR。fbf4e9c 推送结果更新 main，Actions37348318532 文案覆盖失败且 deploy skipped；已修复待复验。主检出未提交图标等工作保留 |
+| 实施工作树 | `.claude/worktrees/agent-billing`，`claude/agent-billing@e4a782e537fb2624a920205e49a2f7d65649eafc`；功能代码已推送 main，补充证据待提交 |
+| 基线 | 原远端 main `3278dfd8ea3994f0fdef601aadd00990d7eff805` 是祖先；87 个计费提交及本轮修复已推送 main。旧 PR #1 已合并，未创建新 PR。fbf4e9c 的 Actions37348318532 文案覆盖失败、deploy skipped；e4a782e 已修复。主检出未提交图标等工作保留 |
 | 锁 | 主检出 `docs/agent-work/.coordinator.lock` 已核实 Claude 原任务配额耗尽且无执行 worker 后接管；原锁备份 `/private/tmp/synwevo-coordinator-before-codex-20261006.txt`。旧 Claude 每分钟循环仍存在但配额已耗尽，未擅自取消、未创建第二循环 |
 | 生产 | 只读 SSH 确认仍为 `a4b42c8da0cee86677cc7d6409e8eaff57543b2b`；accounts/docs/portal/messages/gateway healthy。CI 37226305708 对应此版本；本轮未部署 |
-| 真实模型 | 文件密钥仅在内存读取及隔离库密封保存；官方 models/balance 200；2 次 adapter 流式工具调用通过；隔离真实 Agent 已完成应用目录拒绝、Forms 列表、Forms 详情三条运行，7 个模型调用各结算一次 |
+| 真实模型 | 文件密钥仅在内存读取及隔离库密封保存；官方 models/balance 200；2 次 adapter 流式工具调用通过；隔离真实 Agent 已完成应用目录拒绝、Forms 列表、Forms 详情和跨空间读取四条运行，16 个模型调用各结算一次（包含原失败回答与新成功读后写，详见证据）；另有4次 adapter真实调用覆盖思考开/关 |
 | 本轮修复 | 支付通知/拒付竞争、支付密钥撤销与创建收银台竞争、欢迎额度每日容量并发；模型可见结果带服务器内部链接，Forms get 标记实际资源；工具卡三语言业务名称 |
-| 验证 | e0a22de 恢复了绑定 SHA 的旧门槛证据；当前补丁定向验证和浏览器验收进行中，不能称当前版本全量通过 |
+| 验证 | 本地定向及浏览器验收已完成；CI37349048194/e4a782e 构建通过；容器3634通过/1失败（Forms get 的生成OpenAPI未同步），deploy skipped；契约已重新生成、4项验证通过。真实写入还发现列表新增误触发来源变化，正在修复 |
 | 当前环境 | 隔离数据 `/private/tmp/synwevo-agent-live-20261006/data`；Accounts 37770、Portal 37769；真实 DeepSeek，测试钱包/审计赠送，USD0.10 上游总成本门槛。无真实支付、无客户数据 |
-| 下一动作 | 三处并发回归、Docs 补验、钱包/窄屏/三语言已完成；提交 Account 翻译修复、显式 HEAD:refs/heads/main 推送并跟踪新 SHA CI；通过既有 production workflow 发布；再核对生产版本与最小业务 |
+| 下一动作 | 读后写修复及真实新会话验收已通过，153关联+Python3.12专项26项通过；准备提交并走完整CI/CD。旧真实写入frm_7aaa0ee3b939与新验收frm_69612e61a3f8各仅1份，禁止重放。通过后更新 /private/tmp/synwevo-post-deploy-check.py 的预期SHA再核对上线 |
 
 ## 外部条件与明确边界
 

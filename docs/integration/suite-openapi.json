@@ -11374,7 +11374,7 @@
     "/api/suite/v1/ops/forms.form.get": {
       "post": {
         "operationId": "forms.form.get",
-        "summary": "A form's current draft definition, published versions and public link state.",
+        "summary": "A form's current draft definition, published versions and public link state. Identifies the form for an authenticated application link, even before publication.",
         "tags": [
           "forms"
         ],

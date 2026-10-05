@@ -1,0 +1,58 @@
+{
+  "recorded_at": "2026-10-05T17:33:13.046320+00:00",
+  "observed_with_sha": "e4a782e537fb2624a920205e49a2f7d65649eafc",
+  "environment": "isolated test wallet / official live DeepSeek",
+  "turns": [
+    {
+      "id": "turn_e5165c2b9f6f",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "id": "turn_0ccf092e1dbd",
+      "status": "succeeded",
+      "error_code": null
+    },
+    {
+      "id": "turn_fa7247689078",
+      "status": "succeeded",
+      "error_code": null
+    }
+  ],
+  "calls": [
+    {
+      "id": "d80bfd3f90e74418aa74e6588772e317",
+      "status": "settled"
+    },
+    {
+      "id": "278835e55bed40debc02a8fa1d4145e0",
+      "status": "settled"
+    },
+    {
+      "id": "f9809e7b92ad40db97e6d0b03ae4fd7d",
+      "status": "settled"
+    },
+    {
+      "id": "257a1ffc14604a1680856c1529f32fe3",
+      "status": "settled"
+    },
+    {
+      "id": "6bea73ff898948c1a9f9c1924fc0c97d",
+      "status": "settled"
+    },
+    {
+      "id": "3bb96abf2b6a4bd2bb39a5a14cd042bd",
+      "status": "settled"
+    },
+    {
+      "id": "5a3990f673de4181b0c201c7420f8b2c",
+      "status": "settled"
+    }
+  ],
+  "settlement_count": 7,
+  "usage_count": 7,
+  "funding": "test-only audited admin grant + one-time welcome allowance; no payment",
+  "browser_balance_cny": "1.948249",
+  "browser_settled_cny": "0.051751",
+  "browser_reserved_cny": "0"
+}

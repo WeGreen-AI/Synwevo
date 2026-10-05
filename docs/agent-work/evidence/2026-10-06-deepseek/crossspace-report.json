@@ -1,0 +1,23 @@
+{
+  "source_sha": "e4a782e537fb2624a920205e49a2f7d65649eafc",
+  "environment": "isolated test wallet; official DeepSeek",
+  "conversation_id": "conv_3de448fe9f8b",
+  "turn_id": "turn_f023938238c0",
+  "status": "succeeded",
+  "error_code": null,
+  "scope": [
+    "w_c1d2a0e002aa",
+    "w_8fe40e2b5e4f"
+  ],
+  "roles": [
+    "owner",
+    "viewer"
+  ],
+  "calls_total": 10,
+  "settlements_total": 10,
+  "viewer_write_denied": {
+    "status": 403,
+    "code": "read_only_role"
+  },
+  "viewer_records_unchanged": true
+}

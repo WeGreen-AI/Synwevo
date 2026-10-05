@@ -1,0 +1,36 @@
+{
+  "source_sha": "e4a782e537fb2624a920205e49a2f7d65649eafc",
+  "environment": "isolated test wallet; official DeepSeek",
+  "turn": {
+    "id": "turn_f60df7f1fe62",
+    "status": "failed",
+    "error_code": "source_access_changed"
+  },
+  "tool_calls": [
+    {
+      "id": "tc_bb930c88bce4",
+      "tool": "find_operations",
+      "operation": null,
+      "status": "succeeded",
+      "run_id": null
+    },
+    {
+      "id": "tc_efbfb19b5d95",
+      "tool": "run_operation",
+      "operation": "forms.form.create",
+      "status": "succeeded",
+      "run_id": "run_9d4cddbbe116"
+    }
+  ],
+  "created_form": {
+    "id": "frm_7aaa0ee3b939",
+    "workspace_id": "w_c1d2a0e002aa",
+    "title": "DeepSeek 工具写入验收（隔离）",
+    "published_version": null,
+    "public_version": null
+  },
+  "same_title_count": 1,
+  "calls_total": 12,
+  "settlements_total": 12,
+  "finding": "Confirmed write created one unshared draft. Old collection snapshot changed after insert; source_access_changed stopped answer. Do not replay creation."
+}

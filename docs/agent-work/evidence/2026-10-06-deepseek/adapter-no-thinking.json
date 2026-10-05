@@ -1,0 +1,63 @@
+{
+  "checked_at": "2026-10-05T16:55:10.952210+00:00",
+  "source_sha": "e0a22defdcc9bc91c0f05ce736095f35d1377512",
+  "provider": "DeepSeek",
+  "live": true,
+  "tool_result_verified": true,
+  "calls": [
+    {
+      "attempt": {
+        "requested_model": "deepseek-flash",
+        "dispatch": "observed",
+        "provider_request_id": "5eade865-5e18-4d53-a706-1cbd77c2618a",
+        "returned_model": "deepseek-flash",
+        "effective_route": null,
+        "capability_version": "deepseek-chat-2026-09-30",
+        "http_status": 200,
+        "finish_reason": "tool_calls",
+        "stream_complete": true,
+        "usage_reliability": "trusted_terminal",
+        "usage_reason": "terminal_usage_valid",
+        "usage": {
+          "prompt_tokens": 300,
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 300,
+          "completion_tokens": 25,
+          "total_tokens": 325,
+          "reasoning_tokens": null
+        }
+      },
+      "visible_chunks": 0,
+      "stop_reason": "tool_use",
+      "tool_names": [
+        "read_utc_clock"
+      ]
+    },
+    {
+      "attempt": {
+        "requested_model": "deepseek-flash",
+        "dispatch": "observed",
+        "provider_request_id": "deb55741-0474-4a49-b048-404dedb5b7dd",
+        "returned_model": "deepseek-flash",
+        "effective_route": null,
+        "capability_version": "deepseek-chat-2026-09-30",
+        "http_status": 200,
+        "finish_reason": "stop",
+        "stream_complete": true,
+        "usage_reliability": "trusted_terminal",
+        "usage_reason": "terminal_usage_valid",
+        "usage": {
+          "prompt_tokens": 356,
+          "prompt_cache_hit_tokens": 128,
+          "prompt_cache_miss_tokens": 228,
+          "completion_tokens": 19,
+          "total_tokens": 375,
+          "reasoning_tokens": null
+        }
+      },
+      "visible_chunks": 19,
+      "stop_reason": "end_turn",
+      "tool_names": []
+    }
+  ]
+}

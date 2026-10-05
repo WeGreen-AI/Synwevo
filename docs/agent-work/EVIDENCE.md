@@ -340,3 +340,25 @@
 
 - fbf4e9cb05eb860cf23be4ec4b7deedb38499b8c 已正常推送，实际远端引用为 main；未创建 PR。Actions 37348318532 在 Account 前端错误文案覆盖检查失败，deploy skipped，生产未变化。新增 payment_revision_conflict 在普通账户页没有三语言句子；已补全公共错误目录与代码映射，未修改测试或门槛。
 - 修复后 Account 前端 121 tests、typecheck、build 通过；日志 `/private/tmp/synwevo-account-ci-fix-tests.log`。失败原日志 `/private/tmp/synwevo-ci-37348318532-failed.log`。待新 SHA CI 后方可发布。
+
+### 2026-10-06 补充真实模型与跨空间证据（e4a782e）
+
+- 低思考模式官方 SSE 工具调用与 native reasoning replay 两次通过；23 reasoning tokens 包含在 completion 计量中；仅保存计量/重放存在标志，不保存或展示思考内容。
+- 同一用户 owner A / viewer B 的真实 DeepSeek 会话成功读取、比较两边表单；3 次模型调用结算一次，各工具卡标出实际空间。同用户调用 B 写操作被服务端 403/read_only_role 拒绝且记录未变。此时累计4个 Agent 运行/10个调用/10笔结算，另有4次独立 adapter 验收调用。
+- 可持久核对的脱敏 JSON 与截图已保存 `docs/agent-work/evidence/2026-10-06-deepseek/`；桌面实际1280×720、手机390×844，无横向溢出，跨空间页面控制台 error/warn 为空。
+- 五个指定正式域名发布前 /readyz 均为 ready；Accounts/Docs/Message 扫描器正常。当前电脑内置浏览器对正式域名报告客户端拦截；curl公开健康可达。生产完整已登录浏览器验收仍需要可用会话/浏览器访问，不据健康码冒称完成。
+- 新 CI https://github.com/WeGreen-AI/Synwevo/actions/runs/37349048194 已通过 Verify and build，正在部署容器运行时全量验证。尚未将其标为通过或部署。
+
+- 2026-10-05T17:57:14Z：备份 `/opt/synwevo/config/runtime.env.before-agent-config-20261005T175714Z` 后，仅预置 `SYNWEVO_AGENT_PROVIDER=deepseek`、`SYNWEVO_BILLING_ENVIRONMENT=live`、CNY/scale6 钱包单位。保留五应用名单、不加入Agent；未启用欢迎额度、未配置密钥/价格/支付、未手工重启，交由当前CI/CD加载。正式定价与商户仍待批准配置。
+
+### 2026-10-06 后续门槛发现（未部署）
+
+- `e4a782e` 的 Actions37349048194：构建通过，部署镜像3634 passed / 1 failed / 3 skipped（28m24s），失败为 `test_machine_contract.py::test_everything_the_applications_serve_is_published_as_built`，Forms get描述已变但OpenAPI产物未重生成。deploy skipped。用官方 suite_contract 生成器同步后本地4项通过；未修改断言。
+- 真实模型写入 `turn_f60df7f1fe62` 经页面具体确认创建 `frm_7aaa0ee3b939` 一次，Forms编辑器可打开，未发布、无公开链接。但旧列表快照整体哈希因新增项改变，导致回答失败 source_access_changed。隔离记录12调用/12结算；此失败如实保留，不重放创建。证据 `evidence/2026-10-06-deepseek/agent-write-before-fix.json` 及截图。修复与新增回归进行中。
+- 公开文案改为“尚未取得”书面答复，避免声称已经联系提供方；简繁英同步。Portal没有npm test脚本（首次调用明确报missing script），已跑其typecheck；Suite145项与typecheck通过，最终build待合批。
+
+### 2026-10-06 读后写修复验收
+
+- Forms列表来源新增稳定原条目ID证明，复查只投影原集合并核对原完整哈希；任一原项删除、改变、权限或字段被过滤仍拒绝。其他操作与历史仅哈希证明保持严格检查，不迁移猜测旧集合。新增18项、关联153项通过；Python3.12新增来源+机器契约+公开状态26项通过。日志 `/private/tmp/synwevo-agent-provenance-ptp1zkv8/`、`/private/tmp/synwevo-final-source-targeted.log`。
+- 新隔离会话 `conv_b61622672e73`，真实DeepSeek先读Forms列表，具体确认后新建含名称/备注字段的草稿 `frm_69612e61a3f8`，最终turn_f190d1050d64成功；可从产物卡打开Forms编辑器。刷新后同名草稿仍仅1份、余额不变、无浏览器警告/错误。此会话4次真实模型调用；隔离Agent累计16调用/16结算，另4次适配器调用。测试钱包累计余额1.901426 CNY（初始2），不是支付收款凭据。
+- `evidence/2026-10-06-deepseek/agent-write-recovery.json` 绑定engine源码SHA256，真实模型输出的步骤说明仍可能英文，最终回答简体中文；未承诺模型语言完全一致。未发布草稿、未发客户通知。
