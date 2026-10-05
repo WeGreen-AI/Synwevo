@@ -45,6 +45,10 @@ BACKOFF_BASE_S = 1.0    # first computed cool-down; doubles per consecutive thro
 BACKOFF_CAP_S = 30.0    # computed cool-down never exceeds this (a Retry-After may, up to a day)
 MAX_WAIT_S = 30.0       # a new call waits at most this long, unsent, before it is refused unsent
 THROTTLED_MESSAGE = "模型服务繁忙，本次没有发送，也没有扣费。请稍后再试。"
+#: Prompt-token allowances on top of the request's UTF-8 size (input_bound): the chat
+#: template's fixed special tokens, and its tool-use instructions when tools are offered.
+TEMPLATE_TOKENS = 64
+TOOLS_TEMPLATE_TOKENS = 1024
 
 
 def _json(value):
@@ -270,12 +274,32 @@ class MeteredDeepSeek:
         return sale, cost
 
     @staticmethod
-    def upper_bound(route, sale):
+    def upper_bound(route, sale, *, input_tokens: int | None = None):
         # No cache discount is assumed; include at most one earlier fractional-unit carry.
         # The greater input rate is conservative even for an unusual published cache tariff.
+        # Without a request (quotes, run budgets) the route's whole context ceiling is held.
+        tokens = route.input_token_ceiling if input_tokens is None else min(input_tokens, route.input_token_ceiling)
         rate = max(sale.input_uncached.fraction, sale.input_cached.fraction)
-        exact = (route.input_token_ceiling * rate + route.output_token_ceiling * sale.output.fraction) / sale.per_tokens
+        exact = (tokens * rate + route.output_token_ceiling * sale.output.fraction) / sale.per_tokens
         return integer((exact.numerator + exact.denominator - 1) // exact.denominator + 1)
+
+    @staticmethod
+    def input_bound(route, *, system, tools, messages) -> int:
+        """A conservative upper bound on this request's prompt tokens, for its hold.
+
+        DeepSeek's tokenizer is byte-level BPE: every ordinary token covers at least one UTF-8
+        byte of the text it encodes, so a text never has more tokens than bytes. The request
+        JSON contains every text sent (system, history including replayed reasoning, tool
+        schemas and results) plus syntax and escapes, which only over-count; each message's JSON
+        syntax (20+ bytes) outweighs the few special tokens the chat template wraps it in, and
+        TEMPLATE_TOKENS / TOOLS_TEMPLATE_TOKENS cover the fixed template and tool instructions.
+        Capped at the route's confirmed context ceiling. No official tokenizer is in the lock;
+        if a provider count ever exceeds this, the ledger caps the charge at the hold and the
+        platform absorbs the rest (the observation records the bound for reconciliation).
+        """
+        size = len(_json([system, tools, messages]).encode("utf-8"))
+        bound = size + TEMPLATE_TOKENS + (TOOLS_TEMPLATE_TOKENS if tools else 0)
+        return integer(min(bound, route.input_token_ceiling), positive=True)
 
     def open_run(self, context: ChargeContext, *, route: Route, budget: int, max_calls: int,
                  deadline: int) -> dict:
@@ -345,12 +369,13 @@ class MeteredDeepSeek:
             raise BillingError("model_request_too_large")
         digest = hashlib.sha256(request.encode()).hexdigest()
         request = None  # Request bodies are not persisted in the money evidence tables.
+        bound = self.input_bound(route, system=system, tools=tools, messages=messages)
         claim = None
         if self.traffic is not None:
             # Wait for rate/in-flight capacity before reserving any money (docs/platform/model-traffic.md).
             try:
                 claim = self.traffic.acquire(context.payer_user_id,
-                    est_tokens=route.input_token_ceiling + route.output_token_ceiling,
+                    est_tokens=bound + route.output_token_ceiling,
                     deadline=run["deadline"], should_stop=should_stop)
             except TrafficCancelled:
                 raise DeepSeekCancelled(Attempt()) from None
@@ -359,13 +384,13 @@ class MeteredDeepSeek:
                 raise
         try:
             return self._step(context, logical_call_id, credential, system, tools, messages, effort, on_text,
-                              should_stop, validate_result, run, route, sale, cost, digest, claim)
+                              should_stop, validate_result, run, route, sale, cost, digest, claim, bound)
         finally:
             if claim is not None:
                 self.traffic.abandon(claim)  # Only a grant never admitted is freed here.
 
     def _step(self, context, logical_call_id, credential, system, tools, messages, effort, on_text,
-              should_stop, validate_result, run, route, sale, cost, digest, claim):
+              should_stop, validate_result, run, route, sale, cost, digest, claim, bound):
         key, owner = uuid4().hex, uuid4().hex
         with self.store.tx() as t:
             prior = t.execute("SELECT request_digest FROM agent_metered_calls WHERE run_key=? AND logical_id=?",
@@ -377,7 +402,7 @@ class MeteredDeepSeek:
         call_key, ticket = None, None
         try:
             call_key = self.ledger.reserve_call(context, logical_call_id=logical_call_id,
-                amount=self.upper_bound(route, sale), price_id=route.sale_price_id,
+                amount=self.upper_bound(route, sale, input_tokens=bound), price_id=route.sale_price_id,
                 deadline=min(run["deadline"], self.ledger._now()+self.ledger.max_hold_seconds))
             ticket = self.ledger.prepare_attempt(call_key, attempt_id=key, owner=owner,
                 cost_price_id=route.cost_price_id, requested_model=route.requested_model)
@@ -405,7 +430,7 @@ class MeteredDeepSeek:
                             self.traffic.admit(transaction, claim, attempt_key=dispatch_ticket.attempt_key,
                                 inflight_until=self.ledger._now() + math.ceil(self.limits.timeout_s) + 1)
                         self.cost_admission.admit(transaction, dispatch_ticket,
-                            amount=self.upper_bound(route, cost),
+                            amount=self.upper_bound(route, cost, input_tokens=bound),
                             expires_at=self.ledger._now() + math.ceil(self.limits.timeout_s) + 1)
                     except BillingError as exc:
                         admission_refusal = exc
@@ -431,7 +456,7 @@ class MeteredDeepSeek:
             except (DeepSeekError, DeepSeekCancelled) as exc:
                 ending = ("client_cancelled" if isinstance(exc, DeepSeekCancelled)
                           else "provider_interrupted" if exc.code == "provider_interrupted" else None)
-                self._observe(key, ticket, route, exc.attempt, completed=False, claim=claim, ending=ending)
+                self._observe(key, ticket, route, exc.attempt, completed=False, claim=claim, ending=ending, input_bound=bound)
                 if isinstance(exc, DeepSeekError) and exc.code == "provider_balance":
                     self._closed(route, exc)
                 if isinstance(exc, DeepSeekError) and exc.attempt.http_status in THROTTLED:
@@ -457,7 +482,7 @@ class MeteredDeepSeek:
                 # A refusal/truncation raised above is the provider's ending; a rejected step
                 # (validate_result) has none and is never charged.
                 ending = {"refusal": "content_filter", "max_tokens": "length"}.get(result.step.stop_reason)
-                self._observe(key, ticket, route, result.attempt, completed=False, claim=claim, ending=ending)
+                self._observe(key, ticket, route, result.attempt, completed=False, claim=claim, ending=ending, input_bound=bound)
                 # Keep the step's private reasoning for later thinking-mode requests; its tool
                 # calls were not accepted, so they never run and get no tool result.
                 replay = {k: v for k, v in result.replay_message.items() if k != "tool_calls"}
@@ -468,7 +493,7 @@ class MeteredDeepSeek:
                     if result.attempt.usage_reliability == "trusted_terminal" and usage else {})
                 exc.usage_reliability = result.attempt.usage_reliability
                 raise
-            self._observe(key, ticket, route, result.attempt, completed=True, claim=claim)
+            self._observe(key, ticket, route, result.attempt, completed=True, claim=claim, input_bound=bound)
             self._recovered()
             return result
         except BaseException:
@@ -478,10 +503,11 @@ class MeteredDeepSeek:
                 self.ledger.cancel_call(call_key)
             raise
 
-    def _observe(self, key, ticket, route, attempt, *, completed, claim=None, ending=None):
+    def _observe(self, key, ticket, route, attempt, *, completed, claim=None, ending=None, input_bound=None):
         payload = {k: getattr(attempt,k) for k in ("requested_model", "dispatch", "provider_request_id", "returned_model",
                    "capability_version", "http_status", "finish_reason", "stream_complete", "usage_reliability", "usage_reason")}
         payload.update(raw_usage=_raw_counters(attempt.raw_usage), completed=completed, ending=ending,
+                       input_bound=input_bound,
                        confirmed_route=route.confirmed_route, confirmation_ref=route.confirmation_ref,
                        metered_at=self.ledger._now())
         with self.store.tx() as t:
