@@ -1,8 +1,9 @@
 # Personal Agent runtime and verification
 
 This implementation is under acceptance testing. The production application switch defaults
-to unavailable. A working local conversation manager is not evidence of a verified live model
-or a complete cross-application workflow.
+to unavailable. On 2026-10-06 (Hong Kong), the governed DeepSeek route completed real tool calls
+and three Agent turns in an isolated test wallet; see `docs/agent-work/EVIDENCE.md`. This proves
+that bounded live path, not a complete cross-application workflow or production payment acceptance.
 
 ## Configuration and ownership
 

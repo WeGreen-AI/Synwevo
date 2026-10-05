@@ -18,8 +18,10 @@ secret, alerts are captured by a test double; isolated temporary data directory.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+from threading import Event, current_thread
 import time
 
 import pytest
@@ -114,6 +116,93 @@ def test_a_dispute_for_a_reported_but_not_yet_credited_payment_waits_for_the_cre
     paid_event = session_event(order, kind="checkout.session.async_payment_succeeded", session_id=session)
     assert deliver(world, paid_event).json()["status"] == "processed"
     assert inbox(world, "evt_dispute_waiting")["status"] == "processed" and cny_booked(world) == 0
+
+
+@pytest.mark.parametrize("worker", ["webhook", "sweep"])
+@pytest.mark.parametrize("pause_at", ["unknown_payment", "result"])
+def test_concurrent_credit_and_dispute_are_reconciled_once(world, alerts, monkeypatch, worker, pause_at):
+    """FIXTURE barriers cover credit both before and after the dispute's waiting decision.
+    The sweep uses a second service/Store, as another account process would; no process-local
+    mutex can stand in for the durable ordering of these two independent ledger transactions.
+    """
+    from synwevo_core.store import Store
+    from synwevo_identity.payments import TopupService
+    from .test_wallet_topups import CNY
+
+    world["configure"]()
+    client, order, session = created(world)
+    credit_service = world["api"].state.topups
+    event = dispute_event(f"race_{worker}_{pause_at}")
+    dispute_service = (credit_service if worker == "webhook" else TopupService(
+        Store(world["store"].root), environment="test", units=(CNY,)))
+    ready, resume = Event(), Event()
+    blocked_thread = []
+
+    def pause():
+        if current_thread() is blocked_thread[0]:
+            ready.set()
+            assert resume.wait(10), "fixture dispute was not resumed"
+
+    if pause_at == "unknown_payment":
+        original = dispute_service._credit_expected
+
+        def unknown(payment_id):
+            result = original(payment_id)
+            assert result is False
+            pause()
+            return result
+
+        monkeypatch.setattr(dispute_service, "_credit_expected", unknown)
+    else:
+        original = dispute_service._process
+
+        def processed(event_id, kind, facts, digest):
+            result = original(event_id, kind, facts, digest)
+            if event_id == event["id"]:
+                pause()
+            return result
+
+        monkeypatch.setattr(dispute_service, "_process", processed)
+
+    if worker == "sweep":
+        _crash_left(world, event, int(time.time()))
+
+    def run_dispute():
+        if worker == "sweep":
+            blocked_thread.append(current_thread())
+            return dispute_service.process_pending()
+        # TestClient runs the webhook in a worker thread, so capture that thread at processing.
+        process = dispute_service._process
+
+        def capture(*args):
+            if not blocked_thread:
+                blocked_thread.append(current_thread())
+            return process(*args)
+
+        monkeypatch.setattr(dispute_service, "_process", capture)
+        return deliver(world, event)
+
+    with ThreadPoolExecutor(1) as pool:
+        handling = pool.submit(run_dispute)
+        try:
+            assert ready.wait(10)
+            assert deliver(world, session_event(order, session_id=session)).json()["status"] == "processed"
+        finally:
+            resume.set()
+        result = handling.result(timeout=10)
+    if worker == "sweep":
+        assert result == 1
+    else:
+        assert result.json()["status"] == "processed"
+    assert inbox(world, event["id"])["status"] == "processed"
+    assert cny_booked(world) == 0
+    assert client.get("/api/auth/wallet/topup-options").json()["reason"] == "wallet_frozen"
+    assert deliver(world, event).json()["status"] == "processed"
+    credit_service.process_pending()
+    assert world["store"].one("SELECT COUNT(*) AS n FROM billing_chargebacks")["n"] == 1
+    assert world["store"].one("SELECT COUNT(*) AS n FROM billing_journal WHERE kind='chargeback'")["n"] == 1
+    assert world["store"].one("SELECT COUNT(*) AS n FROM billing_account_freezes")["n"] == 1
+    assert alerts == []
 
 
 def _crash_left(world, event, received_at):

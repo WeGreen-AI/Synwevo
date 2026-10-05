@@ -6,7 +6,7 @@
 .ag-history-link { display: block; padding: var(--sp-3); color: var(--text); overflow-wrap: anywhere; border-radius: var(--radius-sm); text-decoration: none; }
 .ag-history-link:hover { background: var(--surface-hover); text-decoration: none; }
 .ag-history-link.selected { background: var(--accent-weak); color: var(--accent-strong); }
-.ag-main { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.ag-main { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
 .ag-toolbar { min-height: 58px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; padding: var(--sp-2) var(--sp-4); }
 .ag-toolbar h1 { font-size: var(--fs-4); flex: 1; min-width: 0; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ag-toolbar-actions { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
@@ -45,6 +45,9 @@ dl.ag-values { padding: 0; }
 .ag-value { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ag-composer-area { width: min(800px, 100%); margin: 0 auto; padding: var(--sp-2) var(--sp-5); }
 .ag-composer-area .suite-state { min-height: 0; padding: var(--sp-2); }
+.ag-payment-settings > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: var(--sp-2); color: var(--text-2); font-size: var(--fs-2); }
+.ag-payment-settings > summary::before { content: "▸"; }
+.ag-payment-settings[open] > summary::before { content: "▾"; }
 .ag-composer { border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
 .ag-composer:focus-within { border-color: var(--accent); }
 .ag-composer textarea { width: 100%; padding: var(--sp-3) var(--sp-4); border: 0; border-radius: inherit; outline: none; resize: vertical; min-height: 76px; max-height: 28vh; font: inherit; font-size: var(--fs-5); color: var(--text); background: transparent; }
@@ -167,6 +170,7 @@ a.ag-chip-link { color: var(--accent); }
   .ag-workspace { position: relative; }
   .ag-content, .ag-settings { padding: var(--sp-4); }
   .ag-composer-area { padding: var(--sp-2) var(--sp-3); }
+  .ag-composer-area { flex: none; max-height: 52dvh; overflow-y: auto; }
   .ag-welcome { padding: var(--sp-6) 0; }
   .ag-welcome h2 { font-size: var(--fs-7); }
   .ag-toolbar-actions { width: 100%; }

@@ -4,6 +4,7 @@ import { Failure } from "../../shared/states";
 import { consentCopy } from "./consent.messages";
 
 const errors: Record<string, string> = {
+  billing_welcome_capacity: "今日赠送名额已满，请稍后再试。",
   agent_not_configured: "模型服务未配置。请先打开 Agent 设置。",
   provider_history_incompatible: "模型提供方已变化，请新建会话继续。",
   billing_authorization_required: "请先确认本次运行的价格与预算。",

@@ -306,6 +306,13 @@ class TopupService:
         # (a burst of card tests, a double click) cannot both pass the open-order, hourly, daily
         # or amount limit. The ledger order follows in the ledger's own transaction.
         with self.store.tx():
+            # Share the settings writer's lock: either this open order is visible to revocation,
+            # or revocation/closure wins and no checkout can use the earlier resolved key.
+            current, _ = self.configuration()
+            if current is None:
+                raise ServiceError(503, "topup_not_configured", "充值暂未开放")
+            if current.revision != resolved.revision:
+                raise ServiceError(409, "payment_revision_conflict", "充值配置已变化，请刷新后重试")
             self._velocity(initiator["id"], amount, spec["velocity"])
             self.store.execute(
                 "INSERT INTO payment_topups(order_id,environment,provider,payer_kind,payer_id,initiator_id,package_id,"
@@ -459,8 +466,7 @@ class TopupService:
             status, code = self._process(event["id"], event["type"], facts, digest)
         except Exception:  # noqa: BLE001 - recorded as failed and retried by the provider; nothing echoed
             status, code = "failed", "processing_error"
-        self.store.execute("UPDATE payment_webhook_inbox SET status=?,result_code=?,processed_at=? "
-                           "WHERE provider=? AND event_id=?", (status, code, self.clock(), PROVIDER, event["id"]))
+        status, code = self._finish(event["id"], status, code)
         self._ended(status, code)
         if status == "failed":
             return 500, {"error": "processing_failed"}
@@ -522,9 +528,18 @@ class TopupService:
                                          row["payload_sha256"])
         except Exception:  # noqa: BLE001
             status, code = "failed", "processing_error"
-        self.store.execute("UPDATE payment_webhook_inbox SET status=?,result_code=?,processed_at=?,attempts=attempts+? "
-                           "WHERE provider=? AND event_id=?",
-                           (status, code, self.clock(), int(attempt), PROVIDER, row["event_id"]))
+        return self._finish(row["event_id"], status, code, attempt=attempt)
+
+    def _finish(self, event_id: str, status: str, code: str | None, *, attempt: bool = False) -> tuple[str, str | None]:
+        """A concurrent credit may already have revived this dispute. Never overwrite its
+        successful result with an earlier worker's missing-payment refusal (or failure)."""
+        with self.store.tx() as t:
+            row = self._inbox(t, event_id)
+            if row is not None and row["status"] == "processed":
+                status, code = row["status"], row["result_code"]
+            t.execute("UPDATE payment_webhook_inbox SET status=?,result_code=?,processed_at=?,attempts=attempts+? "
+                      "WHERE provider=? AND event_id=?",
+                      (status, code, self.clock(), int(attempt), PROVIDER, event_id))
         return status, code
 
     def _revive(self, payment_id: str) -> None:
@@ -608,23 +623,33 @@ class TopupService:
         notice = DisputeNotice(self.environment, PROVIDER, MERCHANT, facts["id"], event_id, facts["payment_intent"],
                                facts["amount"], facts["currency"].upper(), "stripe-inbox:" + event_id, digest,
                                inquiry=_inquiry(facts))
-        try:
-            self.ledger.record_chargeback(notice)
-        except BillingError as exc:
-            if exc.code == "payment_not_credited":
-                if self._credit_expected(facts["payment_intent"]):
-                    # Our checkout reported it and the credit is still to come: retry later
-                    # (applied at once when it is credited, _revive).
-                    return "failed", exc.code
-                # Not a payment credited here (another product on the same provider account, or
-                # a rejected top-up). Kept and alerted, never retried forever; applied if this
-                # payment is credited later after all.
-                return "rejected", "dispute_payment_unknown"
-            if exc.code == "dispute_payment_mismatch":
-                # Merchant or currency differ from the credited payment: a person must look.
-                return "rejected", exc.code
-            raise
-        return "processed", None
+        for _ in range(2):
+            try:
+                self.ledger.record_chargeback(notice)
+                return "processed", None
+            except BillingError as exc:
+                if exc.code == "payment_not_credited":
+                    expected = self._credit_expected(notice.payment_id)
+                    with self.store.tx() as t:
+                        if t.execute("SELECT 1 FROM billing_payments WHERE environment=? AND provider=? AND payment_id=?",
+                                     (self.environment, PROVIDER, notice.payment_id)).fetchone():
+                            # Credit won the race since the ledger's refusal. Retry after leaving
+                            # this transaction: the append-only payment now exists.
+                            continue
+                        status, code = (("failed", exc.code) if expected else
+                                        ("rejected", "dispute_payment_unknown"))
+                        # Publish the wait/refusal under the same writer lock as the absence
+                        # check. A later credit MUST see it in _revive, even if this worker
+                        # crashes before returning. _finish preserves any concurrent revival.
+                        t.execute("UPDATE payment_webhook_inbox SET status=?,result_code=? "
+                                  "WHERE provider=? AND event_id=? AND status<>'processed'",
+                                  (status, code, PROVIDER, event_id))
+                        return status, code
+                if exc.code == "dispute_payment_mismatch":
+                    # Merchant or currency differ from the credited payment: a person must look.
+                    return "rejected", exc.code
+                raise
+        return "failed", "payment_not_credited"
 
     def _method(self, payment_id: str, method) -> None:
         if isinstance(method, str) and method in ("card", "wechat_pay", "alipay"):

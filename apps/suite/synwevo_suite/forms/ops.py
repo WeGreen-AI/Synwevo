@@ -175,14 +175,19 @@ def register(registry, forms: Forms) -> None:
             kw.setdefault("result_guard", result_guard)
         registry.register(Operation(app="forms", **kw))
 
+    def get_form(c, i):
+        form = forms._form(c.workspace_id, i.form_id)
+        c.touches("form", i.form_id)
+        return forms.form_json(form, with_versions=True, can_write=c.can("write"))
+
     op(id="forms.form.list", title=T("列出表单", "列出表單", "List forms"),
        summary="List the forms of a workspace with their request and submission counts.",
        input=ListForms, handler=lambda c, i: {"forms": forms.list_forms(c.workspace_id, status=i.status, q=i.q)})
     op(id="forms.form.get", title=T("查看表单", "查看表單", "Get a form"),
-       summary="A form's current draft definition, published versions and public link state.",
+       summary="A form's current draft definition, published versions and public link state. "
+               "Identifies the form for an authenticated application link, even before publication.",
        input=FormRef, object_kind="form",
-       handler=lambda c, i: forms.form_json(forms._form(c.workspace_id, i.form_id), with_versions=True,
-                                           can_write=c.can("write")))
+       handler=get_form)
     op(id="forms.form.version", title=T("查看表单版本", "查看表單版本", "Get a form version"),
        summary="The frozen definition of one published (or retired) version of a form.",
        input=VersionRef, object_kind="form",

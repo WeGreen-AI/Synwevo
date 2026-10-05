@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import time
 
 from .ledger import Ledger
 from .models import BillingError, Unit
@@ -53,13 +52,11 @@ def _int_env(name: str, *, low: int, high: int) -> int | None:
 
 
 class WelcomeAllowance:
-    def __init__(self, ledger: Ledger, *, unit: Unit, amount_minor: int, daily_cap: int = DEFAULT_DAILY_CAP,
-                 clock=None):
+    def __init__(self, ledger: Ledger, *, unit: Unit, amount_minor: int, daily_cap: int = DEFAULT_DAILY_CAP):
         self.ledger, self.unit = ledger, unit
         self.amount = fen_to_units(amount_minor, unit)
         self.amount_minor = amount_minor
         self.daily_cap = daily_cap
-        self.clock = clock or (lambda: int(time.time()))
 
     @classmethod
     def from_host(cls, ledger: Ledger | None, units) -> "WelcomeAllowance | None":
@@ -92,13 +89,13 @@ class WelcomeAllowance:
         key = abuse_key(user["email"])
         if self.ledger.has_welcome(payer_id=user_id, abuse_key=key):
             return {"state": "already"}
-        if self.ledger.count_grants(kind="welcome", since=self.clock() - 86400) >= self.daily_cap:
-            return {"state": "capacity"}
         try:
             row = self.ledger.grant(grant_id="welcome:" + user_id, kind="welcome", payer_kind="user",
                                     payer_id=user_id, unit=self.unit, amount=self.amount, reason=REASON,
-                                    actor_id=ACTOR, abuse_key=key)
+                                    actor_id=ACTOR, abuse_key=key, welcome_daily_cap=self.daily_cap)
         except BillingError as exc:
+            if exc.code == "welcome_capacity":
+                return {"state": "capacity"}
             if exc.code in ("welcome_already_granted", "idempotency_conflict"):
                 return {"state": "already"}
             raise

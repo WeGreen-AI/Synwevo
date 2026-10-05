@@ -34,7 +34,12 @@ function Values({ value }: { value: unknown }) {
 function ActionCard({ call, act, busy }: { call: ToolCall; act: Act; busy: boolean }) {
   const { t, locale } = useI18n();
   const pending = call.status === "awaiting_confirmation" && !call.hidden;
-  const title = call.operation_title?.[locale] ?? call.operation_title?.en ?? call.tool;
+  const toolTitles: Record<string, string> = {
+    list_workspaces: t("查看可用工作空间"),
+    find_operations: t("查找应用操作"),
+    run_operation: t("执行应用操作"),
+  };
+  const title = call.operation_title?.[locale] ?? call.operation_title?.en ?? toolTitles[call.tool] ?? t("应用操作");
   // A server-produced application link must remain on this origin.
   const safeLink = call.link?.startsWith("/") && !call.link.startsWith("//") ? call.link : null;
   return <section className={`ag-action${pending ? " pending" : ""}`} aria-label={title}>

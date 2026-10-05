@@ -12,6 +12,9 @@ secret, keys are fixture values shaped like Stripe test-mode keys; isolated data
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+
 import pytest
 
 from synwevo_core.errors import ServiceError
@@ -51,3 +54,69 @@ def test_an_explicit_override_revokes_at_once(world):
     with pytest.raises(ServiceError) as invalid:          # an override means nothing for another action
         world["configure"](CLOSED, {"action": "keep", "override_open_checkouts": True})
     assert invalid.value.code == "payment_config_invalid"
+
+
+@pytest.mark.parametrize("change", ["revoke", "close", "reprice"])
+def test_configuration_change_before_order_admission_prevents_a_checkout(world, monkeypatch, change):
+    world["configure"]()
+    topups = world["api"].state.topups
+    ready, resume = Event(), Event()
+    original = topups.frozen
+
+    def after_configuration(*args):
+        result = original(*args)
+        ready.set()
+        assert resume.wait(10), "fixture checkout was not resumed"
+        return result
+
+    monkeypatch.setattr(topups, "frozen", after_configuration)
+    user = world["users"]["alice"]
+    with ThreadPoolExecutor(1) as pool:
+        creating = pool.submit(topups.create, initiator=user, payer_kind="user", payer_id=user["id"],
+                               package_id="cny-10", amount_minor=None)
+        try:
+            assert ready.wait(10)
+            assert topups.settings.open_checkouts()["count"] == 0
+            if change == "reprice":
+                world["configure"]({**SPEC, "packages": [{"id": "cny-10", "amount_minor": 1200, "label": None}]},
+                                   {"action": "keep"})
+            else:
+                world["configure"](CLOSED, {"action": "revoke" if change == "revoke" else "keep"})
+        finally:
+            resume.set()
+        with pytest.raises(ServiceError) as refused:
+            creating.result(timeout=10)
+    assert refused.value.code == ("payment_revision_conflict" if change == "reprice" else "topup_not_configured")
+    assert world["stripe"].requests == []
+    assert world["store"].all("SELECT * FROM payment_topups") == []
+    assert world["store"].all("SELECT * FROM billing_orders") == []
+
+
+def test_order_admission_before_revocation_keeps_the_payment_verifiable(world, monkeypatch):
+    world["configure"]()
+    topups = world["api"].state.topups
+    ready, resume = Event(), Event()
+    original = topups.provider_factory
+
+    def before_provider(secret):
+        ready.set()
+        assert resume.wait(10), "fixture checkout was not resumed"
+        return original(secret)
+
+    monkeypatch.setattr(topups, "provider_factory", before_provider)
+    user = world["users"]["alice"]
+    with ThreadPoolExecutor(1) as pool:
+        creating = pool.submit(topups.create, initiator=user, payer_kind="user", payer_id=user["id"],
+                               package_id="cny-10", amount_minor=None)
+        try:
+            assert ready.wait(10)
+            with pytest.raises(ServiceError) as refused:
+                world["configure"](CLOSED, {"action": "revoke"})
+            assert refused.value.code == "payment_revoke_open_checkouts"
+            world["configure"](CLOSED, {"action": "keep"})
+        finally:
+            resume.set()
+        order = creating.result(timeout=10)["order_id"]
+    session = topups._row(order)["checkout_session_id"]
+    assert deliver(world, session_event(order, session_id=session)).json()["status"] == "processed"
+    assert cny_booked(world) == 10**7

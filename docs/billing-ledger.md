@@ -1,3 +1,5 @@
+> Current integration status (2026-10-06, Hong Kong): Store migrations, governed provider routes, wallet, organization payer, payment service and gateway are integrated on the Agent billing release branch. Seven real-model calls settled once each in an isolated test wallet. Production enablement and real payment acceptance remain gated. The September handoff below is historical; see `docs/agent-work/EVIDENCE.md` for current evidence.
+
 > Coordinator integration update: this foundation is now registered with the sole Store migration owner in the business-apps integration worktree. Fresh/repeated migrations are tested without funding, prices or enablement. The handoff below records the original isolated delivery; gateway, payments and charging acceptance remain separate.
 
 # Billing ledger foundation — coordinator handoff

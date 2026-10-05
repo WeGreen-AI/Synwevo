@@ -4,10 +4,7 @@
 
 ## Gateway rules (2026-10-05, agent billing programme)
 
-These rules are implemented and tested with FIXTURE transports and the labelled loopback double
-only. No real DeepSeek request has been made; the owner-approved real-upstream check (brief §5)
-must still confirm the SSE shape, usage, tool fragments, error bodies, `reasoning_effort`
-placement and failed-turn replay against the live API, and the input bound below.
+These rules have deterministic FIXTURE coverage. On 2026-10-06 (Hong Kong), the authorized real key additionally passed official model discovery, balance availability, two thinking-disabled SSE tool calls, and three isolated Agent turns with seven settled model calls. See `docs/agent-work/EVIDENCE.md`. These live checks cover terminal usage, cache usage, tool fragments, authenticated application links and the no-replay refresh path. Live thinking-enabled replay, deliberate interruption/error charging, price-window transitions and production payment acceptance remain separate gates; fixture results do not substitute for them.
 
 | Rule | Where | Behaviour |
 | --- | --- | --- |

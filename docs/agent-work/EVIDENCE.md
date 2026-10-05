@@ -311,3 +311,27 @@
 - 推送：用户 2026-10-04 指令“直接推送”。推送 feat/business-apps（PR #1 草稿）；未推 main、未部署。推送时正确性审查与三路对抗复核尚未返回，其结论另行处理。
 - 未验证：新 SHA 的 CI；本会话未做浏览器验收；真实模型链路。
 
+
+
+## 2026-10-06 · Codex 接管 Agent 计费与真实上游验收（进行中）
+
+基线 e0a22de，生产 a4b42c8；检查时间 2026-10-05T17:14:39.795333+00:00。本轮补丁尚未提交，旧报告不自动算当前发布证据。
+
+- 主分支保护读取 API 返回403（私有仓库计划限制）；没有更改保护。无打开 PR。生产 current.json 与四应用角色镜像相同，gateway 与 ClamAV 健康。
+- 上游只读 `/models`、`/user/balance` 200，模型 `deepseek-flash` 与 `deepseek-v4-pro`；没有记录密钥或账户金额。证据 `/private/tmp/synwevo-deepseek-account-20261006.json`。
+- 官方 DeepSeek adapter 2 个真实请求、read_utc_clock 工具返回实际时钟并正确复述：prompt 300+356，completion 25+19，第二调用缓存命中128；两次 trusted_terminal。证据 `/private/tmp/synwevo-deepseek-live-check-20261006.json`。沙箱内第一次未解析 DNS，以 curl 证实后经正常网络权限重试；不是对未知已派发请求盲重试。
+- 隔离真实工厂：初始空间未启用 AI，目录返回 ai_processing_allowed=false，模型没有读取内容；通过 agent.workspace_policy.set 为隔离空间明确允许 DeepSeek 后，读取实际 Forms 列表；用户式浏览器报价/有限预算确认、真实 SSE、钱包预留和结算通过。
+- 第三条真实运行发现/修复产物问题：草稿详情通过已登记资源路径生成内部链接，无需发布/公开分享；点击“打开产物”到真实未发布表单编辑器，原始草稿未变。7 次模型调用结算7笔；测试资金为一次管理员隔离赠送加欢迎额度，不是虚构付款。
+- 只读独立审查发现三处并发缺陷（Popper），已交其修复；此前132项相关测试通过不能代替并发回归。完整旧门槛恢复结果 `/private/tmp/synwevo-agent-billing-verify-e0a22de-n1vgaoj3/summary.json`；Docs 子进程本地包未装引发1项失败，正在补验。
+- 当前链接/来源策略/Forms 定向106项通过（日志 `/private/tmp/synwevo-agent-links-tests.log`）；Suite typecheck、145前端测试、Suite及Workspace build通过。截图 `/private/tmp/synwevo-agent-live-20261006/screenshots/form-from-agent.jpg`。
+- 模型文本仍可能输出英文前置句或技术字段；业务工具卡已本地化，不将提示词改善宣称为输出语言绝对保证。
+
+### 2026-10-06 收尾验证（Hong Kong；e0a22de + 本轮待提交补丁）
+
+- 三处计费竞争修复的完整定向集 153 passed / 7 deselected；覆盖多 Store、线程/进程、webhook 与补跑交错以及配置撤销/关闭/改价。默认权限和不可变账本不变。
+- Docs 原唯一失败是隔离 venv 未安装本地包；安装当前 9 包后 pip check 和精确失败项 `test_run_py_actually_calls_the_guard` 通过。组合结果 1498 passed / 2 skipped（不是重新全跑）。证据 `/private/tmp/synwevo-docs-gate-close-ljtnhwiv/summary.json`，Docs 源码与 e0a22de 一致。
+- 当前 Agent/Forms/来源策略定向集 106 passed；Suite 前端 145 tests、typecheck、build 通过。当前 workspace 外壳 build 通过。
+- 真实浏览器：OIDC 登录，三次模型运行及工具结果，打开未发布表单的真实内部页面；返回/刷新/服务重启后仍为 7 笔结算。钱包显示可用 CNY1.948249、已结算 CNY0.051751、冻结 0，与 7 笔账本一致。初始 CNY2 来自隔离审计赠送与一次欢迎额度，不是支付。
+- 手机 390×844：付款设置改为可键盘展开的原生 disclosure，聊天区域由约 66px 增至 267.5px；document scrollWidth=clientWidth=390。简/繁/英切换不改变用户中文内容。英文与繁体、真实长对话均检查；无控制台 error/warn。减少动态效果尚未通过浏览器环境实测，不据 CSS 宣称验收通过。
+- 截图 `/private/tmp/synwevo-agent-live-20261006/screenshots/agent-phone-en-after.jpg`、`form-from-agent.jpg`；测试钱包充值按钮准确显示未接入支付、未创建订单。
+- 模型有时仍输出英文工具前导或内部字段名；已加强提示，但不将此宣称为语言输出完全受控。

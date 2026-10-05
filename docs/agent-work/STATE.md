@@ -1,34 +1,24 @@
-# 业务应用、Admin/API 与个人 Agent：状态与断点
+# Agent / DeepSeek 计费：当前断点
 
-最后检查：2026-10-05T03:50Z（UTC 2026-10-04T19:50Z）。协调任务 Claude `80146fec-e8b8-43eb-aafb-6b062986dc5d`（/loop d90b5952）；2026-10-03T15:01Z 自 `df1f0b15…` 接管：用户于 14:00Z 中断其回合并取消其循环 f5cb7ce9，原并行会话 `12134ed7…`（Admin）与 `7bc70746…`（Webhook）同时被中断；三者均已书面交接并确认不再写入。
+最后检查：2026-10-05T17:24:13.341386+00:00。协调者 Codex `01a0f104-e57f-7092-ab67-50359f43b547`。
 
-| 项 | 当前事实 |
+| 项目 | 现场核实 |
 |---|---|
-| 锁 | 主检出 docs/agent-work/.coordinator.lock 由 80146fec 持有（记录了接管证据），每轮更新 heartbeat |
-| 实施树 | claude/app-icons（42 提交）：应用图标接入 + 五个业务应用验收修复（CR-054）+ portal 内存上限；pytest 4817 通过 2 跳过，前端与守卫全部通过 |
-| PR | PR #1 已合并（main@6f463ba） |
-| 主检出 | main@7d690f1（7ae3527 部署 + 部署记录）；主检出工作树的图标任务等其他会话改动完整保留，不触碰 |
-| CI / 部署 | **生产运行 a4b42c8**（Actions 37226305708）：五个业务应用已向用户开放（SYNWEVO_SUITE_APPS），应用图标上线，验收缺陷全部修复；portal 内存 1.5GiB；五主机 /readyz 200，四角色同镜像；记录 docs/quality/deployment.md |
-| 本机门槛（admin-d9 7ae3527，2026-10-04T07:00Z） | testpaths 2996 passed / 2 skipped；infra unittest 8；npm test、typecheck、build、五守卫（c9896b6，其后无前端改动）；拒绝文案目录 7/7；SDK 与 main 相同未重跑 |
-| 当前包 | ① 第三轮复核修复（feat/business-apps，见上）；② R3-FE-04：事件唤醒按 poll_s 限频由协调者修（他人事件耗尽运行预算是缺陷）；预算规则本身（状态检查计入 max_calls、预算耗尽跳过 on_error、默认 7 天等待撑不满）为所有者决定；③ Admin 余项：D3/D4/D10/D11/D14/D15/D18 与低项，见 CODE_REVIEW CR-050 |
-| 并行 | 工作流 wf_a736bbb9-19a（第四轮复核，只读，四区域查找+核实）；business-apps 无其他写入者；r3-webhooks 已合入 |
-| 下一动作 | 观察真实使用（portal 日志与内存）；Agent 开放需模型与密钥及真实模型验收；Admin 余项 D3/D4/D10/D11/D14/D15/D18；所有者决定：D3、D5 其余、D7 第二步、R3-FE-04 预算规则、Webhook 解析池上限、ClamAV 主机步骤（仓库 compose 已含 clamd.conf 挂载，主机未装） |
+| 实施工作树 | `.claude/worktrees/agent-billing`，`claude/agent-billing@e0a22defdcc9bc91c0f05ce736095f35d1377512` 加本轮待提交修复 |
+| 基线 | 远端 main `3278dfd8ea3994f0fdef601aadd00990d7eff805` 是实施树祖先；此前 87 个计费提交未推送。旧 PR #1 已合并，无打开的 PR。主检出未提交图标等工作保留 |
+| 锁 | 主检出 `docs/agent-work/.coordinator.lock` 已核实 Claude 原任务配额耗尽且无执行 worker 后接管；原锁备份 `/private/tmp/synwevo-coordinator-before-codex-20261006.txt`。旧 Claude 每分钟循环仍存在但配额已耗尽，未擅自取消、未创建第二循环 |
+| 生产 | 只读 SSH 确认仍为 `a4b42c8da0cee86677cc7d6409e8eaff57543b2b`；accounts/docs/portal/messages/gateway healthy。CI 37226305708 对应此版本；本轮未部署 |
+| 真实模型 | 文件密钥仅在内存读取及隔离库密封保存；官方 models/balance 200；2 次 adapter 流式工具调用通过；隔离真实 Agent 已完成应用目录拒绝、Forms 列表、Forms 详情三条运行，7 个模型调用各结算一次 |
+| 本轮修复 | 支付通知/拒付竞争、支付密钥撤销与创建收银台竞争、欢迎额度每日容量并发；模型可见结果带服务器内部链接，Forms get 标记实际资源；工具卡三语言业务名称 |
+| 验证 | e0a22de 恢复了绑定 SHA 的旧门槛证据；当前补丁定向验证和浏览器验收进行中，不能称当前版本全量通过 |
+| 当前环境 | 隔离数据 `/private/tmp/synwevo-agent-live-20261006/data`；Accounts 37770、Portal 37769；真实 DeepSeek，测试钱包/审计赠送，USD0.10 上游总成本门槛。无真实支付、无客户数据 |
+| 下一动作 | 三处并发回归、Docs 补验、钱包/窄屏/三语言已完成；提交本任务文件、创建 PR 跟踪当前 SHA CI；通过既有 production workflow 发布；再核对生产版本与最小业务 |
 
-## 已验证与边界
+## 外部条件与明确边界
 
-- 持续同意：本人对一次已审核报价设定1–1000次、明确到期（≤366天）或直到撤销；固定route/价格/范围/每次预算/调用/期限；basis quote同事务撤销。每次人工发送原子签发并绑定普通quote；每次派发重检同意状态与钱包/周期/成本门槛。记录与绑定由SQLite触发器保持不可变。agent/flow/automation/system/api均拒绝（仅UI），机器入口须单独评审。
-- 个人预算（d3cba3c，已在6052c13）：日/周/月上限、原子准入、三语言设置界面已验收；周期上限不等于持续付款同意。
-- 正式DeepSeek/收费/支付退款未启用；本机协议、fixture路由和资金测试不代表真实链路。
-
-## 所有权、环境与恢复
-
-- 隔离验收：accounts 33770（/private/tmp/synwevo-payer-ui.py）与portal 33769（scratchpad/consent-ui.py：fixture路由、MockTransport阻断网络、空成本策略即关闭准入、无资金），数据仅scratchpad/live/data，SYNWEVO_TEST_INSTANCE=1；验收后已停止。31765/32765不触碰。
-- 测试包装/private/tmp/synwevo-suite-test.sh使用本树包和根venv3.14.5。
-- detached /private/tmp/synwevo-price-validation及stash513202cb1e188d613472d1506d755f238d9d14ed继续保留。
-
-## 外部条件及余项
-
-- 商户/运营主体/支付渠道/币种和商业政策待已有问题答复，不重复问、不编造金额或资金。
-- 真实DeepSeek此前仅models/balance GET200，未推理/收费；真实model/tool/产物/计量与支付生产小额测试仍未验。
-- CI：DECISIONS 2026-10-02已规定不无限加时；须找到单测固定成本（现约1s/项，早期0.35s）根因，保留全部测试与断言。
-- 余项依MASTER_PROMPT/BACKLOG：RPM/TPM及公平队列、上游余额/成本治理、支付退款、完整跨应用B1/跨空间Agent、API双SDK（WP9并行中）与全部应用验收。
+- 用户最新优先级：先完成 DeepSeek Agent 与计费，并部署。全球服务不等于已指定收款主体/地区。
+- 已异步询问收款公司与注册地区、现有 Stripe 商户，以及免费“1块”是否每账户一次人民币1元；等待答复，不重复询问、不编造。
+- Stripe 实际收款、微信/支付宝商户资格、真实 webhook 投递尚未验收；没有支付密钥不得标为充值已开放。
+- 公开披露 DeepSeek；上游 API 专门的训练/保留书面答复尚无，不能承诺零保留。未代用户发送外部邮件。
+- 本机测试价与额度是明确隔离的验收配置，不代表已批准公开零售价格；生产密钥仍待正式管理员治理配置，不能通过造管理员会话绕过门禁。
+- 历史产物与依据保留在 EVIDENCE.md、docs/quality/deployment.md。六应用的大范围验收不是本轮 DeepSeek 部署代码完成即可宣称全部完成。

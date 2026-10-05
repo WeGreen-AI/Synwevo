@@ -1,5 +1,11 @@
 import { registerMessages } from "@synwevo/ui/i18n-core";
 export const agentMessages = {
+  "今日赠送名额已满，请稍后再试。": { en: "Today's welcome grants are fully allocated. Please try again later.", "zh-Hant": "今日贈送名額已滿，請稍後再試。" },
+  "付款授权设置": { en: "Payment authorization settings", "zh-Hant": "付款授權設定" },
+  "查看可用工作空间": { en: "Find available workspaces", "zh-Hant": "查看可用工作空間" },
+  "查找应用操作": { en: "Find app actions", "zh-Hant": "尋找應用操作" },
+  "执行应用操作": { en: "Run app action", "zh-Hant": "執行應用操作" },
+  "应用操作": { en: "App action", "zh-Hant": "應用操作" },
   "模型调用排队超过等待上限，当前调用尚未发送，请稍后重试。": {"en": "The model call waited longer than allowed and was not sent. Try again later.", "zh-Hant": "模型呼叫排隊超過等待上限，目前呼叫尚未傳送，請稍後重試。"},
   "模型调用排队已满，当前调用尚未发送，请稍后再试。": {"en": "The model call queue is full. This call was not sent; try again later.", "zh-Hant": "模型呼叫排隊已滿，目前呼叫尚未傳送，請稍後再試。"},
   "你的模型调用排队已满，当前调用尚未发送，请等待已排队的调用完成。": {"en": "Your model call queue is full. This call was not sent; wait for queued calls to finish.", "zh-Hant": "你的模型呼叫排隊已滿，目前呼叫尚未傳送，請等待已排隊的呼叫完成。"},

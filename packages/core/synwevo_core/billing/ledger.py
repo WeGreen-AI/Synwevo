@@ -279,7 +279,8 @@ class Ledger:
             return journal
 
     def grant(self, *, grant_id: str, kind: str, payer_kind: str, payer_id: str, unit: Unit, amount: int,
-              reason: str, actor_id: str, abuse_key: str | None = None) -> dict:
+              reason: str, actor_id: str, abuse_key: str | None = None,
+              welcome_daily_cap: int | None = None) -> dict:
         """Credit an audited grant: never a payment, never anonymous, never without a reason.
 
         ``kind='welcome'`` is the one-time allowance (a person only; ``abuse_key`` identifies the
@@ -290,12 +291,21 @@ class Ledger:
         returns the first result, changed facts conflict. The row is the audit record (actor,
         reason, time); the journal entry is kind ``grant`` from the platform grant account.
         ``created`` in the result says whether this call made the grant or found it.
+
+        ``welcome_daily_cap`` is optional for compatibility and valid only for welcome grants.
+        It bounds their count in this environment over the rolling 24 hours on the ledger's
+        clock, across namespaces and units. Count and issuance share this BEGIN IMMEDIATE
+        transaction. Zero closes issuance; an idempotent replay does not consume capacity.
         """
         identifier(grant_id)
         identifier(actor_id)
         integer(amount, positive=True)
         if kind not in GRANT_KINDS:
             raise BillingError("invalid_grant")
+        if welcome_daily_cap is not None:
+            if kind != "welcome":
+                raise BillingError("invalid_grant")
+            integer(welcome_daily_cap)
         if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 500 or reason != reason.strip():
             raise BillingError("grant_reason_required")
         self._payer_kind(payer_kind)
@@ -322,6 +332,9 @@ class Ledger:
                     "SELECT 1 FROM billing_grants WHERE environment=? AND kind='welcome' AND (payer_id=? OR abuse_key=?)",
                     (self.environment, payer_id, abuse_key)).fetchone():
                 raise BillingError("welcome_already_granted")
+            if welcome_daily_cap is not None and self.count_grants(
+                    kind="welcome", since=max(0, self._now() - 86400)) >= welcome_daily_cap:
+                raise BillingError("welcome_capacity")
             wallet = self._payer_account(t, unit.code, payer_kind, payer_id)
             source = self._account(t, unit.code, "platform", "grant")
             key = _id()

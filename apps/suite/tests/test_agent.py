@@ -380,3 +380,31 @@ def test_memory_is_personal_and_the_agent_asks_before_remembering(agent):
     assert [m["body"] for m in op(agent, "agent.memory.list")["output"]["memories"]] == ["用繁体中文回答"]
     agent.sign_in("bob")
     assert op(agent, "agent.memory.list")["output"]["memories"] == []
+
+
+def test_draft_form_has_authenticated_link_without_publication_and_policy_still_withholds(agent):
+    import json
+    agent.sign_in('alice')
+    p = agent.people
+    form = op(agent, 'forms.form.create', {'title': 'Unpublished internal form'}, ws=p.a)['output']
+    path = f"/forms/w/{p.a}/f/{form['id']}"
+    op(agent, 'agent.workspace_policy.set', {'processing': 'platform'}, ws=p.a)
+    for allowed in (True, False):
+        if not allowed:
+            op(agent, 'agent.workspace_policy.set', {'processing': 'none'}, ws=p.a)
+        conv, turn = start(agent, [
+            call('run_operation', {'operation': 'forms.form.get', 'workspace_id': p.a,
+                                   'input': {'form_id': form['id']}}),
+            lambda msgs: say('Checked the form'),
+        ])
+        assert wait_turn(p.store, turn['turn_id']) == 'succeeded'
+        payload = json.loads(agent.agent.provider.requests[-1]['messages'][-1]['content'][0]['content'])
+        if allowed:
+            assert payload['result']['open_path'] == path
+        else:
+            assert payload['withheld'] is True and path not in json.dumps(payload)
+        public = op(agent, 'agent.conversation.get', {'conversation_id': conv})['output']
+        card = next(m for m in public['messages'] if m['role'] == 'assistant')['tool_calls'][0]
+        assert card['link'] == path  # The authorized person may open it independently of AI policy.
+    current = op(agent, 'forms.form.get', {'form_id': form['id']}, ws=p.a)['output']
+    assert current['published_version'] is None and current['public_link'] is None

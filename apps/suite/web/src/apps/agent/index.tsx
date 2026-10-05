@@ -312,9 +312,12 @@ function AgentApp() {
             maximum={money && <TurnMaximum maximum={turnMaximum(single ? null : activeConsent, offer)} />}
             hint={money ? t(chatCopy.turnMaximumHint[0]) : undefined}
             aside={writer && id && <>
+              <details className="ag-payment-settings">
+                <summary>{t("付款授权设置")}</summary>
               <ConsentPanel consents={consents.data} loading={consents.loading} error={consents.error} refresh={consents.refresh}
                 scope={conversation?.scope ?? null} spaces={spaces} payer={payerName} writer={writer} single={single} setSingle={setSingle} revoke={revoke}
                 offer={offer ?? null} />
+              </details>
               <ConsentRecovery writer={writer} retry={async () => {
                 try { await writer.retry(); } finally { consents.refresh(); setTick((n) => n + 1); await refresh(); }
               }} />
