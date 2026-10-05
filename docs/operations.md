@@ -497,6 +497,116 @@ docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwev
 
 **回滚代码**到不认识表格草稿的版本之前，另按 docs-sheet-live.md §9 末尾清掉表格草稿。
 
+## 11. 付费 Agent（DeepSeek）：停止开关、生产参数与告警处理
+
+适用于平台付费、按用户计费的受治理 DeepSeek 路径。行为与边界见 [platform/model-risk.md](platform/model-risk.md)（单次上限、
+刹车、总闸、放行名单、余额与对账）和 [platform/model-traffic.md](platform/model-traffic.md)（速率、在途、排队）。本节只写运维取值与步骤；
+下面的数是**首次生产开放的起点**，不是已验证的吞吐量。所有成本策略字段都在 Account 管理端「配置与治理 → 模型成本」页修改：
+预览、写理由、发布新版本（版本化、审计），不改主机文件、不重启。
+
+### 11.1 两个停止开关
+
+| | 一级：成本策略 `enabled=false` | 二级：从 `SYNWEVO_SUITE_APPS` 去掉 `agent` |
+|---|---|---|
+| 操作 | 「模型成本」页取消“启用”，写理由并发布 | 主机 `/opt/synwevo/config/runtime.env` 改这一行，重建 portal 角色（命令见下） |
+| 生效 | 下一次付费调用的准入：策略在发送事务里读取，没有缓存，不需要重启（`tests/integration/test_model_cost_settings.py::test_real_dispatch_reads_new_policy_without_restart`） | portal 重建完成后 |
+| 用户看到 | 新的付费调用在发送前被拒绝（`billing_cost_admission_disabled`）：“服务暂时不可用，未发送、未扣费” | Agent 不再注册：没有应用卡片、接口与工具 |
+| 照常运行 | 已发送调用的收尾与结算、计量恢复、余额监控、每日对账与账本审计 | 账户服务的管理页（总闸、放行名单、对账记录仍可查看与操作） |
+| 一起停止的 | 无 | 计量恢复线程与风险定时任务（`RiskMonitor`）随 Agent 停止：期间没有余额读数，对应日子的每日对账为 `incomplete`；用量未知的调用保持未决，直到重新启用 |
+| 恢复 | 发布 `enabled=true` 的新版本 | 把 `agent` 写回并重建 portal |
+
+另有一个等效于一级的手动入口：「付费风险控制」页的「关闭全部付费调用」（总闸，写理由；重新开启要理由与管理重认证）。它不产生新的成本策略
+版本；上游余额低于停止阈值、上游报告账户不可用或上游返回 402 时它会自动关闭。
+
+**顺序**：先一级（或总闸）；在「模型成本」页的「当前模型调用流量」确认“进行中的调用”为 0；确有需要再用二级。直接二级会让进行中的调用随
+进程重启中断，变成“用量未知”，在 Agent 重新启用前不会被处理。二级的主机步骤（先说明再做，先备份）：
+
+```bash
+cp /opt/synwevo/config/runtime.env /opt/synwevo/config/runtime.env.bak-$(date -u +%Y%m%dT%H%M%SZ)
+# 编辑 runtime.env：SYNWEVO_SUITE_APPS 去掉 agent，其余应用原样保留
+docker compose -f /opt/synwevo/config/compose.yaml up -d --no-deps --force-recreate --wait portal </dev/null
+```
+
+两种开关的每一次使用都写入 `docs/quality/deployment.md`（UTC 时间、哪个开关、原因、正在运行的提交、操作人）。
+
+### 11.2 生产参数的约束
+
+DeepSeek 不公布 RPM/TPM，只有按模型的账户并发上限：`deepseek-flash` 2500、`deepseek-v4-pro` 500（2026-10-05 读取官方 rate_limit 页；
+每次改参数前重新核对）。超出返回 429。平台的在途上限（`max_inflight`）是**两条路线合计**、没有按路线的在途上限，所以全部在途调用可能
+落在同一个模型上。由此得出下面的规则（`tests/integration/test_model_risk_guidance.py` 用 11.3 的示例逐条核对）：
+
+| # | 规则 | 不满足时 |
+|---|---|---|
+| 1 | `max_inflight` ≤ 0.8 × 已启用路线中**最小**的账户并发（启用 v4-pro 时 ≤ 400；只有 flash 时 ≤ 2000） | 上游 429；用量未知的调用在过期前仍计入在途，留 20% 余量 |
+| 2 | `max_unknown` ≥ `max_inflight` | 进行中的调用也计入“用量未知”，`max_unknown` 会成为真正的并发上限 |
+| 3 | `max_call_cost` ≥ 每条已启用路线在**高峰价**下的单次保守上界：⌈输入上限 × max(命中价, 未命中价) + 输出上限 × 输出价⌉ + 1（网关 `upper_bound`，成本单位） | 该路线的每一次调用都被拒绝（`cost_call_limit_exceeded`） |
+| 4 | `unknown_budget` ≥ `max_unknown` × `max_call_cost` | 未知用量金额先于数量上限触顶 |
+| 5 | `traffic.payer_tpm` ≥ 每条已启用路线的 输入上限 + 输出上限（发送前的 token 估算） | 每一次调用都被拒绝（`traffic_request_too_large`） |
+| 6 | `traffic.payer_inflight` ≤ `max_inflight`，付款人 RPM/TPM ≤ 平台 RPM/TPM，排队上限在总上限内 | 发布时校验拒绝 |
+| 7 | `risk.payer_window_cost` ≥ `traffic.payer_inflight` × `max_call_cost`；`risk.route_window_cost` ≥ `max_inflight` × `max_call_cost` | 正常的并发调用就会触发刹车（窗口内未结算的调用按保守上界计） |
+| 8 | `risk.balance_close` ≥ `unknown_budget` | 总闸关闭后，已发送的调用仍可能把上游余额扣到 0，触发上游 402 |
+| 9 | `risk.balance_warn` ≥ `risk.balance_close` + `daily_budget` | 预警到停止之间不足一天的支出，来不及充值 |
+| 10 | `risk.reconcile_tolerance` 起步 1 元，`risk.pending_alert` 约为 `unknown_budget` 的一半 | 容差过小会把定档与断流的合理差异当作漂移（model-risk.md §7） |
+
+每人的额度不在这里设置：单次运行最多 12 次调用、1 小时（代码固定），运行预算来自本人确认的报价；个人日/周/月上限与持续同意上限由本人
+在 Agent 设置中填写，未设置个人上限时付费运行不开始。
+
+### 11.3 首次生产开放（放行名单阶段）的起点
+
+假设：两条路线都启用，输入上限 131072、输出上限 32768 token；成本价用 DeepSeek 人民币价目表的**高峰价**（每百万 token：flash 未命中 2、
+输出 8；v4-pro 未命中 9、输出 27）；成本单位 `CNY`、scale 6（1 = 0.000001 元，必须与已发布的成本价单位一致）。单次保守上界：
+flash 524,289，v4-pro 2,064,385（约 2.06 元）。
+
+<!-- model-risk-guidance:start -->
+```json
+{
+  "enabled": true,
+  "unit": {"code": "CNY", "scale": 6},
+  "daily_budget": "200000000",
+  "weekly_budget": "1000000000",
+  "monthly_budget": "3000000000",
+  "unknown_budget": "120000000",
+  "max_inflight": 32,
+  "max_unknown": 48,
+  "max_call_cost": "2100000",
+  "traffic": {
+    "platform_rpm": 240, "platform_tpm": 10000000,
+    "payer_rpm": 20, "payer_tpm": 1000000, "payer_inflight": 2,
+    "wait_seconds": 60, "max_waiting": 64, "max_waiting_per_payer": 2
+  },
+  "risk": {
+    "allowlist_only": true,
+    "payer_window_s": 3600, "payer_window_cost": "20000000",
+    "route_window_s": 3600, "route_window_cost": "100000000",
+    "balance_warn": "400000000", "balance_close": "120000000", "balance_poll_s": 300,
+    "reconcile_tolerance": "1000000", "pending_alert": "60000000"
+  }
+}
+```
+<!-- model-risk-guidance:end -->
+
+即：平台每日 200 元、每周 1000 元、每月 3000 元；在途 32、未知 48 次 / 120 元；单次上限 2.10 元；平台每分钟 240 次、付款人每分钟 20 次、
+付款人同时 2 个；付款人每小时 20 元、每条路线每小时 100 元触发刹车；上游余额低于 400 元提醒、低于 120 元自动关闭总闸，每 5 分钟读取；
+对账容差 1 元；待确认用量超过 60 元提醒。
+
+**扩大到公开之前**（需求 §5 的上线顺序）：放行名单阶段至少连续数日每日对账为 `ok`、账本审计无差异、没有异常扣费，再发布
+`allowlist_only=false` 的新版本，并按所有者确定的预算放大日/周/月上限；在途上限仍受规则 1 约束（启用 v4-pro 时 ≤ 400）。
+
+### 11.4 告警与处理
+
+告警经站内通知与邮件发给持有 `platform.config.manage` 的平台管理员（付款人只收到自己的暂停通知），详情都在「付费风险控制」页，
+只有金额、状态与代码，没有对话内容。
+
+| 告警 | 先做什么 |
+|---|---|
+| 上游余额偏低 | 给 DeepSeek 账户充值；完成后在「付费风险控制」页登记上游充值（金额、时间、理由），否则当日对账会显示漂移 |
+| 付费调用总闸已关闭 | 看原因：余额低于停止阈值 / 上游不可用 / 上游 402 / 管理员。充值并等到下一次余额读数高于停止阈值后，写理由重新开启；余额仍低时下一次读数会再次关闭 |
+| 付费调用自动刹车 | 在页面看是哪个付款人或路线、窗口与阈值；核实是正常高峰还是异常（泄露的会话、脚本），再决定解除（理由 + 重认证）或保持 |
+| 模型成本对账 | `drift`：先核对是否有未登记的上游充值，再看待确认用量；`incomplete`：缺少边界读数（例如 Agent 被二级开关停过），人工核对后在页面重算 |
+| 账本余额审计差异 | 不要自动修复；保留现场，按 [billing-ledger.md](billing-ledger.md) 排查，修复是另行决定的维护操作 |
+| 用量待确认的成本偏高 | 查看计量恢复线程是否运行、上游是否中断；必要时先用一级开关停止新调用 |
+| 支付回调处理失败 | 按支付渠道的说明检查回调配置与收件箱记录 |
+
 ## 成员导入到期清理（CI-96）
 
 成员导入的记录与上传的名单文件标有 7 天有效期。账户服务每小时的清扫可以删除到期的记录（从不删除正在执行的导入）与其上传文件，以及没有记录、超过 7 天的旧上传文件。

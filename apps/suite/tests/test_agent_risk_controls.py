@@ -107,6 +107,8 @@ def test_latched_payer_stays_suspended_after_the_window_until_an_admin_lifts_it(
     g.model.open_run(replace(g.context, run_id='fixture-run-2'), route=g.route, budget=1000, max_calls=3,
                      deadline=g.ticks[0] + 500)
     g.args['context'] = replace(g.context, run_id='fixture-run-2')
+    # A fresh upstream id: if the suspension were not enforced, this call would be sent and succeed.
+    g.holder['body'] = g.holder['body'].replace(b'fixture-upstream-1', b'fixture-upstream-2')
     refused(g, 'step-3', 'risk_payer_suspended')
     assert len(g.seen) == 1
     suspension = g.store.one('SELECT id FROM model_risk_suspensions')['id']
@@ -115,7 +117,6 @@ def test_latched_payer_stays_suspended_after_the_window_until_an_admin_lifts_it(
         controls.lift(suspension, actor_id=boss, reason='short')
     lifted = controls.lift(suspension, actor_id=boss, reason='reviewed the isolated fixture spend')
     assert lifted['lifted_by'] == boss and lifted['lift_reason'] == 'reviewed the isolated fixture spend'
-    g.holder['body'] = g.holder['body'].replace(b'fixture-upstream-1', b'fixture-upstream-2')
     step(g, 'step-4')
     assert len(g.seen) == 2
 
@@ -224,3 +225,29 @@ def test_metered_composition_owns_the_risk_monitor_and_its_shutdown(gateway, mon
         for hook in api.state.shutdown_hooks:
             hook()
     assert monitor._thread is None or not monitor._thread.is_alive()
+
+
+def test_second_kill_switch_removing_agent_from_the_release_list_leaves_no_paid_path(gateway, monkeypatch):
+    """docs/operations.md §11.1: without `agent` in SYNWEVO_SUITE_APPS nothing of the paid Agent is
+    installed: no Agent route, no metering recovery and no risk monitor, even with a provider ready."""
+    from synwevo_core.http import build_platform, new_api
+    from synwevo_suite.agent.gateway import MeteredTurnProvider
+    from synwevo_suite.app import install
+    monkeypatch.setenv('SYNWEVO_SUITE_APPS', 'forms')
+    g = gateway
+    plat = build_platform(str(g.store.root))
+    api = new_api('Isolated kill switch fixture')
+    g.model.store = plat.store
+    g.ledger.store = plat.store
+    api.state.agent_provider = MeteredTurnProvider(g.model)
+    install(api, plat, start_jobs=True)
+    try:
+        assert getattr(api.state, 'model_risk_monitor', None) is None
+        assert getattr(api.state, 'agent_metering_recovery', None) is None
+        paths = {getattr(route, 'path', '') for route in api.routes}
+        assert not any(path.startswith('/api/suite/agent') for path in paths)
+        assert any(path.startswith('/api/suite/') for path in paths)  # The released application is served.
+        assert g.seen == []
+    finally:
+        for hook in getattr(api.state, 'shutdown_hooks', []):
+            hook()
