@@ -8,14 +8,17 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_serializer
+from pydantic import (BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator,
+                      model_serializer, model_validator)
 
 from ..errors import ServiceError
 from .admission import CostAdmission, CostPolicy
 from .catalogue import PriceUnit
 from .ledger import Ledger
 from .models import BillingError, Unit, identifier
+from .risk import POLL_MAX_S, POLL_MIN_S, WINDOW_MAX_S, WINDOW_MIN_S, RiskPolicy
 from .traffic import TrafficLimits
 
 PROVIDER = "deepseek"
@@ -41,6 +44,53 @@ class TrafficSpec(BaseModel):
         return TrafficLimits(**self.model_dump())
 
 
+# Amounts are integer strings in the policy unit's smallest unit, bounded to signed 64 bits.
+Amount = Annotated[str, StringConstraints(pattern=r"^(0|[1-9][0-9]{0,18})$")]
+
+
+def _int64(value):
+    if value is not None and int(value) > 2**63-1:
+        raise ValueError("invalid amount")
+    return value
+
+
+class RiskSpec(BaseModel):
+    """Optional (docs/platform/model-risk.md). Every field is explicit; null switches a check off.
+    Velocity counts provider cost in the policy unit; balance thresholds compare the upstream
+    balance in the same unit (its code must be the balance currency)."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    allowlist_only: bool
+    payer_window_s: int = Field(ge=WINDOW_MIN_S, le=WINDOW_MAX_S)
+    payer_window_cost: Amount | None
+    route_window_s: int = Field(ge=WINDOW_MIN_S, le=WINDOW_MAX_S)
+    route_window_cost: Amount | None
+    balance_warn: Amount | None
+    balance_close: Amount | None
+    balance_poll_s: int = Field(ge=POLL_MIN_S, le=POLL_MAX_S)
+    reconcile_tolerance: Amount
+    pending_alert: Amount | None
+
+    @field_validator("payer_window_cost", "route_window_cost", "balance_warn", "balance_close",
+                     "reconcile_tolerance", "pending_alert")
+    @classmethod
+    def bounded_amount(cls, value):
+        return _int64(value)
+
+    @model_validator(mode="after")
+    def ordered_thresholds(self):
+        if (self.balance_warn is not None and self.balance_close is not None
+                and int(self.balance_close) > int(self.balance_warn)):
+            raise ValueError("close threshold above warning threshold")
+        return self
+
+    def policy(self) -> RiskPolicy:
+        values = self.model_dump()
+        for name in ("payer_window_cost", "route_window_cost", "balance_warn", "balance_close",
+                     "reconcile_tolerance", "pending_alert"):
+            values[name] = int(values[name]) if values[name] is not None else None
+        return RiskPolicy(**values)
+
+
 class CostPolicySpec(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     enabled: bool
@@ -52,19 +102,24 @@ class CostPolicySpec(BaseModel):
     max_inflight: int = Field(ge=1, le=10000)
     max_unknown: int = Field(ge=1, le=10000)
     traffic: TrafficSpec | None = None
+    # Per-call cap on the reserved cost bound (same unit); absent = no cap.
+    max_call_cost: Amount | None = None
+    risk: RiskSpec | None = None
 
     @model_serializer(mode="wrap")
     def _without_unset_traffic(self, handler):
-        # Revisions without traffic limits keep their exact stored and signed shape.
+        # Revisions without these optional sections keep their exact stored and signed shape.
         data = handler(self)
-        if isinstance(data, dict) and data.get("traffic") is None:
-            data.pop("traffic", None)
+        if isinstance(data, dict):
+            for name in ("traffic", "max_call_cost", "risk"):
+                if data.get(name) is None:
+                    data.pop(name, None)
         return data
 
-    @field_validator("daily_budget", "weekly_budget", "monthly_budget", "unknown_budget")
+    @field_validator("daily_budget", "weekly_budget", "monthly_budget", "unknown_budget", "max_call_cost")
     @classmethod
     def bounded_amount(cls, value):
-        if int(value) > 2**63-1:
+        if value is not None and int(value) > 2**63-1:
             raise ValueError("invalid budget")
         return value
 
@@ -72,6 +127,8 @@ class CostPolicySpec(BaseModel):
         values = self.model_dump()
         values["unit"] = Unit(**values["unit"])
         values["traffic"] = self.traffic.limits() if self.traffic is not None else None
+        values["risk"] = self.risk.policy() if self.risk is not None else None
+        values["max_call_cost"] = int(self.max_call_cost) if self.max_call_cost is not None else None
         for name in ("daily_budget", "weekly_budget", "monthly_budget", "unknown_budget"):
             values[name] = int(values[name])
         return CostPolicy(revision=revision, account_ref=ACCOUNT_REF, provider=PROVIDER, **values)
