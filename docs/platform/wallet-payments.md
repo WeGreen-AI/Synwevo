@@ -69,20 +69,40 @@ Stripe 重试，入账后再处理，不会丢失。解除冻结是财务管理�
 **未使用余额（基准日）**：每年 3 月 31 日与 9 月 30 日日终（日本时间 24:00，即日本预付式支付手段申报的基准日）所有个人
 与组织钱包的余额合计（含赠送额度，并按分录类型拆分），以及当前值。计算只读不可变账本分录，不估算。
 
-## 5. 验证
+## 5. 组织付费
+
+组织钱包（`org_wallet`）由持有组织权限 `org.billing.manage` 的人充值（所有者默认持有；管理员默认**不**持有，可通过
+自定义角色授予）。付费设置在账户源站：
+
+| 接口（前缀 `/api/auth/organizations/{oid}/billing`） | 说明 |
+|---|---|
+| `GET` | 组织钱包、每位成员的授权（是否允许、每月额度、本月已用与预留）、每个工作空间的可选每月额度 |
+| `PUT /members/{uid}` | `{enabled, monthly_limit_minor, expected_revision}`：允许某成员用组织付费；版本冲突返回 409 |
+| `PUT /workspaces/{wid}` | `{monthly_limit_minor 或 null, expected_revision}`：工作空间每月额度（null 为不限） |
+| `GET /statement` | 组织钱包流水；每笔消费标明是哪位成员、哪个工作空间（只有金额与元数据） |
+
+成员在对话中选择付款方（`GET /api/suite/agent/payers`，个人默认在第一位）。额度按 UTC 自然月计算，已结算消费加进行中
+预留不得超过成员额度与工作空间额度；撤回授权、成员离开、组织冻结或删除都会在下一次预留与下一次发送前生效。所有变更
+写审计（`org.billing.member_grant`、`org.billing.workspace_limit`）。组织付费的管理页面尚未实现（本期提供接口）。
+
+## 6. 验证
 
 - `tests/integration/test_billing_grants_chargebacks.py`、`test_billing_welcome.py`：账本赠送、拒付、冻结、组织钱包、迁移。
 - `services/identity/tests/test_wallet_topups.py`：16 项端到端（Stripe 以 `httpx.MockTransport` 测试替身，Webhook 用夹具
   签名密钥按官方算法签名）：未配置诚实关闭、服务端定价、Checkout 参数、限频、Turnstile、签名/时效/多签名、只在已付时入账、
   重放与乱序、错配拒绝、收据、拒付冻结、组织充值。
+- `tests/integration/test_billing_org_payers.py`、`apps/suite/tests/test_agent_payers.py`、
+  `services/identity/tests/test_org_billing_routes.py`：组织授权、成员与工作空间月额度（含跨月）、撤回授权阻止发送、
+  组织付款不动个人钱包、付款方列表、委派自定义角色、版本冲突与审计。
 - `services/identity/tests/test_admin_payments.py`：设置发布与密钥不回显、环境与密钥模式绑定、权限矩阵、赠送、财务视图与解冻、
   基准日、旧授权表加宽。`test_platform_access.py` 的路由权限矩阵包含新路由与财务角色。
 - 没有调用真实 Stripe：Checkout 参数名与签名算法按 docs.stripe.com（2026-10-05 读取）实现；真实测试模式联调（含微信支付/
   支付宝在 CNY 下的可用性与最低金额）须在隔离实例用 Stripe 测试密钥完成并记录证据。
 
-## 6. 未实现 / 待所有者
+## 7. 未实现 / 待所有者
 
 - 退款：按所有者决定不提供。条款、定价页的“不退款”文字由公开页面工作包落地。
 - 发票/税务、Stripe 对 CNY 结算与各支付方式最低金额的账户级核实。
 - 争议结案后的自动处理；欠款的自动追收（目前冻结 + 人工处理）。
 - 3-D Secure 由 Stripe Checkout 按其风控自动触发；本平台不另行配置。
+- 组织付费的账户页界面（授权成员、设置额度、组织账单）；目前只有接口与测试。

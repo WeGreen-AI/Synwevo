@@ -121,7 +121,8 @@ class ModelConsents:
                       for key in ('input_uncached', 'input_cached', 'output')},
             'per_tokens': sale['per_tokens'], 'per_call_hold': str(terms['per_call_hold']),
             'budget': str(terms['budget']), 'total_maximum': str(terms['budget'] * row['max_runs']),
-            'max_calls': terms['max_calls'], 'run_seconds': terms['run_seconds']}
+            'max_calls': terms['max_calls'], 'run_seconds': terms['run_seconds'],
+            'payer': self.quotes.payer_of(terms) | ({'id': user_id} if self.quotes.payer_of(terms)['kind'] == 'user' else {})}
 
     def list(self, user_id, conversation_id):
         with self.store.tx() as t:
@@ -157,10 +158,14 @@ class ModelConsents:
         seconds = min(terms['run_seconds'], terms['route']['valid_until'] - now)
         if row['expires_at'] is not None:
             seconds = min(seconds, row['expires_at'] - now)
+        payer = self.quotes.payer_of(terms)
         quote = self.quotes.issue(user_id, conversation, text=text, parent_id=parent_id,
-            regenerate_of=regenerate_of, budget=terms['budget'], max_calls=terms['max_calls'], run_seconds=seconds)
+            regenerate_of=regenerate_of, budget=terms['budget'], max_calls=terms['max_calls'], run_seconds=seconds,
+            payer=payer if payer['kind'] == 'organization' else None)
         issued = json.loads(self.quotes._row(user_id, quote['id'])['terms_json'])
         if any(issued[key] != terms[key] for key in ('route', 'sale', 'budget', 'max_calls', 'per_call_hold')):
+            raise BillingError('consent_model_changed')
+        if self.quotes.payer_of(issued) != self.quotes.payer_of(terms):
             raise BillingError('consent_model_changed')
         self.store.execute('INSERT INTO agent_quote_consents VALUES (?,?,?)',
                             (quote['id'], consent_id, used + 1))

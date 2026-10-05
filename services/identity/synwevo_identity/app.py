@@ -139,6 +139,9 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     from .api_platform import build_router as build_api_platform_router
     api.include_router(build_account_router(identity, sessions, mailer, audit))
     api.include_router(build_organization_router(store, identity, sessions, audit, invites, mailer))
+    # An organization paying for its members (org-payments): wallet, grants, limits, statement.
+    from .org_billing_routes import build_router as build_org_billing_router
+    api.include_router(build_org_billing_router(identity, sessions, audit))
     from synwevo_core.member_import import BasicIngest
     from .member_import_routes import build_router as build_member_import_router
     api.state.ingest = ingest or BasicIngest()

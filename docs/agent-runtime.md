@@ -28,6 +28,25 @@ platform credential or also personal credentials. Personal workspaces default to
 choice. These policies govern model processing; normal application authorization continues to
 apply to every operation. Platform API administration is not granted by personal Agent access.
 
+## Payers (org-payments, 2026-10-05)
+
+A paid run names its payer in the quote (`agent.turn.quote` input `payer_kind` = `user` | `organization`,
+`payer_id`). The person is the default. An organization pays only when its current grant lets this member
+charge it (`billing.org_payers`: enabled, a monthly limit per member, an optional monthly limit per
+workspace, UTC calendar month, spend plus active holds). The quote's terms, a consent built from it, the
+run's `ChargeContext` (`payer_kind='organization'`, `organization_id`) and every billing call record the
+payer; the ledger rechecks the grant and limits under the writer lock at every reservation and before
+every send, so withdrawing a grant stops the next send without any network call. Quotes and consents
+return `payer: {kind, id}`.
+
+`GET /api/suite/agent/payers` lists the payers the signed-in person may charge — the personal wallet first
+(`available`, `frozen`), then each granting organization with its wallet's available units and this
+member's `monthly_limit`, `spent_this_month`, `held` and `remaining_this_month` (decimal strings of wallet
+units, `unit.scale` places, CNY). Opening the Agent is its first use: this read also grants the one-time
+welcome allowance when configured (docs/personal-wallet.md) and reports its state. Organizations manage
+grants and limits on the accounts origin (`/api/auth/organizations/{oid}/billing`, permission
+`org.billing.manage`; docs/platform/wallet-payments.md).
+
 ## Execution and recovery
 
 The server persists messages, turns, tool calls and SSE events. Text is rendered from authorized

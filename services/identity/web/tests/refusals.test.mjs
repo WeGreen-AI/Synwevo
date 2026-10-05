@@ -58,6 +58,7 @@ const SERVER = [
   { file: ID + "payment_routes.py", surfaces: ["account"] },
   { file: ID + "payments.py", surfaces: ["account"] },
   { file: ID + "admin_payments.py", surfaces: ["admin"] },
+  { file: ID + "org_billing_routes.py", surfaces: ["org"] },
   { file: CORE + "billing/payment_settings.py", surfaces: ["admin"] },
   { file: CORE + "billing/catalogue.py", surfaces: ["admin"] },
   { file: CORE + "billing/cost_settings.py", surfaces: ["admin"] },

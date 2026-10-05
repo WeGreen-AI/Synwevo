@@ -16,6 +16,7 @@ import OrganizationReports from "./org/OrganizationReports";
 import OrganizationAudit from "./org/OrganizationAudit";
 import { orgPath, roleSource, statusSource, type Organization, type OrganizationWorkspace, type PermissionInfo } from "./org/types";
 import "../organization.messages";
+import "../org-billing.messages";
 
 export default function Organizations() {
   const { oid } = useParams<{ oid: string }>();
