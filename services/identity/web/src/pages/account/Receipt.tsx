@@ -3,6 +3,7 @@ import { get, useSession } from '@synwevo/auth-client';
 import { useI18n, type Translator } from '@synwevo/ui';
 import { Topbar } from '../../components/Topbar';
 import { useLoad } from '../../lib/hooks';
+import { WalletGate } from './WalletGate';
 import { ErrorNotice, errorText, timeText } from './common';
 import { WALLET_API, paymentText, receiptText, type Receipt } from './walletModel';
 import './wallet.messages';
@@ -46,6 +47,10 @@ export function ReceiptView({ data, timezone, onDownload }: { data: Receipt; tim
 /** The receipt of one credited top-up, printable (or saved as PDF by the browser) and
  *  downloadable as plain text. Only the order's payer can read it; the server decides. */
 export default function ReceiptPage() {
+  return <WalletGate><ReceiptBody /></WalletGate>;
+}
+
+function ReceiptBody() {
   const { orderId = '' } = useParams();
   const { me } = useSession();
   const { t, locale } = useI18n();

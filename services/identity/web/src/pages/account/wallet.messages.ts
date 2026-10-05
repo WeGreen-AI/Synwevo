@@ -4,6 +4,8 @@ import { registerMessages } from '@synwevo/ui';
 registerMessages({
   // ---- wallet
   '钱包与用量': { en: 'Wallet & usage', 'zh-Hant': '錢包與用量' },
+  '这个部署没有提供付费 Agent 钱包': { en: 'This deployment does not offer the paid Agent wallet.', 'zh-Hant': '這個部署沒有提供付費 Agent 錢包' },
+  '这里没有余额、充值或用量可看，也不会产生任何费用。': { en: 'There is no balance, top-up or usage to see here, and nothing is charged.', 'zh-Hant': '這裡沒有餘額、儲值或用量可看，也不會產生任何費用。' },
   '个人钱包': { en: 'Personal wallet', 'zh-Hant': '個人錢包' },
   '组织钱包': { en: 'Organization wallet', 'zh-Hant': '組織錢包' },
   '付款方': { en: 'Payer', 'zh-Hant': '付款方' },

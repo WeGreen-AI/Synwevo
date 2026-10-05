@@ -14,7 +14,7 @@ const WEB = fileURLToPath(new URL('../', import.meta.url));
 const storage = new Map();
 globalThis.window ??= { location: new URL('http://127.0.0.1/'), history: { state: null, replaceState() {} }, addEventListener() {}, removeEventListener() {} };
 globalThis.sessionStorage ??= { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) };
-let server, ui, model, wallet, topup, status, usage, chart, receipt, topbar;
+let server, ui, model, wallet, topup, status, usage, chart, receipt, topbar, gate;
 before(async () => {
   server = await createServer({ root: WEB, configFile: false, logLevel: 'error', appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   ui = await server.ssrLoadModule('@synwevo/ui');
@@ -26,6 +26,7 @@ before(async () => {
   chart = await server.ssrLoadModule('/src/pages/account/UsageChart.tsx');
   receipt = await server.ssrLoadModule('/src/pages/account/Receipt.tsx');
   topbar = await server.ssrLoadModule('/src/components/Topbar.tsx');
+  gate = await server.ssrLoadModule('/src/pages/account/WalletGate.tsx');
   await server.ssrLoadModule('/src/components/Topbar.messages.ts');
   await server.ssrLoadModule('/src/pages/account/WalletSettings.tsx');
 });
@@ -277,8 +278,25 @@ test('the wallet’s own pages lead back to the wallet; the wallet leads back to
   assert.deepEqual(topbar.parentOf('/account/wallet'), { href: '/account', label: '账户与安全' });
 });
 
+// ------------------------------------------------------------------ a deployment without the wallet
+test('without the wallet the bar draws no wallet entry, and the wallet pages say plainly it is not offered', () => {
+  // The session's deployment state not known, or known without the wallet: no link to a page that cannot work.
+  window.matchMedia ??= () => ({ matches: false, addEventListener() {}, removeEventListener() {} });   // fixture: a wide screen
+  const bar = render(h(topbar.Topbar, { title: 'Fixture' }));
+  assert.ok(bar.includes('href="/account') && !bar.includes('/account/wallet'), bar);
+  assert.equal(gate.walletOffered(null), false);
+  assert.equal(gate.walletOffered({}), false);
+  assert.equal(gate.walletOffered({ wallet_offered: false }), false);
+  assert.equal(gate.walletOffered({ wallet_offered: true }), true);
+  const page = render(h(gate.WalletNotOffered));
+  assert.ok(page.includes('这个部署没有提供付费 Agent 钱包') && page.includes('href="/account"'), page);
+  assert.ok(!page.includes('重试') && !page.includes('稍后') && !page.includes('<button'), 'a deliberate off state is not an outage: no retry');
+  for (const [locale, sentence] of [['en', 'This deployment does not offer the paid Agent wallet.'], ['zh-Hant', '這個部署沒有提供付費 Agent 錢包']])
+    assert.equal(ui.translate(locale, '这个部署没有提供付费 Agent 钱包'), sentence);
+});
+
 // ------------------------------------------------------------------ three languages
-const SOURCES = ['Wallet.tsx', 'Usage.tsx', 'UsageChart.tsx', 'TopupDialog.tsx', 'TopupStatus.tsx', 'Receipt.tsx', 'WalletSettings.tsx', 'walletModel.ts']
+const SOURCES = ['Wallet.tsx', 'WalletGate.tsx', 'Usage.tsx', 'UsageChart.tsx', 'TopupDialog.tsx', 'TopupStatus.tsx', 'Receipt.tsx', 'WalletSettings.tsx', 'walletModel.ts']
   .map(name => `src/pages/account/${name}`);
 test('every sentence on the wallet pages exists in Traditional Chinese and English', () => {
   const missing = [];

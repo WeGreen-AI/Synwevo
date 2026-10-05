@@ -78,7 +78,16 @@ def public_state(ident: Identity, role: str) -> dict:
             # offered on this one (a WebAuthn credential is bound to its RP ID). One deployment-
             # wide boolean — never per account — so the sign-in screen can explain a "no passkey
             # here" result instead of leaving the person to guess.
-            "passkeys_elsewhere": passkeys_registered_elsewhere(ident.store)}
+            "passkeys_elsewhere": passkeys_registered_elsewhere(ident.store),
+            # Whether this deployment offers the paid Agent wallet at all (billing environment and
+            # wallet units configured). Deployment-wide, never per account: the account shells
+            # draw their wallet entries only then, instead of links to a page that cannot work.
+            "wallet_offered": _wallet_offered()}
+
+
+def _wallet_offered() -> bool:
+    from synwevo_core.billing.wallet_config import wallet_offered
+    return wallet_offered()
 
 
 def _messages_url(ident: Identity) -> str | None:

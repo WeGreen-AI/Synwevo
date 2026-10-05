@@ -52,6 +52,14 @@ def units_from_env() -> tuple[Unit, ...]:
         return ()
 
 
+def wallet_offered() -> bool:
+    """Whether this deployment offers the wallet at all: a billing environment and wallet units are
+    configured. Off is a deliberate state (production ships with billing off), not an outage: the
+    account shells draw their wallet entries only when this is true, and the wallet's reads answer
+    "not offered here" otherwise (identity wallet_routes)."""
+    return environment_from_env() is not None and bool(units_from_env())
+
+
 def cny_unit(units) -> Unit | None:
     """The CNY wallet unit, when configured with at least fen precision."""
     for unit in units or ():

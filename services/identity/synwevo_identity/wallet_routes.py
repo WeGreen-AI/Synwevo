@@ -2,7 +2,10 @@
 
 The positional dependencies match account_routes.build_router. The host must additionally
 inject its environment-bound Ledger (using the same Store) and explicitly configured
-Units. Missing configuration returns 503; this module invents no unit, price or environment.
+Units. No ledger or no units means the deployment does not offer the wallet: 404
+``wallet_not_offered`` (a deliberate state, never "try again later"; the shells hide their wallet
+entries from ``wallet_offered`` in the auth state). An inconsistent configuration or a failing
+read returns 503 ``wallet_unavailable``. This module invents no unit, price or environment.
 Only the admitted central session determines who is asking. No admin or workspace override.
 
 Payer selection (shared contract ``{"kind": "user"|"organization", "id"}``): ``payer_kind`` and
@@ -130,6 +133,10 @@ def _unavailable() -> ServiceError:
     return ServiceError(503, "wallet_unavailable", "个人钱包暂不可用，请稍后再试")
 
 
+def _not_offered() -> ServiceError:
+    return ServiceError(404, "wallet_not_offered", "这个部署没有提供付费 Agent 钱包")
+
+
 def from_host(store: Store) -> tuple[Ledger | None, tuple[Unit, ...]]:
     """Capture explicit host settings at installation; missing/invalid means unavailable.
 
@@ -226,7 +233,9 @@ def build_router(ident: Identity, sessions: Sessions, mailer: Mailer,
         return current_user(request)["id"]
 
     def configured() -> tuple[Ledger, Literal["test", "live"]]:
-        if (ledger is None or not 1 <= len(wallet_units) <= 16 or environment not in ("test", "live")
+        if ledger is None or not wallet_units:
+            raise _not_offered()
+        if (not 1 <= len(wallet_units) <= 16 or environment not in ("test", "live")
                 or ledger.environment != environment or ledger.store is not ident.store
                 or sessions.store is not ident.store
                 or any(not isinstance(unit, Unit) for unit in wallet_units)

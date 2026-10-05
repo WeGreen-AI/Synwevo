@@ -15,6 +15,7 @@ import OrganizationApprovals from "./org/OrganizationApprovals";
 import OrganizationReports from "./org/OrganizationReports";
 import OrganizationAudit from "./org/OrganizationAudit";
 import OrganizationBilling from "./org/OrganizationBilling";
+import { walletOffered } from "../lib/walletOffered";
 import { orgPath, roleSource, statusSource, type Organization, type OrganizationWorkspace, type PermissionInfo } from "./org/types";
 import "../organization.messages";
 import "../org-billing.messages";
@@ -49,7 +50,7 @@ function OrganizationList() {
   </OrgPage>;
 }
 function OrganizationDetail({ id }: { id: string }) {
-  const { t, locale } = useI18n(); const { me, refresh } = useSession();
+  const { t, locale } = useI18n(); const { me, state, refresh } = useSession();
   const [org, setOrg] = useState<Organization | null>(null); const [workspaces, setWorkspaces] = useState<OrganizationWorkspace[]>([]);
   const [error, setError] = useState<unknown>(null); const [revision, setRevision] = useState(0); const [modal, setModal] = useState<string | null>(null);
   const [name, setName] = useState(""); const [policy, setPolicy] = useState<"admins" | "owners">("admins");
@@ -93,8 +94,9 @@ function OrganizationDetail({ id }: { id: string }) {
       <OrganizationReports organization={org} mine={mine} />
       <OrganizationBilling organization={org} mine={mine} />
       <OrganizationAudit organization={org} mine={mine} />
-      {/* The organization's wallet is read by its billing managers only (the server decides on every read). */}
-      {(org.role === "owner" || mine.includes("org.billing.manage")) && <section className="org-section"><h2>{t("组织钱包")}</h2>
+      {/* The organization's wallet is read by its billing managers only (the server decides on every read),
+          and only on a deployment that offers the wallet at all (auth state `wallet_offered`). */}
+      {walletOffered(state) && (org.role === "owner" || mine.includes("org.billing.manage")) && <section className="org-section"><h2>{t("组织钱包")}</h2>
         <p className="tiny muted">{t("组织的余额、充值、成员用量与调用明细。成员的对话内容不会显示。")}</p>
         <div><a className="btn" href={`/account/wallet?payer=${encodeURIComponent(`organization:${org.id}`)}`}>{t("打开组织钱包")}</a></div></section>}
       {manage && <section className="org-section"><h2>{t("组织设置")}</h2><p className="tiny muted">{t(org.invitation_policy === "owners" ? "仅组织所有者可发送工作空间邀请。" : "组织所有者和管理员可发送工作空间邀请。")}</p><p className="tiny muted">{t(org.transfer_policy === "any" ? "组织内容可按各工作空间的数据流政策带到组织以外。" : "组织内容只能在组织的工作空间之间转移。")}</p>{org.status === "active" && <button type="button" className="btn" onClick={() => { setName(org.name); setPolicy(org.invitation_policy); setTransfer(org.transfer_policy ?? "organization"); setModal("settings"); }}>{t("编辑组织设置")}</button>}</section>}

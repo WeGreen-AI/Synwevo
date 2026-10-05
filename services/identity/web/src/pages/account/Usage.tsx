@@ -7,6 +7,7 @@ import { useLoad } from '../../lib/hooks';
 import { ErrorNotice, errorText, timeText } from './common';
 import UsageChart from './UsageChart';
 import { PayerPicker, payerName, usePayers } from './Wallet';
+import { WalletGate } from './WalletGate';
 import { PRESETS, callsPath, chartBars, csvPath, localToday, moneyText, parsePayer, payerKey, periodDays, presetPeriod,
   usagePath, withQuery, type CallRow, type CallState, type CallsPage, type Payer, type Period, type Preset,
   type UsageGroup, type UsageSummary } from './walletModel';
@@ -120,6 +121,10 @@ function Calls({ payer, period, timezone }: { payer: Payer; period: Period; time
 }
 
 export default function Usage() {
+  return <WalletGate><UsagePage /></WalletGate>;
+}
+
+function UsagePage() {
   const { me } = useSession();
   const { t, locale } = useI18n();
   const [params, setParams] = useSearchParams();
