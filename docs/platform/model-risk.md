@@ -149,7 +149,8 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 | 登记上游充值 | `POST /topups` | 同上 |
 | 重算某日 / 立即审计账本 | `POST /reconciliations/run` | 同上 |
 
-每个修改带客户端幂等键；授权在写状态、审计与操作结果的同一事务内复核；同一键不同内容返回 409 `idempotency_conflict`；
+每个修改先检查授权，再检查计费环境是否配置（没有权限的人得到权限拒绝，不会得知部署是否配置了计费）；全部 13 个接口登记在
+平台权限矩阵 `services/identity/tests/test_platform_access.py` 中。每个修改带客户端幂等键；授权在写状态、审计与操作结果的同一事务内复核；同一键不同内容返回 409 `idempotency_conflict`；
 校验失败不回显提交值。阈值本身在「模型成本」页设置。
 
 ## 11. 备份与恢复

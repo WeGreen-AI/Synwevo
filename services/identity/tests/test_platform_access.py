@@ -14,6 +14,7 @@ Isolated data directory and file mail only; the grants in fixtures go through th
 from __future__ import annotations
 
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -80,6 +81,20 @@ ROUTES = [
     ("GET", "/api/admin/billing/model-provider/history", "platform.config.view", False),
     ("POST", "/api/admin/billing/model-provider/preview", "platform.config.manage", False),
     ("POST", "/api/admin/billing/model-provider/publish", "platform.config.manage", True),
+    # Paid-model risk controls (docs/platform/model-risk.md §10): reopening paid calls is dangerous.
+    ("GET", "/api/admin/billing/risk", "platform.config.view", False),
+    ("GET", "/api/admin/billing/risk/suspensions", "platform.config.view", False),
+    ("POST", "/api/admin/billing/risk/suspensions/{suspension_id}/lift", "platform.config.manage", True),
+    ("GET", "/api/admin/billing/risk/breaker", "platform.config.view", False),
+    ("POST", "/api/admin/billing/risk/breaker/open", "platform.config.manage", False),
+    ("POST", "/api/admin/billing/risk/breaker/close", "platform.config.manage", True),
+    ("GET", "/api/admin/billing/risk/allowlist", "platform.config.view", False),
+    ("POST", "/api/admin/billing/risk/allowlist", "platform.config.manage", True),
+    ("POST", "/api/admin/billing/risk/allowlist/{entry_id}/remove", "platform.config.manage", False),
+    ("GET", "/api/admin/billing/risk/balance", "platform.config.view", False),
+    ("POST", "/api/admin/billing/risk/topups", "platform.config.manage", False),
+    ("GET", "/api/admin/billing/risk/reconciliations", "platform.config.view", False),
+    ("POST", "/api/admin/billing/risk/reconciliations/run", "platform.config.manage", False),
     ("GET", "/api/admin/registration", "platform.config.view", False),
     ("POST", "/api/admin/registration", "platform.config.manage", True),
     ("GET", "/api/admin/identity-providers", "platform.config.view", False),
@@ -193,12 +208,33 @@ def _path(template, w, *, legacy: str | None = None):
     wid = legacy if legacy and template.endswith(HISTORICAL) else w["wid"]
     return template.format(uid=w["plain"]["id"], wid=wid, mid="mail_fixture_missing",
                            draft_id=w["draft_id"], run_id="run_matrix_fixture", flow_run_id="fr_matrix_fixture",
-                           oid="org_fixture_missing", action="freeze", gid="pg_fixture_missing")
+                           oid="org_fixture_missing", action="freeze", gid="pg_fixture_missing",
+                           suspension_id="rsus_fixture_missing", entry_id="rallow_fixture_missing")
+
+
+#: Risk changes the matrix reaches with valid bodies but no matching state: past the permission
+#: check they answer a state refusal, which nothing else could produce.
+RISK_STATE_REFUSALS = {"/api/admin/billing/risk/allowlist/{entry_id}/remove": (404, "risk_allowlist_not_found"),
+                       "/api/admin/billing/risk/topups": (409, "model_cost_policy_required")}
+
+
+def _risk_body(path):
+    # Keys are per administrator; one key per route keeps each a distinct operation.
+    body = {"reason": REASON, "idempotency_key": "matrix" + re.sub(r"[^A-Za-z0-9]", "_", path)[-100:]}
+    if path.endswith("/risk/allowlist"):
+        body.update(payer_kind="user", email="nobody@example.test")
+    elif path.endswith("/topups"):
+        body.update(amount_units="1", topped_up_at=0)
+    elif path.endswith("/reconciliations/run"):
+        body.update(kind="ledger_audit")
+    return body
 
 
 def _call(client, method, path):
     if method == "GET":
         return client.get(path)
+    if path.startswith("/api/admin/billing/risk/"):
+        return post(client, path, _risk_body(path))
     if path.startswith("/api/admin/billing/"):
         if path.endswith("/drafts"):
             body = {"spec": PRICE_SPEC, "idempotency_key": "matrix_http_draft"}
@@ -266,6 +302,9 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
             code = "super_offer_bad_target" if template.endswith("/preview") else "admin_confirmation_required" \
                 if template.endswith("/finish") else "super_offer_not_found"
             assert r.status_code == (400 if code != "super_offer_not_found" else 404) and r.json()["error"] == code, (role, path, r.text)
+        elif template in RISK_STATE_REFUSALS:
+            status, code = RISK_STATE_REFUSALS[template]
+            assert r.status_code == status and r.json()["error"] == code, (role, method, path, r.text)
         else:
             assert r.status_code == 200, (role, method, path, r.text)
     overview, mutation = c.get(CONSOLE_GET), post(c, CONSOLE_POST, {"reason": REASON})

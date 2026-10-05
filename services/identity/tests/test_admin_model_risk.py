@@ -38,6 +38,32 @@ def test_overview_is_honest_before_any_policy_and_hidden_from_ordinary_accounts(
     assert post(w["ordinary"], BASE + "/breaker/open", change()).status_code == 404
 
 
+def test_authorization_comes_before_configuration(request, monkeypatch):
+    # Whether billing is configured is deployment state; a change route answers the caller's
+    # authority first. An auditor (platform.config.view only) is refused the permission it lacks,
+    # never told "not configured"; an account without any platform role sees 404 as everywhere.
+    monkeypatch.delenv("SYNWEVO_BILLING_ENVIRONMENT")
+    w = request.getfixturevalue("world")
+    from synwevo_core.platform_access import PlatformAccess
+    from .test_admin_operations import PW
+    user = w["ident"].create_user("risk-auditor@example.test", PW, status="active")
+    w["store"].execute("UPDATE users SET email_verified_at=1 WHERE id=?", (user["id"],))
+    PlatformAccess(w["store"]).host_grant(user["id"], "auditor", source="fixture:risk-order",
+                                          reason="isolated authorization order fixture")
+    auditor = w["login"](user)
+    bodies = {"/breaker/open": change(), "/breaker/close": change(), "/suspensions/rsus_fixture/lift": change(),
+              "/allowlist": change(payer_kind="user", email="nobody@example.test"),
+              "/allowlist/rallow_fixture/remove": change(), "/topups": change(amount_units="1", topped_up_at=0),
+              "/reconciliations/run": change(kind="ledger_audit")}
+    for path, body in bodies.items():
+        r = post(auditor, BASE + path, body)
+        assert r.status_code == 403 and r.json()["error"] == "platform_permission_denied", (path, r.text)
+        assert post(w["ordinary"], BASE + path, body).status_code == 404, path
+    # A platform administrator is told the honest reason once authorized.
+    refused = post(w["admin"], BASE + "/breaker/open", change())
+    assert refused.status_code == 503 and refused.json()["error"] == "billing_not_configured"
+
+
 def test_breaker_open_and_close_are_audited_idempotent_and_close_needs_reauth(world):
     w = world
     body = change()

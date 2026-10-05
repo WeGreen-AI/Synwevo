@@ -146,8 +146,9 @@ class RiskOperations:
         `own_transaction`: the change opens its own (the ledger audit must), so it runs between
         an authorized idempotency check and the transaction that records audit and result. Only
         append-only reconciliation results use it; repeating one is a second result, not harm."""
-        self._require_environment()
+        # Authority first: whether billing is configured is not for callers who may not change it.
         actor = self._actor(request, manage=True, dangerous=dangerous)
+        self._require_environment()
         reason = body.reason.strip()
         if not 8 <= len(reason) <= 500:
             raise ServiceError(400, "missing_reason", "请写明理由（8 至 500 个字）")
