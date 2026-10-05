@@ -388,7 +388,16 @@ class Ledger:
             disputed = -(-payment["credit_units"] * notice.amount_minor // payment["paid_minor"])
             booked, held = self._balance(t, wallet)
             recovered = max(0, min(disputed, booked - held))
-            key = _id()
+            key, freeze_id = _id(), _id()
+            owner = t.execute("SELECT kind,owner FROM billing_accounts WHERE id=?", (wallet,)).fetchone()
+            # Write-ahead, before any change below: a restored backup must not let this wallet pay
+            # again (synwevo_core.journal "payer_frozen", replayed by the freeze's id). A failed
+            # append aborts the chargeback; the provider's event stays in the inbox to retry.
+            from .. import journal as security_journal
+            security_journal.record(self.store, security_journal.PAYER_FREEZE_KIND, freeze_id=freeze_id,
+                                    environment=self.environment, account_id=wallet,
+                                    payer_kind="organization" if owner["kind"] == "org_wallet" else "user",
+                                    payer_id=owner["owner"], chargeback_id=key)
             journal = None
             if recovered:
                 sink = self._account(t, unit, "platform", "chargeback")
@@ -401,7 +410,7 @@ class Ledger:
                        payment["id"], wallet, notice.amount_minor, notice.currency, disputed, recovered,
                        disputed - recovered, journal, notice.evidence_ref, notice.payload_sha256, self._now()))
             t.execute("INSERT INTO billing_account_freezes(id,account_id,reason,chargeback_id,created_at) "
-                      "VALUES (?,?,'chargeback',?,?)", (_id(), wallet, key, self._now()))
+                      "VALUES (?,?,'chargeback',?,?)", (freeze_id, wallet, key, self._now()))
             return self._chargeback_row(t, t.execute("SELECT * FROM billing_chargebacks WHERE id=?", (key,)).fetchone())
 
     @staticmethod
