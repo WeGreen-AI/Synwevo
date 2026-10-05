@@ -310,6 +310,8 @@ test('what changed is listed per field, compared per million tokens, and nothing
   const html = render('en', React.createElement(parts.PriceChangeList, { before: previousTerms, after }));
   assert.ok(html.includes('What changed since you last confirmed') && html.includes('<del>') && html.includes('<ins>'), html);
   assert.ok(html.includes('Before </span>fixture-model<') && html.includes('Now </span>fixture-model-2<'), html);
+  // Shown in the reader's locale; decided on exact values.
+  assert.ok(html.includes('CN¥8.00') && html.includes('CN¥16.00') && html.includes('CN¥0.05') && html.includes('CN¥0.06'), html);
   const same = render('zh-Hant', React.createElement(parts.PriceChangeList, { before: previousTerms, after: { ...previousTerms } }));
   assert.ok(same.includes('價格條款未變'), same);
 });

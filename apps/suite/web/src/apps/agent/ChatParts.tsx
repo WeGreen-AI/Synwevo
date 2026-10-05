@@ -7,8 +7,8 @@ import { Link } from "react-router-dom";
 import { useI18n, type Params } from "@synwevo/ui";
 import type { Pricing } from "./budget";
 import { chatCopy, type ChatText } from "./chat.messages";
-import { priceChanges } from "./composer";
-import { bandText, costSummary, costUnit, formatMoney, formatTokens, validTurnCost } from "./cost";
+import { perMillion, priceChanges } from "./composer";
+import { bandText, costSummary, costUnit, formatMoney, formatPerMillion, formatTokens, validTurnCost } from "./cost";
 import type { Refusal } from "./refusals";
 
 export function useChatText() {
@@ -86,10 +86,15 @@ export function RefusalNotice({ refusal, walletUrl, onRequote, busy = false, liv
 
 /** What differs between the terms someone last confirmed and the terms on offer now. */
 export function PriceChangeList({ before, after }: { before: Pricing; after: Pricing }) {
-  const { c } = useChatText();
+  const { c, locale } = useChatText();
   const id = useId();
   let changes: ReturnType<typeof priceChanges>;
-  try { changes = priceChanges(before, after); } catch { return null; }
+  try {
+    changes = priceChanges(before, after, {
+      rate: (pricing, key) => formatPerMillion(pricing, key, locale, perMillion(pricing, key)),
+      amount: (minor, unit) => formatMoney(minor, unit, locale),
+    });
+  } catch { return null; }
   if (!changes.length) return <p className="ag-price-same">{c("changedNothing")}</p>;
   return <section className="ag-price-change" aria-labelledby={`${id}-title`}>
     <h3 id={`${id}-title`}>{c("changedTitle")}</h3>

@@ -179,7 +179,8 @@ export default function Chat({ conversation, loading, error, connection, configu
       {assistant && !m.hidden && <footer className="ag-answer-foot">
         {!!m.body && <AiLabel />}
         <TurnCostLine cost={m.turn?.cost} />
-        <div className="ag-message-tools">
+        {/* While this answer is still being written there is nothing final to copy, retry or switch. */}
+        {!active && <div className="ag-message-tools">
           {!!m.body && <button type="button" className="btn ghost sm" onClick={() => void copyAnswer(m)}>
             {copied?.id === m.id && copied.ok ? <span className="ag-done">{c("copied")}</span> : c("copy")}
           </button>}
@@ -198,7 +199,7 @@ export default function Chat({ conversation, loading, error, connection, configu
               onClick={() => void action("agent.conversation.update", { conversation_id: conversation!.id, head_id: siblings[position + 1].id })}>
               <span aria-hidden="true">›</span></button>
           </div>}
-        </div>
+        </div>}
       </footer>}
     </article>;
   }

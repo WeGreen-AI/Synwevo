@@ -73,10 +73,15 @@ export function perMillion(pricing: Pick<Pricing, 'rates' | 'per_tokens' | 'unit
 }
 
 export interface PriceChange { field: ChatText; before: string; after: string }
-/** What changed between the terms a person last confirmed and the terms on offer now. */
-export function priceChanges(before: Pricing, after: Pricing): PriceChange[] {
+type RateKey = 'input_uncached' | 'input_cached' | 'output';
+export interface PriceDisplay { rate?: (pricing: Pricing, key: RateKey) => string; amount?: (minor: string, unit: Pricing['unit']) => string }
+/** What changed between the terms a person last confirmed and the terms on offer now. Equality is
+ *  decided on exact values; `display` only chooses how a changed rate or amount is written. */
+export function priceChanges(before: Pricing, after: Pricing, display: PriceDisplay = {}): PriceChange[] {
   const out: PriceChange[] = [];
-  const add = (field: ChatText, a: string, b: string) => { if (a !== b) out.push({ field, before: a, after: b }); };
+  const add = (field: ChatText, a: string, b: string, shown?: () => [string, string]) => {
+    if (a !== b) { const [x, y] = shown ? shown() : [a, b]; out.push({ field, before: x, after: y }); }
+  };
   add('changedModel', before.model, after.model);
   add('changedRoute', before.confirmed_route, after.confirmed_route);
   add('changedVersion', before.route_version, after.route_version);
@@ -84,9 +89,11 @@ export function priceChanges(before: Pricing, after: Pricing): PriceChange[] {
   const sameUnit = before.unit.code === after.unit.code && before.unit.scale === after.unit.scale;
   add('changedUnit', `${before.unit.code}/${before.unit.scale}`, `${after.unit.code}/${after.unit.scale}`);
   for (const [key, field] of [['input_uncached', 'changedUncached'], ['input_cached', 'changedCached'], ['output', 'changedOutput']] as const) {
-    add(field, perMillion(before, key), perMillion(after, key));
+    add(field, perMillion(before, key), perMillion(after, key),
+      display.rate && (() => [display.rate!(before, key), display.rate!(after, key)]));
   }
-  if (sameUnit) add('changedHold', formatAmount(before.per_call_hold, before.unit), formatAmount(after.per_call_hold, after.unit));
+  if (sameUnit) add('changedHold', formatAmount(before.per_call_hold, before.unit), formatAmount(after.per_call_hold, after.unit),
+    display.amount && (() => [display.amount!(before.per_call_hold, before.unit), display.amount!(after.per_call_hold, after.unit)]));
   return out;
 }
 
