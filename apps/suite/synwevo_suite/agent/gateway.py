@@ -285,6 +285,11 @@ class MeteredDeepSeek:
                     validate_result(result.step)
             except ProviderError as exc:
                 self._observe(key, ticket, route, result.attempt, completed=False, claim=claim)
+                # Keep the step's private reasoning for later thinking-mode requests; its tool
+                # calls were not accepted, so they never run and get no tool result.
+                replay = {k: v for k, v in result.replay_message.items() if k != "tool_calls"}
+                exc.replay_message = {**replay, "content": replay.get("content") or "",
+                                      "reasoning_content": replay.get("reasoning_content", "")}
                 usage = result.attempt.usage
                 exc.metered_usage = ({"input_tokens": usage.prompt_tokens, "output_tokens": usage.completion_tokens}
                     if result.attempt.usage_reliability == "trusted_terminal" and usage else {})

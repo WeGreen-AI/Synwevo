@@ -99,12 +99,23 @@ class DeepSeekError(ProviderError):
     def __init__(self, code: str, attempt: Attempt, *, retry_after: float | None = None):
         super().__init__(code, "模型请求未完成，请核实调用状态", retryable=False, retry_after=retry_after)
         self.attempt = attempt
+        # Private reasoning/visible text received before the failure (never unrun tool calls).
+        # Thinking mode with tools refuses later requests that omit it (docs/deepseek-provider.md).
+        self.replay_message: dict | None = None
 
 
 class DeepSeekCancelled(Cancelled):
     def __init__(self, attempt: Attempt):
         super().__init__("模型请求已停止")
         self.attempt = attempt
+        self.replay_message: dict | None = None
+
+
+def _with_partial(exc, state: dict):
+    assembly = state.get("assembly")
+    if assembly is not None and getattr(exc, "replay_message", None) is None:
+        exc.replay_message = assembly.partial()
+    return exc
 
 
 class _Invalid(Exception):
@@ -200,11 +211,14 @@ def _text(value) -> str:
     return "\n".join(b["text"] for b in value)
 
 
-def _history(messages: list[dict], limits: Limits) -> list[dict]:
+def _history(messages: list[dict], limits: Limits, *, thinking: bool = False) -> list[dict]:
     """Accept native DeepSeek replay messages or the engine's text/tool block history.
 
     Foreign thinking/signatures/images are refused, never silently stripped. Native
     replay_message is the lossless route for reasoning and exact tool argument strings.
+    With thinking on, every assistant message carries a reasoning string: an earlier turn that
+    produced none (thinking off, legacy visible-text replay) is sent with an empty one, because
+    a tool-carrying request that omits any earlier reasoning_content is refused with HTTP 400.
     """
     out, pending, used = [], set(), set()
     for message in messages:
@@ -243,6 +257,8 @@ def _history(messages: list[dict], limits: Limits) -> list[dict]:
             if "reasoning_content" in message:
                 _require(isinstance(message["reasoning_content"], str))
                 msg["reasoning_content"] = message["reasoning_content"]
+            elif thinking:
+                msg["reasoning_content"] = ""
             out.append(msg)
         elif role == "tool":
             cid = message.get("tool_call_id")
@@ -318,6 +334,17 @@ class _Assembly:
         self.sizes = {"content": 0, "reasoning_content": 0, "arguments": 0}
         self.terminal_usage = None
         self.early_usage = False
+
+    def partial(self) -> dict | None:
+        """The private replay of an interrupted step: reasoning and visible text, no tool calls.
+
+        Unrun (or unparsed) tool calls are dropped: they were never executed, so no tool result
+        can follow them. The reasoning stays because later thinking-mode requests need it.
+        """
+        text, reasoning = "".join(self.text), "".join(self.reasoning)
+        if not text and not reasoning:
+            return None
+        return {"role": "assistant", "content": text, "reasoning_content": reasoning}
 
     def chunk(self, chunk: dict, on_text: Callable[[str], None]):
         a = self.attempt
@@ -463,7 +490,7 @@ class DeepSeekProvider:
                 names.add(name)
                 definitions.append({"type": "function", "function": {"name": name,
                     "description": tool.get("description", ""), "parameters": tool["input_schema"]}})
-            history = _history(messages, limits)
+            history = _history(messages, limits, thinking=self.thinking)
             prompt = _text(system)
             if prompt:
                 history.insert(0, {"role": "system", "content": prompt})
@@ -519,6 +546,7 @@ class DeepSeekProvider:
                     _require(response.headers.get("content-type", "").split(";")[0].strip().lower() == "text/event-stream")
                     _require(response.headers.get("content-encoding", "identity").lower() == "identity")
                     parser, assembly = _SSE(limits), _Assembly(a, limits, names)
+                    state["assembly"] = assembly
                     async for chunk in response.aiter_raw():
                         if should_stop():
                             raise DeepSeekCancelled(a)
@@ -534,7 +562,7 @@ class DeepSeekProvider:
                             assembly.chunk(_loads(event), on_text)
                     raise DeepSeekError("provider_stream_incomplete", a)
 
-        task = None
+        task, state = None, {}
         try:
             async with asyncio.timeout(limits.timeout_s):
                 task = asyncio.create_task(exchange())
@@ -543,16 +571,17 @@ class DeepSeekProvider:
                     if not task.done() and should_stop():
                         raise DeepSeekCancelled(a)
                 return task.result()
-        except (DeepSeekError, DeepSeekCancelled):
-            raise
+        except (DeepSeekError, DeepSeekCancelled) as exc:
+            raise _with_partial(exc, state)
         except asyncio.CancelledError:
-            raise DeepSeekCancelled(a) from None
+            raise _with_partial(DeepSeekCancelled(a), state) from None
         except (TimeoutError, httpx.TimeoutException):
-            raise DeepSeekError("provider_timeout", a) from None
+            raise _with_partial(DeepSeekError("provider_timeout", a), state) from None
         except httpx.HTTPError:
-            raise DeepSeekError("provider_transport", a) from None
+            raise _with_partial(DeepSeekError("provider_transport", a), state) from None
         except Exception:
-            raise DeepSeekError("provider_bad_output" if a.dispatch != "definitely_not_requested" else "provider_dispatch_blocked", a) from None
+            raise _with_partial(DeepSeekError("provider_bad_output" if a.dispatch != "definitely_not_requested"
+                                              else "provider_dispatch_blocked", a), state) from None
         finally:
             if task is not None:
                 if not task.done():
