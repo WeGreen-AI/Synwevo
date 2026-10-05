@@ -29,7 +29,8 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
 2. 服务端写入不可变的 `billing_orders`（`exchange_version=cny-fen-identity-v1`：入账单位 = 分 × 10^(scale−2)，精确）
    与 `payment_topups` 生命周期行，再向 Stripe 创建 Checkout Session：`mode=payment`、`currency=cny`、
    `payment_method_types=[card,wechat_pay,alipay]`、`payment_method_options[wechat_pay][client]=web`、
-   成功/取消地址回到账户源站 `/account/wallet?topup=<订单>&result=success|cancel`、订单号写入
+   成功/取消地址回到账户源站发起充值的页面（个人：`/account/wallet?topup=<订单>&result=success|cancel`；组织：
+   `/organizations/<组织>?topup=<订单>&result=success|cancel`）、订单号写入
    `client_reference_id` 与 metadata、`Idempotency-Key=checkout-<订单>`、有效期 1 小时。创建失败返回 502
    `topup_provider_unavailable`（“未扣款”），订单记为失败。
 3. Stripe 回调 Webhook：校验 `Stripe-Signature`（`t=` 时间戳与一个或多个 `v1=`；HMAC-SHA256(`"{t}.{原始请求体}"`,
@@ -87,8 +88,9 @@ Stripe 重试，入账后再处理，不会丢失。解除冻结是财务管理�
 
 **页面**：组织详情页的「组织付费」区（`services/identity/web/src/pages/org/OrganizationBilling.tsx`）只对持有
 `org.billing.manage` 的人显示：组织钱包可用/冻结金额与拒付冻结标记；为组织钱包充值（与个人充值同一套服务端定价、
-Turnstile 与限频，`payer_kind=organization`，只跳转到 Stripe 托管收银台，返回同一账户页 `/account/wallet?topup=…`
-轮询订单）；每位成员的授权开关与每月额度（显示本月已用与冻结）；工作空间每月额度（留空为不限）；组织账单（按页加载，
+Turnstile 与限频，`payer_kind=organization`，只跳转到 Stripe 托管收银台）；从收银台返回组织页后轮询订单状态
+（先快后慢，2 分钟后停止并提供“再次查看”），只有服务端报告 `paid` 才显示“已到账”与收据（金额、付款方式、到账时间、
+收款方、支付单号，可打印），取消返回直接说明“没有扣款”，失败/过期提示可重新发起；每位成员的授权开关与每月额度（显示本月已用与冻结）；工作空间每月额度（留空为不限）；组织账单（按页加载，
 每笔消费注明成员邮箱）。未配置计费环境时只显示“组织付费尚未开放”，充值未开放时显示原因，不出现假入口。金额以整数
 单位用 BigInt 精确格式化；额度输入与服务端上限一致（每月最多 1,000,000 元）。三语言文案在 `org-billing.messages.ts`，
 由 `pages/org/flow.validation.mjs` 检查完整性与权限门槛。

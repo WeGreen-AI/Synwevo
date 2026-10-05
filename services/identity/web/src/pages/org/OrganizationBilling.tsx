@@ -6,8 +6,13 @@
  *  hosted checkout; the wallet is credited only from the provider's signed notification. Limits
  *  are rechecked by the ledger at every reservation and send, so a change here applies to the
  *  next model call. The statement carries amounts and who/where a charge was for — never a
- *  conversation. Amounts stay exact: integer wallet units are formatted with BigInt. */
-import { useEffect, useId, useState } from "react";
+ *  conversation. Amounts stay exact: integer wallet units are formatted with BigInt.
+ *
+ *  The hosted checkout returns here with ?topup=<order>&result=success|cancel. The page then
+ *  polls the order (GET /api/auth/wallet/topups/{id}) until the signed notice has credited it
+ *  and shows the receipt the server holds; it never treats the return itself as payment. */
+import { useEffect, useId, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { get, post, put } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { FlowError, Loading, useAction } from "./AuthFlow";
@@ -26,11 +31,18 @@ interface TopupOptions { available: boolean; reason?: string; currency: "CNY"; p
   custom_amount?: boolean; min_amount_minor: number | null; max_amount_minor: number | null }
 interface StatementItem { seq: string; id: string; kind: string; delta: string; created_at: number; member_id?: string; member_email?: string | null; workspace_id?: string }
 interface Statement { items: StatementItem[]; next_after_seq: string | null }
+interface TopupStatus { order_id: string; status: "pending" | "paid" | "failed" | "expired"; amount_minor: number; currency: string; credited_at?: number }
+interface Receipt { order_id: string; amount_minor: number; currency: string; method: string | null; paid_at: number | null;
+  credited_at: number; operator_name: string | null; provider_reference: string | null }
 
 const CHECKOUT = "https://checkout.stripe.com/";
 /** The largest monthly limit the server accepts, in yuan (org_billing_routes.MAX_LIMIT_MINOR). */
 const MAX_LIMIT_YUAN = 1000000;
 const KIND: Record<string, string> = { paid: "充值到账", test_payment: "测试到账", sale: "已结算消费", grant: "赠送额度", chargeback: "拒付追回" };
+const METHOD: Record<string, string> = { card: "银行卡", wechat_pay: "微信支付", alipay: "支付宝" };
+/** Polling the order after the return: quickly at first, then slower, then stop and offer a manual check. */
+const POLL_DELAYS_MS = [1500, 2000, 3000, 5000];
+const POLL_FOR_MS = 120_000;
 const UNAVAILABLE: Record<string, string> = { not_configured: "充值暂未开放", email_unverified: "请先验证邮箱再继续", wallet_frozen: "该钱包因支付争议已被冻结，暂不能充值" };
 
 /** A copy of a draft map without one key (the saved row reads from the server again). */
@@ -47,6 +59,8 @@ export default function OrganizationBilling({ organization, mine }: { organizati
   const can = mine.includes("org.billing.manage");
   const [data, setData] = useState<Billing | null>(null); const [error, setError] = useState<unknown>(null); const [revision, setRevision] = useState(0);
   const [closed, setClosed] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const returned = params.get("topup"); const result = params.get("result");
   useEffect(() => {
     if (!can) return;
     const abort = new AbortController(); setError(null); setClosed(false);
@@ -63,6 +77,9 @@ export default function OrganizationBilling({ organization, mine }: { organizati
   const money = (units: string) => data ? cnyText(units, data.unit.scale, locale) : "";
   return <section className="org-section org-billing" id="org-billing" aria-labelledby={`${id}-h`}>{heading}
     <p className="tiny muted">{t("组织可以为成员的 Agent 使用付费。每位成员需要单独授权并设置每月额度；成员在对话中自己选择由个人还是组织付款。额度在每次模型调用前重新核对。")}</p>
+    {returned && /^[A-Za-z0-9_-]{1,200}$/.test(returned) && <TopupReturn key={returned} orderId={returned} cancelled={result === "cancel"}
+      onCredited={() => setRevision(v => v + 1)}
+      onDismiss={() => setParams(p => { const next = new URLSearchParams(p); next.delete("topup"); next.delete("result"); return next; }, { replace: true })} />}
     <FlowError error={error} />
     {error ? <button type="button" className="btn" onClick={() => setRevision(v => v + 1)}>{t("重试")}</button> : !data ? <Loading /> : <>
       <div className="org-actions" aria-live="polite">
@@ -73,9 +90,63 @@ export default function OrganizationBilling({ organization, mine }: { organizati
       {organization.status === "active" && <OrganizationTopup organization={organization} />}
       <MemberGrants organization={organization} data={data} onSaved={setData} />
       <WorkspaceLimits organization={organization} data={data} onSaved={setData} />
-      <OrganizationStatement organization={organization} unit={data.unit} />
+      <OrganizationStatement key={revision} organization={organization} unit={data.unit} />
     </>}
   </section>;
+}
+
+/** After the hosted checkout: the order's real state, then its receipt. A cancelled return is
+ *  said plainly (nothing was charged) without polling; the order simply expires. */
+function TopupReturn({ orderId, cancelled, onCredited, onDismiss }: { orderId: string; cancelled: boolean; onCredited: () => void; onDismiss: () => void }) {
+  const { t, locale } = useI18n(); const id = useId();
+  const [status, setStatus] = useState<TopupStatus | null>(null); const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [error, setError] = useState<unknown>(null); const [waiting, setWaiting] = useState(!cancelled); const [round, setRound] = useState(0);
+  const credited = useRef(onCredited); credited.current = onCredited;
+  useEffect(() => {
+    if (cancelled && round === 0) return;
+    const abort = new AbortController(); const started = Date.now(); let timer: number | undefined; let n = 0;
+    setWaiting(true); setError(null);
+    const poll = async () => {
+      try {
+        const now = await get<TopupStatus>(`/api/auth/wallet/topups/${encodeURIComponent(orderId)}`, abort.signal);
+        if (abort.signal.aborted) return;
+        setStatus(now);
+        if (now.status === "paid") {
+          setWaiting(false); credited.current();
+          setReceipt(await get<Receipt>(`/api/auth/wallet/receipts/${encodeURIComponent(orderId)}`, abort.signal));
+          return;
+        }
+        if (now.status !== "pending" || Date.now() - started > POLL_FOR_MS) { setWaiting(false); return; }
+        timer = window.setTimeout(poll, POLL_DELAYS_MS[Math.min(n++, POLL_DELAYS_MS.length - 1)]);
+      } catch (e) { if (!abort.signal.aborted) { setError(e); setWaiting(false); } }
+    };
+    void poll();
+    return () => { abort.abort(); window.clearTimeout(timer); };
+  }, [orderId, cancelled, round]);
+  const state = status?.status;
+  const message = cancelled && !status ? "你已取消支付，没有扣款。订单会在收银台过期后关闭。"
+    : state === "paid" ? "充值已到账。"
+    : state === "failed" ? "支付没有完成，没有扣款。可以重新发起充值。"
+    : state === "expired" ? "收银台已过期，没有扣款。可以重新发起充值。"
+    : waiting ? "正在等待支付服务确认到账…"
+    : "支付服务尚未确认到账。如果你已经付款，稍后再查看；确认前不会入账。";
+  return <div className={`notice${state === "paid" ? " ok" : ""}`} role="status" aria-live="polite" aria-labelledby={`${id}-h`}>
+    <h3 id={`${id}-h`}>{t("充值订单 {order}", { order: orderId })}</h3>
+    <p>{t(message)}</p>
+    <FlowError error={error} />
+    {receipt && <dl className="org-receipt">
+      <dt>{t("金额")}</dt><dd>{receipt.currency === "CNY" ? fenText(receipt.amount_minor, locale) : `${receipt.amount_minor} ${receipt.currency}`}</dd>
+      <dt>{t("付款方式")}</dt><dd>{receipt.method ? t(METHOD[receipt.method] || receipt.method) : t("支付服务未报告")}</dd>
+      <dt>{t("到账时间")}</dt><dd>{new Date(receipt.credited_at * 1000).toLocaleString(locale)}</dd>
+      {receipt.operator_name && <><dt>{t("收款方")}</dt><dd>{receipt.operator_name}</dd></>}
+      {receipt.provider_reference && <><dt>{t("支付单号")}</dt><dd className="org-billing-wrap">{receipt.provider_reference}</dd></>}
+    </dl>}
+    <div className="org-actions">
+      {!waiting && state !== "paid" && state !== "failed" && state !== "expired" && <button type="button" className="btn" onClick={() => setRound(v => v + 1)}>{t("再次查看")}</button>}
+      {receipt && <button type="button" className="btn" onClick={() => window.print()}>{t("打印收据")}</button>}
+      <button type="button" className="btn" onClick={onDismiss}>{t("关闭")}</button>
+    </div>
+  </div>;
 }
 
 function OrganizationTopup({ organization }: { organization: Organization }) {

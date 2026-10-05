@@ -145,11 +145,24 @@ try {
   });
   check('organization payments are shown only to holders of org.billing.manage', () => {
     const organization = { id: 'fixture-org', name: 'Fixture organization', role: 'admin', status: 'active' };
-    const render = mine => renderToStaticMarkup(React.createElement(billingView.default, { organization, mine }));
+    const render = (mine, entry = '/organizations/fixture-org') => renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: [entry] },
+      React.createElement(billingView.default, { organization, mine })));
     assert.equal(render(['org.members.view', 'org.settings.manage']), '');
     const manager = render(['org.billing.manage']);
     assert.match(manager, /<section[^>]*aria-labelledby=/); assert.ok(manager.includes('组织付费'));
     assert.ok(!manager.includes('前往支付')); // no checkout control before the server has priced the options
+    assert.ok(!manager.includes('充值订单'));
+  });
+  check('the return from the checkout never reads as paid until the server says so', () => {
+    const organization = { id: 'fixture-org', name: 'Fixture organization', role: 'owner', status: 'active' };
+    const render = entry => renderToStaticMarkup(React.createElement(MemoryRouter, { initialEntries: [entry] },
+      React.createElement(billingView.default, { organization, mine: ['org.billing.manage'] })));
+    const success = render('/organizations/fixture-org?topup=top_fixture1&result=success');
+    assert.match(success, /role="status"/); assert.ok(success.includes('正在等待支付服务确认到账'));
+    assert.ok(!success.includes('充值已到账'));
+    const cancelled = render('/organizations/fixture-org?topup=top_fixture1&result=cancel');
+    assert.ok(cancelled.includes('你已取消支付，没有扣款'));
+    assert.ok(!render('/organizations/fixture-org?topup=..%2Fadmin&result=success').includes('充值订单'), 'a malformed order id is not requested');
   });
   check('MFA errors preserve remaining attempts in all three languages', () => {
     const error = new client.ApiError(401, 'bad_code', '验证码不正确，还可尝试 2 次');

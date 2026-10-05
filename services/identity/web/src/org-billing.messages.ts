@@ -62,6 +62,26 @@ export const messages = {
   "已结算消费": { en: "Settled charge", "zh-Hant": "已結算消費" },
   "赠送额度": { en: "Granted credit", "zh-Hant": "贈送額度" },
   "拒付追回": { en: "Recovered after a chargeback", "zh-Hant": "拒付追回" },
+  // the return from the hosted checkout
+  "充值订单 {order}": { en: "Top-up order {order}", "zh-Hant": "儲值訂單 {order}" },
+  "你已取消支付，没有扣款。订单会在收银台过期后关闭。": { en: "You cancelled the payment and nothing was charged. The order closes when the checkout expires.", "zh-Hant": "你已取消支付，沒有扣款。訂單會在收銀台過期後關閉。" },
+  "充值已到账。": { en: "The top-up has been credited.", "zh-Hant": "儲值已到帳。" },
+  "支付没有完成，没有扣款。可以重新发起充值。": { en: "The payment did not complete and nothing was charged. You can start a new top-up.", "zh-Hant": "支付沒有完成，沒有扣款。可以重新發起儲值。" },
+  "收银台已过期，没有扣款。可以重新发起充值。": { en: "The checkout expired and nothing was charged. You can start a new top-up.", "zh-Hant": "收銀台已過期，沒有扣款。可以重新發起儲值。" },
+  "正在等待支付服务确认到账…": { en: "Waiting for the payment service to confirm the payment…", "zh-Hant": "正在等待支付服務確認到帳…" },
+  "支付服务尚未确认到账。如果你已经付款，稍后再查看；确认前不会入账。": { en: "The payment service has not confirmed the payment yet. If you paid, check again later; nothing is credited before it confirms.", "zh-Hant": "支付服務尚未確認到帳。如果你已經付款，稍後再查看；確認前不會入帳。" },
+  "金额": { en: "Amount", "zh-Hant": "金額" },
+  "付款方式": { en: "Payment method", "zh-Hant": "付款方式" },
+  "银行卡": { en: "Card", "zh-Hant": "銀行卡" },
+  "微信支付": { en: "WeChat Pay", "zh-Hant": "微信支付" },
+  "支付宝": { en: "Alipay", "zh-Hant": "支付寶" },
+  "支付服务未报告": { en: "Not reported by the payment service", "zh-Hant": "支付服務未報告" },
+  "到账时间": { en: "Credited at", "zh-Hant": "到帳時間" },
+  "收款方": { en: "Payee", "zh-Hant": "收款方" },
+  "支付单号": { en: "Payment reference", "zh-Hant": "支付單號" },
+  "再次查看": { en: "Check again", "zh-Hant": "再次查看" },
+  "打印收据": { en: "Print receipt", "zh-Hant": "列印收據" },
+  "关闭": { en: "Close", "zh-Hant": "關閉" },
 };
 
 registerMessages(messages);

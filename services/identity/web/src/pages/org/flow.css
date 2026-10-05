@@ -50,3 +50,6 @@
 .org-billing-who strong, .org-billing-wrap { overflow-wrap: anywhere; }
 .org-billing-amount { width: 9em; max-width: 100%; }
 .org-billing-money { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.org-receipt { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 8px 0; }
+.org-receipt dt { color: var(--muted); }
+.org-receipt dd { margin: 0; min-width: 0; font-variant-numeric: tabular-nums; }

@@ -32,7 +32,7 @@ import hmac
 import json
 import time
 from typing import Any, Protocol
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -302,13 +302,17 @@ class TopupService:
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'creating',?,?)",
             (order_id, self.environment, PROVIDER, payer_kind, payer_id, initiator["id"], package_id, amount,
              CURRENCY, self.unit.code, credit, resolved.revision, now, expires))
+        # Back to where the payment was started: a person's wallet, or the organization's
+        # payments section for an organization top-up. Both pages poll the order status.
         base = (self.return_base or "").rstrip("/")
+        page = (f"{base}/organizations/{quote(payer_id, safe='')}" if payer_kind == "organization"
+                else f"{base}/account/wallet")
         try:
             checkout = self.provider_factory(resolved.secret_key).create_checkout(
                 order_id=order_id, amount_minor=amount, currency=CURRENCY,
                 product_name=spec["operator_name"], environment=self.environment, expires_at=expires,
-                success_url=f"{base}/account/wallet?topup={order_id}&result=success",
-                cancel_url=f"{base}/account/wallet?topup={order_id}&result=cancel")
+                success_url=f"{page}?topup={order_id}&result=success",
+                cancel_url=f"{page}?topup={order_id}&result=cancel")
         except ProviderUnavailable:
             self.store.execute("UPDATE payment_topups SET status='failed',failure_code='provider_unavailable' "
                                "WHERE order_id=? AND status='creating'", (order_id,))

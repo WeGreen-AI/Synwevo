@@ -376,6 +376,10 @@ def test_only_a_billing_manager_tops_up_an_organization_and_the_money_lands_ther
     r = post(alice, "/api/auth/wallet/topups", {"payer_kind": "organization", "payer_id": oid, "package_id": "cny-50"})
     assert r.status_code == 201, r.text
     order = r.json()["order_id"]
+    # The billing manager comes back to the organization's payments, not to their own wallet.
+    form = parse_qs(world["stripe"].requests[-1].content.decode())
+    assert form["success_url"] == [f"http://accounts.testserver/organizations/{oid}?topup={order}&result=success"]
+    assert form["cancel_url"] == [f"http://accounts.testserver/organizations/{oid}?topup={order}&result=cancel"]
     session = store.one("SELECT checkout_session_id FROM payment_topups WHERE order_id=?", (order,))["checkout_session_id"]
     deliver(world, session_event(order, amount=5000, session_id=session, pi="pi_org"))
     assert cny_booked(world, "alice") == 0, "组织充值不进入个人钱包"
