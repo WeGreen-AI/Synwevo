@@ -14,7 +14,7 @@ from synwevo_core.billing import (BillingError, ChargeContext, Ledger, PaymentRe
                                  PriceSnapshot, Rate, Unit)
 from synwevo_core.identity import Identity
 from synwevo_core.store import Store
-from synwevo_suite.agent.deepseek import DeepSeekCancelled, DeepSeekError
+from synwevo_suite.agent.deepseek import DeepSeekCancelled, DeepSeekError, Limits
 from synwevo_suite.agent.gateway import MeteredDeepSeek, Route
 from synwevo_suite.agent.provider import Credential
 
@@ -82,7 +82,10 @@ def gateway(tmp_path, monkeypatch):
             assert not conn.in_transaction
         assert balance().held==297
         return httpx.Response(200,headers={'content-type':'text/event-stream'},stream=Wire(holder['body']))
-    model=MeteredDeepSeek(ledger,current_authority=lambda c: authority[0],transport=httpx.MockTransport(respond))
+    # FIXTURE: a 60 s transport timeout, so one send (plus its settlement margin) fits the
+    # fixture ledger's 100 s longest hold; a send that could outlive its hold is never made.
+    model=MeteredDeepSeek(ledger,current_authority=lambda c: authority[0],transport=httpx.MockTransport(respond),
+                          limits=Limits(timeout_s=60))
     model.open_run(ctx,route=route,budget=1000,max_calls=3,deadline=STAMP+500)
     def balance():
         return ledger.balance_for_user(requester_user_id=user,payer_user_id=user,unit=UNIT)

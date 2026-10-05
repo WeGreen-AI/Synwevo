@@ -34,6 +34,7 @@ const errors: Record<string, string> = {
   billing_insufficient_funds: "可用余额不足，后续调用尚未开始。",
   billing_usage_pending: "上次模型调用的用量待核实，后续调用已暂停。",
   billing_run_budget_exceeded: "本次运行已达到授权预算，后续调用尚未开始。",
+  billing_run_time_too_short: "本次运行剩余的时间不足以完成一次模型调用，本次没有发送，也不扣费。请重新确认运行时间后继续。",
   billing_payer_budget_not_configured: "请在 Agent 设置中配置个人日、周、月支出上限。当前调用尚未发送。",
   billing_payer_budget_disabled: "个人支出已暂停，当前调用尚未发送。可在 Agent 设置中核对。",
   billing_payer_daily_budget_exceeded: "个人今日支出上限不足以容纳本次预留，当前调用尚未发送。",

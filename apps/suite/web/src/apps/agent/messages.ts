@@ -46,6 +46,7 @@ export const agentMessages = {
   "可用余额不足，后续调用尚未开始。": { en: "Available balance is insufficient. Subsequent calls have not started.", "zh-Hant": "可用餘額不足，後續呼叫尚未開始。" },
   "上次模型调用的用量待核实，后续调用已暂停。": { en: "Usage from the last model call is awaiting verification. Further calls are paused.", "zh-Hant": "上次模型呼叫的用量待核實，後續呼叫已暫停。" },
   "本次运行已达到授权预算，后续调用尚未开始。": { en: "This run reached its authorized budget. Subsequent calls have not started.", "zh-Hant": "本次執行已達到授權預算，後續呼叫尚未開始。" },
+  "本次运行剩余的时间不足以完成一次模型调用，本次没有发送，也不扣费。请重新确认运行时间后继续。": { en: "This run has too little time left to finish one model call. Nothing was sent and you were not charged. Confirm a new run time to continue.", "zh-Hant": "本次執行剩餘的時間不足以完成一次模型呼叫，本次沒有傳送，也不扣費。請重新確認執行時間後繼續。" },
   "模型服务暂时不可用，本次未扣费。请稍后再试。": { en: "The model service is temporarily unavailable. You were not charged for this. Try again later.", "zh-Hant": "模型服務暫時無法使用，本次未扣費。請稍後再試。" },
   "所配置的模型暂时不可用，本次未发送、未扣费。平台管理员已收到通知。": { en: "The configured model is temporarily unavailable. Nothing was sent and you were not charged. Platform administrators have been notified.", "zh-Hant": "所設定的模型暫時無法使用，本次未傳送、未扣費。平台管理員已收到通知。" },
   "模型连接已中断，用量待核实，已完成操作保留。": { en: "The model connection was interrupted. Usage is awaiting verification; completed actions are retained.", "zh-Hant": "模型連線已中斷，用量待核實，已完成操作保留。" },

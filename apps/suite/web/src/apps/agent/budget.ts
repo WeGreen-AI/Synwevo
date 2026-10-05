@@ -13,7 +13,10 @@ export interface Pricing {
   terms_ref: string;
   per_call_hold: string;
 }
-export interface Offer extends Pricing { max_calls_limit: number; run_seconds_limit: number }
+/** run_seconds_min: the shortest run the server quotes (one whole model call fits its hold);
+ *  older servers did not send it, so 1. */
+export interface Offer extends Pricing { max_calls_limit: number; run_seconds_limit: number; run_seconds_min?: number }
+export function runSecondsMin(offer: Pick<Offer, 'run_seconds_min'>): number { return offer.run_seconds_min ?? 1; }
 // Issued quotes contain the fixed limits, rather than the offer's editable upper limits.
 export interface Quote extends Pricing {
   id: string;
@@ -92,8 +95,9 @@ export function formatRate(rate: Rate, unit: Unit): string {
   return `${places ? exact.replace(/\.?0+$/, '') : exact} ${unit.code}`;
 }
 
-export function boundedCount(value: string, maximum: number): number {
-  if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > maximum) {
+export function boundedCount(value: string, maximum: number, minimum = 1): number {
+  if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) > maximum
+    || Number(value) < minimum) {
     throw new Error('invalid_count');
   }
   return Number(value);
@@ -111,7 +115,9 @@ export function validatePricing(value: Pricing): void {
 export function validateOffer(value: Offer): void {
   validatePricing(value);
   if (!Number.isSafeInteger(value.max_calls_limit) || value.max_calls_limit < 1
-    || !Number.isInteger(value.run_seconds_limit) || value.run_seconds_limit < 1 || value.run_seconds_limit > 3600) {
+    || !Number.isInteger(value.run_seconds_limit) || value.run_seconds_limit < 1 || value.run_seconds_limit > 3600
+    || (value.run_seconds_min !== undefined && (!Number.isInteger(value.run_seconds_min) || value.run_seconds_min < 1
+      || value.run_seconds_min > 3600))) {
     throw new Error('invalid_offer');
   }
 }

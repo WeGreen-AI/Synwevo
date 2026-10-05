@@ -60,3 +60,11 @@ test('call and duration limits follow the server offer, including a reduced limi
   assert.throws(() => boundedCount('300', 120));
   for (const value of ['0', '-1', '1.5', '1e1', '']) assert.throws(() => boundedCount(value, 12));
 });
+
+test('a run shorter than the server minimum (one whole model call) is not offered for quoting', () => {
+  // money-1: usage after a call's hold deadline is never charged, so the server refuses a run
+  // too short for one send; the dialog must not let a person pick one.
+  assert.throws(() => boundedCount('149', 3600, 150));
+  assert.equal(boundedCount('150', 3600, 150), 150);
+  assert.equal(boundedCount('1', 12), 1);
+});

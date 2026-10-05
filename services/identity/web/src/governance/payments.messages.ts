@@ -150,4 +150,8 @@ registerMessages({
   "解除冻结未完成，请核对后重试": { en: "The freeze was not lifted. Check it and try again.", "zh-Hant": "解除凍結未完成，請核對後重試" },
   "请写明理由（8 至 500 个字）": { en: "Write a reason (8 to 500 characters).", "zh-Hant": "請寫明理由（8 至 500 個字）" },
   "此操作编号已用于不同的请求": { en: "This operation ID was already used for a different request.", "zh-Hant": "此操作編號已用於不同的請求" },
+  "仍有未到期的充值收银台：撤销密钥后，在这些收银台完成的付款将无法验证、无法入账。请先关闭充值并保留密钥，等它们到期后再撤销；确需立即撤销请明确确认": { en: "Some top-up checkouts have not expired yet: after the keys are revoked, payments completed there can no longer be verified or credited. Close top-ups and keep the keys, then revoke once they have expired; to revoke at once anyway, confirm it explicitly.", "zh-Hant": "仍有未到期的儲值收銀台：撤銷金鑰後，在這些收銀台完成的付款將無法驗證、無法入帳。請先關閉儲值並保留金鑰，等它們到期後再撤銷；確需立即撤銷請明確確認" },
+  "仍有 {n} 个未到期的充值收银台（最晚 {time} 到期）。撤销密钥会删除 Webhook 签名密钥，此后在这些收银台完成的付款无法验证、无法自动入账。建议先关闭充值并保留密钥，等它们到期后再撤销。": { en: "{n} top-up checkouts have not expired yet (the last one expires {time}). Revoking deletes the webhook signing secret, so payments completed there can no longer be verified or credited automatically. Close top-ups and keep the keys, then revoke once they have expired.", "zh-Hant": "仍有 {n} 個未到期的儲值收銀台（最晚 {time} 到期）。撤銷金鑰會刪除 Webhook 簽章金鑰，此後在這些收銀台完成的付款無法驗證、無法自動入帳。建議先關閉儲值並保留金鑰，等它們到期後再撤銷。" },
+  "撤销后，{n} 个未到期收银台中完成的付款无法自动入账，需要人工核对。": { en: "After revoking, payments completed in the {n} checkouts that have not expired cannot be credited automatically and need a manual check.", "zh-Hant": "撤銷後，{n} 個未到期收銀台中完成的付款無法自動入帳，需要人工核對。" },
+  "仍要立即撤销（例如签名密钥已泄露）；这些付款需要人工核对": { en: "Revoke now anyway (for example, the signing secret leaked); those payments will need a manual check", "zh-Hant": "仍要立即撤銷（例如簽章金鑰已洩露）；這些付款需要人工核對" },
 });

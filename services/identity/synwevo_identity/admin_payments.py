@@ -109,11 +109,13 @@ def build_router(store, audit) -> APIRouter:
                     "credential_revision": 0, "credential_configured": False, "actor_id": None,
                     "created_at": None, "reason": None, "operation_id": None,
                     "status": "unconfigured", "wallet_unit": None, "webhook_url": issuer() + WEBHOOK_PATH,
-                    "webhook_events": WEBHOOK_EVENTS}
+                    "webhook_events": WEBHOOK_EVENTS, "open_checkouts": {"count": 0, "until": None}}
         current = settings.read()
+        # Checkouts that can still be paid: revoking the keys would strand them (payments-1).
         return {**current, "status": "configured" if current["spec"] else "unconfigured",
                 "wallet_unit": {"code": unit.code, "scale": unit.scale} if unit else None,
-                "webhook_url": issuer() + WEBHOOK_PATH, "webhook_events": WEBHOOK_EVENTS}
+                "webhook_url": issuer() + WEBHOOK_PATH, "webhook_events": WEBHOOK_EVENTS,
+                "open_checkouts": settings.open_checkouts()}
 
     @router.get("/payments")
     def read(request: Request):
@@ -141,6 +143,7 @@ def build_router(store, audit) -> APIRouter:
                 if previous is not None:
                     return previous
                 before = settings.read()
+                stranded = settings.open_checkouts()["count"] if credential.override_open_checkouts else 0
                 operation_id = new_id("ao")
                 saved = settings.append(body.get("spec"), credential, expected_revision=body.get("expected_revision"),
                                         actor_id=user["id"], reason=reason, operation_id=operation_id)
@@ -149,7 +152,9 @@ def build_router(store, audit) -> APIRouter:
                       workspace_given=True, result="ok",
                       meta={"operation_id": operation_id, "reason": reason, "before_revision": before["revision"],
                             "revision": saved["revision"], "credential_action": commitment["action"],
-                            "enabled": saved["spec"]["enabled"]})
+                            "enabled": saved["spec"]["enabled"],
+                            **({"override_open_checkouts": True, "open_checkouts": stranded}
+                               if credential.override_open_checkouts else {})})
                 record(transaction, user, action, environment, key, request_hash, result)
                 return result
         except ServiceError as exc:

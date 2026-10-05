@@ -111,8 +111,10 @@ def deliver(w, event, *, secret=FIXTURE_WEBHOOK_SECRET, at=None, extra_signature
 
 
 def session_event(order_id, *, kind="checkout.session.completed", paid=True, amount=1000, currency="cny",
-                  pi="pi_fixture1", event_id=None, session_id="cs_test_fixture1", livemode=False):
+                  pi="pi_fixture1", event_id=None, session_id="cs_test_fixture1", livemode=False, created=None):
+    # ``created``: when the provider recorded the event (Stripe sends it on every event).
     return {"id": event_id or f"evt_{kind.replace('.', '_')}_{order_id}", "object": "event", "type": kind,
+            "created": created if created is not None else int(time.time()),
             "livemode": livemode, "data": {"object": {
                 "id": session_id, "object": "checkout.session", "status": "complete",
                 "payment_status": "paid" if paid else "unpaid", "payment_intent": pi, "amount_total": amount,
@@ -376,13 +378,15 @@ def test_a_dispute_after_spend_freezes_the_wallet_and_closes_top_up(world):
     assert r.status_code == 409 and r.json()["error"] == "wallet_frozen"
 
 
-def test_a_dispute_before_the_credit_is_retried_not_lost(world):
+def test_a_dispute_before_the_credit_is_kept_not_lost(world):
     world["configure"]()
     c, order, session = created(world)
     dispute = {"id": "evt_dispute_early", "object": "event", "type": "charge.dispute.created", "livemode": False,
                "data": {"object": {"id": "dp_early", "object": "dispute", "payment_intent": "pi_fixture1",
                                    "amount": 1000, "currency": "cny", "status": "needs_response"}}}
-    assert deliver(world, dispute).status_code == 500, "付款尚未入账：让支付渠道稍后重试"
+    # Nothing here knows this payment yet: kept in the inbox (and alerted), not retried forever
+    # (test_wallet_disputes.py); applied the moment the payment is credited.
+    assert deliver(world, dispute).json()["status"] == "rejected"
     deliver(world, session_event(order, session_id=session))
     assert deliver(world, dispute).json()["status"] == "processed"
     assert cny_booked(world) == 0
@@ -416,25 +420,34 @@ def test_failed_or_rejected_webhooks_alert_administrators_once_a_day_per_code_wi
     early = {"id": "evt_dispute_early", "object": "event", "type": "charge.dispute.created", "livemode": False,
              "data": {"object": {"id": "dp_early", "object": "dispute", "payment_intent": "pi_fixture1",
                                  "amount": 1000, "currency": "cny", "status": "needs_response"}}}
-    assert deliver(world, early).status_code == 500
-    assert alerted_codes(world, boss)[2:] == ["amount_mismatch", "payment_order_mismatch"]
+    # A dispute for a payment not credited here is rejected and kept; it is applied once that
+    # payment is credited (payments.py _revive).
+    reply = deliver(world, early)
+    assert reply.status_code == 200 and reply.json()["status"] == "rejected"
+    assert alerted_codes(world, boss)[2:] == ["amount_mismatch", "dispute_payment_unknown"]
     # A processed or ignored event raises nothing.
     assert deliver(world, event).json()["status"] == "processed"
     assert deliver(world, session_event(order, paid=False, session_id=session, event_id="evt_unpaid")).json()["status"] == "ignored"
     assert len(alerted_codes(world, boss)) == 4
     # The replay of inbox rows left failed (process_pending) alerts too, under the same rules.
     topups = world["api"].state.topups
-    world["store"].execute("UPDATE payment_webhook_inbox SET status='failed' WHERE event_id='evt_dispute_early'")
+    def due():  # a failed row is retried only after its backoff; make it due now
+        world["store"].execute("UPDATE payment_webhook_inbox SET processed_at=NULL WHERE event_id='evt_dispute_early'")
+    world["store"].execute("UPDATE payment_webhook_inbox SET status='failed',attempts=0 WHERE event_id='evt_dispute_early'")
+    due()
     monkeypatch.setattr(topups, "_process", lambda *a: (_ for _ in ()).throw(RuntimeError("fixture: ledger unavailable")))
     assert topups.process_pending() == 0
     assert alerted_codes(world, boss)[4:] == ["processing_error"]
+    due()
     assert topups.process_pending() == 0
     assert len(alerted_codes(world, boss)) == 5, "同一天同一代码不再重复"
     # The next day the same failure is reported again, once.
     import synwevo_core.billing.risk as risk
     tomorrow = time.gmtime(time.time() + 86400)
     monkeypatch.setattr(risk.time, "gmtime", lambda *a: tomorrow)
+    due()
     topups.process_pending()
+    due()
     topups.process_pending()
     assert alerted_codes(world, boss)[5:] == ["processing_error"]
     # Only the provider name and a stable code travel: no payload, signature, event or customer detail.

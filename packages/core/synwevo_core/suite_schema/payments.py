@@ -11,6 +11,10 @@
 * ``payment_topups`` — a top-up order's lifecycle (creating → pending → paid | failed | expired).
   Money is never here: the immutable ``billing_orders`` row and the ledger journal are the facts.
 
+Receipt times (review payments-3, 2026-10-05): ``payment_webhook_inbox.provider_created_at`` is
+the signed event's own ``created`` time (when the provider recorded it), set once and then fixed.
+A credit takes ``payment_topups.paid_at`` from it; ``credited_at`` stays the processing time.
+
 Rollback: older code never reads these tables; credited payments stay in the ledger.
 """
 
@@ -87,3 +91,14 @@ BEGIN SELECT RAISE(ABORT,'immutable_payment_order'); END;
 CREATE TRIGGER IF NOT EXISTS payment_topups_no_delete BEFORE DELETE ON payment_topups
 BEGIN SELECT RAISE(ABORT,'immutable_payment_order'); END;
 """
+
+#: Added column: older rows have no provider time (NULL) and may receive it once.
+COLUMNS = (("payment_webhook_inbox", "provider_created_at", "INTEGER"),)
+
+
+def migrate(c) -> None:
+    """After COLUMNS (same transaction): once known, the provider's time is evidence too."""
+    c.execute("CREATE TRIGGER IF NOT EXISTS payment_inbox_created_fixed BEFORE UPDATE OF provider_created_at "
+              "ON payment_webhook_inbox WHEN OLD.provider_created_at IS NOT NULL "
+              "AND NEW.provider_created_at IS NOT OLD.provider_created_at "
+              "BEGIN SELECT RAISE(ABORT,'immutable_payment_evidence'); END")

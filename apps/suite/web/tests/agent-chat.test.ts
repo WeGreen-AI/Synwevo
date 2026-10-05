@@ -270,7 +270,8 @@ const NOT_IN_CHAT: [string, string][] = [
   ['billing_grant_reason_required billing_invalid_grant billing_welcome_already_granted billing_freeze_not_found billing_order_already_funded '
     + 'billing_payment_authority_denied billing_payment_delegation_required billing_payment_environment_mismatch billing_payment_event_conflict '
     + 'billing_payment_evidence_untrusted billing_payment_not_succeeded billing_payment_order_mismatch billing_payment_transaction_conflict '
-    + 'billing_wallet_forbidden billing_invalid_org_payer billing_org_payer_conflict billing_org_workspace_unknown billing_price_version_conflict',
+    + 'billing_wallet_forbidden billing_invalid_org_payer billing_org_payer_conflict billing_org_workspace_unknown billing_price_version_conflict '
+    + 'billing_dispute_payment_mismatch billing_invalid_dispute billing_payment_not_credited',
     'wallet, payment, grant and organization-payer management on the account service, never on the chat path'],
   ['billing_model_authority_required billing_model_configuration_required billing_model_cost_admission_required billing_model_traffic_required '
     + 'billing_invalid_price_bands billing_invalid_price_basis billing_invalid_price_purpose '
@@ -776,6 +777,9 @@ test('a one-step re-confirmation reuses the previous limits only when they fit t
   assert.equal(composer.renewalParams({ ...previous, run_seconds: 601 }, offer, previousTerms.unit), null);
   assert.equal(composer.renewalParams(previous, offer, { code: 'USD', scale: 6 }), null);
   assert.equal(composer.renewalParams(previous, { ...offer, unit: { code: 'CNY', scale: 2 } }, previousTerms.unit), null);
+  // A previous run time below the server's current minimum (one whole call) is not reused.
+  assert.equal(composer.renewalParams(previous, { ...offer, run_seconds_min: 301 }, previousTerms.unit), null);
+  assert.deepEqual(composer.renewalParams(previous, { ...offer, run_seconds_min: 300 }, previousTerms.unit), previous);
 });
 
 // ---------------------------------------------------------------- the AI-content label

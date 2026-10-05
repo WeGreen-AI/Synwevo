@@ -99,12 +99,16 @@ deny their corresponding operation. Test callbacks are explicitly fixture-only.
    Ticket fields: `attempt_key, owner, fence`. A prepared attempt has not crossed the send
    boundary. `claim_prepared(attempt_key, owner=..., lease_seconds=60)` rotates its fence only
    after lease expiry, while the call remains active and uncancelled.
-5. `dispatch(ticket) -> None` commits `dispatch_unknown` and a timestamp. **Only the caller
-   whose invocation returns successfully may now perform one network send.** Replaying this
-   method always refuses after that boundary, even with the same ticket. A crash between
-   commit and network send is conservatively unknown. Do not repeat the send based on lease
-   expiry, lost response, worker restart or idempotent prepare replay. There is no claim of
-   upstream exactly-once execution. Never wrap these methods in another Store transaction.
+5. `dispatch(ticket, send_window=...) -> None` commits `dispatch_unknown` and a timestamp.
+   **Only the caller whose invocation returns successfully may now perform one network send.**
+   Replaying this method always refuses after that boundary, even with the same ticket. A crash
+   between commit and network send is conservatively unknown. Do not repeat the send based on
+   lease expiry, lost response, worker restart or idempotent prepare replay. There is no claim
+   of upstream exactly-once execution. Never wrap these methods in another Store transaction.
+   `send_window` (whole seconds) is the dispatcher's bound on how long the send may take until
+   its usage is settled; a network dispatcher must pass it. When the call's hold has less time
+   left than that, the dispatch is refused under the writer lock with `run_time_too_short` and
+   nothing is sent (see "Hold deadlines and the send window" below).
 6. `mark_usage_pending(ticket, request_id=None, reason='awaiting_final_usage')` records a
    verified upstream request ID or stream interruption without charging or releasing.
 7. Adapter verifies final usage provenance, then constructs `UsageEvidence(provider,
@@ -138,6 +142,40 @@ reserves and settlement also reconcile expiry. Deadlines cannot be extended, are
 than the run deadline, and are at most 24 hours from reservation (configurable downward).
 At the exact deadline settlement is late, even if the sweeper has not run. Late evidence
 records cost and zero charge forever. No private debt or future secret charge is retained.
+
+#### Hold deadlines and the send window (review finding money-1, 2026-10-05)
+
+A late settlement is free for the payer, so a send must never be able to outlive its hold.
+Before this fix a call could be dispatched one second before its deadline (the attempt lease
+only needed to be unexpired) while the transport streamed for up to `Limits.timeout_s`
+(120 s by default, at most 300 s); the usage then settled late and the platform paid the
+provider for output the person received free, on every short-deadline turn.
+
+Two designs were possible: charge trusted usage of an attempt dispatched before the deadline
+even when it settles after it (capped at the hold), or never send what cannot finish inside the
+hold. The second is chosen because it is the only one that keeps the promise the hold makes to
+the payer: the deadline is final, the hold is the most they can be charged, and once it is
+released at the deadline that money is theirs to spend again. Charging after release could
+take money already reserved or spent elsewhere, or need an unbounded "debt" the ledger refuses
+to keep. So:
+
+* `MeteredDeepSeek.send_window = ceil(Limits.timeout_s) + SETTLE_MARGIN_S` (30 s: one SQLite
+  busy timeout for writing the observation and settling, which also covers the ledger's
+  whole-second clock). The transport's total timeout starts before the dispatch fence, so a
+  stream never ends later than `send_window − SETTLE_MARGIN_S` after `dispatch`.
+* The gateway refuses a step, before recording, reserving or sending anything, when
+  `min(run deadline, now + max_hold_seconds) − now < send_window` (checked before and again
+  after any upstream/traffic wait); the error carries `not_dispatched` and reaches the person
+  as `billing_run_time_too_short` ("not sent, not charged").
+* `Ledger.dispatch(..., send_window=gateway.send_window)` repeats the check under the writer
+  lock, so time spent between reserving and the send boundary cannot slip a send past its hold.
+* A quote cannot choose a run shorter than one send: `RunQuotes.issue` refuses
+  `run_seconds < send_window` (`run_time_too_short`) and the offer publishes
+  `run_seconds_min`, which the budget dialog uses as the input's minimum.
+
+Remaining (accepted) late cases are platform faults, never a payer charge: a crash after the
+stream and before settlement whose recovery runs after the deadline, or a settlement transaction
+that waits longer than the margin. They are recorded as cost with `late=1`.
 
 ### Payment credit boundary
 
@@ -288,7 +326,7 @@ still handled. The ledger gained exactly what those decisions need; there is no 
 | Account kind `org_wallet` | An organization's wallet (owner = organization id). Same never-negative trigger as a person's `wallet`. |
 | Account kinds `grant`, `chargeback` | Platform accounts: the source of grants, the sink of recovered disputed units. |
 | Journal kind `grant` | `Ledger.grant(grant_id, kind, payer_kind, payer_id, unit, amount, reason, actor_id, abuse_key)`. `kind` is `welcome` (a person only, once per account **and** once per verified-address key, enforced by unique indexes) or `admin` (a named administrator). Reason 8–500 characters is mandatory; the immutable `billing_grants` row is the audit record (actor, reason, time). Idempotent by `grant_id`; changed facts conflict. |
-| Journal kind `chargeback` | `Ledger.record_chargeback(DisputeNotice)` through the mandatory `verify_dispute` callback (durable, signature-verified provider event). Takes back `ceil(credit_units × disputed / paid)` but never more than the wallet's available units (booked − active holds): the wallet never goes negative, the rest is `outstanding_units`. The wallet is frozen in the same transaction. Idempotent per dispute. |
+| Journal kind `chargeback` | `Ledger.record_chargeback(DisputeNotice)` through the mandatory `verify_dispute` callback (durable, signature-verified provider event). Takes back `ceil(credit_units × disputed / paid)` but never more than the wallet's available units (booked − active holds): the wallet never goes negative, the rest is `outstanding_units`. The wallet is frozen in the same transaction. Idempotent per dispute. Bounds (review money-2/money-4): a disputed amount above the paid amount is capped at the paid amount (never refused); all disputes of one payment together take at most its `credit_units`; an inquiry (`DisputeNotice.inquiry`, Stripe status `warning_*`, no funds withdrawn) takes nothing and only freezes. A dispute that takes nothing is still recorded (`disputed_units` 0, column `inquiry`) and still freezes, so the finance view lists it with its freeze. Refusals: `payment_not_credited` (no credited payment here) and `dispute_payment_mismatch` (merchant or currency differ). |
 | `billing_account_freezes` | A frozen wallet cannot reserve (`wallet_frozen`) or cross the dispatch fence. `Ledger.lift_freeze(freeze_id, actor_id, reason)` is an administrator's audited decision; a lifted freeze cannot be edited again. |
 | `billing_orders.payer_kind/payer_org_id` | An order funds either the paying person (`user`, the default and every pre-existing order) or an organization (`organization`). |
 | `ChargeContext.payer_kind='organization'` + `organization_id` | The organization's wallet is reserved; the member stays payer and actor (no delegation). Admitted only through `Ledger.org_payers` (the organization's current grant and monthly limits, checked under the reservation and dispatch writer lock); without it the ledger refuses (`organization_billing_not_configured`). The shared contract's payer kind `user` is `personal` inside `ChargeContext` (pre-existing stored contexts). |

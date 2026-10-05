@@ -11,6 +11,10 @@ Org-payments (2026-10-05) widens two CHECKs, which SQLite can only do by rebuild
   payment's recovered units go);
 * journal kinds gain ``grant`` and ``chargeback``.
 
+Dispute bounds (review money-4, 2026-10-05) widen one more: ``billing_chargebacks.disputed_units``
+may be 0 (an inquiry, or a payment whose earlier disputes already took its whole credit back),
+and the added ``inquiry`` column says which rows were inquiries (freeze only).
+
 The wallet-never-negative trigger covers organization wallets too. Rollback: older code reads
 the rebuilt tables as before; it does not know the new kinds, so its wallet page refuses a
 statement containing them instead of mislabelling it (its response model is a closed list).
@@ -31,6 +35,10 @@ WIDENED = {
                           f"CHECK(kind IN ({_sql_list(ACCOUNT_KINDS)}))"),),
     "billing_journal": (("CHECK(kind IN ('paid','test_payment','sale'))",
                          f"CHECK(kind IN ({_sql_list(JOURNAL_KINDS)}))"),),
+    # A dispute may take nothing (an inquiry, or a payment its earlier disputes already took
+    # back: review money-4), yet it is still recorded and freezes the wallet.
+    "billing_chargebacks": (("CHECK(typeof(disputed_units)='integer' AND disputed_units>0)",
+                             "CHECK(typeof(disputed_units)='integer' AND disputed_units>=0)"),),
 }
 
 JOURNAL_APPLY = """CREATE TRIGGER IF NOT EXISTS billing_journal_apply AFTER INSERT ON billing_journal BEGIN
@@ -176,7 +184,7 @@ CREATE TABLE IF NOT EXISTS billing_chargebacks (
     provider TEXT NOT NULL, merchant_id TEXT NOT NULL, dispute_id TEXT NOT NULL, event_id TEXT NOT NULL,
     payment_key TEXT NOT NULL REFERENCES billing_payments(id), account_id TEXT NOT NULL REFERENCES billing_accounts(id),
     amount_minor INTEGER NOT NULL CHECK(typeof(amount_minor)='integer' AND amount_minor>0), currency TEXT NOT NULL,
-    disputed_units INTEGER NOT NULL CHECK(typeof(disputed_units)='integer' AND disputed_units>0),
+    disputed_units INTEGER NOT NULL CHECK(typeof(disputed_units)='integer' AND disputed_units>=0),
     recovered_units INTEGER NOT NULL CHECK(typeof(recovered_units)='integer' AND recovered_units>=0),
     outstanding_units INTEGER NOT NULL CHECK(typeof(outstanding_units)='integer' AND outstanding_units>=0),
     journal_id TEXT UNIQUE REFERENCES billing_journal(id), evidence_ref TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
@@ -266,6 +274,8 @@ BEGIN SELECT RAISE(ABORT,'immutable_billing_contract'); END;
 COLUMNS = (
     ("billing_orders", "payer_kind", "TEXT NOT NULL DEFAULT 'user' CHECK(payer_kind IN ('user','organization'))"),
     ("billing_orders", "payer_org_id", "TEXT"),
+    # An inquiry (no funds withdrawn) freezes and takes nothing; earlier rows were chargebacks.
+    ("billing_chargebacks", "inquiry", "INTEGER NOT NULL DEFAULT 0 CHECK(inquiry IN (0,1))"),
 )
 
 

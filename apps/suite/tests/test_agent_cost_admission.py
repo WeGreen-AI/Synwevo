@@ -1,5 +1,6 @@
 """Platform exposure gates the real gateway send boundary, independently of user funds."""
 from dataclasses import replace
+import math
 
 import pytest
 
@@ -40,7 +41,8 @@ def test_actual_cost_replaces_exposure_and_blocks_the_next_unaffordable_call(gat
     admission = g.store.one('SELECT * FROM model_cost_admissions')
     assert admission['reserved_units'] == 297
     assert admission['unit'] == 'FIXTURE-GATEWAY-COST'
-    assert admission['expires_at'] == g.ticks[0] + 121
+    # In flight for at most the transport's timeout (the fixture's), plus one second.
+    assert admission['expires_at'] == g.ticks[0] + math.ceil(g.model.limits.timeout_s) + 1
     assert g.store.one('SELECT cost_n,cost_d FROM billing_usage') == {'cost_n': '42', 'cost_d': '1'}
     policies[0] = replace(policies[0], revision='cost-fixture-v2', daily_budget=338)
     with pytest.raises(BillingError):  # 42 committed cost + 297 reservation = 339, not 338.

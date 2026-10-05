@@ -362,6 +362,15 @@ class Ledger:
         rest is recorded as outstanding. The wallet is frozen in the same transaction: it cannot
         reserve new paid calls until an administrator lifts the freeze. Idempotent per dispute;
         the verifier must have checked the durable, signature-verified provider event.
+
+        Bounds (review money-2, money-4): a disputed amount above the paid amount (the provider
+        documents it can differ, e.g. by currency fluctuation) is capped at the paid amount, never
+        refused; all disputes of one payment together take at most its credit, so a second dispute
+        object for the same charge cannot reach credit another payment funded; an inquiry (no
+        funds withdrawn) takes nothing and only freezes. A dispute that takes nothing is still
+        recorded (``disputed_units`` 0) and still freezes. Refusals: ``payment_not_credited``
+        (no credited payment with this id here) and ``dispute_payment_mismatch`` (merchant or
+        currency differ from the credited payment: a different fact, never retried).
         """
         if not isinstance(notice, DisputeNotice) or notice.environment != self.environment:
             raise BillingError("payment_environment_mismatch")
@@ -371,21 +380,25 @@ class Ledger:
             old = t.execute("SELECT * FROM billing_chargebacks WHERE environment=? AND provider=? AND dispute_id=?",
                             (self.environment, notice.provider, notice.dispute_id)).fetchone()
             if old:
-                if (old["merchant_id"], old["amount_minor"], old["currency"]) != (
-                        notice.merchant_id, notice.amount_minor, notice.currency):
+                if (old["merchant_id"], old["amount_minor"], old["currency"], bool(old["inquiry"])) != (
+                        notice.merchant_id, notice.amount_minor, notice.currency, notice.inquiry):
                     raise BillingError("payment_event_conflict")
                 return self._chargeback_row(t, old)
             payment = t.execute("SELECT p.*,o.credit_units,o.amount_minor AS paid_minor,o.currency AS paid_currency "
                                 "FROM billing_payments p JOIN billing_orders o ON o.id=p.order_key "
                                 "WHERE p.environment=? AND p.provider=? AND p.payment_id=?",
                                 (self.environment, notice.provider, notice.payment_id)).fetchone()
-            if (not payment or payment["merchant_id"] != notice.merchant_id
-                    or payment["paid_currency"] != notice.currency or notice.amount_minor > payment["paid_minor"]):
-                raise BillingError("payment_order_mismatch")
+            if not payment:
+                raise BillingError("payment_not_credited")
+            if payment["merchant_id"] != notice.merchant_id or payment["paid_currency"] != notice.currency:
+                raise BillingError("dispute_payment_mismatch")
             journal_row = t.execute("SELECT credit_account,unit FROM billing_journal WHERE id=?",
                                     (payment["journal_id"],)).fetchone()
             wallet, unit = journal_row["credit_account"], journal_row["unit"]
-            disputed = -(-payment["credit_units"] * notice.amount_minor // payment["paid_minor"])
+            share = -(-payment["credit_units"] * min(notice.amount_minor, payment["paid_minor"]) // payment["paid_minor"])
+            earlier = t.execute("SELECT COALESCE(SUM(disputed_units),0) FROM billing_chargebacks WHERE payment_key=?",
+                                (payment["id"],)).fetchone()[0]
+            disputed = 0 if notice.inquiry else max(0, min(share, payment["credit_units"] - earlier))
             booked, held = self._balance(t, wallet)
             recovered = max(0, min(disputed, booked - held))
             key, freeze_id = _id(), _id()
@@ -405,10 +418,11 @@ class Ledger:
                                      amount=recovered, kind="chargeback", reference=key)
             t.execute("INSERT INTO billing_chargebacks(id,environment,provider,merchant_id,dispute_id,event_id,payment_key,"
                       "account_id,amount_minor,currency,disputed_units,recovered_units,outstanding_units,journal_id,"
-                      "evidence_ref,payload_sha256,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                      "evidence_ref,payload_sha256,created_at,inquiry) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                       (key, self.environment, notice.provider, notice.merchant_id, notice.dispute_id, notice.event_id,
                        payment["id"], wallet, notice.amount_minor, notice.currency, disputed, recovered,
-                       disputed - recovered, journal, notice.evidence_ref, notice.payload_sha256, self._now()))
+                       disputed - recovered, journal, notice.evidence_ref, notice.payload_sha256, self._now(),
+                       int(notice.inquiry)))
             t.execute("INSERT INTO billing_account_freezes(id,account_id,reason,chargeback_id,created_at) "
                       "VALUES (?,?,'chargeback',?,?)", (freeze_id, wallet, key, self._now()))
             return self._chargeback_row(t, t.execute("SELECT * FROM billing_chargebacks WHERE id=?", (key,)).fetchone())
@@ -421,7 +435,7 @@ class Ledger:
                 "payer_id": account["owner"], "amount_minor": row["amount_minor"], "currency": row["currency"],
                 "disputed_units": row["disputed_units"], "recovered_units": row["recovered_units"],
                 "outstanding_units": row["outstanding_units"], "journal_id": row["journal_id"],
-                "freeze_id": freeze["id"] if freeze else None,
+                "inquiry": bool(row["inquiry"]), "freeze_id": freeze["id"] if freeze else None,
                 "frozen": bool(freeze) and freeze["lifted_at"] is None, "created_at": row["created_at"]}
 
     def lift_freeze(self, freeze_id: str, *, actor_id: str, reason: str) -> dict:
@@ -647,7 +661,7 @@ class Ledger:
             return AttemptTicket(attempt_key, owner, fence)
 
     def dispatch(self, ticket: AttemptTicket, *, block_unresolved_run: bool = False,
-                 admission=None) -> None:
+                 admission=None, send_window: int | None = None) -> None:
         """Commit the one-shot send boundary; a replay is REFUSED, never permission to resend.
 
         Success means 'may have been sent' even if the process crashes before network I/O.
@@ -655,9 +669,17 @@ class Ledger:
         A trusted local admission callback may reserve provider-account capacity/cost in
         this same writer transaction. It must not perform network I/O. Its writes and
         the dispatch fence either commit together with FULL durability or both roll back.
+
+        ``send_window`` is the dispatcher's bound, in seconds, on how long the send may take
+        until its usage is settled (transport timeout plus settlement margin). A network
+        dispatcher MUST pass it: the hold deadline is final (usage after it is the platform's
+        cost, never the payer's), so a send that could outlive its hold is refused here,
+        under the writer lock, before anything is sent (``run_time_too_short``).
         """
         if admission is not None and not callable(admission):
             raise BillingError("invalid_dispatch_admission")
+        if send_window is not None:
+            integer(send_window, positive=True, maximum=86400)
         with self._tx() as t:
             self._expire(t)
             attempt = self._attempt(t, ticket.attempt_key)
@@ -667,6 +689,8 @@ class Ledger:
                     or attempt["status"] != "prepared" or attempt["lease_until"] <= self._now()
                     or call["status"] != "reserved" or call["cancel_requested"]):
                 raise BillingError("dispatch_fenced")
+            if send_window is not None and call["deadline"] - self._now() < send_window:
+                raise BillingError("run_time_too_short")
             context = ChargeContext(**json.loads(call["context"]))
             if self._frozen(t, call["account_id"]):
                 raise BillingError("wallet_frozen")

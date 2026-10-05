@@ -30,7 +30,7 @@ export const budgetCopy = {
   precision: ['最多 {scale} 位小数；使用小数点，不加千位分隔符。最小金额单位：{amount}。', 'Up to {scale} decimal places; use a decimal point without grouping separators. Smallest amount: {amount}.', '最多 {scale} 位小數；使用小數點，不加千位分隔符。最小金額單位：{amount}。'],
   calls: ['最多调用次数', 'Maximum calls', '最多呼叫次數'],
   seconds: ['运行期限（秒）', 'Run duration (seconds)', '執行期限（秒）'],
-  limits: ['调用次数为 1–{calls}，运行期限为 1–{seconds} 秒。', 'Choose 1–{calls} calls and 1–{seconds} seconds.', '呼叫次數為 1–{calls}，執行期限為 1–{seconds} 秒。'],
+  limits: ['调用次数为 1–{calls}，运行期限为 {min}–{seconds} 秒（至少能完成一次模型调用）。', 'Choose 1–{calls} calls and {min}–{seconds} seconds (enough for at least one whole model call).', '呼叫次數為 1–{calls}，執行期限為 {min}–{seconds} 秒（至少能完成一次模型呼叫）。'],
   deadline: ['运行截止时间', 'Run deadline', '執行截止時間'],
   expires: ['报价确认截止时间', 'Confirm quote before', '報價確認截止時間'],
   timezone: ['时间按当前设备时区显示。', 'Times use this device’s time zone.', '時間按目前裝置時區顯示。'],
