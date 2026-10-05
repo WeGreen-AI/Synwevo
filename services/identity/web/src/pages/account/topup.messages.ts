@@ -17,4 +17,7 @@ registerMessages({
   '该钱包因支付争议已被冻结，暂不能充值': { en: 'This wallet is frozen because of a payment dispute and cannot be topped up.', 'zh-Hant': '該錢包因支付爭議已被凍結，暫不能儲值' },
   '请选择一个充值套餐或填写充值金额': { en: 'Choose a top-up package or enter an amount.', 'zh-Hant': '請選擇一個儲值套餐或填寫儲值金額' },
   '请先验证邮箱再继续': { en: 'Verify your email address before continuing.', 'zh-Hant': '請先驗證郵箱再繼續' },
+  // statement entry kinds added with grants and chargebacks (Wallet.tsx)
+  '赠送额度': { en: 'Granted credit', 'zh-Hant': '贈送額度' },
+  '拒付追回': { en: 'Recovered after a chargeback', 'zh-Hant': '拒付追回' },
 });

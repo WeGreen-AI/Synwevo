@@ -6,15 +6,16 @@ import { useLoad } from '../../lib/hooks';
 import { ErrorNotice, errorText, timeText } from './common';
 import { walletAmount } from './money';
 import './wallet.messages';
+import './topup.messages';
 import './account.css';
 import './wallet.css';
 
 type Balance = { unit: string; scale: number; booked: string; used: string; held: string; available: string };
 type Overview = { environment: 'test' | 'live'; payer_user_id: string; balances: Balance[]; used_through_seq: string };
-type Entry = { seq: string; id: string; kind: 'paid' | 'test_payment' | 'sale'; unit: string; scale: number; delta: string; created_at: number };
+type Entry = { seq: string; id: string; kind: 'paid' | 'test_payment' | 'sale' | 'grant' | 'chargeback'; unit: string; scale: number; delta: string; created_at: number };
 type Statement = { environment: 'test' | 'live'; payer_user_id: string; items: Entry[]; next_after_seq: string | null };
 const API = '/api/auth/wallet';
-const kinds = { paid: '充值到账', test_payment: '测试到账', sale: '已结算消费' };
+const kinds = { paid: '充值到账', test_payment: '测试到账', sale: '已结算消费', grant: '赠送额度', chargeback: '拒付追回' };
 
 export default function Wallet() {
   const { me } = useSession();

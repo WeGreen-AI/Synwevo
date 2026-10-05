@@ -31,7 +31,7 @@ import hashlib
 import hmac
 import json
 import time
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlencode
 
 import httpx
@@ -105,6 +105,16 @@ def _form(value: Any, prefix: str = "") -> list[tuple[str, str]]:
 
 class ProviderUnavailable(Exception):
     """The provider could not create a checkout (network, 5xx, refusal). Nothing was charged."""
+
+
+class PaymentProvider(Protocol):
+    """What a payment provider adapter must do. Crediting never goes through the adapter: it
+    happens only from a signature-verified notification in the inbox (``TopupService.webhook``)."""
+
+    name: str
+
+    def create_checkout(self, *, order_id: str, amount_minor: int, currency: str, product_name: str,
+                        success_url: str, cancel_url: str, environment: str, expires_at: int) -> "Checkout": ...
 
 
 @dataclass(frozen=True)
