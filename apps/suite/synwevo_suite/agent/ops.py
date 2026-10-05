@@ -785,8 +785,8 @@ def register(registry, agent: Agent, store, identity) -> None:
             # A narrowing is a withdrawal: journalled ahead of the change so a restored backup
             # cannot reopen the workspace's content to a model (synwevo_core.journal).
             from synwevo_core import journal
-            journal.record(store, "ai_policy_narrowed", workspace_id=c.workspace_id,
-                           processing=i.processing, providers=sorted(providers))
+            journal.record_ai_policy_narrowed(store, workspace_id=c.workspace_id,
+                                              processing=i.processing, providers=sorted(providers))
         store.execute("INSERT INTO agent_workspace_policies (workspace_id, processing, updated_by, updated_at) VALUES (?,?,?,?) "
                       "ON CONFLICT(workspace_id) DO UPDATE SET processing=excluded.processing, updated_by=excluded.updated_by, "
                       "updated_at=excluded.updated_at", (c.workspace_id, i.processing, c.user_id, ts))

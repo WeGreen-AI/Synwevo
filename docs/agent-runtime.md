@@ -196,6 +196,17 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
   sets `include_excerpt`. Administrators (`platform.users.*`) close reports and suspend or
   restore a person's Agent access with a reason: 403 `agent_access_suspended`, running turns are
   cancelled, journalled `agent_access_suspended`.
+* **Withdrawals survive a restore.** The consent withdrawal, the suspension, a workspace AI-policy
+  narrowing (`ai_policy_narrowed`), a withdrawn platform model key (`model_credential_withdrawn`) and
+  a provider switch-off (`model_provider_disabled`) are journalled before their transaction commits,
+  so a backup can land between the line and the COMMIT. A restore therefore replays them whatever
+  the backup's time (`journal.ALWAYS_REPLAYED`), and each replay keeps what the backup already holds
+  after it: a suspension by id (a lifted one stays lifted), a consent withdrawal as of its time (a
+  later consent stands), the key withdrawal and switch-off by the operation id of the provider
+  version that committed with them, the policy narrowing by a receipt committed with it; a replay
+  leaves its own receipt, so a key published later under a reused revision number survives the
+  next restore (`apps/suite/tests/test_agent_withdrawal_restore.py`,
+  `services/identity/tests/test_model_withdrawal_journal.py`).
 * **Terms.** A paid run records the terms / AI use / pricing versions in force once per version
   (`synwevo_core/terms.py`); the account export lists them, together with the Agent's visible
   conversation text, memories, settings, consents, quotes and the wallet statement

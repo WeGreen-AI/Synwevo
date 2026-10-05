@@ -347,7 +347,8 @@ def test_a_restore_cannot_reopen_a_workspace_to_the_model(agent):
     op(agent, "agent.workspace_policy.set", {"processing": "platform", "providers": ["anthropic"]}, ws=a)
     entries = narrowed()
     assert [(e["processing"], e["providers"]) for e in entries] == [("platform", ["anthropic"])]
-    # A backup from before the narrowing.
+    # A backup from before the narrowing: neither the narrower policy nor the receipt that committed with it.
+    store.execute("DELETE FROM meta WHERE key=?", ("ai_policy_narrowed:" + entries[0]["event_id"],))
     store.execute("UPDATE agent_workspace_policies SET processing='any' WHERE workspace_id=?", (a,))
     store.execute("UPDATE agent_workspace_model_providers SET providers_json='[\"anthropic\",\"deepseek\"]' WHERE workspace_id=?", (a,))
     assert journal.apply(store, entries)["ai_policy_narrowed"] == 1
