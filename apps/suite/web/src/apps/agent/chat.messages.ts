@@ -57,6 +57,7 @@ export const chatCopy = {
   balance: ['余额 {amount}', 'Balance {amount}', '餘額 {amount}'],
   balanceHeld: ['冻结 {amount}', '{amount} on hold', '凍結 {amount}'],
   balanceUnknown: ['余额暂时无法读取', 'Balance unavailable', '餘額暫時無法讀取'],
+  paidNotOpen: ['付费模型服务尚未开放', 'Paid model service not open yet', '付費模型服務尚未開放'],
   limitRemaining: ['{period}剩余 {amount}', '{amount} left {period}', '{period}剩餘 {amount}'],
   periodDaily: ['今日', 'today', '今日'],
   periodWeekly: ['本周', 'this week', '本週'],

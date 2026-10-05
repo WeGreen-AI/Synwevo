@@ -240,6 +240,10 @@ test('the composer shows the payer choice, balance, limit and a low-balance top-
   const missing = render('en', React.createElement(status.ComposerStatus, { money: { ...props, payers: [list[0]],
     status: { ...fixtureStatus, limit: { configured: false, enabled: false, usage_state: null, remaining: null, period: null } } } }));
   assert.ok(missing.includes('No spending limit set') && missing.includes('href="/agent/settings"'), missing);
+  // Without the paid service the composer says so instead of inventing a balance.
+  const closed = render('zh-Hans', React.createElement(status.ComposerStatus, { money: { ...props, payers: [list[0]],
+    status: { available: false, reason: 'not_configured' } } }));
+  assert.ok(closed.includes('付费模型服务尚未开放') && !closed.includes('余额 ¥') && !closed.includes('去充值'), closed);
 });
 
 // ---------------------------------------------------------------- the composer's facts

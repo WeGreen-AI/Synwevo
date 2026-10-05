@@ -97,7 +97,8 @@ export function ComposerStatus({ money: state, disabled = false }: { money: Mone
         </select></label>
         : <span className="ag-chip">{c("payer")} · {c("payerPersonal")}</span>}
       <span className={`ag-chip ag-balance${funds === "empty" ? " is-empty" : funds === "low" ? " is-low" : ""}`} aria-live="polite">
-        {shown ? c("balance", { amount: shown }) : status === undefined ? "…" : c("balanceUnknown")}
+        {shown ? c("balance", { amount: shown }) : status === undefined ? "…"
+          : status?.available === false && status.reason === "not_configured" ? c("paidNotOpen") : c("balanceUnknown")}
         {held && status?.balance?.held !== "0" && <span className="ag-chip-sub">{c("balanceHeld", { amount: held })}</span>}
       </span>
       {limitText && (limit!.key === "limitRemaining" ? <span className="ag-chip">{limitText}</span>
