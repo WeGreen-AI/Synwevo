@@ -71,6 +71,7 @@ function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
     invalid_input: "输入不符合要求，请检查后再提交。",
     too_many_memories: "最多保存 50 条个人记忆，请先删除一些。",
     memory_not_found: "这条记忆已不存在，请重新加载记忆列表。",
+    content_blocked_memory: "这条记忆触发了内容安全规则，没有保存。请修改后再保存。",
     idempotency_conflict: "这次请求与先前的操作不一致，请重新加载并核对结果。",
     transfer_policy_changed: "这个工作空间的数据流政策刚被其他人修改，本次更改没有保存。请重新加载后核对当前政策再决定。",
     account_unavailable: "登录已失效，请重新登录。",

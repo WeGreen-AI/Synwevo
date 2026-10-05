@@ -15,6 +15,7 @@ from synwevo_core.store import new_id, now
 
 from .engine import Agent, _j
 from .provider import EFFORTS, KEY_PURPOSE, configured_model, resolve_credential
+from .safety import check_memory
 from .tools import workspace_policy
 from .turn_cost import turn_costs
 
@@ -740,20 +741,26 @@ def register(registry, agent: Agent, store, identity) -> None:
        handler=lambda c, i: {"memories": store.all("SELECT id, body, created_at, updated_at FROM agent_memories "
                                                    "WHERE user_id=? ORDER BY created_at", (c.user_id,))})
 
+    # Memories reach every request's system prompt, so the input rules check them first. The
+    # check runs outside the write: a refusal's safety record must outlive the refused write's
+    # rollback, so these two operations own their transaction (transactional=False).
     def add_memory(c, i):
-        n = store.one("SELECT COUNT(*) AS n FROM agent_memories WHERE user_id=?", (c.user_id,))["n"]
-        if n >= 50:
-            raise ServiceError(409, "too_many_memories", "记忆已满 50 条，请先删除一些")
-        mid = new_id("mem")
-        store.execute("INSERT INTO agent_memories (id,user_id,body,created_at,updated_at) VALUES (?,?,?,?,?)",
-                      (mid, c.user_id, i.body.strip(), now(), now()))
+        check_memory(store, c.user_id, i.body.strip())
+        with store.tx():
+            n = store.one("SELECT COUNT(*) AS n FROM agent_memories WHERE user_id=?", (c.user_id,))["n"]
+            if n >= 50:
+                raise ServiceError(409, "too_many_memories", "记忆已满 50 条，请先删除一些")
+            mid = new_id("mem")
+            store.execute("INSERT INTO agent_memories (id,user_id,body,created_at,updated_at) VALUES (?,?,?,?,?)",
+                          (mid, c.user_id, i.body.strip(), now(), now()))
         return {"id": mid, "body": i.body.strip()}
 
     op(id="agent.memory.add", title=T("记住一条偏好", "記住一條偏好", "Remember a preference"),
        summary="Remember a personal preference the person stated (never business facts from a workspace).",
-       input=MemoryAdd, side_effect="write", agent="confirm", handler=add_memory)
+       input=MemoryAdd, side_effect="write", agent="confirm", transactional=False, handler=add_memory)
 
     def update_memory(c, i):
+        check_memory(store, c.user_id, i.body.strip())
         n = store.execute("UPDATE agent_memories SET body=?, updated_at=? WHERE id=? AND user_id=?",
                           (i.body.strip(), now(), i.memory_id, c.user_id))
         if not n:
@@ -761,7 +768,7 @@ def register(registry, agent: Agent, store, identity) -> None:
         return {"id": i.memory_id, "body": i.body.strip()}
 
     op(id="agent.memory.update", title=T("修改记忆", "修改記憶", "Edit a memory"), summary="Edit a memory.",
-       input=MemoryUpdate, side_effect="write", agent="never", handler=update_memory)
+       input=MemoryUpdate, side_effect="write", agent="never", transactional=False, handler=update_memory)
 
     def delete_memory(c, i):
         if not store.execute("DELETE FROM agent_memories WHERE id=? AND user_id=?", (i.memory_id, c.user_id)):

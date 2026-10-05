@@ -79,6 +79,8 @@ const errors: Record<string, string> = {
   turn_running: "已有回答正在进行，请等待或先停止。",
   turn_cancelled: "回答已停止，后续操作未执行。",
   conversation_sealed: "访问权限已改变，相关内容已隐藏。请新建会话继续。",
+  // A memory the model proposed and the person confirmed, refused by an input rule (agent/safety.py).
+  content_blocked_memory: "这条记忆触发了内容安全规则，没有保存。请修改后再保存。",
 };
 
 export function agentErrorText(error: unknown, t: (key: string) => string): string {

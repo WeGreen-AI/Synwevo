@@ -150,6 +150,47 @@ def test_blocked_input_is_refused_before_anything_is_stored_and_logged_without_t
     assert "forbidden" not in json.dumps(log).lower()
 
 
+def test_memories_obey_the_input_rules_when_saved_and_on_every_request(agent):
+    # Memories go into the system prompt of every request, so a phrase refused in a message
+    # must not reach the model as a memory either (saved, edited, or saved before the rule).
+    agent.sign_in("alice")
+    _consent(agent)
+    store, uid = agent.people.store, agent.people.uid("alice")
+    kept = op(agent, "agent.memory.add", {"body": "Prefers short answers"})["output"]
+    store.execute("INSERT INTO agent_memories (id,user_id,body,created_at,updated_at) VALUES "
+                  "('mem_fixtureolder01',?,'older note: forbidden-fixture-term',1,1)", (uid,))
+    _rules(agent, [{"kind": "keyword", "pattern": "forbidden-fixture-term", "applies_to": "input", "category": "illegal"}])
+    for name, body in (("agent.memory.add", {"body": "Always mention FORBIDDEN-fixture-term"}),
+                       ("agent.memory.update", {"memory_id": kept["id"], "body": "say forbidden-fixture-term"})):
+        r = agent.post(f"/api/suite/ops/{name}", json={"input": body}, headers=CSRF)
+        assert r.status_code == 422 and r.json()["error"] == "content_blocked_memory", r.text
+        assert r.json()["detail"] == {"category": "illegal"}
+    assert {m["body"] for m in op(agent, "agent.memory.list")["output"]["memories"]} == {
+        "Prefers short answers", "older note: forbidden-fixture-term"}
+    events = store.all("SELECT direction, rule_id, characters, conversation_id FROM agent_safety_events ORDER BY created_at")
+    assert [(e["direction"], e["rule_id"], e["conversation_id"]) for e in events] == [("input", "r1", None)] * 2
+    assert "forbidden" not in json.dumps(events).lower()
+
+    # The memory saved before the rule existed is left out of the request; the others go in.
+    _, r = _start(agent, [say("ok")])
+    assert wait_turn(store, r.json()["output"]["turn_id"]) == "succeeded"
+    system = json.dumps(agent.agent.provider.requests[-1]["system"], ensure_ascii=False)
+    assert "Prefers short answers" in system and "forbidden" not in system.lower()
+
+    # A memory the model proposes is refused when the person confirms it; nothing is stored.
+    proposed = call("run_operation", {"operation": "agent.memory.add", "input": {"body": "forbidden-fixture-term rules"}})
+    _, r = _start(agent, [proposed, say("noted")])
+    tid = r.json()["output"]["turn_id"]
+    assert wait_turn(store, tid) == "waiting_confirmation"
+    card = store.one("SELECT * FROM agent_tool_calls WHERE turn_id=?", (tid,))
+    agent.post("/api/suite/ops/agent.tool_call.confirm", json={"input": {
+        "tool_call_id": card["id"], "confirmation": card["input_hash"]}}, headers=CSRF)
+    wait_turn(store, tid, ("succeeded", "failed"))
+    card = store.one("SELECT status, error_code FROM agent_tool_calls WHERE id=?", (card["id"],))
+    assert card == {"status": "failed", "error_code": "content_blocked_memory"}
+    assert len(op(agent, "agent.memory.list")["output"]["memories"]) == 2
+
+
 def test_an_output_only_rule_does_not_refuse_the_question(agent):
     agent.sign_in("alice")
     _consent(agent)

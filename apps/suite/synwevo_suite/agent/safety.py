@@ -2,7 +2,9 @@
 
 * **Input** — a message matching a governed rule (administrators' keyword/pattern lists,
   `synwevo_core.agent_safety.SafetyRules`) is refused before anything is stored or sent:
-  ``content_blocked_input`` (422). The text stays with the person to edit.
+  ``content_blocked_input`` (422). The text stays with the person to edit. Memories reach the
+  model in every request's system prompt, so the same rules refuse saving or editing one
+  (``content_blocked_memory``) and leave out of the prompt any saved before a rule matched it.
 * **Output** — the streamed answer is checked as it arrives. On a match no further text is
   shown, the model call is stopped, what was already shown of that answer is withheld and the
   turn ends ``content_blocked_output``. A tool call's arguments are checked against the same
@@ -61,6 +63,27 @@ def check_input(store, user_id: str, text: str, *, conversation_id: str | None) 
                                conversation_id=conversation_id, characters=len(text or ""))
     raise ServiceError(422, "content_blocked_input", "这条消息触发了内容安全规则，没有发送给模型，请修改后再发送",
                        {"category": rule["category"]})
+
+
+def check_memory(store, user_id: str, text: str) -> None:
+    """A memory goes into the system prompt of every request, so the input rules apply to it as
+    to a message: refused before it is stored (added, edited, or proposed by the model and then
+    confirmed), recording only which rule and how long."""
+    rules = SafetyRules(store).compiled()
+    rule = rules.match(text or "", "input")
+    if rule is None:
+        return
+    SafetyEvents(store).record(user_id, "input", rule=rule, version=rules.version, conversation_id=None,
+                               characters=len(text or ""))
+    raise ServiceError(422, "content_blocked_memory", "这条记忆触发了内容安全规则，没有保存，请修改后再保存",
+                       {"category": rule["category"]})
+
+
+def allowed_memories(store, bodies: list[str]) -> list[str]:
+    """The memories that may go into a request: one saved before an input rule was published
+    that matches it now is left out (it stays visible to the person in Agent settings)."""
+    rules = SafetyRules(store).compiled()
+    return [body for body in bodies if rules.match(body, "input") is None]
 
 
 class OutputGuard:

@@ -30,7 +30,7 @@ from synwevo_core.terms import TermsAcceptances
 from synwevo_core.agent_safety import AgentAccess, ProviderConsents, SafetyEvents
 
 from .provider import Cancelled, Credential, Provider, ProviderError, replayable, resolve_credential
-from .safety import OutputGuard, check_input, refused
+from .safety import OutputGuard, allowed_memories, check_input, refused
 from .tools import TOOLS, ToolContext, policy_allows, resource_reads, snapshot_read, tool_result_text, validate_tool
 
 log = logging.getLogger("synwevo.agent")
@@ -617,9 +617,11 @@ class Agent:
         settings = self.store.one("SELECT memory_enabled FROM agent_settings WHERE user_id=?", (user["id"],))
         if not settings or settings["memory_enabled"]:
             mems = self.store.all("SELECT body FROM agent_memories WHERE user_id=? ORDER BY created_at LIMIT 50", (user["id"],))
-            if mems:
+            # The input rules in force now: a memory saved before a rule matched it is not sent.
+            bodies = allowed_memories(self.store, [m["body"] for m in mems])
+            if bodies:
                 memory = "\n\nWhat the person asked you to remember about them (personal preferences, not business facts):\n" + \
-                         "\n".join(f"- {m['body']}" for m in mems)
+                         "\n".join(f"- {body}" for body in bodies)
         return [{"type": "text", "text": SYSTEM_PROMPT},
                 {"type": "text", "text": f"Operations available to this person (use find_operations for input schemas):\n{ops}"
                                          f"\n\nThe person's interface language: {locale}. Their time zone: {tz}. Today (UTC): {today}.{memory}"}]

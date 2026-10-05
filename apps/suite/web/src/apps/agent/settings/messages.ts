@@ -74,6 +74,7 @@ export const agentSettingsMessages = {
   "输入不符合要求，请检查后再提交。": { en: "The input is invalid. Check it before submitting again.", "zh-Hant": "輸入不符合要求，請檢查後再提交。" },
   "最多保存 50 条个人记忆，请先删除一些。": { en: "You can save up to 50 memories. Delete some before adding more.", "zh-Hant": "最多儲存 50 條個人記憶，請先刪除一些。" },
   "这条记忆已不存在，请重新加载记忆列表。": { en: "This memory no longer exists. Reload the memory list.", "zh-Hant": "這條記憶已不存在，請重新載入記憶清單。" },
+  "这条记忆触发了内容安全规则，没有保存。请修改后再保存。": { en: "This memory matched a content safety rule, so it was not saved. Edit it and save again.", "zh-Hant": "這條記憶觸發了內容安全規則，沒有儲存。請修改後再儲存。" },
   "这个工作空间的数据流政策刚被其他人修改，本次更改没有保存。请重新加载后核对当前政策再决定。": { en: "Someone else just changed this workspace's data-flow policy, so your change was not saved. Reload, check the current policy, then decide.", "zh-Hant": "這個工作空間的資料流政策剛被其他人修改，本次更改沒有儲存。請重新載入後核對目前政策再決定。" },
   "这次请求与先前的操作不一致，请重新加载并核对结果。": { en: "This request conflicts with an earlier operation. Reload and check the result.", "zh-Hant": "這次請求與先前的操作不一致，請重新載入並核對結果。" },
   "登录已失效，请重新登录。": { en: "Your session has expired. Sign in again.", "zh-Hant": "登入已失效，請重新登入。" },
