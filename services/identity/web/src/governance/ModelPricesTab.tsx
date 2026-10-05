@@ -6,13 +6,19 @@ import { permitted, type Held } from "./access";
 import { useAdminData } from "./data";
 import { errText } from "./labels";
 import { useUnsavedChanges } from "../lib/hooks";
+import { ModelPriceCalendar } from "./ModelPriceCalendar";
+import { ModelPriceMarkups } from "./ModelPriceMarkups";
+import { compareDecimal, type BandRates } from "./model-price-bands";
 import "./model-prices.messages";
+import "./model-price-bands.messages";
 
 type Environment = "test" | "live" | null;
 export type PriceSpec = {
   name: string; purpose: "sale" | "cost"; unit: { code: string; scale: number };
   provider: "deepseek"; model: string; input_uncached: string; input_cached: string; output: string;
   terms_ref: string; effective_from: number; previous_price_id: string | null;
+  /** Off-peak rates of a time-banded price; the three rates above are then its peak rates. */
+  off_peak?: BandRates | null;
 };
 export type PriceDraft = {
   id: string; revision: number; status: "draft" | "published"; price_id: string | null;
@@ -24,11 +30,13 @@ type Publication = { operation_id: string; status: "succeeded"; draft: PriceDraf
 type Calculation = {
   unit: PriceSpec["unit"]; exact: { numerator: string; denominator: string }; display_amount: string;
   charge_units_if_no_prior_remainder: string; per_tokens: 1000000;
+  bands?: Record<"peak" | "off_peak", { exact: { numerator: string; denominator: string }; display_amount: string; charge_units_if_no_prior_remainder: string }> | null;
 };
 type Form = {
   name: string; purpose: "" | PriceSpec["purpose"]; code: string; scale: string; provider: "" | "deepseek";
   model: string; input_uncached: string; input_cached: string; output: string; terms_ref: string;
   effective: string; previous_price_id: string;
+  banded: "" | "yes"; off_input_uncached: string; off_input_cached: string; off_output: string;
 };
 type Counts = Pick<Form, "input_uncached" | "input_cached" | "output">;
 type CreateAttempt = { environment: "test" | "live"; body: { spec: PriceSpec; idempotency_key: string } };
@@ -39,10 +47,12 @@ type Choice = { kind: "new" } | { kind: "select" | "copy"; item: PriceDraft };
 const API = "/api/admin/billing/prices";
 const rateKeys = ["input_uncached", "input_cached", "output"] as const;
 const rateNames = { input_uncached: "未缓存输入", input_cached: "缓存输入", output: "输出" };
+const offKeys = { input_uncached: "off_input_uncached", input_cached: "off_input_cached", output: "off_output" } as const;
 const grid: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))", gap: 16 };
 const fieldset: CSSProperties = { border: 0, padding: 0, margin: 0, minWidth: 0 };
 const emptyForm = (): Form => ({ name: "", purpose: "", code: "", scale: "", provider: "", model: "",
-  input_uncached: "", input_cached: "", output: "", terms_ref: "", effective: "", previous_price_id: "" });
+  input_uncached: "", input_cached: "", output: "", terms_ref: "", effective: "", previous_price_id: "",
+  banded: "", off_input_uncached: "", off_input_cached: "", off_output: "" });
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const endpoint = (id: string, action = "") => `${API}/drafts/${encodeURIComponent(id)}${action}`;
 // Only bounded counts, scale and timestamps become numbers. Monetary values never do.
@@ -67,7 +77,9 @@ function timestamp(value: string): number | null {
 function editable(spec: PriceSpec): Form {
   return { name: spec.name, purpose: spec.purpose, code: spec.unit.code, scale: String(spec.unit.scale),
     provider: spec.provider, model: spec.model, input_uncached: spec.input_uncached, input_cached: spec.input_cached,
-    output: spec.output, terms_ref: spec.terms_ref, effective: localInput(spec.effective_from), previous_price_id: spec.previous_price_id || "" };
+    output: spec.output, terms_ref: spec.terms_ref, effective: localInput(spec.effective_from), previous_price_id: spec.previous_price_id || "",
+    banded: spec.off_peak ? "yes" : "", off_input_uncached: spec.off_peak?.input_uncached || "", off_input_cached: spec.off_peak?.input_cached || "",
+    off_output: spec.off_peak?.output || "" };
 }
 function validated(form: Form, source: PriceSpec | null): { spec: PriceSpec | null; errors: Partial<Record<keyof Form, string>> } {
   const errors: Partial<Record<keyof Form, string>> = {};
@@ -79,6 +91,11 @@ function validated(form: Form, source: PriceSpec | null): { spec: PriceSpec | nu
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(form.model)) errors.model = "模型标识须以英文字母或数字开头，共 1–100 位，仅限英文字母、数字及 . _ : -。";
   for (const key of rateKeys) if (!decimal(form[key])) errors[key] = "费率须为非负十进制数，整数最多 9 位、小数最多 9 位；不能有多余前导零、指数或千位分隔符。";
   if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(form.terms_ref)) errors.terms_ref = "条款引用须以英文字母或数字开头，共 1–200 位，仅限英文字母、数字及 . _ : / -，不能包含查询参数。";
+  if (form.banded === "yes") for (const key of rateKeys) {
+    const off = form[offKeys[key]];
+    if (!decimal(off)) errors[offKeys[key]] = "费率须为非负十进制数，整数最多 9 位、小数最多 9 位；不能有多余前导零、指数或千位分隔符。";
+    else if (decimal(form[key]) && compareDecimal(off, form[key]) > 0) errors[offKeys[key]] = "低谷费率不能高于同类高峰费率。";
+  }
   if (form.previous_price_id && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(form.previous_price_id)) errors.previous_price_id = "前一价格版本须以英文字母或数字开头，共 1–200 位，仅限英文字母、数字及 . _ : -。";
   // Preserve an unchanged server timestamp even if it is the later occurrence of a
   // repeated local time. Editing a different field must not move its effective instant.
@@ -89,7 +106,8 @@ function validated(form: Form, source: PriceSpec | null): { spec: PriceSpec | nu
   return { errors, spec: { name: form.name.trim(), purpose: form.purpose as PriceSpec["purpose"],
     unit: { code: form.code, scale: Number(form.scale) }, provider: "deepseek", model: form.model,
     input_uncached: form.input_uncached, input_cached: form.input_cached, output: form.output,
-    terms_ref: form.terms_ref, effective_from: effective!, previous_price_id: form.previous_price_id || null } };
+    terms_ref: form.terms_ref, effective_from: effective!, previous_price_id: form.previous_price_id || null,
+    off_peak: form.banded === "yes" ? { input_uncached: form.off_input_uncached, input_cached: form.off_input_cached, output: form.off_output } : null } };
 }
 const unitFraction = (scale: number) => scale === 0 ? "1" : `0.${"0".repeat(scale - 1)}1`;
 
@@ -100,7 +118,14 @@ function PriceDetails({ spec }: { spec: PriceSpec }) {
     <b>{spec.name}</b>
     <p>{t("{purpose} · 提供方：{provider} · 模型：{model}", { purpose: t(spec.purpose === "sale" ? "销售价" : "成本价"), provider: spec.provider, model: spec.model })}</p>
     <p>{t("单位：{code}；精度：{scale}；钱包整数 1 = {fraction} {code}。", { ...spec.unit, fraction: unitFraction(spec.unit.scale) })}</p>
-    <ul>{rateKeys.map(key => <li key={key}>{t("{kind}：每百万 token 为 {amount} {code}", { kind: t(rateNames[key]), amount: spec[key], code: spec.unit.code })}</li>)}</ul>
+    {spec.off_peak ? <>
+      <p>{t("分时价格：按调用派发时刻落入的时段计价。")}</p>
+      <div className="tbl-wrap"><table className="tbl">
+        <caption className="small" style={{ textAlign: "left" }}>{t("每百万 token 的费率（{code}）", { code: spec.unit.code })}</caption>
+        <thead><tr><th scope="col">{t("Token 类型")}</th><th scope="col">{t("高峰")}</th><th scope="col">{t("低谷")}</th></tr></thead>
+        <tbody>{rateKeys.map(key => <tr key={key}><th scope="row">{t(rateNames[key])}</th><td>{spec[key]}</td><td>{spec.off_peak![key]}</td></tr>)}</tbody>
+      </table></div>
+    </> : <ul>{rateKeys.map(key => <li key={key}>{t("{kind}：每百万 token 为 {amount} {code}", { kind: t(rateNames[key]), amount: spec[key], code: spec.unit.code })}</li>)}</ul>}
     <p>{t("生效时间：{time}（本地时区 {zone}）；Unix 秒：{seconds}", { time: date, zone: timeZone(), seconds: String(spec.effective_from) })}</p>
     <p>{t("条款引用：{ref}", { ref: spec.terms_ref })}</p>
     <p>{t("前一价格版本：{id}", { id: spec.previous_price_id || t("无前一版本") })}</p>
@@ -346,7 +371,9 @@ function ModelPricesContent({ held, onDenied }: { held: Held; onDenied: () => vo
         {list.data.items.map(item => <article className="notice col gap8" key={item.id}>
           <div className="row wrap gap8"><b className="grow">{item.spec.name}</b><span className="badge">{t(item.status === "draft" ? "价格草稿" : "已发布价格")}</span></div>
           <p className="small">{t("{purpose} · 模型：{model} · 单位：{code} · 修订 {revision}", { purpose: t(item.spec.purpose === "sale" ? "销售价" : "成本价"), model: item.spec.model, code: item.spec.unit.code, revision: item.revision })}</p>
-          <p className="small">{rateKeys.map(key => t("{kind} {amount}", { kind: t(rateNames[key]), amount: item.spec[key] })).join(" · ")}</p>
+          <p className="small">{item.spec.off_peak && <span className="badge">{t("分时")}</span>} {rateKeys.map(key => item.spec.off_peak
+            ? t("{kind} {amount}（低谷 {off}）", { kind: t(rateNames[key]), amount: item.spec[key], off: item.spec.off_peak[key] })
+            : t("{kind} {amount}", { kind: t(rateNames[key]), amount: item.spec[key] })).join(" · ")}</p>
           <p className="tiny muted">{t("以上费率均为每百万 token 的主要单位金额。")}</p>
           <p className="tiny muted">{t("记录：{id}；价格版本：{price}；更新时间：{time}", { id: item.id, price: item.price_id || t("尚未发布"), time: formatTime(item.updated_at) })}</p>
           <div className="row wrap gap8"><button type="button" className="btn" disabled={frozen} aria-pressed={base?.id === item.id}
@@ -390,6 +417,7 @@ function ModelPricesContent({ held, onDenied }: { held: Held; onDenied: () => vo
         <div id={`${id}-rules`} className="notice info col gap8 small">
           <p>{t("所有价格信息均须自行填写；本页不预设售价、币种或兑换比例。单位代码是计价标识，不代表已配置货币兑换。")}</p>
           <p>{t("费率是每百万 token 的主要单位金额，不是钱包最小单位。精度表示主要单位的小数位数，例如精度 6 时，钱包整数 1 = 0.000001 个主要单位。")}</p>
+          <p>{t("分时价格按调用派发时刻（UTC）落入的高峰或低谷时段计价；发布分时价格前须先发布下方的时段日历。冻结与成本准入按高峰费率计算。")}</p>
           <p>{t("日期按浏览器本地时区 {zone} 输入并转换为 Unix 秒；夏令时重复时刻采用较早的时刻，请在预览中核对。", { zone: timeZone() })}</p>
         </div>
         <fieldset className="col gap16" disabled={!canWrite || frozen} style={fieldset}>
@@ -405,7 +433,13 @@ function ModelPricesContent({ held, onDenied }: { held: Held; onDenied: () => vo
               onChange={event => edit("provider", event.target.value)}><option value="">{t("请选择模型提供方")}</option><option value="deepseek">DeepSeek</option></select>
               {tried && validation.errors.provider && <span>{t(validation.errors.provider)}</span>}</label>
             {field("model", "模型标识", { maxLength: 100 })}
-            {rateKeys.map(key => field(key, key === "input_uncached" ? "未缓存输入费率（每百万 token）" : key === "input_cached" ? "缓存输入费率（每百万 token）" : "输出费率（每百万 token）", { decimal: true }))}
+            <label className="field"><span>{t("计价方式")}</span><select id={`${id}-banded`} className="input" value={form.banded}
+              onChange={event => edit("banded", event.target.value)}><option value="">{t("统一费率")}</option><option value="yes">{t("分时（高峰与低谷）")}</option></select></label>
+            {rateKeys.map(key => field(key, form.banded === "yes"
+              ? (key === "input_uncached" ? "高峰未缓存输入费率（每百万 token）" : key === "input_cached" ? "高峰缓存输入费率（每百万 token）" : "高峰输出费率（每百万 token）")
+              : (key === "input_uncached" ? "未缓存输入费率（每百万 token）" : key === "input_cached" ? "缓存输入费率（每百万 token）" : "输出费率（每百万 token）"), { decimal: true }))}
+            {form.banded === "yes" && rateKeys.map(key => field(offKeys[key], key === "input_uncached" ? "低谷未缓存输入费率（每百万 token）"
+              : key === "input_cached" ? "低谷缓存输入费率（每百万 token）" : "低谷输出费率（每百万 token）", { decimal: true }))}
             {field("terms_ref", "条款引用标识", { maxLength: 200 })}
             {field("effective", "生效日期与时间（本地）", { type: "datetime-local" })}
             {field("previous_price_id", "前一价格版本标识（可选）", { maxLength: 200 })}
@@ -434,10 +468,14 @@ function ModelPricesContent({ held, onDenied }: { held: Held; onDenied: () => vo
           <p>{t("试算金额：{amount} {code}", { amount: calculation.result.display_amount, code: calculation.result.unit.code })}</p>
           <p>{t("精确金额（钱包最小单位）：{numerator} / {denominator}", calculation.result.exact)}</p>
           <p>{t("无前期余数时的钱包整数扣减：{units}；单位精度：{scale}。", { units: calculation.result.charge_units_if_no_prior_remainder, scale: calculation.result.unit.scale })}</p>
+          {calculation.result.bands && <p>{t("分时价格：上面的金额按高峰计算；高峰 {peak} {code}，低谷 {off} {code}。", { peak: calculation.result.bands.peak.display_amount,
+            off: calculation.result.bands.off_peak.display_amount, code: calculation.result.unit.code })}</p>}
           <p>{t("仅计算示例用量，不是实际账单，也不会发送模型请求。各项 token 数量须为 0–1000000000 的整数。")}</p>
         </div>}
       </form>}
     </section>}
+    <ModelPriceCalendar manage={manage} onDenied={onDenied} />
+    <ModelPriceMarkups manage={manage} onDenied={onDenied} />
     {busy && <p className="small muted" role="status">{t("正在等待服务器响应…")}</p>}
     {choice && <ActionDialog title={t("放弃未保存的价格输入？")} confirmLabel={t("放弃输入并继续")} reason="none"
       impact={t("切换记录或创建草稿会清除当前尚未保存的输入。服务器记录不会被删除。")}
