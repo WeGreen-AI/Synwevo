@@ -207,7 +207,11 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
   Whether a stopped call is charged is the gateway's incomplete-call policy.
 * **Records.** A stop is stored as rule id/version, direction and length — never text.
   `agent.message.report` files a report on an answer; its text is attached only when the person
-  sets `include_excerpt`. Administrators (`platform.users.*`) close reports and suspend or
+  sets `include_excerpt`. In the chat every finished answer with text has a "Report" control
+  (`ReportDialog.tsx`): a reason (harmful, illegal, privacy, wrong, other), an optional note
+  (≤ 1000 characters) and an "attach this answer's text" box that is off by default; it ends
+  "sent" (saying whether the text went with it), "already reported" (`report_exists`, not a
+  failure) or "not sent" with the reason and a retry of the same request. Administrators (`platform.users.*`) close reports and suspend or
   restore a person's Agent access with a reason: 403 `agent_access_suspended`, running turns are
   cancelled, journalled `agent_access_suspended`.
 * **Terms.** A paid run records the terms / AI use / pricing versions in force once per version

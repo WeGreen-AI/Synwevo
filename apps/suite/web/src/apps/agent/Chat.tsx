@@ -9,6 +9,7 @@ import { AgentFailure as Failure, agentErrorText } from "./errors";
 import { Markdown } from "./Markdown";
 import { validTurnCost } from "./cost";
 import { refusalOf } from "./refusals";
+import ReportDialog, { useReportText } from "./ReportDialog";
 import { activeTurn, branchMessages, type Conversation, type Message, type ToolCall, type Workspace } from "./types";
 
 export type Act = (operation: string, input: Record<string, unknown>) => Promise<unknown>;
@@ -115,6 +116,10 @@ export default function Chat({ conversation, loading, error, connection, configu
   const [scopeOpen, setScopeOpen] = useState(false);
   const [newContent, setNewContent] = useState(false);
   const [copied, setCopied] = useState<CopyState>(null);
+  /** The answer being reported, and the answers reported from this page (the server refuses a second report). */
+  const [reporting, setReporting] = useState<string | null>(null);
+  const [reported, setReported] = useState<ReadonlySet<string>>(() => new Set());
+  const r = useReportText();
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const composing = useRef(false);
@@ -124,7 +129,7 @@ export default function Chat({ conversation, loading, error, connection, configu
   const running = (conversation?.messages ?? []).find(activeTurn);
   const blocked = busy || !!running || !!conversation?.sealed || conversation?.status === "archived" || configured === false;
   useEffect(() => { if (sentDraft) { setText(""); stick.current = true; input.current?.focus(); } }, [sentDraft]);
-  useEffect(() => { setFailure(undefined); stick.current = true; setNewContent(false); }, [conversation?.id]);
+  useEffect(() => { setFailure(undefined); stick.current = true; setNewContent(false); setReporting(null); }, [conversation?.id]);
   useEffect(() => () => clearTimeout(copyTimer.current), []);
   useEffect(() => {
     // Follow the stream only while the reader is at the bottom; never pull them back from reading.
@@ -198,6 +203,10 @@ export default function Chat({ conversation, loading, error, connection, configu
             onClick={() => void action("agent.turn.start", { conversation_id: conversation!.id, regenerate_of: m.id })}>
             {failed ? c("retry") : t("重新生成回答")}
           </button>
+          {!!m.body && (reported.has(m.id)
+            ? <button type="button" className="btn ghost sm" aria-disabled="true" aria-label={r("reportedLabel")}>{r("reported")}</button>
+            : <button type="button" className="btn ghost sm" aria-haspopup="dialog" aria-label={r("openLabel")}
+              onClick={() => setReporting(m.id)}>{r("open")}</button>)}
           {siblings.length > 1 && <div className="ag-branch" role="group" aria-label={c("branchGroup")}>
             <button type="button" className="btn ghost sm" aria-label={c("branchPrev")} disabled={busy || !!running || position <= 0}
               onClick={() => void action("agent.conversation.update", { conversation_id: conversation!.id, head_id: siblings[position - 1].id })}>
@@ -254,6 +263,9 @@ export default function Chat({ conversation, loading, error, connection, configu
       </form>
       <p className="ag-composer-hint" id={`${id}-hint`}>{t("Enter 发送 · Shift+Enter 换行")}{hint ? ` · ${hint}` : ""}</p>
     </div>
+    {reporting && conversation && <ReportDialog conversationId={conversation.id} messageId={reporting}
+      send={(input) => act("agent.message.report", input)} onClose={() => setReporting(null)}
+      onReported={(messageId) => setReported((old) => new Set(old).add(messageId))} />}
     {scopeOpen && conversation && <Scope scope={conversation.scope} spaces={spaces} close={() => setScopeOpen(false)}
       change={(scope) => act("agent.conversation.update", { conversation_id: conversation.id, ...(scope === null ? { clear_scope: true } : { scope }) })} />}
   </div>;

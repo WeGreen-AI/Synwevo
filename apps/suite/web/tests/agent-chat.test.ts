@@ -360,6 +360,106 @@ test('a refusal notice states what happened and offers the next step', () => {
   assert.ok(frozen.includes('暫時凍結') && frozen.includes('href="/account/wallet"') && frozen.includes('開啟錢包'), frozen);
 });
 
+// ---------------------------------------------------------------- reporting an answer
+
+test('a report sends the reason and note, and the answer\'s text only when the person ticks the box', async () => {
+  const report = await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx');
+  assert.equal(report.reportInput('conv_fixture', 'msg_fixture', report.initialReport), null);
+  assert.equal(report.reportInput('conv_fixture', 'msg_fixture', { ...report.initialReport, category: 'spam' }), null);
+  // Off by default: a reason alone shares nothing of the conversation.
+  assert.deepEqual(report.reportInput('conv_fixture', 'msg_fixture', { ...report.initialReport, category: 'wrong' }),
+    { conversation_id: 'conv_fixture', message_id: 'msg_fixture', category: 'wrong', include_excerpt: false });
+  assert.deepEqual(report.reportInput('conv_fixture', 'msg_fixture', { category: 'privacy', note: '  fixture note  ', attach: true }),
+    { conversation_id: 'conv_fixture', message_id: 'msg_fixture', category: 'privacy', note: 'fixture note', include_excerpt: true });
+  assert.equal(report.reportInput('c', 'm', { category: 'other', note: 'x'.repeat(1200), attach: false }).note.length, 1000);
+  assert.deepEqual([...report.REPORT_CATEGORIES], ['harmful', 'illegal', 'privacy', 'wrong', 'other']);
+  // The server's own categories (synwevo_core.agent_safety.REPORT_CATEGORIES) and limits.
+  const safety = readFileSync(ROOT + 'packages/core/synwevo_core/agent_safety.py', 'utf8');
+  assert.match(safety, /REPORT_CATEGORIES = \("harmful", "illegal", "privacy", "wrong", "other"\)/);
+  assert.match(safety, /MAX_NOTE = 1000\b/);
+  assert.match(safety, /MAX_EXCERPT = 2000\b/);
+});
+
+test('a report ends sent, already reported, or not sent with the reason, and a retry is offered only then', async () => {
+  const report = await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx');
+  const sent: unknown[] = [];
+  const ok = await report.sendReport(async (input: unknown) => { sent.push(input); return { id: 'arp_fixture', status: 'open', included_excerpt: false }; },
+    { category: 'wrong' });
+  assert.deepEqual(ok, { state: 'sent', withText: false });
+  assert.deepEqual(sent, [{ category: 'wrong' }]);
+  assert.deepEqual(await report.sendReport(async () => ({ included_excerpt: true }), {}), { state: 'sent', withText: true });
+  const refuse = (code: unknown) => async () => { throw code; };
+  assert.deepEqual(await report.sendReport(refuse({ code: 'report_exists' }), {}), { state: 'exists' });
+  assert.deepEqual(await report.sendReport(refuse({ code: 'idempotent_failure', detail: { code: 'report_exists' } }), {}), { state: 'exists' });
+  assert.deepEqual(await report.sendReport(refuse({ code: 'report_category_invalid' }), {}), { state: 'failed', text: 'failedCategory' });
+  assert.deepEqual(await report.sendReport(refuse({ code: 'message_not_found' }), {}), { state: 'failed', text: 'failedGone' });
+  assert.deepEqual(await report.sendReport(refuse({ code: 'conversation_not_found' }), {}), { state: 'failed', text: 'failedGone' });
+  assert.deepEqual(await report.sendReport(refuse(new TypeError('Failed to fetch')), {}), { state: 'failed', text: 'failed' });
+  // A gateway's answer is not the application's: never "already reported".
+  assert.deepEqual(await report.sendReport(refuse({ code: 'report_exists', upstream: true }), {}), { state: 'failed', text: 'failed' });
+  const words = { 'zh-Hans': ['举报已提交', '你已经举报过这条回答', '举报没有提交成功'],
+    en: ['Report sent', 'You have already reported this answer', 'The report was not sent'],
+    'zh-Hant': ['檢舉已送出', '你已經檢舉過這則回答', '檢舉沒有送出成功'] } as const;
+  for (const locale of LOCALES) {
+    const done = render(locale, React.createElement(report.ReportStatus, { phase: { state: 'sent', withText: false } }));
+    assert.ok(done.includes(words[locale][0]) && done.includes('role="status"'), done);
+    const exists = render(locale, React.createElement(report.ReportStatus, { phase: { state: 'exists' } }));
+    assert.ok(exists.includes(words[locale][1]) && exists.includes('role="status"'), exists);
+    const failed = render(locale, React.createElement(report.ReportStatus, { phase: { state: 'failed', text: 'failed' } }));
+    assert.ok(failed.includes(words[locale][2]) && failed.includes('role="alert"'), failed);
+  }
+  assert.ok(render('en', React.createElement(report.ReportStatus, { phase: { state: 'sent', withText: true } })).includes('with the answer’s text'));
+  assert.equal(render('en', React.createElement(report.ReportStatus, { phase: { state: 'editing' } })), '');
+});
+
+test('the report dialog is a labelled form: a reason group, an optional note and an unticked attach box', async () => {
+  const report = await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx');
+  const words = { 'zh-Hans': ['举报这条回答', '原因', '有害或冒犯', '内容错误或误导', '备注（可选）', '附上这条回答的文字', '提交举报', '取消'],
+    en: ['Report this answer', 'Reason', 'Harmful or offensive', 'Wrong or misleading', 'Note (optional)', 'Attach this answer’s text', 'Send report', 'Cancel'],
+    'zh-Hant': ['檢舉這則回答', '原因', '有害或冒犯', '內容錯誤或誤導', '備註（選填）', '附上這則回答的文字', '送出檢舉', '取消'] } as const;
+  for (const locale of LOCALES) {
+    const html = render(locale, React.createElement(report.default, { conversationId: 'conv_fixture', messageId: 'msg_fixture',
+      send: async () => ({}), onClose() {}, onReported() {} }));
+    for (const text of words[locale]) assert.ok(html.includes(text), `${locale}: ${text}`);
+    assert.match(html, /role="dialog" aria-modal="true" aria-labelledby="[^"]+" aria-describedby="[^"]+-intro"/);
+    assert.match(html, /<fieldset[^>]*><legend>/);
+    assert.equal(html.match(/type="radio"/g)?.length, 5);
+    assert.equal(html.match(/type="checkbox"/g)?.length, 1);
+    assert.ok(!/type="checkbox"[^>]*checked/.test(html), 'attach is off by default');
+    assert.match(html, /<textarea[^>]*maxLength="1000"/);
+    // The first reason takes focus when the dialog opens (keyboard users start at the choice).
+    assert.match(html, /type="radio"[^>]*data-autofocus="true"/);
+    assert.match(html, /<button type="submit" form="[^"]+-form" class="btn primary"/);
+  }
+  // Complete in three languages and not colliding with another wording of the same source.
+  const copy = await server.ssrLoadModule('/src/apps/agent/report.messages.ts');
+  assert.deepEqual(core.validateMessages(copy.reportMessages), []);
+  for (const [key, [source, en, hant]] of Object.entries(copy.reportCopy) as [string, [string, string, string]][]) {
+    const params = { count: 7 };
+    const fill = (text: string) => text.replace('{count}', '7');
+    assert.equal(core.translate('en', source, params), fill(en), key);
+    assert.equal(core.translate('zh-Hant', source, params), fill(hant), key);
+  }
+});
+
+test('every answer with text has a report control; questions and answers being written do not', async () => {
+  const chat = await server.ssrLoadModule('/src/apps/agent/Chat.tsx');
+  const message = (id: string, role: string, body: string, extra: Record<string, unknown> = {}) => ({ id, parent_id: null, role, status: 'done',
+    body, hidden: false, error: null, turn: null, tool_calls: [], created_at: 1, ...extra });
+  const conversation = { id: 'conv_fixture', title: 'Fixture', status: 'active', scope: [], sealed: false, event_seq: 1, head_id: 'msg_a2',
+    messages: [message('msg_u1', 'user', 'Fixture question?'), { ...message('msg_a1', 'assistant', 'Fixture answer.'), parent_id: 'msg_u1' },
+      { ...message('msg_u2', 'user', 'Again?'), parent_id: 'msg_a1' },
+      { ...message('msg_a2', 'assistant', 'Being written', { turn: { id: 'turn_fixture', status: 'running' } }), parent_id: 'msg_u2' }] };
+  const props = { conversation, loading: false, error: null, connection: 'connected', configured: true, spaces: [],
+    act: async () => ({}), send: async () => true, refresh: async () => {} };
+  for (const [locale, label] of [['en', 'Report this answer'], ['zh-Hant', '檢舉這則回答'], ['zh-Hans', '举报这条回答']] as const) {
+    const html = render(locale, React.createElement(chat.default, props));
+    // One control: the finished answer; not the questions, not the answer still being written.
+    assert.equal(html.split(`aria-label="${label}"`).length - 1, 1, html);
+    assert.match(html, new RegExp(`aria-haspopup="dialog" aria-label="${label}"`));
+  }
+});
+
 // ---------------------------------------------------------------- payer selection
 
 const me = { id: 'usr_fixture', name: 'Fixture Person' };
