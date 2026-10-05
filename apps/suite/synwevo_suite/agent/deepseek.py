@@ -18,11 +18,32 @@ import httpx
 
 from .provider import Cancelled, Credential, ProviderError, StepResult
 
-ENDPOINT = "https://api.deepseek.com/chat/completions"
+BASE_URL = "https://api.deepseek.com"
+ENDPOINT = BASE_URL + "/chat/completions"
+_STATUS = {400: "provider_bad_request", 401: "provider_auth", 402: "provider_balance",
+           403: "provider_forbidden", 404: "provider_model_missing", 422: "provider_bad_request",
+           429: "provider_rate_limited", 500: "provider_error", 503: "provider_overloaded"}
 CAPABILITY_VERSION = "deepseek-chat-2026-09-30"
 _NAME = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,200}\Z")
-_EFFORT = {"low": "low", "medium": "high", "high": "high", "xhigh": "high", "max": "max"}
+#: DeepSeek reasoning_effort values (thinking-mode guide, re-read 2026-10-05). "none" means
+#: thinking off: the request then says thinking.type=disabled and sends no reasoning_effort.
+EFFORTS = ("none", "low", "high", "max")
+#: The Agent's effort setting -> DeepSeek value (the provider has no medium/xhigh level).
+_EFFORT = {"none": "none", "low": "low", "medium": "high", "high": "high", "xhigh": "high", "max": "max"}
+
+
+def deepseek_effort(effort: object) -> str | None:
+    """The DeepSeek reasoning_effort for an Agent effort setting, or None when unknown."""
+    return _EFFORT.get(effort) if isinstance(effort, str) else None
+
+
+def allowed_efforts(values) -> tuple[str, ...]:
+    """A route's allowed DeepSeek efforts in canonical order; refuses empty/unknown/duplicates."""
+    if not isinstance(values, (list, tuple)) or not values or len(set(values)) != len(values) \
+            or any(value not in EFFORTS for value in values):
+        raise ValueError("Invalid DeepSeek reasoning efforts")
+    return tuple(value for value in EFFORTS if value in values)
 _FINISH = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens",
            "content_filter": "refusal", "aborted": "aborted",
            "insufficient_system_resource": "insufficient_system_resource"}
@@ -96,15 +117,29 @@ class DeepSeekResult:
 
 
 class DeepSeekError(ProviderError):
-    def __init__(self, code: str, attempt: Attempt, *, retry_after: float | None = None):
-        super().__init__(code, "模型请求未完成，请核实调用状态", retryable=False, retry_after=retry_after)
+    def __init__(self, code: str, attempt: Attempt, *, retry_after: float | None = None,
+                 message: str = "模型请求未完成，请核实调用状态"):
+        super().__init__(code, message, retryable=False, retry_after=retry_after)
         self.attempt = attempt
+        # Private reasoning/visible text received before the failure (never unrun tool calls).
+        # Thinking mode with tools refuses later requests that omit it (docs/deepseek-provider.md).
+        self.replay_message: dict | None = None
 
 
 class DeepSeekCancelled(Cancelled):
     def __init__(self, attempt: Attempt):
         super().__init__("模型请求已停止")
         self.attempt = attempt
+        self.replay_message: dict | None = None
+
+
+def _with_partial(exc, state: dict):
+    assembly = state.get("assembly")
+    if assembly is not None and getattr(exc, "replay_message", None) is None:
+        exc.replay_message = assembly.partial()
+    if assembly is not None and isinstance(exc, DeepSeekCancelled):
+        assembly.usage_before_cancel()
+    return exc
 
 
 class _Invalid(Exception):
@@ -200,11 +235,14 @@ def _text(value) -> str:
     return "\n".join(b["text"] for b in value)
 
 
-def _history(messages: list[dict], limits: Limits) -> list[dict]:
+def _history(messages: list[dict], limits: Limits, *, thinking: bool = False) -> list[dict]:
     """Accept native DeepSeek replay messages or the engine's text/tool block history.
 
     Foreign thinking/signatures/images are refused, never silently stripped. Native
     replay_message is the lossless route for reasoning and exact tool argument strings.
+    With thinking on, every assistant message carries a reasoning string: an earlier turn that
+    produced none (thinking off, legacy visible-text replay) is sent with an empty one, because
+    a tool-carrying request that omits any earlier reasoning_content is refused with HTTP 400.
     """
     out, pending, used = [], set(), set()
     for message in messages:
@@ -243,6 +281,8 @@ def _history(messages: list[dict], limits: Limits) -> list[dict]:
             if "reasoning_content" in message:
                 _require(isinstance(message["reasoning_content"], str))
                 msg["reasoning_content"] = message["reasoning_content"]
+            elif thinking:
+                msg["reasoning_content"] = ""
             out.append(msg)
         elif role == "tool":
             cid = message.get("tool_call_id")
@@ -318,6 +358,29 @@ class _Assembly:
         self.sizes = {"content": 0, "reasoning_content": 0, "arguments": 0}
         self.terminal_usage = None
         self.early_usage = False
+
+    def partial(self) -> dict | None:
+        """The private replay of an interrupted step: reasoning and visible text, no tool calls.
+
+        Unrun (or unparsed) tool calls are dropped: they were never executed, so no tool result
+        can follow them. The reasoning stays because later thinking-mode requests need it.
+        """
+        text, reasoning = "".join(self.text), "".join(self.reasoning)
+        if not text and not reasoning:
+            return None
+        return {"role": "assistant", "content": text, "reasoning_content": reasoning}
+
+    def usage_before_cancel(self) -> None:
+        """The person stopped after the final chunk (finish_reason + usage) arrived and before
+        [DONE]: that chunk is the provider's last word on usage, so it is kept as trusted
+        evidence. Stopping any earlier leaves usage unknown, exactly as before."""
+        a = self.attempt
+        if a.finish_reason is None or self.terminal_usage is None or self.early_usage or a.usage_reliability != "pending":
+            return
+        usage = normalize_usage(self.terminal_usage)
+        if usage is not None:
+            a.usage, a.raw_usage = usage, self.terminal_usage
+            a.usage_reliability, a.usage_reason = "trusted_terminal", "terminal_usage_before_cancel"
 
     def chunk(self, chunk: dict, on_text: Callable[[str], None]):
         a = self.attempt
@@ -410,14 +473,105 @@ class _Assembly:
         return DeepSeekResult(StepResult(content, _FINISH[a.finish_reason], model=a.returned_model), replay, a)
 
 
+_LOOPBACK = ("127.0.0.1", "::1", "localhost")
+
+
+def _loopback(value: object) -> bool:
+    try:
+        url = httpx.URL(value) if isinstance(value, str) else None
+    except Exception:  # noqa: BLE001 - any unparsable value is simply not loopback
+        return False
+    return bool(url) and url.scheme in ("http", "https") and url.host in _LOOPBACK and url.port is not None \
+        and not url.userinfo and url.path in ("", "/") and not url.query and not url.fragment
+
+
+def upstream_base(environment: str | None, override: str | None) -> str:
+    """The upstream origin the platform key may be sent to.
+
+    Always the official origin, except that end-to-end tests may point at a labelled FIXTURE
+    double (apps/suite/scripts/deepseek_test_double.py) when the billing environment is
+    ``test`` AND the target is a loopback host. Anything else is refused at startup, so a
+    configuration mistake can never send the platform key to another host.
+    """
+    if override in (None, ""):
+        return BASE_URL
+    if environment != "test":
+        raise ValueError("DeepSeek upstream override is refused outside SYNWEVO_BILLING_ENVIRONMENT=test")
+    if not _loopback(override):
+        raise ValueError("DeepSeek upstream override must be a loopback origin: http(s)://127.0.0.1|[::1]|localhost:<port>")
+    return override.rstrip("/")
+
+
+def _base(value: str) -> str:
+    if value != BASE_URL and not _loopback(value):
+        raise ValueError("DeepSeek upstream must be the official origin or a loopback test double")
+    return value.rstrip("/")
+
+
+async def alist_models(credential: Credential, *, transport: httpx.AsyncBaseTransport | None = None,
+                       base_url: str = BASE_URL, timeout_s: float = 15.0) -> frozenset[str]:
+    """GET /models: the model ids the platform account can currently request.
+
+    One bounded request, no redirects/retries/proxies; the key goes only to the official (or
+    loopback test) origin. Errors are DeepSeekError with the same codes as chat requests.
+    """
+    a = Attempt()
+    base = _base(base_url)
+    if (credential.provider != "deepseek" or not isinstance(credential.api_key, str)
+            or not 1 <= len(credential.api_key) <= 4096 or not all(33 <= ord(c) <= 126 for c in credential.api_key)):
+        raise DeepSeekError("provider_invalid_request", a)
+    timeout = httpx.Timeout(timeout_s, connect=min(timeout_s, 10.0))
+    client_transport = transport if transport is not None else httpx.AsyncHTTPTransport(retries=0, trust_env=False)
+    try:
+        async with asyncio.timeout(timeout_s):
+            async with httpx.AsyncClient(transport=client_transport, timeout=timeout, trust_env=False,
+                                         follow_redirects=False) as client:
+                a.dispatch = "unknown"
+                async with client.stream("GET", base + "/models", headers={
+                        "Authorization": "Bearer " + credential.api_key, "Accept": "application/json",
+                        "Accept-Encoding": "identity"}) as response:
+                    a.dispatch, a.http_status = "observed", response.status_code
+                    if response.status_code != 200:
+                        raise DeepSeekError("provider_redirect" if 300 <= response.status_code < 400
+                                            else _STATUS.get(response.status_code, "provider_error"), a)
+                    body = bytearray()
+                    async for piece in response.aiter_raw():
+                        body.extend(piece)
+                        _require(len(body) <= 262_144)
+                    _require(response.headers.get("content-type", "").split(";")[0].strip().lower() == "application/json")
+                    listing = _loads(body.decode("utf-8"))
+                    _require(isinstance(listing, dict) and isinstance(listing.get("data"), list) and len(listing["data"]) <= 1000)
+                    ids = set()
+                    for item in listing["data"]:
+                        _require(isinstance(item, dict) and isinstance(item.get("id"), str) and bool(_ID.fullmatch(item["id"])))
+                        ids.add(item["id"])
+                    return frozenset(ids)
+    except DeepSeekError:
+        raise
+    except (TimeoutError, httpx.TimeoutException):
+        raise DeepSeekError("provider_timeout", a) from None
+    except httpx.HTTPError:
+        raise DeepSeekError("provider_transport", a) from None
+    except Exception:
+        raise DeepSeekError("provider_bad_output", a) from None
+
+
+def list_models(credential: Credential, **kwargs) -> frozenset[str]:
+    """Synchronous entry point for worker threads (never from a running event loop)."""
+    return asyncio.run(alist_models(credential, **kwargs))
+
+
 class DeepSeekProvider:
     name = "deepseek"
 
     def __init__(self, *, limits: Limits | None = None, thinking: bool = True,
-                 transport: httpx.AsyncBaseTransport | None = None):
+                 transport: httpx.AsyncBaseTransport | None = None, efforts=EFFORTS,
+                 base_url: str = BASE_URL):
         _require(type(thinking) is bool)
         self.limits = limits or Limits()
         self.thinking = thinking
+        self.efforts = allowed_efforts(efforts)  # The governed route's allowed values.
+        self.base_url = _base(base_url)  # Official origin, or a loopback FIXTURE double in tests.
         self._transport = transport  # Trusted dependency injection for isolated tests only.
 
     def step(self, **kwargs) -> DeepSeekResult:
@@ -442,6 +596,10 @@ class DeepSeekProvider:
         a = Attempt()
         limits = self.limits
         deadline = time.monotonic() + limits.timeout_s
+        value = deepseek_effort(effort)
+        if value is not None and value not in self.efforts:
+            raise DeepSeekError("model_effort_unavailable", a)  # Refused before any send.
+        thinking = self.thinking and value != "none"
         try:
             if should_stop():
                 raise DeepSeekCancelled(a)
@@ -463,15 +621,17 @@ class DeepSeekProvider:
                 names.add(name)
                 definitions.append({"type": "function", "function": {"name": name,
                     "description": tool.get("description", ""), "parameters": tool["input_schema"]}})
-            history = _history(messages, limits)
+            history = _history(messages, limits, thinking=thinking)
             prompt = _text(system)
             if prompt:
                 history.insert(0, {"role": "system", "content": prompt})
+            # thinking.type and reasoning_effort always agree: effort "none" (or thinking
+            # switched off) sends disabled and no effort, never "enabled" + "none".
             payload = {"model": credential.model, "messages": history, "stream": True,
                        "stream_options": {"include_usage": True}, "max_tokens": limits.max_tokens,
-                       "thinking": {"type": "enabled" if self.thinking else "disabled"}}
-            if self.thinking:
-                payload["reasoning_effort"] = _EFFORT[effort]
+                       "thinking": {"type": "enabled" if thinking else "disabled"}}
+            if thinking:
+                payload["reasoning_effort"] = value
             if definitions:
                 payload["tools"] = definitions
             if user_id is not None:
@@ -503,22 +663,20 @@ class DeepSeekProvider:
                 if time.monotonic() >= deadline:
                     raise TimeoutError()
                 a.dispatch = "unknown"
-                async with client.stream("POST", ENDPOINT, content=body, extensions={"trace": trace},
+                async with client.stream("POST", self.base_url + "/chat/completions", content=body, extensions={"trace": trace},
                                          headers={"Authorization": "Bearer " + credential.api_key,
                                                   "Content-Type": "application/json", "Accept": "text/event-stream",
                                                   "Accept-Encoding": "identity"}) as response:
                     a.dispatch, a.http_status = "observed", response.status_code
                     if response.status_code != 200:
-                        codes = {400: "provider_bad_request", 401: "provider_auth", 402: "provider_balance",
-                                 403: "provider_forbidden", 404: "provider_model_missing", 422: "provider_bad_request",
-                                 429: "provider_rate_limited", 500: "provider_error", 503: "provider_overloaded"}
-                        code = "provider_redirect" if 300 <= response.status_code < 400 else codes.get(response.status_code, "provider_error")
+                        code = "provider_redirect" if 300 <= response.status_code < 400 else _STATUS.get(response.status_code, "provider_error")
                         after = response.headers.get("retry-after", "")
                         retry_after = float(after) if re.fullmatch(r"[0-9]{1,6}", after) and int(after) <= 86400 else None
                         raise DeepSeekError(code, a, retry_after=retry_after)
                     _require(response.headers.get("content-type", "").split(";")[0].strip().lower() == "text/event-stream")
                     _require(response.headers.get("content-encoding", "identity").lower() == "identity")
                     parser, assembly = _SSE(limits), _Assembly(a, limits, names)
+                    state["assembly"] = assembly
                     async for chunk in response.aiter_raw():
                         if should_stop():
                             raise DeepSeekCancelled(a)
@@ -534,7 +692,7 @@ class DeepSeekProvider:
                             assembly.chunk(_loads(event), on_text)
                     raise DeepSeekError("provider_stream_incomplete", a)
 
-        task = None
+        task, state = None, {}
         try:
             async with asyncio.timeout(limits.timeout_s):
                 task = asyncio.create_task(exchange())
@@ -543,16 +701,17 @@ class DeepSeekProvider:
                     if not task.done() and should_stop():
                         raise DeepSeekCancelled(a)
                 return task.result()
-        except (DeepSeekError, DeepSeekCancelled):
-            raise
+        except (DeepSeekError, DeepSeekCancelled) as exc:
+            raise _with_partial(exc, state)
         except asyncio.CancelledError:
-            raise DeepSeekCancelled(a) from None
+            raise _with_partial(DeepSeekCancelled(a), state) from None
         except (TimeoutError, httpx.TimeoutException):
-            raise DeepSeekError("provider_timeout", a) from None
+            raise _with_partial(DeepSeekError("provider_timeout", a), state) from None
         except httpx.HTTPError:
-            raise DeepSeekError("provider_transport", a) from None
+            raise _with_partial(DeepSeekError("provider_transport", a), state) from None
         except Exception:
-            raise DeepSeekError("provider_bad_output" if a.dispatch != "definitely_not_requested" else "provider_dispatch_blocked", a) from None
+            raise _with_partial(DeepSeekError("provider_bad_output" if a.dispatch != "definitely_not_requested"
+                                              else "provider_dispatch_blocked", a), state) from None
         finally:
             if task is not None:
                 if not task.done():

@@ -111,6 +111,19 @@ CATALOGUE: dict[str, dict] = {
         "zh-Hans": "可用余额 {available} {unit}，低于你设置的 {threshold} {unit}。充值后可继续使用付费的 Agent；余额回到提醒线以上后，下次低于时会再提醒一次。",
         "zh-Hant": "可用餘額 {available} {unit}，低於你設定的 {threshold} {unit}。儲值後可繼續使用付費的 Agent；餘額回到提醒線以上後，下次低於時會再提醒一次。",
         "en": "Available balance is {available} {unit}, below the {threshold} {unit} you set. Top up to keep using the paid Agent; once the balance is back above the line, you will be reminded again the next time it drops."}},
+    # ---- paid model route closed automatically (billing/provider_settings.py, docs/deepseek-provider.md)
+    "billing.model.route_missing": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "模型路线已停止：提供方不再列出 {model}", "zh-Hant": "模型路線已停止：供應商不再列出 {model}",
+        "en": "Model route stopped: the provider no longer lists {model}"}, "body": {
+        "zh-Hans": "定时核对发现所配置的模型标识已不在模型列表中（{environment}），付费 Agent 调用已停止，被拒绝的请求不扣费。请核实后发布新的路线配置。",
+        "zh-Hant": "定時核對發現所設定的模型標識已不在模型清單中（{environment}），付費 Agent 呼叫已停止，被拒絕的請求不扣費。請核實後發佈新的路線設定。",
+        "en": "A scheduled check found the configured model id missing from the model list ({environment}). Paid Agent calls are stopped and refused requests are not charged. Verify and publish a new route configuration."}},
+    "billing.model.upstream_balance": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "模型提供方报告平台账户余额不足", "zh-Hant": "模型供應商回報平台帳戶餘額不足",
+        "en": "The model provider reports the platform account balance is empty"}, "body": {
+        "zh-Hans": "上游返回 HTTP 402（{environment}），付费 Agent 调用已停止，用户看到“服务暂时不可用，不扣费”。为上游账户充值后，在管理后台重新发布提供方配置即可恢复。",
+        "zh-Hant": "上游回傳 HTTP 402（{environment}），付費 Agent 呼叫已停止，使用者看到「服務暫時無法使用，不扣費」。為上游帳戶儲值後，在管理後台重新發佈供應商設定即可恢復。",
+        "en": "The upstream answered HTTP 402 ({environment}). Paid Agent calls are stopped and people see “service temporarily unavailable, not charged”. Top up the upstream account, then publish the provider configuration again in the admin console to reopen."}},
     # ---- organization & workspace membership
     "invitation.received": {"category": "organization", "severity": "action", "email": "immediate", "title": {
         "zh-Hans": "{inviter} 邀请你加入「{workspace}」", "zh-Hant": "{inviter} 邀請你加入「{workspace}」", "en": "{inviter} invited you to “{workspace}”"}, "body": {

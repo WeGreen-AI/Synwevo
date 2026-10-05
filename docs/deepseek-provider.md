@@ -2,6 +2,28 @@
 
 # DeepSeek adapter: bounded transport, not an enabled paid route
 
+## Gateway rules (2026-10-05, agent billing programme)
+
+These rules are implemented and tested with FIXTURE transports and the labelled loopback double
+only. No real DeepSeek request has been made; the owner-approved real-upstream check (brief §5)
+must still confirm the SSE shape, usage, tool fragments, error bodies, `reasoning_effort`
+placement and failed-turn replay against the live API, and the input bound below.
+
+| Rule | Where | Behaviour |
+| --- | --- | --- |
+| Reasoning replay | `engine.py` `_api_history`, `deepseek.py` `_history` | Failed and cancelled turns replay their private `reasoning_content` (never unrun tool calls); with thinking on every earlier assistant message carries a reasoning string (empty when none was produced), because a tool-carrying request that omits one is refused with 400. |
+| Reasoning effort | `RouteSpec.reasoning_efforts`, `deepseek.py` | Values `none`, `low`, `high`, `max`, governed per route (default all). `none` sends `thinking: {type: disabled}` and no `reasoning_effort`; otherwise `enabled` plus the value. A level the route does not offer is refused before reserving or sending. |
+| Model ids | `agent/model_check.py`, `provider_settings.record_health` | Never constants. `GET /models` with the sealed key at start, on each newly published revision (polled every 60 s) and every `SYNWEVO_DEEPSEEK_MODEL_CHECK_SECONDS` (default 3600). A missing id closes paid dispatch on that revision (`model_provider_health`, append-only; system audit `admin.model_provider.closed`; inbox/mail `billing.model.route_missing` to holders of `platform.config.manage`). Sticky until an administrator publishes again (the same settings may be republished). A failed check closes nothing. Turns are refused unsent with `billing_provider_model_missing`. |
+| Upstream 402 | `gateway._open_platform_breaker` | The operator's balance, never the person's. The turn fails with `provider_balance` and "temporarily unavailable, not charged" (three languages); nothing is sold, the uncertain hold ends unsold at its deadline. Paid dispatch closes through this one seam: `synwevo_core.billing.risk.trip_platform_breaker(source="upstream_402")` when that module is installed, otherwise the provider revision is closed (state `upstream_balance`, audited, `billing.model.upstream_balance` alert) and later turns are refused unsent with `risk_breaker_open`, the breaker's own code. |
+| 429 / 503 | `gateway._throttled`, `_await_upstream` | The refused attempt reached the provider and is never resent (the ledger's dispatch fence holds it). Later calls wait out a process-local cool-down while still provably unsent (nothing reserved, no fence): Retry-After plus up to 20 % jitter, otherwise equal jitter over 1, 2, 4 … s capped at 30 s. A wait over 30 s or past the run deadline refuses the call unsent and unreserved (`provider_rate_limited` / `provider_overloaded`, `retry_after`). Success resets the backoff. One gateway process serves the deployment; several would each keep their own cool-down. |
+| `user_id` | `MeteredDeepSeek.pseudonym` | HMAC-SHA256 of `environment:namespace:payer` under a key derived from the server root secret (label `synwevo/model-user-pseudonym/v1`); 64 hex characters, within `[a-zA-Z0-9-_]{1,512}`, stable per payer, not recomputable from a guessed id. A root rekey changes every pseudonym. |
+| Incomplete-call charging | `ProviderSpec.incomplete_charging`, `gateway._settle` | Admin-set booleans `length`, `content_filter`, `provider_interrupted` (`aborted`, `insufficient_system_resource`) and `client_cancelled`; default all false (the platform absorbs the recorded cost). Published with the provider revision (reason, audit, immutable history), pinned on the run with the quote (a change invalidates quotes and consents). A charged ending sells its trusted terminal usage as a completed call, never beyond the hold; invalid or rejected output and unknown usage are never charged. A person who stops after the final usage chunk arrived (before `[DONE]`) leaves trusted usage (`terminal_usage_before_cancel`); stopping earlier leaves usage unknown. |
+| Upstream override | `deepseek.upstream_base`, `SYNWEVO_DEEPSEEK_UPSTREAM` | Only with `SYNWEVO_BILLING_ENVIRONMENT=test` and an `http(s)://127.0.0.1|[::1]|localhost:<port>` origin (no path, credentials or query); anything else fails startup, and the gateway rechecks it against its ledger environment, so the platform key cannot be sent elsewhere. `apps/suite/scripts/deepseek_test_double.py` is the labelled FIXTURE double (loopback only). |
+| Hold input bound | `MeteredDeepSeek.input_bound` | No official tokenizer is in the lock. DeepSeek's tokenizer is byte-level BPE, so a text never has more ordinary tokens than UTF-8 bytes. The bound is the UTF-8 size of the request JSON (system, tool schemas, history with replayed reasoning, tool results) + 64 template tokens + 1024 when tools are offered, capped at the route's context ceiling. The per-call hold, the cost admission and the traffic estimate use it; quotes and run budgets keep the ceiling. The observation records the bound; if a provider count ever exceeds it, the ledger caps the charge at the hold and the platform absorbs the rest. |
+
+The transport now also makes `GET /models` (same origin rules, bounded body, no redirects or
+retries); everything below about the single chat POST still holds for chat requests.
+
 Verified against public official documentation on **2026-09-30**. Implementation base:
 `codex/deepseek-provider`, `8e8fcec01b26f9677e0951cf294212b23e5b7a09`.
 No credentials, authenticated account inspection, live inference, browser changes,

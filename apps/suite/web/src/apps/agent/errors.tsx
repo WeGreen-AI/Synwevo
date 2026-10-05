@@ -41,7 +41,10 @@ const errors: Record<string, string> = {
   billing_payer_monthly_budget_exceeded: "个人本月支出上限不足以容纳本次预留，当前调用尚未发送。",
   billing_payer_budget_capacity: "暂时无法安全核算个人周期支出，已停止新调用。请联系管理员。",
   billing_payer_budget_inconsistent: "暂时无法安全核算个人周期支出，已停止新调用。请联系管理员。",
-  provider_balance: "平台模型服务余额不足，请联系管理员。",
+  // Upstream HTTP 402 is the operator's provider balance, never the person's wallet (gateway.py).
+  provider_balance: "模型服务暂时不可用，本次未扣费。请稍后再试。",
+  billing_risk_breaker_open: "模型服务暂时不可用，本次未扣费。请稍后再试。",
+  billing_provider_model_missing: "所配置的模型暂时不可用，本次未发送、未扣费。平台管理员已收到通知。",
   provider_stream_incomplete: "模型连接已中断，用量待核实，已完成操作保留。",
   provider_transport: "模型连接已中断，用量待核实，已完成操作保留。",
   provider_auth: "模型凭据不可用，请检查 Agent 设置。",

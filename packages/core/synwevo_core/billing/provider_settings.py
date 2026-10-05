@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
 import json
+import logging
 import time
 from typing import Literal
 
@@ -16,11 +17,21 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, m
 
 from .. import sealed
 from ..errors import ServiceError
+from ..store import new_id
 from .bands import schedule_revision_for
 from .cost_settings import ACCOUNT_REF, PROVIDER, CostSettings
 from .models import BillingError, PriceSnapshot, identifier
 
 KEY_PURPOSE = "platform-model-key"
+log = logging.getLogger("synwevo.billing")
+#: Health observations of a published revision; the closing ones stop paid dispatch on it.
+HEALTH_STATES = ("model_listed", "model_missing", "models_check_failed", "upstream_balance")
+CLOSING = ("model_missing", "upstream_balance")
+ALERT_PERMISSION = "platform.config.manage"  # Those who can reopen the route by publishing.
+ADMIN_TARGET = {"origin": "accounts", "path": "/admin?tab=model-provider"}
+#: DeepSeek reasoning_effort values; "none" is thinking off (docs/deepseek-provider.md).
+REASONING_EFFORTS = ("none", "low", "high", "max")
+Effort = Literal["none", "low", "high", "max"]
 
 
 class RouteSpec(BaseModel):
@@ -35,6 +46,9 @@ class RouteSpec(BaseModel):
     input_token_ceiling: int = Field(ge=1, le=2_000_000)
     output_token_ceiling: int = Field(ge=1, le=32768)
     valid_until: int = Field(ge=1, le=253402300799)
+    # Which thinking levels this route offers. Versions published before the field existed
+    # allowed every level, so the default keeps their meaning unchanged.
+    reasoning_efforts: list[Effort] = Field(default_factory=lambda: list(REASONING_EFFORTS), min_length=1, max_length=4)
 
     @field_validator("requested_model", "confirmed_route", "confirmation_ref", "cost_basis_ref",
                      "account_confirmation_ref", "sale_price_id", "cost_price_id")
@@ -42,11 +56,42 @@ class RouteSpec(BaseModel):
     def bounded_identifier(cls, value):
         return identifier(value)
 
+    @field_validator("reasoning_efforts")
+    @classmethod
+    def canonical_efforts(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError("duplicate reasoning effort")
+        return [effort for effort in REASONING_EFFORTS if effort in value]
+
+
+#: Kinds of incomplete call a charging policy can decide on (shared contract, docs/deepseek-provider.md).
+INCOMPLETE_KINDS = ("length", "content_filter", "provider_interrupted", "client_cancelled")
+
+
+class ChargingPolicy(BaseModel):
+    """Whether a payer is charged for the tokens an incomplete call consumed, per kind of ending.
+
+    true charges the trusted terminal usage (never beyond the call's hold); false keeps the
+    platform absorbing it as recorded cost, which is what every version before this field
+    meant. Anything else that fails (invalid tool output, a rejected step, untrusted or missing
+    usage) is never charged. Part of the published revision, so a change is versioned, needs a
+    reason, is audited, and invalidates existing quotes and consents through the route version.
+    """
+    model_config = ConfigDict(extra="forbid", strict=True)
+    length: bool = False                # finish_reason=length (output limit reached)
+    content_filter: bool = False        # finish_reason=content_filter
+    provider_interrupted: bool = False  # finish_reason=aborted / insufficient_system_resource
+    client_cancelled: bool = False      # the person stopped after the final usage had arrived
+
+    def charged(self) -> list[str]:
+        return [kind for kind in INCOMPLETE_KINDS if getattr(self, kind)]
+
 
 class ProviderSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     enabled: bool
     route: RouteSpec | None
+    incomplete_charging: ChargingPolicy = Field(default_factory=ChargingPolicy)
 
     @model_validator(mode="after")
     def enabled_route(self):
@@ -118,6 +163,111 @@ class ProviderSettings:
         return self._record(self.store.one("SELECT * FROM model_provider_versions WHERE environment=? "
                                             "ORDER BY revision DESC LIMIT 1", (self.environment,)))
 
+    def status(self):
+        """The current version plus its health (automatic closure, last model-id check)."""
+        with self.store.tx():
+            state = self.read()
+            return {**state, "health": self.health(state["revision"])}
+
+    # ------------------------------------------------------------------ route health
+    def closure(self, revision: int | None = None) -> dict | None:
+        """Why paid dispatch on this revision is closed, or None while it is open.
+
+        An upstream 402 (the operator's provider balance is empty) or a model id missing from
+        GET /models closes the revision until an administrator publishes again (the same
+        settings may be republished for that). Closure is sticky: a later listing of the id
+        never reopens it silently, because a provider can reuse an id for a different model.
+        A failed check never closes anything. Safe inside an open Store.tx() (same connection).
+        """
+        if revision is None:
+            row = self.store.one("SELECT MAX(revision) AS r FROM model_provider_versions WHERE environment=?",
+                                 (self.environment,))
+            revision = row["r"] if row and row["r"] else 0
+        found = self.store.one("SELECT state,requested_model,reason_code,created_at FROM model_provider_health "
+                               "WHERE environment=? AND revision=? AND state IN ('model_missing','upstream_balance') "
+                               "ORDER BY seq LIMIT 1", (self.environment, revision))
+        if found is None:
+            return None
+        return {"state": found["state"], "reason_code": found["reason_code"],
+                "requested_model": found["requested_model"], "since": found["created_at"]}
+
+    def route_revision(self, version: str) -> int | None:
+        """The provider revision a resolved route version (``deepseek:<env>:<revision>``) names."""
+        prefix = f"{PROVIDER}:{self.environment}:"
+        if not isinstance(version, str) or not version.startswith(prefix) or not version[len(prefix):].isdigit():
+            return None
+        return int(version[len(prefix):])
+
+    def health(self, revision: int) -> dict:
+        last = self.store.one("SELECT state,created_at FROM model_provider_health WHERE environment=? AND revision=? "
+                              "AND state IN ('model_listed','model_missing','models_check_failed') ORDER BY seq DESC LIMIT 1",
+                              (self.environment, revision))
+        return {"closure": self.closure(revision),
+                "last_models_check": {"state": last["state"], "at": last["created_at"]} if last else None}
+
+    def record_health(self, *, state: str, requested_model: str, reason_code: str,
+                      revision: int | None = None) -> dict | None:
+        """Append one observation of the current revision; returns its closure afterwards.
+
+        Opening/closing transitions are audited as system events and closing alerts every
+        current administrator who can reopen the route (inbox and mail by their preferences).
+        An observation of an older revision is ignored: it describes a route no longer served.
+        """
+        if state not in HEALTH_STATES:
+            raise BillingError("invalid_health_state")
+        identifier(requested_model); identifier(reason_code)
+        with self.store.tx() as t:
+            current = t.execute("SELECT MAX(revision) FROM model_provider_versions WHERE environment=?",
+                                (self.environment,)).fetchone()[0]
+            if not current or (revision is not None and revision != current):
+                return None
+            before = self.closure(current)
+            if state in CLOSING and before is not None:
+                return before  # Already closed: one closure event, one alert per revision.
+            seq = t.execute("SELECT COALESCE(MAX(seq),0)+1 FROM model_provider_health WHERE environment=?",
+                            (self.environment,)).fetchone()[0]
+            t.execute("INSERT INTO model_provider_health(environment,seq,revision,state,requested_model,reason_code,created_at) "
+                      "VALUES (?,?,?,?,?,?,?)", (self.environment, seq, current, state, requested_model, reason_code, self.clock()))
+            after = self.closure(current)
+            changed = before is None and after is not None
+            if changed:
+                t.execute("INSERT INTO audit_events (id,at,actor_kind,actor_id,workspace_id,action,object_kind,object_id,"
+                          "result,request_id,ip,meta) VALUES (?,?,'system',NULL,NULL,?,'model_provider',?,'ok',NULL,NULL,?)",
+                          (new_id("ae"), time.time(), "admin.model_provider.closed",
+                           ACCOUNT_REF, json.dumps({"billing_environment": self.environment, "provider": PROVIDER,
+                               "revision": current, "state": state, "reason_code": reason_code,
+                               "requested_model": requested_model}, sort_keys=True)))
+        if changed:
+            self._alert(after, current)
+        return after
+
+    def _alert(self, closure: dict, revision: int) -> int:
+        """Never raises: an alert that cannot be delivered must not reopen paid dispatch."""
+        from ..notifications import Notifier
+        from ..platform_access import ROLES, PlatformAccess
+        kind = "billing.model.route_missing" if closure["state"] == "model_missing" else "billing.model.upstream_balance"
+        sent = 0
+        try:
+            roles = sorted(role for role, permissions in ROLES.items() if ALERT_PERMISSION in permissions)
+            rows = self.store.all("SELECT DISTINCT user_id FROM platform_role_grants WHERE revoked_at IS NULL "
+                                  "AND (expires_at IS NULL OR expires_at>?) AND role IN (" + ",".join("?" * len(roles)) +
+                                  ") ORDER BY user_id LIMIT 50", (time.time(), *roles))
+            access, notifier = PlatformAccess(self.store), Notifier(self.store)
+            for row in rows:
+                try:
+                    if ALERT_PERMISSION in access.effective_permissions(row["user_id"]) and notifier.emit(
+                            row["user_id"], kind, params={"model": closure["requested_model"],
+                                                          "environment": self.environment},
+                            object_kind="model_provider", object_id=f"{self.environment}:{revision}",
+                            dedupe_key=f"model-provider:{self.environment}:{revision}:{closure['state']}",
+                            target=ADMIN_TARGET):
+                        sent += 1
+                except Exception as exc:  # noqa: BLE001 - one reader's failure is not another's
+                    log.warning("model route alert to one administrator failed: %s", type(exc).__name__)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("model route alert could not be delivered: %s", type(exc).__name__)
+        return sent
+
     def _prices(self, route):
         prices = []
         for price_id, purpose in ((route.sale_price_id, "sale"), (route.cost_price_id, "cost")):
@@ -160,7 +310,10 @@ class ProviderSettings:
                     raise ServiceError(409, "model_cost_policy_required", "启用模型前请发布有效的成本预算") from None
                 if not policy.enabled or policy.unit != cost.unit:
                     raise ServiceError(409, "model_cost_policy_required", "模型成本价格与已启用的成本预算不匹配")
-            if before["spec"] == spec.model_dump() and credential.action == "keep":
+            # Publishing the same settings again is the audited way to reopen a route that an
+            # upstream 402 or a missing model id closed; otherwise an identical version is refused.
+            if (before["spec"] == spec.model_dump() and credential.action == "keep"
+                    and self.closure(before["revision"]) is None):
                 raise ServiceError(409, "model_no_change", "模型配置未发生变化，无需提交")
             revision = before["credential_revision"] + int(credential.action != "keep")
             return {"before": before, "after": spec.model_dump(), "credential": credential.commitment(),
@@ -212,6 +365,7 @@ class ProviderSettings:
             schedule = schedule_revision_for(self.store, self.environment, prices)
             if schedule is not None:
                 route["version"] += f":bands:{schedule}"
+            route["charge_incomplete"] = spec.incomplete_charging.charged()
             return ResolvedProvider(state["revision"], state["credential_revision"], route, secret)
 
     def history(self, *, before_revision=None, limit=20):

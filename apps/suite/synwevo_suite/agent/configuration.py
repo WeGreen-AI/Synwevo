@@ -19,15 +19,30 @@ from synwevo_core.billing.wallet_config import units_from_env
 from synwevo_core.billing.welcome import WelcomeAllowance
 from synwevo_core.errors import ServiceError
 
+from .deepseek import upstream_base
 from .gateway import MeteredDeepSeek, MeteredTurnProvider, Route
+from .model_check import ModelCheck
 from .provider import AnthropicProvider, Credential, ProviderError
 from .quotes import RunQuotes
 
+#: Test-only upstream origin for a labelled FIXTURE double; refused unless the billing
+#: environment is "test" and the host is loopback (deepseek.upstream_base).
+UPSTREAM_ENV = "SYNWEVO_DEEPSEEK_UPSTREAM"
+#: How often GET /models re-validates the governed model id (also once at start).
+MODEL_CHECK_ENV = "SYNWEVO_DEEPSEEK_MODEL_CHECK_SECONDS"
+#: The closure states of a provider revision, as the refusal codes a person's turn carries. An
+#: upstream-402 closure refuses with the platform breaker's own code (billing/risk.py), so the
+#: chat says the same thing whichever mechanism closed paid dispatch.
+CLOSURE_CODES = {"upstream_balance": "risk_breaker_open", "model_missing": "provider_model_missing"}
+
 
 class GovernedDeepSeek(MeteredTurnProvider):
-    def __init__(self, store, *, environment):
+    def __init__(self, store, *, environment, upstream: str | None = None):
         self.settings = ProviderSettings(store, environment=environment)
         self.agent = None
+        # Refuses (at startup) any override outside test or off loopback: the platform key
+        # can only ever be sent to the official origin or a local FIXTURE double.
+        self.base_url = upstream_base(environment, upstream)
         ledger = Ledger(store, environment=environment, namespace="agent")
         ledger.payer_budgets = PayerBudgets(ledger)
         # Organization payers: the organization's grant and monthly limits, checked by the ledger.
@@ -35,7 +50,8 @@ class GovernedDeepSeek(MeteredTurnProvider):
         costs = CostSettings(store, environment=environment)
         gateway = MeteredDeepSeek(ledger, current_authority=self.authorized,
             cost_admission=CostAdmission(ledger, current_policy=costs.policy),
-            traffic=ModelTraffic(ledger, current_policy=costs.policy))
+            traffic=ModelTraffic(ledger, current_policy=costs.policy),
+            base_url=self.base_url, route_guard=self.route_open, on_upstream_balance=self.upstream_balance)
         quotes = RunQuotes(gateway, current_route=self.route, current_authority=self.authorized)
         ledger.authorize = quotes.authorize
         # The one-time welcome allowance (off unless SYNWEVO_BILLING_WELCOME_MINOR and a CNY
@@ -43,6 +59,25 @@ class GovernedDeepSeek(MeteredTurnProvider):
         self.wallet_units = units_from_env()
         quotes.welcome = WelcomeAllowance.from_host(ledger, self.wallet_units)
         super().__init__(gateway, quotes=quotes, credential_resolver=self.credential)
+
+    def route_open(self, route):
+        """Refuse paid dispatch on a provider revision that a 402 or a model check closed."""
+        closure = self.settings.closure(self.settings.route_revision(route.version) or 0)
+        if closure is not None:
+            raise BillingError(CLOSURE_CODES[closure["state"]])
+
+    def upstream_balance(self, route):
+        """The single seam an upstream HTTP 402 goes through: close paid dispatch on this
+        revision (audited, administrators alerted) until an administrator publishes again.
+        A platform-wide breaker that other controls share hooks in here as well."""
+        self.settings.record_health(state="upstream_balance", requested_model=route.requested_model,
+                                    reason_code="http_402", revision=self.settings.route_revision(route.version))
+
+    def model_check(self, *, interval_seconds: float | None = None) -> ModelCheck:
+        if interval_seconds is None:
+            interval_seconds = float(os.environ.get(MODEL_CHECK_ENV, "3600"))
+        return ModelCheck(self.settings, base_url=self.base_url, interval_seconds=interval_seconds,
+                          transport=lambda: self.gateway.transport)
 
     def bind(self, agent):
         if agent.store is not self.settings.store or agent.provider is not self or self.agent is not None:
@@ -98,5 +133,6 @@ def configured_provider(store):
     if provider == "anthropic":
         return AnthropicProvider()
     if provider == "deepseek":
-        return GovernedDeepSeek(store, environment=os.environ.get("SYNWEVO_BILLING_ENVIRONMENT"))
+        return GovernedDeepSeek(store, environment=os.environ.get("SYNWEVO_BILLING_ENVIRONMENT"),
+                                upstream=os.environ.get(UPSTREAM_ENV))
     raise ValueError("unsupported SYNWEVO_AGENT_PROVIDER")

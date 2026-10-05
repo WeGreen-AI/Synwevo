@@ -547,14 +547,23 @@ class Agent:
             if m["role"] == "user":
                 msgs.append({"role": "user", "content": m["body"]})
             else:
-                api = _j(m["api_json"], [])
-                if m["status"] != "done" or not api:
-                    # An answer that failed or was cancelled contributes its visible text only, so the
-                    # next user message does not follow a dangling tool call.
-                    if m["body"]:
-                        msgs.append({"role": "assistant", "content": m["body"]})
+                api = _j(m["api_json"], []) or []
+                if m["status"] == "done" and api:
+                    msgs.extend(api)
                     continue
-                msgs.extend(api)
+                turn = self.store.one("SELECT id,provider,steps FROM agent_turns WHERE assistant_message_id=?", (m["id"],))
+                if api and turn and turn["provider"] == "deepseek":
+                    # DeepSeek thinking mode refuses (HTTP 400) a tool-carrying request that omits
+                    # any earlier reasoning_content, failed and cancelled turns included. Replay the
+                    # turn's saved native messages (completed steps plus the interrupted step's
+                    # private reasoning) and close an unanswered tool call with its durable record.
+                    msgs.extend(api)
+                    msgs.extend(self._close_calls(turn, api[-1]))
+                    continue
+                # Other providers: an answer that failed or was cancelled contributes its visible
+                # text only, so the next user message does not follow a dangling tool call.
+                if m["body"]:
+                    msgs.append({"role": "assistant", "content": m["body"]})
         # Collapse consecutive user entries (a failed answer with no text leaves two in a row).
         out: list[dict] = []
         for msg in msgs:
@@ -564,6 +573,25 @@ class Agent:
             else:
                 out.append(msg)
         return out
+
+    def _close_calls(self, turn: dict, last: dict) -> list[dict]:
+        """Results for the tool calls a stopped/failed turn left unanswered, from their records."""
+        if last.get("role") != "assistant":
+            return []
+        if last.get("tool_calls"):
+            uses = [{"id": call["id"]} for call in last["tool_calls"]]
+        elif isinstance(last.get("content"), list):
+            uses = [b for b in last["content"] if b.get("type") == "tool_use"]
+        else:
+            uses = []
+        return [self._tool_results(turn["id"], turn["steps"], uses)] if uses else []
+
+    def _keep_partial(self, t: dict, turn_msgs: list[dict], err: Exception) -> None:
+        """Save an interrupted step's private replay (reasoning, visible text, no tool calls)."""
+        partial = getattr(err, "replay_message", None)
+        if isinstance(partial, dict) and partial.get("role") == "assistant":
+            turn_msgs.append(partial)
+            self._save_api(t, turn_msgs)
 
     def _system(self, user: dict, ctx: ToolContext) -> list[dict]:
         ops = "\n".join(f"- {o['id']}{' (changes data)' if o['changes_data'] else ''}: {o['summary']}"
@@ -675,6 +703,7 @@ class Agent:
                     self._record_usage(turn_id, steps, err.metered_usage, err.usage_reliability,
                                        previous_pending=t["usage_state"] == "pending")
                 self._flush(t, buf)
+                self._keep_partial(t, turn_msgs, err)
                 self._finish(t, "cancelled", None, api=turn_msgs)
                 return
             except ProviderError as err:
@@ -682,6 +711,7 @@ class Agent:
                     self._record_usage(turn_id, steps, err.metered_usage, err.usage_reliability,
                                        previous_pending=t["usage_state"] == "pending")
                 self._flush(t, buf)
+                self._keep_partial(t, turn_msgs, err)
                 self._finish(t, "failed", err, api=turn_msgs)
                 return
             self._flush(t, buf)
@@ -1085,8 +1115,10 @@ class Agent:
                 blocks.append({"type": "tool_result", "tool_use_id": tu["id"], "is_error": True, "content": "not run"})
                 continue
             if c["status"] == "declined":
-                text = tool_result_text({"declined": True, "message": "The person declined this action. Do not retry it "
-                                         "unless they ask again."})
+                stopped = c["error_code"] in ("turn_cancelled", "turn_stopped")
+                text = tool_result_text({"declined": True, "message": (
+                    "Not run: the answer was stopped before this action was decided. Do not assume it happened."
+                    if stopped else "The person declined this action. Do not retry it unless they ask again.")})
                 blocks.append({"type": "tool_result", "tool_use_id": tu["id"], "is_error": True, "content": text})
                 continue
             payload = _j(c["for_model_json"], None)
