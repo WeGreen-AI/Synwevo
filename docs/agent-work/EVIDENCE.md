@@ -391,3 +391,12 @@
 - 2026-10-05T20:08:49Z最终只读核对：生产仍a4b42c8、五服务healthy，961acbf部署未发生；release-status.json保存verify成功/deploy queued，production-before-pending-deploy.json保存实际运行版本。官方Actions故障仍investigating（20:08:48Z读取，官方最后更新19:50:50Z），见github-actions-status.json。保留原部署作业，停止本机重复轮询并保存断点；新版本上线核对脚本已准备，未误执行于旧版本。
 
 - **最新覆盖20:10:16Z**：job111952838389 completed/cancelled、runner为空、steps=[]；check-run注释 `The job was not acquired by Runner of type hosted even after multiple attempts`。整个Actions37362720332为failure，verify保持success。前述queued是当时快照；部署现已被平台取消，不会自动继续，也没有执行SSH部署。没有重跑故障平台上的同一操作。STATE写明待故障恢复后仅重跑该deploy job；本地watch自行以exit1结束。最新状态已更新release-status.json。
+
+## 2026-10-06 恢复远程部署
+
+- 2026-10-06T01:34:15.145714+00:00：用户明确要求远程部署。现场工作树干净、HEAD357ce92，961acbf之后仅文档修改；生产current.json仍a4b42c8，没有在途生产workflow。官方Actions组件已operational；原run verify成功/deploy cancelled（无runner）。重新取得单协调者锁，执行 `gh run rerun 37362720332 --repo WeGreen-AI/Synwevo --job 111952838389` 成功，沿用同一源SHA，未启动手工部署或重放业务侧副作用。
+
+- **部署完成2026-10-06T01:40:51Z**：同一run attempt2/deploy112064193905 success，受限SSH步骤返回部署镜像961acbf及备份20261006T014023Z；公开健康步骤成功。attempt2所列verify112064194680复用10月5日原verify111940913669结果，不是本轮重新运行5130项。原始日志 `/private/tmp/synwevo-resumed-deployment.log`；脱敏结构化记录 `release-status.json`。
+- **独立核对01:41:34–40Z**：四应用镜像ID `sha256:1358526d4d1776dcf8b28cb115f65c0fb654fbbc2694a3ea3076278d3d8bd14e`、OCI revision与current.json均961acbf；accounts/docs/portal/messages/gateway为running且health精确为healthy。备份manifest来源a4b42c8，数据库存在；未做恢复演练。生产billing_calls/settlements/model_provider_versions/payment_settings_versions四表存在且均0；Accounts与Portal加载DeepSeek/live/CNY(scale6)/welcome100，Agent未列入名单。见 `production-after-deploy.json`。
+- 五个指定域名 `/readyz`、根页与根页引用JS均200；所适用的数据库/存储/worker/扫描器正常；匿名模型提供方与钱包充值选项401；工作空间OIDC起跳303至accounts.synwevo.com/oidc/authorize。见 `public-after-deploy.json`。检查脚本均exit0，无生产业务写入；没有重放模型请求、赠送、表单创建或支付。
+- 本次远程代码部署已完成，正式模型与收款配置仍须既有真实管理员重认证及商户信息。Agent没有公开启用，未完成已登录生产业务/支付验收。后续文档提交不改变运行产品源SHA，不触发重复发布。

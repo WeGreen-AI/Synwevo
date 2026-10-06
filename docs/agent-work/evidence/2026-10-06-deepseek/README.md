@@ -19,6 +19,6 @@
 
 最终追加验收累计16个Agent模型调用/16笔结算，另4个适配器调用；前述7笔、10笔文件是先前时间点的快照。`call-latency.json` 只测量账本时间戳差（秒级分辨率），不是首token或完整端到端延迟。`ci-disk-measurement.json` 为CI临时库保留对照，不是生产性能指标。
 
-发布快照：`ci-verification.json` 为961acbf的已通过验证；`release-status.json`、`github-actions-status.json` 和 `production-before-pending-deploy.json` 记录部署因GitHub执行器故障排队、生产仍旧版的最终观察。它们是带时间的证据，不会随远端作业自动更新；恢复必须重新核对。
+发布证据：`ci-verification.json` 为961acbf准确源的已通过验证；`release-status.json` 为attempt2完整成功。`production-after-deploy.json` 记录2026-10-06T01:41Z四应用镜像ID/revision、健康、备份和非秘密配置；`public-after-deploy.json` 记录五域readyz/root/JS、匿名拒绝与OIDC登录起跳。正式Agent与充值仍关闭，不能将基础上线核对当作真实生产收费验收。
 
-20:10:16Z更新：部署job最终因始终未获得hosted runner被GitHub取消，整条run失败但verify成功。`release-status.json` 已更新，生产快照仍为旧版；不会自动继续，恢复命令见STATE。
+历史：`github-actions-status.json`、`production-before-pending-deploy.json` 是10月5日晚的故障/旧版快照。原deploy111952838389未获得runner被平台取消；10月6日恢复同一源SHA的deploy112064193905成功。verify沿用原通过结果，未在恢复时重跑全量测试。

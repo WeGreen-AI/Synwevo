@@ -1,5 +1,13 @@
 # Vultr Tokyo deployment — current record
 
+## 2026-10-06 — DeepSeek Agent and billing code deployed; activation pending (961acbf)
+
+**Running source:** `961acbf3ad3e363486261072552c5d91a7024c32`. [Actions 37362720332](https://github.com/WeGreen-AI/Synwevo/actions/runs/37362720332), attempt 2, deployed successfully at 01:40:51 UTC through the existing restricted SSH receiver. Attempt 1's deployment was cancelled by GitHub before any step because no hosted runner was assigned. On the owner's remote-deployment request, the deploy job alone was resumed after Actions recovered; the successful verification for the same SHA was reused, not rerun: runtime 5130 passed / 5 skipped, frontend 496 and infra 11, with SDK, guard, type and build checks.
+
+At 01:41 UTC, all four application containers had image ID `sha256:1358526d4d1776dcf8b28cb115f65c0fb654fbbc2694a3ea3076278d3d8bd14e` and the expected OCI revision. Accounts, Docs, Portal, Messages and gateway were healthy. Pre-upgrade backup `/opt/synwevo/backups/20261006T014023Z` contains its manifest and database and identifies the previous a4b42c8 image; this check is not a restore drill. All five public hosts returned 200 for readiness, root and referenced JavaScript. The workspace sign-in start redirected to Accounts OIDC; anonymous provider and top-up-options requests returned 401.
+
+DeepSeek/live/CNY(scale 6)/welcome 100 minor units settings are now loaded by Accounts and Portal. The five business applications remain enabled; **Agent and actual payment collection remain closed** pending legitimate administrator configuration and production acceptance. Provider/payment version tables and call/settlement tables exist and were empty at inspection. No production model request, grant, form creation or payment was replayed. Authenticated production business acceptance is still outstanding. Evidence: `docs/agent-work/evidence/2026-10-06-deepseek/{release-status,production-after-deploy,public-after-deploy}.json`; activation requirements: `docs/agent-work/DEEPSEEK_ENABLEMENT.md`.
+
 ## 2026-10-05 — business applications released; app icons; acceptance fixes (a4b42c8)
 
 **Running source:** `a4b42c8da0cee86677cc7d6409e8eaff57543b2b`. **The five business applications are now open to

@@ -3,7 +3,7 @@
   "workflow_url": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37362720332",
   "verify_job_id": 111940913669,
   "verify_conclusion": "success",
-  "deployment": "job cancelled before any step: hosted runner not acquired; workflow failure, verify success",
+  "deployment": "attempt 2 deploy job 112064193905 succeeded at 2026-10-06T01:40:51Z; independently confirmed on production",
   "runtime_tests": {
     "passed": 5130,
     "skipped": 5,
@@ -96,5 +96,6 @@
     "frontend_test_count": 496,
     "sdk_checks": "success"
   },
-  "captured_at": "2026-10-05T20:01:54.171688+00:00"
+  "captured_at": "2026-10-05T20:01:54.171688+00:00",
+  "deployment_updated_at": "2026-10-06T01:45:07.912277+00:00"
 }

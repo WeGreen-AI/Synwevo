@@ -1,0 +1,118 @@
+{
+  "checked_at": "2026-10-06T01:41:40.982249+00:00",
+  "hosts": {
+    "synwevo.com": {
+      "readyz_status": 200,
+      "readyz": {
+        "status": "ready",
+        "checks": {
+          "database": "ok",
+          "storage": "ok",
+          "worker": "ok"
+        }
+      },
+      "root_status": 200,
+      "javascript": {
+        "path": "/portal-assets/index-Ba8_32G7.js",
+        "status": 200,
+        "sha256": "010924c33c2986774296356c2067611fef5054c7e9957faa619d75d2a40a5877",
+        "bytes": 437455
+      }
+    },
+    "accounts.synwevo.com": {
+      "readyz_status": 200,
+      "readyz": {
+        "status": "ready",
+        "checks": {
+          "database": "ok",
+          "storage": "ok",
+          "worker": "ok",
+          "malware_scanner": "ok"
+        }
+      },
+      "root_status": 200,
+      "javascript": {
+        "path": "/account-assets/index-G5dJV7VM.js",
+        "status": 200,
+        "sha256": "e441da1b69b333d1ec8566e62f552f0439d233289f70a956a723c6f1e5dcd4f7",
+        "bytes": 379592
+      }
+    },
+    "docwave.synwevo.com": {
+      "readyz_status": 200,
+      "readyz": {
+        "status": "ready",
+        "checks": {
+          "database": "ok",
+          "storage": "ok",
+          "worker": "ok",
+          "malware_scanner": "ok"
+        }
+      },
+      "root_status": 200,
+      "javascript": {
+        "path": "/assets/index-BkvoDrTy.js",
+        "status": 200,
+        "sha256": "2ea85f47cbc652fc7e173ba72d9b7e2fa1fd8c501a1aa26120eca7d5ecd9f0c4",
+        "bytes": 238260
+      }
+    },
+    "workplace.synwevo.com": {
+      "readyz_status": 200,
+      "readyz": {
+        "status": "ready",
+        "checks": {
+          "database": "ok",
+          "storage": "ok",
+          "worker": "ok"
+        }
+      },
+      "root_status": 200,
+      "javascript": {
+        "path": "/portal-assets/index-Ba8_32G7.js",
+        "status": 200,
+        "sha256": "010924c33c2986774296356c2067611fef5054c7e9957faa619d75d2a40a5877",
+        "bytes": 437455
+      }
+    },
+    "message.synwevo.com": {
+      "readyz_status": 200,
+      "readyz": {
+        "status": "ready",
+        "checks": {
+          "database": "ok",
+          "storage": "ok",
+          "malware_scanner": "ok",
+          "messaging": {
+            "send_failed": 0,
+            "stream_replays": 0,
+            "stream_resyncs": 0,
+            "stream_refused": 0,
+            "typing_events": 0,
+            "presence_events": 0,
+            "search_queries": 0,
+            "stream_connections": 0,
+            "presence_tracked": 0,
+            "ring_events": 0
+          }
+        }
+      },
+      "root_status": 200,
+      "javascript": {
+        "path": "/messages-assets/index-Dm-lXdct.js",
+        "status": 200,
+        "sha256": "ae7391b808ef924d60cea82b6bd9337141e7853e8e797e252c8a3a377cea41cb",
+        "bytes": 478024
+      }
+    }
+  },
+  "anonymous_boundaries": {
+    "/api/admin/billing/model-provider": 401,
+    "/api/auth/wallet/topup-options": 401
+  },
+  "oidc_start": {
+    "status": 303,
+    "redirect_host": "accounts.synwevo.com",
+    "redirect_path": "/oidc/authorize"
+  }
+}

@@ -4,7 +4,7 @@
 
 ## 主机配置（由已授权运维完成）
 
-现有位置 `/opt/synwevo/config/runtime.env`，不是源码或公开变量。正式环境使用 `SYNWEVO_AGENT_PROVIDER=deepseek`、`SYNWEVO_BILLING_ENVIRONMENT=live`；钱包单位 JSON 必须与批准的币种/价格精度一致。2026-10-05T17:57Z 已为正式后台预置 CNY/scale=6（微元精度），不构成售价发布或货币兑换。原配置备份 `/opt/synwevo/config/runtime.env.before-agent-config-20261005T175714Z`；未重启，交由既有 CI/CD 加载。欢迎额度按分配置，100 表示人民币1元；按用户明确的免费“1块”要求落实为每个已验证账户/邮箱一次人民币1元。2026-10-05T19:23:01Z 已将 `SYNWEVO_BILLING_WELCOME_MINOR=100` 预置到生产运行配置，备份 `runtime.env.before-welcome-20261005T192301Z`，沿用既有每日200次总量与账本防重复规则；未重启，Agent仍关闭，未实际赠送。生产不设置测试 upstream。
+现有位置 `/opt/synwevo/config/runtime.env`，不是源码或公开变量。正式环境使用 `SYNWEVO_AGENT_PROVIDER=deepseek`、`SYNWEVO_BILLING_ENVIRONMENT=live`；钱包单位 JSON 必须与批准的币种/价格精度一致。2026-10-05T17:57Z 已为正式后台预置 CNY/scale=6（微元精度），不构成售价发布或货币兑换。原配置备份 `/opt/synwevo/config/runtime.env.before-agent-config-20261005T175714Z`；2026-10-06T01:40Z 已由既有 CI/CD 随961acbf加载。欢迎额度按分配置，100 表示人民币1元；按用户明确的免费“1块”要求落实为每个已验证账户/邮箱一次人民币1元。2026-10-05T19:23:01Z 已将 `SYNWEVO_BILLING_WELCOME_MINOR=100` 预置到生产运行配置，备份 `runtime.env.before-welcome-20261005T192301Z`，沿用既有每日200次总量与账本防重复规则；2026-10-06发布后已核对Accounts与Portal实际加载，Agent仍关闭。本任务未调用生产赠送接口。生产不设置测试 upstream。
 
 在下面的后台配置与定向正式验收完成前，保留当前应用名单，不加入 `agent`；开放时保留其它应用并经既有部署/运维方式重建 portal。代码发布本身不会启用模型或充值。
 

@@ -1,0 +1,83 @@
+{
+  "checked_at": "2026-10-06T01:41:34.189604+00:00",
+  "expected_sha": "961acbf3ad3e363486261072552c5d91a7024c32",
+  "current": {
+    "image": "synwevo:961acbf3ad3e363486261072552c5d91a7024c32",
+    "previous_image": "synwevo:a4b42c8da0cee86677cc7d6409e8eaff57543b2b",
+    "backup": "/opt/synwevo/backups/20261006T014023Z",
+    "at": "20261006T014023Z"
+  },
+  "containers": [
+    "synwevo-gateway-1\tnginx:1.28-alpine\tUp 52 seconds (healthy)",
+    "synwevo-messages-1\tsynwevo:961acbf3ad3e363486261072552c5d91a7024c32\tUp About a minute (healthy)",
+    "synwevo-portal-1\tsynwevo:961acbf3ad3e363486261072552c5d91a7024c32\tUp About a minute (healthy)",
+    "synwevo-docs-1\tsynwevo:961acbf3ad3e363486261072552c5d91a7024c32\tUp About a minute (healthy)",
+    "synwevo-accounts-1\tsynwevo:961acbf3ad3e363486261072552c5d91a7024c32\tUp About a minute (healthy)",
+    "synwevo-clamav-1\tclamav/clamav:1.4\tUp 7 days (healthy)"
+  ],
+  "health_states": {
+    "accounts": {
+      "running": true,
+      "health": "healthy"
+    },
+    "portal": {
+      "running": true,
+      "health": "healthy"
+    },
+    "docs": {
+      "running": true,
+      "health": "healthy"
+    },
+    "messages": {
+      "running": true,
+      "health": "healthy"
+    },
+    "gateway": {
+      "running": true,
+      "health": "healthy"
+    }
+  },
+  "image_ids": {
+    "synwevo-accounts-1": "sha256:1358526d4d1776dcf8b28cb115f65c0fb654fbbc2694a3ea3076278d3d8bd14e",
+    "synwevo-portal-1": "sha256:1358526d4d1776dcf8b28cb115f65c0fb654fbbc2694a3ea3076278d3d8bd14e",
+    "synwevo-docs-1": "sha256:1358526d4d1776dcf8b28cb115f65c0fb654fbbc2694a3ea3076278d3d8bd14e",
+    "synwevo-messages-1": "sha256:1358526d4d1776dcf8b28cb115f65c0fb654fbbc2694a3ea3076278d3d8bd14e"
+  },
+  "image_revisions": {
+    "sha256:1358526d4d1776dcf8b28cb115f65c0fb654fbbc2694a3ea3076278d3d8bd14e": "961acbf3ad3e363486261072552c5d91a7024c32"
+  },
+  "backup": {
+    "path": "/opt/synwevo/backups/20261006T014023Z",
+    "manifest_present": true,
+    "source_image": "synwevo:a4b42c8da0cee86677cc7d6409e8eaff57543b2b",
+    "database_present": true
+  },
+  "readiness_configuration": {
+    "tables_present": {
+      "billing_calls": true,
+      "billing_settlements": true,
+      "model_provider_versions": true,
+      "payment_settings_versions": true
+    },
+    "counts": {
+      "billing_calls": 0,
+      "billing_settlements": 0,
+      "model_provider_versions": 0,
+      "payment_settings_versions": 0
+    },
+    "configuration": {
+      "SYNWEVO_SUITE_APPS": "forms,tables,dataprep,approvals,extract",
+      "SYNWEVO_AGENT_PROVIDER": "deepseek",
+      "SYNWEVO_BILLING_ENVIRONMENT": "live",
+      "SYNWEVO_BILLING_WALLET_UNITS": "[{\"code\":\"CNY\",\"scale\":6}]",
+      "SYNWEVO_BILLING_WELCOME_MINOR": "100"
+    }
+  },
+  "portal_configuration": {
+    "SYNWEVO_SUITE_APPS": "forms,tables,dataprep,approvals,extract",
+    "SYNWEVO_AGENT_PROVIDER": "deepseek",
+    "SYNWEVO_BILLING_ENVIRONMENT": "live",
+    "SYNWEVO_BILLING_WALLET_UNITS": "[{\"code\":\"CNY\",\"scale\":6}]",
+    "SYNWEVO_BILLING_WELCOME_MINOR": "100"
+  }
+}
