@@ -1,0 +1,45 @@
+{
+  "checked_at": "2026-10-06T07:47:47.919095+00:00",
+  "base_sha": "08d6700cd524da10163643dbf97f7e1a113a4bd7",
+  "status": "local uncommitted follow-ups; not part of 08d6700 deployment; user asked to pause after that release",
+  "source_sha256": {
+    "services/identity/web/src/pages/apiplatform/Requests.tsx": "6412419bf5866140fdb7706ade48add2385d0d57049a95ed0a25969d6c7733f9",
+    "services/identity/web/src/pages/api-platform.messages.ts": "e58accc0b7798d3c43be0aee4f571dd5f13d8119a9bfc835a27c80d4291f3bfc",
+    "tests/integration/browser_webhook_overlap.py": "6c59c29f726bcea0451984d8d483c7bb56b64cbfb5d675b73764fec6c3a838c2",
+    "packages/core/synwevo_core/messaging.py": "08d2de99dd2d9bf485d3dcf52ec13999ce7eafaea21825bf1f69157f55a1f0db",
+    "packages/core/synwevo_core/messaging_bridge.py": "1c6fae7a76ca76e54b9c88c7d5b48d2e40245f34c977a3a872058424dea31f74",
+    "apps/messages/web/src/messages.messages.ts": "163db2636a7b3f5f61341a14df4ab0e6a7587144e63d1b556367e32b1a6d431d",
+    "apps/messages/tests/test_unused_attachments.py": "2b8bfeb2dd0c3f56a1b2caa5ca3e4ba25e54a4276224a7a21877cdec8ab19827"
+  },
+  "D4": {
+    "backend_tests": 3,
+    "frontend_copy_tests": 9,
+    "browser_real_rotation_checks": 18,
+    "locales": [
+      "zh-Hans",
+      "en",
+      "zh-Hant"
+    ],
+    "typecheck": "passed",
+    "build": "passed",
+    "browser_cleanup": "confirmed",
+    "independent_visual_review": "parent viewed desktop Simplified Chinese and narrow English/Traditional Chinese; no overflow",
+    "limitations": [
+      "Chromium only",
+      "no full suite; not committed or deployed"
+    ]
+  },
+  "D18": {
+    "unique_python_tests": 17,
+    "new_cases": 10,
+    "frontend_copy_tests": 5,
+    "workers_cleanup": "confirmed",
+    "parent_review": "read final diff and transaction/expiry/lifecycle tests; no further changes",
+    "limitations": [
+      "deletion count bounded to 100 per minute, row scan cost not bounded",
+      "no new index/migration",
+      "no full suite; not committed or deployed"
+    ]
+  },
+  "D20": "researched only; no code changes"
+}

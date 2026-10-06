@@ -12,3 +12,11 @@
 本地服务37774使用同一 `/private/tmp/synwevo-admin-continuity-20261006/isolated`，PID67004→79410；不要重播seed或启用/审核。测试用口令、cookie、secret、数据库、原始浏览器日志和mail文件不进入证据目录。备份恢复和生产登录业务验收不由此证明。
 
 - 最终扩展Message回归118独立项通过：首跑104通过，另14项因沙箱不允许Clamd测试替身绑定127.0.0.1出现2失败/12setup错误；仅对受影响3文件授予回环端口后14通过（2.29s），没有改源码/断言。D13追加diff独立复核无阻断。隔离浏览器与37774服务已关闭，数据和证据保留。
+
+## 发布证据（2026-10-06）
+
+产品源08d6700已通过[Actions37430536566](https://github.com/WeGreen-AI/Synwevo/actions/runs/37430536566)，verify于08:28:08Z成功，deploy于08:30:09Z成功。完整运行环境5282通过、5跳过、242警告；前端496、Python SDK40与14子测试、TypeScript SDK25及构建/守卫通过。跳过原因及日志哈希见ci-verification.json，未降低门槛。
+
+08:31Z独立只读核对current.json、四应用OCI revision和镜像f2a50db5681e一致；五服务healthy。五正式域名/静态资源200，OIDC起跳303到Accounts，匿名模型管理/充值401。备份20261006T082943Z的manifest来源f1dae29、数据库存在；未做恢复演练。生产未重放启用、举报审核、业务发送或付费调用。正式Agent及充值仍未开放；具体缺项见DEEPSEEK_ENABLEMENT.md。
+
+用户要求本轮后暂停。D4/D18仅本机定向验证并保留源码，不属于这次发布；其断点见../2026-10-06-paused-followups/。

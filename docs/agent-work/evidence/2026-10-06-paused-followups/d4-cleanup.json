@@ -1,0 +1,27 @@
+{
+  "test_pid": 167,
+  "server_pid": 167,
+  "server_thread_stopped": true,
+  "browser_closed": true,
+  "observed_child_pids": [
+    182,
+    185,
+    217,
+    218,
+    219,
+    221,
+    224,
+    228,
+    229,
+    262,
+    263,
+    265,
+    266,
+    302,
+    303,
+    306,
+    307
+  ],
+  "remaining_owned_children": [],
+  "retained_fixture_data": "/private/tmp/synwevo-d4-retained-fixture"
+}

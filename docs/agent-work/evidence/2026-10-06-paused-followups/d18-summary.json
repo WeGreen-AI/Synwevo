@@ -1,0 +1,118 @@
+{
+  "task": "D18 unused Message attachment cleanup",
+  "state": "implemented_and_targeted_validation_complete; paused_at_user_request",
+  "worktree": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing",
+  "branch": "claude/agent-billing",
+  "head": "08d6700cd524da10163643dbf97f7e1a113a4bd7",
+  "files": [
+    {
+      "path": "packages/core/synwevo_core/messaging.py",
+      "sha256": "08d2de99dd2d9bf485d3dcf52ec13999ce7eafaea21825bf1f69157f55a1f0db",
+      "change": "100-row bounded conditional DELETE within Store write transaction; expiry validation after acquiring send writer and after download authorization/scan checks"
+    },
+    {
+      "path": "packages/core/synwevo_core/messaging_bridge.py",
+      "sha256": "1c6fae7a76ca76e54b9c88c7d5b48d2e40245f34c977a3a872058424dea31f74",
+      "change": "Existing minute maintenance calls attachment sweep; existing worker lifecycle and sweep return contract retained"
+    },
+    {
+      "path": "apps/messages/web/src/messages.messages.ts",
+      "sha256": "163db2636a7b3f5f61341a14df4ab0e6a7587144e63d1b556367e32b1a6d431d",
+      "change": "Message-only Simplified/Traditional Chinese and English expiry sentence"
+    },
+    {
+      "path": "apps/messages/tests/test_unused_attachments.py",
+      "sha256": "2b8bfeb2dd0c3f56a1b2caa5ca3e4ba25e54a4276224a7a21877cdec8ab19827",
+      "change": "New untracked file, 10 real-Store cases including deterministic writer ordering and actual worker lifecycle"
+    }
+  ],
+  "root_causes": [
+    "Sweep was never called by a worker",
+    "Candidate IDs were read before acquiring a writer and later deleted unconditionally, allowing deletion of concurrently bound attachments",
+    "Send/download did not enforce existing unsent expiry"
+  ],
+  "policy": {
+    "expiry": "Existing 3600-second upload deadline; expires_at <= current time expires only unbound attachments",
+    "before_cleanup": "Authorized uploader receives HTTP 410 attachment_expired and re-upload instruction for send/download/inline",
+    "after_cleanup": "Missing attachment keeps existing HTTP 404 no_attachment behavior; no tombstones",
+    "sent": "Sent attachments and successful client_id replay are unaffected even if a historical bound row has stale expires_at",
+    "authorization_and_scan": "Authorization and quarantine refusal precedence preserved",
+    "cleanup": "At most 100 expired unbound rows per existing minute sweep; NULL deadline retained; no blob deletion",
+    "scan_cost": "Deletion batch is bounded; no new expiry index or schema migration, so row scanning is not guaranteed bounded"
+  },
+  "tests": {
+    "runtime": "Python 3.12.6 / pytest 9.1.1",
+    "red": {
+      "passed": 3,
+      "failed": 7,
+      "seconds": 2.85,
+      "exit_code": 1,
+      "log": "/private/tmp/synwevo-d18-20261006/red.log",
+      "xml": "/private/tmp/synwevo-d18-20261006/red.xml",
+      "note": "Pre-fix product implementation. Final worker test additionally checks recurring idle maintenance after first startup cleanup."
+    },
+    "green_initial": {
+      "passed": 14,
+      "errors": 3,
+      "seconds": 1.12,
+      "exit_code": 1,
+      "log": "/private/tmp/synwevo-d18-20261006/green.log",
+      "xml": "/private/tmp/synwevo-d18-20261006/green.xml",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python -B -m pytest apps/messages/tests/test_unused_attachments.py apps/messages/tests/test_bridge_worker_lifecycle.py apps/messages/tests/test_messaging_api.py::test_attachments_go_through_the_acceptance_chain_and_are_served_only_to_readers apps/messages/tests/test_attachment_rescan.py::test_clean_and_infected_attachments apps/messages/tests/test_attachment_rescan.py::test_a_standing_verdict_refuses_attachments_even_with_the_bytes_back_in_the_store apps/messages/tests/test_encrypted_attachments.py::test_a_rescan_reports_an_encrypted_historical_attachment_and_leaves_it_readable -p no:cacheprovider -o addopts=--import-mode=importlib -vv --tb=short -ra --basetemp=/private/tmp/synwevo-d18-20261006/green-tmp --junitxml=/private/tmp/synwevo-d18-20261006/green.xml > /private/tmp/synwevo-d18-20261006/green.log 2>&1",
+      "note": "All 10 D18 tests, 3 existing worker tests and attachment API test passed; 3 scanner fixtures could not bind 127.0.0.1 under sandbox."
+    },
+    "scanner_retry": {
+      "passed": 3,
+      "failed": 0,
+      "seconds": 0.55,
+      "exit_code": 0,
+      "log": "/private/tmp/synwevo-d18-20261006/scans.log",
+      "xml": "/private/tmp/synwevo-d18-20261006/scans.xml",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python -B -m pytest apps/messages/tests/test_attachment_rescan.py::test_clean_and_infected_attachments apps/messages/tests/test_attachment_rescan.py::test_a_standing_verdict_refuses_attachments_even_with_the_bytes_back_in_the_store apps/messages/tests/test_encrypted_attachments.py::test_a_rescan_reports_an_encrypted_historical_attachment_and_leaves_it_readable -p no:cacheprovider -o addopts=--import-mode=importlib -vv --tb=short -ra --basetemp=/private/tmp/synwevo-d18-20261006/scans-tmp --junitxml=/private/tmp/synwevo-d18-20261006/scans.xml > /private/tmp/synwevo-d18-20261006/scans.log 2>&1",
+      "note": "Only the three setup-blocked tests rerun with local socket permission. Local ClamdDouble fixtures, no production."
+    },
+    "unique_python_passes": 17,
+    "frontend": {
+      "passed": 5,
+      "failed": 0,
+      "exit_code": 0,
+      "log": "/private/tmp/synwevo-d18-20261006/refusals.log",
+      "command": "node --experimental-strip-types --experimental-vm-modules --disable-warning=ExperimentalWarning --test tests/refusals.test.ts",
+      "cwd": "apps/messages/web"
+    },
+    "boundaries": {
+      "passed": true,
+      "log": "/private/tmp/synwevo-d18-20261006/boundaries.log"
+    },
+    "whitespace": {
+      "passed": true,
+      "scope": "D18 files only"
+    },
+    "warning": "Existing Starlette TestClient anyio BlockingPortal deprecation"
+  },
+  "remaining": [
+    "Independent review and any eventual commit/deployment are intentionally deferred until user resumes; none performed",
+    "D20 not started"
+  ],
+  "exclusions": [
+    "No identity, Docs, migration, shared locale, state document changes by this task",
+    "No notification dead-letter recovery work",
+    "No B1/full-suite/production checks",
+    "Other coordinator's pre-existing dirty files left intact"
+  ],
+  "recovery_patch": "/private/tmp/synwevo-d18-20261006/d18.patch",
+  "worker_cleanup": {
+    "matching_d18_test_processes": [],
+    "persistent_services_started": false,
+    "worker_lifecycle_assertions": [
+      "actual start_jobs=True bridge thread not alive after TestClient lifespan",
+      "global bridge wakers restored to baseline",
+      "wake after stop does not delete newly expired fixture row"
+    ],
+    "fixture_cleanup": "autouse workers.stop_all(wait=3.0) after each Message test",
+    "test_commands_exited": true,
+    "new_background_writers_remaining": false,
+    "process_check": "read-only ps filtered to this D18 pytest invocation; no unrelated process details retained",
+    "evidence_file": "/private/tmp/synwevo-d18-20261006/worker-cleanup.json"
+  }
+}

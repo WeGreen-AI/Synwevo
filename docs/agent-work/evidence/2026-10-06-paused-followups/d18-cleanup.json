@@ -1,0 +1,13 @@
+{
+  "matching_d18_test_processes": [],
+  "persistent_services_started": false,
+  "worker_lifecycle_assertions": [
+    "actual start_jobs=True bridge thread not alive after TestClient lifespan",
+    "global bridge wakers restored to baseline",
+    "wake after stop does not delete newly expired fixture row"
+  ],
+  "fixture_cleanup": "autouse workers.stop_all(wait=3.0) after each Message test",
+  "test_commands_exited": true,
+  "new_background_writers_remaining": false,
+  "process_check": "read-only ps filtered to this D18 pytest invocation; no unrelated process details retained"
+}

@@ -1,0 +1,44 @@
+{
+  "source_sha": "08d6700cd524da10163643dbf97f7e1a113a4bd7",
+  "run": 37430536566,
+  "verify_job": 112160107888,
+  "result": "success",
+  "runtime": {
+    "passed": 5282,
+    "skipped": 5,
+    "warnings": 242,
+    "seconds": 2862.91
+  },
+  "frontend_tests": 496,
+  "python_sdk": {
+    "tests_passed": 40,
+    "subtests_passed": 14
+  },
+  "typescript_sdk_tests": 25,
+  "checks": [
+    "boundaries",
+    "brand",
+    "design",
+    "component_names",
+    "logo",
+    "app_icons",
+    "typecheck",
+    "build",
+    "frontend",
+    "live sheet clients with Node",
+    "infra",
+    "Python/TypeScript SDK",
+    "deployment image runtime"
+  ],
+  "ci_temporary_directories_removed": 4262,
+  "runtime_free_MiB_final": 10450,
+  "verify_log_sha256": "938770839bdebdd6bd8b6c7f3e65846bde14420268d14668012ea506ffff278b",
+  "skip_reasons": [
+    "[1] apps/docs/tests/test_sheet_live_clients.py:41: real-room client tests need Node: node is not installed",
+    "[1] apps/docs/tests/test_encrypted_files.py:430: CLAMD_TEST_ADDRESS is not set (a clamd with AlertEncryptedArchive yes)",
+    "[1] apps/docs/tests/test_licensing.py:160: 本项目尚未选定 LICENSE",
+    "[1] tests/integration/test_platform_tooling.py:284: 本机没有 docker",
+    "[1] tests/integration/test_platform_tooling.py:460: needs Node and the workspace's node_modules (the verify job has both)"
+  ],
+  "warning": "Pinned actions target Node20; runner forced Node24. Verification passed; no unrelated dependency change."
+}

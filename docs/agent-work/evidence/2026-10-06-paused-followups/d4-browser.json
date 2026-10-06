@@ -1,0 +1,147 @@
+{
+  "checks": [
+    {
+      "locale": "zh-Hans",
+      "selection": null,
+      "request_body": {},
+      "stored_overlap_seconds": 86400
+    },
+    {
+      "locale": "zh-Hans",
+      "selection": 0,
+      "request_body": {
+        "overlap_s": 0
+      },
+      "stored_overlap_seconds": 0
+    },
+    {
+      "locale": "zh-Hans",
+      "selection": 600,
+      "request_body": {
+        "overlap_s": 600
+      },
+      "stored_overlap_seconds": 600
+    },
+    {
+      "locale": "zh-Hans",
+      "selection": 3600,
+      "request_body": {
+        "overlap_s": 3600
+      },
+      "stored_overlap_seconds": 3600
+    },
+    {
+      "locale": "zh-Hans",
+      "selection": 86400,
+      "request_body": {
+        "overlap_s": 86400
+      },
+      "stored_overlap_seconds": 86400
+    },
+    {
+      "locale": "zh-Hans",
+      "selection": "reset",
+      "request_body": {},
+      "stored_overlap_seconds": 86400
+    },
+    {
+      "locale": "en",
+      "selection": null,
+      "request_body": {},
+      "stored_overlap_seconds": 86400
+    },
+    {
+      "locale": "en",
+      "selection": 0,
+      "request_body": {
+        "overlap_s": 0
+      },
+      "stored_overlap_seconds": 0
+    },
+    {
+      "locale": "en",
+      "selection": 600,
+      "request_body": {
+        "overlap_s": 600
+      },
+      "stored_overlap_seconds": 600
+    },
+    {
+      "locale": "en",
+      "selection": 3600,
+      "request_body": {
+        "overlap_s": 3600
+      },
+      "stored_overlap_seconds": 3600
+    },
+    {
+      "locale": "en",
+      "selection": 86400,
+      "request_body": {
+        "overlap_s": 86400
+      },
+      "stored_overlap_seconds": 86400
+    },
+    {
+      "locale": "en",
+      "selection": "reset",
+      "request_body": {},
+      "stored_overlap_seconds": 86400
+    },
+    {
+      "locale": "zh-Hant",
+      "selection": null,
+      "request_body": {},
+      "stored_overlap_seconds": 86400
+    },
+    {
+      "locale": "zh-Hant",
+      "selection": 0,
+      "request_body": {
+        "overlap_s": 0
+      },
+      "stored_overlap_seconds": 0
+    },
+    {
+      "locale": "zh-Hant",
+      "selection": 600,
+      "request_body": {
+        "overlap_s": 600
+      },
+      "stored_overlap_seconds": 600
+    },
+    {
+      "locale": "zh-Hant",
+      "selection": 3600,
+      "request_body": {
+        "overlap_s": 3600
+      },
+      "stored_overlap_seconds": 3600
+    },
+    {
+      "locale": "zh-Hant",
+      "selection": 86400,
+      "request_body": {
+        "overlap_s": 86400
+      },
+      "stored_overlap_seconds": 86400
+    },
+    {
+      "locale": "zh-Hant",
+      "selection": "reset",
+      "request_body": {},
+      "stored_overlap_seconds": 86400
+    }
+  ],
+  "cancellation_locales": [
+    "zh-Hans",
+    "en",
+    "zh-Hant"
+  ],
+  "revoked_credential_refused": true,
+  "page_errors": [],
+  "limits": [
+    "Chromium only",
+    "No external delivery; signing is covered by backend tests"
+  ]
+}
