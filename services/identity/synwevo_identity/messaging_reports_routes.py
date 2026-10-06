@@ -16,8 +16,6 @@ event), not the same instant.
 """
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, Body, Query, Request
 
 from synwevo_core.errors import ServiceError
@@ -26,9 +24,7 @@ from synwevo_core.messaging import REPORT_REASONS, Messaging, conversation_targe
 from synwevo_core.notifications import Notifier
 from synwevo_core.organizations import Organizations
 from synwevo_core.sessions import Sessions
-from synwevo_core.store import now
 
-log = logging.getLogger("synwevo.messaging")
 REAUTH_SCOPE = "admin"          # reviewing a report is an organization write like deciding an approval
 
 
@@ -41,9 +37,8 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
         state = getattr(request.state, "session", None)
         if not state:
             raise ServiceError(401, "unauthorized", "请先登录")
-        current = store.one("SELECT * FROM sessions WHERE id=?", (state["id"],))
-        ts = now()
-        if (not current or current["revoked_at"] is not None or current["idle_expires_at"] <= ts or current["absolute_expires_at"] <= ts):
+        current = sessions.current(state)
+        if not current:
             raise ServiceError(401, "unauthorized", "会话已失效，请重新登录")
         return current
 
@@ -63,23 +58,23 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier)
 
     @r.post("/reports/{rid}/review")
     def review_report(request: Request, rid: str, body: dict = Body(...)):
-        current = svc.report_get(rid)
-        uid = _moderator(request, current["organization_id"], sensitive=True)
-        out = svc.review_report(rid, uid, str(body.get("decision") or ""), body.get("note"))
-        audit(request, "messaging.report.review", actor_id=uid, object_kind="message_report", object_id=rid, result="ok",
-              meta={"decision": out["status"], "message_id": out["message_id"], "organization_id": out["organization_id"]})
-        # Every report the decision settled — this one and the other open reports of the same
-        # message — tells its reporter the outcome and closes the to-do each manager was given.
-        # The note was written for the reviewed report; the others get the outcome alone.
-        for settled in [out, *(svc.report_get(other) for other in out["settled_with"])]:
-            try:
+        # Middleware admission may predate a withdrawal. Read current session, scoped reauth,
+        # organization and permission under the same writer lock as the decision. An audit or
+        # notification write failure must leave the whole decision open for a safe retry.
+        with store.tx():
+            current = svc.report_get(rid)
+            uid = _moderator(request, current["organization_id"], sensitive=True)
+            out = svc.review_report(rid, uid, str(body.get("decision") or ""), body.get("note"))
+            audit(request, "messaging.report.review", actor_id=uid, object_kind="message_report", object_id=rid, result="ok",
+                  meta={"decision": out["status"], "message_id": out["message_id"], "organization_id": out["organization_id"]})
+            # Every settled report closes all reviewers' to-dos and records its reporter's
+            # outcome (subject to their notification preferences). Only this report gets the note.
+            for settled in [out, *(svc.report_get(other) for other in out["settled_with"])]:
                 notifier.set_action_state("message_report", settled["id"], "done")
                 notifier.emit(settled["reporter"]["user_id"], f"conversation.report_{out['status']}",
                               params={"note": (out["decision_note"] or "") if settled["id"] == rid else ""},
                               organization_id=out["organization_id"], object_kind="message_report", object_id=settled["id"],
                               dedupe_key=f"report:{settled['id']}:reviewed", target=conversation_target(store, out["conversation_id"]))
-            except Exception as e:  # noqa: BLE001
-                log.warning("report outcome inbox item skipped: %s", type(e).__name__)
         return out
 
     return r

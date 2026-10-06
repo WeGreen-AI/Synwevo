@@ -351,10 +351,13 @@ def test_service_rotation_disable_enable_and_token_revocation(plane):
     assert call(e, access).status_code == 200
     assert post(e["admin"], path + "/revoke-tokens", {"reason": REASON}).status_code == 200
     assert call(e, access).status_code == 401
-    assert service_token(e, credential).status_code == 200
+    token_before_disable = service_token(e, credential).json()["access_token"]
+    assert call(e, token_before_disable).status_code == 200
     assert post(e["admin"], path + "/disable", {"reason": REASON}).status_code == 200
+    assert call(e, token_before_disable).status_code == 401
     assert service_token(e, credential).status_code == 401
     assert post(e["admin"], path + "/enable", {"reason": REASON}).status_code == 200
+    assert call(e, token_before_disable).status_code == 401
     assert service_token(e, credential).status_code == 200
 
 

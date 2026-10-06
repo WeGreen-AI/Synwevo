@@ -1,0 +1,174 @@
+{
+  "checked_at": "2026-10-06T02:54:40.695993+00:00",
+  "source_sha": "f1dae29ed028cc0c38aacb03dccc6da1f76047e6",
+  "processes": {
+    "before": 49789,
+    "after": 56148
+  },
+  "flow": {
+    "id": "flowrun_45fa79e79365",
+    "status": "partial",
+    "step_id": "end",
+    "error_code": null,
+    "finished_at": 1791254683.958205
+  },
+  "project": {
+    "id": "p_0f257bf966bb"
+  },
+  "job": {
+    "id": "j_f10a76da8254",
+    "project_id": "p_0f257bf966bb",
+    "status": "completed"
+  },
+  "artifact": {
+    "id": "a_bf25f2d2c9cd",
+    "job_id": "j_f10a76da8254"
+  },
+  "message": {
+    "id": "msg_6706af1d4589",
+    "sender_id": "u_fa5399d1f4ae",
+    "body": "B1 release document approved\nhttp://127.0.0.1:37772/api/suite/docweave/workspaces/w_ad139b72c7c0/artifacts/a_bf25f2d2c9cd"
+  },
+  "business_counts": {
+    "projects": 1,
+    "jobs": 1,
+    "artifacts": 1,
+    "messages": 1
+  },
+  "steps": [
+    {
+      "step_id": "request",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "collect",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "submission",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "import",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "extract",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "dataset",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "prep",
+      "status": "partial"
+    },
+    {
+      "step_id": "issues",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "record",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "approval",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "review",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "route",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "materialize",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "project",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "job",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "artifacts",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "conversation",
+      "status": "succeeded"
+    },
+    {
+      "step_id": "send",
+      "status": "succeeded"
+    }
+  ],
+  "operation_counts": [
+    {
+      "op": "approvals.request.create",
+      "n": 1
+    },
+    {
+      "op": "dataprep.dataset.from_extract",
+      "n": 1
+    },
+    {
+      "op": "dataprep.run.start",
+      "n": 1
+    },
+    {
+      "op": "docweave.job.artifacts",
+      "n": 1
+    },
+    {
+      "op": "docweave.job.create",
+      "n": 1
+    },
+    {
+      "op": "docweave.project.from_dataset",
+      "n": 1
+    },
+    {
+      "op": "docweave.project.get",
+      "n": 1
+    },
+    {
+      "op": "extract.file.from_forms",
+      "n": 1
+    },
+    {
+      "op": "extract.task.create",
+      "n": 1
+    },
+    {
+      "op": "forms.request.create",
+      "n": 1
+    },
+    {
+      "op": "forms.submission.get",
+      "n": 1
+    },
+    {
+      "op": "messages.conversation.get",
+      "n": 1
+    },
+    {
+      "op": "messages.message.send",
+      "n": 1
+    },
+    {
+      "op": "tables.record.create",
+      "n": 1
+    }
+  ],
+  "automatic_workers": true,
+  "manual_worker_ticks_after_restart": 0,
+  "approver_ui_account": "owner@example.test",
+  "requester_account": "editor@example.test"
+}

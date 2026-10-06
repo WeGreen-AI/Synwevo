@@ -798,7 +798,7 @@ class JobService:
                   (new_id("ev"), jid, tenant or "default", etype, EVENT_VERSION, now(), json.dumps(data, ensure_ascii=False)))
         hook = getattr(self.app, "on_event", None)
         if hook:
-            hook()
+            self.store.after_commit(hook)
 
     def events(self, jid: str, after: int = 0, limit: int = 200) -> list[dict]:
         rows = self.store.all("SELECT seq, id, job_id, type, version, occurred_at, data FROM job_events WHERE job_id=? AND seq>? ORDER BY seq LIMIT ?",

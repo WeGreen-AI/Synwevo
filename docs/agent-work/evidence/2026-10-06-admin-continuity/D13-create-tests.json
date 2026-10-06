@@ -1,0 +1,111 @@
+{
+  "package": "D13 report creation races",
+  "worktree": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing",
+  "python": "3.12.6",
+  "changed_files": {
+    "apps/messages/synwevo_messages/routes.py": "43fab4279dd18c60aa9e90859f1170ae1c52396de927f7ba4c67b946607f24d2",
+    "packages/core/synwevo_core/messaging.py": "7b9de62d91b211f9fe14bde0762afb3e06e8310d25840bc5b509830443a05328",
+    "tests/integration/test_message_report_creation_transactions.py": "436cdb4537d4cec87330a3d344856e6716a3f4a74eb5298620f37559818272ee"
+  },
+  "identity_route_unchanged": true,
+  "identity_route_sha256": "b4f8fe4ec095a140c05a2673c955c90b887db28232cc387dbd6e1dba56027e4f",
+  "runs": {
+    "red": {
+      "tests": "15",
+      "failures": "15",
+      "errors": "0",
+      "skipped": "0",
+      "time": "7.117",
+      "command": [
+        "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "tests/integration/test_message_report_creation_transactions.py",
+        "-k",
+        "not concurrent_duplicate",
+        "-p",
+        "no:cacheprovider",
+        "-o",
+        "addopts=--import-mode=importlib",
+        "-vv",
+        "--tb=short",
+        "-ra",
+        "--basetemp=/private/tmp/synwevo-d13-producer-20261006/red-tmp",
+        "--junitxml=/private/tmp/synwevo-d13-producer-20261006/red.xml"
+      ],
+      "env": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "stdout_stderr": "/private/tmp/synwevo-d13-producer-20261006/red.log",
+      "exit_code": 1,
+      "by_module": {
+        "tests.integration.test_message_report_creation_transactions": 15
+      }
+    },
+    "green": {
+      "tests": "48",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "13.918",
+      "command": [
+        "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+        "-B",
+        "-m",
+        "pytest",
+        "tests/integration/test_message_report_creation_transactions.py",
+        "services/identity/tests/test_messaging_report_transactions.py",
+        "services/identity/tests/test_messaging_reports.py",
+        "apps/messages/tests/test_messaging_api.py",
+        "-p",
+        "no:cacheprovider",
+        "-o",
+        "addopts=--import-mode=importlib",
+        "-vv",
+        "--tb=short",
+        "-ra",
+        "--basetemp=/private/tmp/synwevo-d13-producer-20261006/green-tmp",
+        "--junitxml=/private/tmp/synwevo-d13-producer-20261006/green.xml"
+      ],
+      "env": {
+        "PYTHONDONTWRITEBYTECODE": "1"
+      },
+      "stdout_stderr": "/private/tmp/synwevo-d13-producer-20261006/green.log",
+      "exit_code": 0,
+      "by_module": {
+        "tests.integration.test_message_report_creation_transactions": 16,
+        "services.identity.tests.test_messaging_report_transactions": 21,
+        "services.identity.tests.test_messaging_reports": 4,
+        "apps.messages.tests.test_messaging_api": 7
+      }
+    }
+  },
+  "red_evidence": [
+    "Two real HTTP races leave late pending to-dos after removed/dismissed review.",
+    "Queued direct service report succeeds after removal instead of rejecting no_message.",
+    "Withdrawn session/account/org/conversation/history permits a stale report.",
+    "Audit failure leaves report; notification/delivery/push failures are swallowed as HTTP 201."
+  ],
+  "result": "48 passed; 0 failures/errors/skipped. Six dependency deprecation warnings. No fullsuite or B1 rerun.",
+  "checks": {
+    "boundaries": {
+      "exit_code": 0,
+      "log": "/private/tmp/synwevo-d13-producer-20261006/boundaries.log"
+    },
+    "diff_check": 0
+  },
+  "behavior": [
+    "Message report+success audit+all reviewer notices/delivery/push rows share a Store.tx.",
+    "Session is reread under the writer lock; service validates current account/org/conversation/history/message under the same lock.",
+    "Core direct callers also serialize report checks with message review and duplicate creation.",
+    "Existing identity review transaction/after_commit patch preserved."
+  ],
+  "compatibility": "Request/response shape and HTTP 201 success unchanged; duplicate remains 409. Persistence failure now rolls back with 500 and is safely retryable. No new refusal codes; organization-unavailable translation already exists.",
+  "limits": [
+    "All identities, storage and push endpoints are fixtures; stopped workers send nothing externally.",
+    "Existing notification preference suppression and admission rate-limit accounting retained.",
+    "Direct core service report callers own audit/notification orchestration; public route guarantees atomic report+to-dos.",
+    "No commit, deployment, status document or identity-route edit."
+  ]
+}

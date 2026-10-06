@@ -1,0 +1,20 @@
+{
+  "checked_at": "2026-10-06T02:31:08.975459+00:00",
+  "source_sha": "f1dae29ed028cc0c38aacb03dccc6da1f76047e6",
+  "fixture": "Isolated synthetic cr045, original saved database reused",
+  "action": "UI publish once after synthetic source policy changed none -> organization; browser refresh",
+  "publication": {
+    "id": "ot_5764897750ff",
+    "source_tenant": "w_c256816a9cd0",
+    "template_id": "t_3622fbe4a0ec",
+    "release_no": 1,
+    "version_no": 1,
+    "name": "Synthetic publication policy"
+  },
+  "counts": {
+    "organization_templates": 1,
+    "organization_template_releases": 1,
+    "project_copies": 0
+  },
+  "no_provider_or_payment_calls": true
+}

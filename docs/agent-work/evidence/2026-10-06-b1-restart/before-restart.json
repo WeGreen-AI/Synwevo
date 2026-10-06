@@ -1,0 +1,12 @@
+{
+  "checked_at": "2026-10-06T02:41:51.572639+00:00",
+  "flow": {
+    "id": "flowrun_45fa79e79365",
+    "status": "waiting_approval",
+    "step_id": "review"
+  },
+  "approval": {
+    "id": "apr_9a2c84d770a9",
+    "status": "in_review"
+  }
+}

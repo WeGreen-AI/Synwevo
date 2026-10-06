@@ -1,0 +1,100 @@
+{
+  "checked_at": "2026-10-06T07:29:42.938365+00:00",
+  "baseline": "f1dae29ed028cc0c38aacb03dccc6da1f76047e6",
+  "status": "local verification; publication pending",
+  "source_sha256": {
+    "apps/docs/synwevo_docs/jobs.py": "5403eca26845cab15dc7a0c9f5fd33c44dd4ae2f43546f05381a34f0db982ed4",
+    "apps/messages/synwevo_messages/routes.py": "43fab4279dd18c60aa9e90859f1170ae1c52396de927f7ba4c67b946607f24d2",
+    "packages/core/synwevo_core/messaging.py": "7b9de62d91b211f9fe14bde0762afb3e06e8310d25840bc5b509830443a05328",
+    "services/identity/synwevo_identity/admin_operations.py": "c46379104903f99a1a141f5712b44f5871bb47849661f40367784271d96a0739",
+    "services/identity/synwevo_identity/api_platform.py": "479999a920cde8dea34b29d6a837b2a1d24c7c0c1f2081fde829e91d6d399c1f",
+    "services/identity/synwevo_identity/messaging_reports_routes.py": "b4f8fe4ec095a140c05a2673c955c90b887db28232cc387dbd6e1dba56027e4f",
+    "services/identity/synwevo_identity/ownership.py": "6067053f0a216276f59d1463710999f9b4e15859b34bba547877850d3f14623b",
+    "services/identity/synwevo_identity/profile.py": "88a711c093e317e634ae7ceb2317da839386cc759c17e7154aad06b7779d96d0",
+    "services/identity/web/src/pages/apiplatform/Credentials.tsx": "2c15d74c9bc9380a40641b5b5a758f6eb45ac472a4093f8d8f1969c48d87d34c",
+    "services/identity/web/src/pages/api-platform.messages.ts": "bee1a94bc3c1e5f5133d1991acb58504dbca8d735609e798a7eb477537f430fa"
+  },
+  "test_groups": {
+    "D16": {
+      "tests": "112",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "42.797"
+    },
+    "Docs-job-events": {
+      "tests": "29",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "11.199"
+    },
+    "reenable-old-token": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 0.93
+    },
+    "Message-expanded": {
+      "unique_passed": 118,
+      "skipped": 0,
+      "first_pass": {
+        "passed": 104,
+        "failed": 2,
+        "setup_errors": 12,
+        "cause": "sandbox denied fixture loopback bind"
+      },
+      "affected_loopback_rerun": {
+        "passed": 14,
+        "failed": 0,
+        "errors": 0,
+        "seconds": 2.29
+      },
+      "product_or_test_changes_between_runs": false
+    }
+  },
+  "frontend": {
+    "account_tests_passed": 121,
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "browser": {
+    "fixtures_only": true,
+    "real_password_login_and_reauth": true,
+    "credential_enable_success_count": 1,
+    "owner_suspension": "409 organization_ownership_required during preview; account active",
+    "moderation": "removed; one success audit; one result notice; todos done",
+    "mobile": {
+      "width": 390,
+      "scroll_width": 390,
+      "reduced_motion": true,
+      "keyboard_submit": true
+    },
+    "local_server_restart": {
+      "old_pid": 67004,
+      "new_pid": 79410,
+      "same_database": true
+    },
+    "expected_network_errors": [
+      "401 unauthenticated /me",
+      "403 reauth required",
+      "409 ownership protection",
+      "503 organization billing disabled",
+      "connection refused during deliberate local restart"
+    ],
+    "javascript_exceptions": 0,
+    "verbose_browser_diagnostics": "Account password-field form/username markup suggestions, unchanged existing UI"
+  },
+  "independent_review": {
+    "D11_D16": "no blocking findings",
+    "D13_final": "no blocking findings; reviewed creation-side additions and caller compatibility"
+  },
+  "guards": {
+    "boundaries": "passed",
+    "brand": "passed",
+    "design": "passed",
+    "component_names": "passed",
+    "brand_assets": "22 match",
+    "diff_check": "passed"
+  }
+}

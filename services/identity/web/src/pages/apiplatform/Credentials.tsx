@@ -32,6 +32,7 @@ export function Credentials({ act, revision }: { act: (a: Action) => void; revis
     act({ title,
       impact: <div className="col gap8">{operation === 'rotate'
         ? <><span>{t('新密钥只显示一次。重叠期内新旧密钥都可调用，到期后旧密钥失效；选择「立即失效」会马上停止旧密钥。')}</span><Overlap onChange={v => { overlap.seconds = v; }} /></>
+        : operation === 'enable' ? <span>{t('重新启用需审批仍然有效，已撤销的令牌不会恢复。恢复备份后，此客户端可能因停用记录再次停用，届时需重新核验并启用。')}</span>
         : <span>{t('操作将影响此凭据及其现有集成。')}</span>} <code>{row.id}</code></div>,
       run: reason => post(`${BASE}/credentials/${row.kind}/${row.id}/${operation}`,
         operation === 'rotate' ? { reason, grace_seconds: overlap.seconds } : { reason }) });

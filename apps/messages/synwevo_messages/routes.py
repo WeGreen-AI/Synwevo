@@ -680,17 +680,22 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
             raise ServiceError(400, "invalid_field", "只能提交 reason 和 note")
         uid = uid_of(request)
         limited(uid, "msg-report", REPORTS_PER_DAY, 86400)
-        out = svc.report(mid, uid, str(body.get("reason") or ""), body.get("note"))
-        audit(request, "messaging.message.report", actor_id=uid, object_kind="message", object_id=mid, result="ok",
-              meta={"report_id": out["id"], "reason": out["reason"], "organization_id": out["organization_id"]})
-        for manager in svc.messaging_managers(out["organization_id"]):
-            if manager != uid:
-                try:
+        # Admission/rate limiting may precede a withdrawal. The report, audit and every
+        # reviewer's to-do must become visible together: review cannot close a report and
+        # then be overtaken by a late pending to-do from this request.
+        with store.tx():
+            current = sessions.current(getattr(request.state, "session", None))
+            if not current:
+                raise ServiceError(401, "unauthorized", "会话已失效，请重新登录")
+            uid = current["user_id"]
+            out = svc.report(mid, uid, str(body.get("reason") or ""), body.get("note"))
+            audit(request, "messaging.message.report", actor_id=uid, object_kind="message", object_id=mid, result="ok",
+                  meta={"report_id": out["id"], "reason": out["reason"], "organization_id": out["organization_id"]})
+            for manager in svc.messaging_managers(out["organization_id"]):
+                if manager != uid:
                     notifier.emit(manager, "conversation.reported", params={"who": out["reporter"]["name"], "conversation": out["conversation"]["name"] or out["sender"]["name"]},
                                   organization_id=out["organization_id"], object_kind="message_report", object_id=out["id"], dedupe_key=f"report:{out['id']}:{manager}",
                                   actionable=True, target={"origin": "accounts", "path": f"/organizations/{out['organization_id']}?report={out['id']}"})
-                except Exception as e:  # noqa: BLE001
-                    log.warning("report inbox item skipped: %s", type(e).__name__)
         return out
 
     # Listing and reviewing reports are not here: see the module docstring.

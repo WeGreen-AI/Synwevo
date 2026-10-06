@@ -23,6 +23,8 @@ from synwevo_core.platform_access import PlatformAccess, require_outranking, req
 from synwevo_core.sessions import Sessions
 from synwevo_core.store import new_id
 
+from .ownership import check_ownership_continuity
+
 
 @dataclass(frozen=True)
 class Operation:
@@ -114,7 +116,7 @@ class AccountOperations(SignedPreview):
             require_outranking(request, actor, uid, store=self.store, audit=self.audit)
         return target
 
-    def _snapshot(self, target):
+    def _snapshot(self, target, status):
         uid = target["id"]
         # Stable references enter only the opaque version digest, never the response or audit.
         # SQLite rowids can be reused after cleanup, so they cannot identify a proof version.
@@ -131,6 +133,10 @@ class AccountOperations(SignedPreview):
         version = {"id": uid, "status": target["status"], "updated_at": target["updated_at"],
                    "verified": target["email_verified_at"], "refs": refs,
                    "grants": PlatformAccess(self.store).live_grants(uid)}
+        if status == "suspended":
+            # Both callers hold the writer lock. Recheck live successors at execution,
+            # and bind even still-safe governance changes to a fresh impact preview.
+            version["ownership"] = check_ownership_continuity(self.store, uid)
         counts = {"sessions": len(refs["sessions"]), "tokens": len(refs["oauth_tokens"]),
                   "pending_authentication": sum(len(refs[t]) for t in tables[2:])}
         return hashlib.sha256(canonical(version).encode()).hexdigest(), counts
@@ -141,7 +147,7 @@ class AccountOperations(SignedPreview):
             with self.store.tx():
                 actor = self._actor(request)
                 target = self._target(request, actor, uid, status)
-                version, counts = self._snapshot(target)
+                version, counts = self._snapshot(target, status)
                 result_status = "suspended" if status == "suspended" else "active" if target["email_verified_at"] else "pending"
                 expires = time.time() + PREVIEW_SECONDS
                 plan = {"v": 1, "actor": actor["id"], "action": self.action, "target": uid,
@@ -188,7 +194,7 @@ class AccountOperations(SignedPreview):
                     raise ServiceError(409, "admin_preview_invalid", "操作目标已变化，请重新预览")
                 if plan.get("expires_at", 0) <= time.time():
                     raise ServiceError(409, "admin_preview_expired", "操作预览已过期，请重新预览")
-                version, _ = self._snapshot(target)
+                version, _ = self._snapshot(target, status)
                 if plan.get("version") != version:
                     raise ServiceError(409, "admin_preview_stale", "账户或访问权限已变化，请重新预览")
                 operation_id = new_id("ao")

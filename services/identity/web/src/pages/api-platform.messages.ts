@@ -2,6 +2,7 @@ import { registerMessages } from '@synwevo/ui';
 
 // Module-local copy. API resource IDs, scopes, request IDs and user-authored data stay literal.
 const entries: [string, string, string][] = [
+  ['重新启用需审批仍然有效，已撤销的令牌不会恢复。恢复备份后，此客户端可能因停用记录再次停用，届时需重新核验并启用。', 'Enabling requires a currently valid approval and does not restore revoked tokens. After a backup restore, the disablement record may disable this client again; recheck its authority before enabling it again.', '重新啟用需審批仍然有效，已撤銷的權杖不會恢復。還原備份後，此用戶端可能因停用記錄再次停用，屆時需重新核驗並啟用。'],
   ['{count} 个订阅', '{count} subscriptions', '{count} 個訂閱'],
   ['API 管理导航', 'API administration navigation', 'API 管理導覽'],
   ['API 管理平台', 'API administration', 'API 管理平台'],

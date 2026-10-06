@@ -20,6 +20,8 @@ from synwevo_core.platform_access import SYSTEM_REASONS, PlatformAccess
 from synwevo_core.sessions import Sessions
 from synwevo_core.store import now
 
+from .ownership import check_ownership_continuity
+
 LOCALES = ("zh-Hans", "zh-Hant", "en")
 GRACE_SECONDS = 7 * 86400
 
@@ -79,33 +81,7 @@ def check_deletion_constraints(store, user: dict) -> None:
     if access.is_usable_super_admin(user) and not access.usable_super_admins(excluding=uid):
         raise ServiceError(409, "last_super_admin",
                            "你是最后一名可用的最高管理员。请先授予另一位最高管理员，并确认对方能登录并完成身份确认")
-    if store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='organization_memberships'"):
-        for member in store.all("SELECT m.organization_id,m.role FROM organization_memberships m "
-                                "JOIN organizations o ON o.id=m.organization_id WHERE m.user_id=? "
-                                "AND m.role IN ('owner','admin') AND (o.status<>'deleted' OR o.recover_until>?)", (uid, now())):
-            others = store.all("SELECT m.role FROM organization_memberships m JOIN users u ON u.id=m.user_id "
-                               "WHERE m.organization_id=? AND m.user_id<>? AND u.status='active' AND u.deleted_at IS NULL",
-                               (member["organization_id"], uid))
-            roles = {other["role"] for other in others}
-            if (member["role"] == "owner" and "owner" not in roles) or not roles.intersection({"owner", "admin"}):
-                raise ServiceError(409, "organization_ownership_required", "请先移交组织的所有权和管理权限")
-    # A personal workspace containing only this person may remain inaccessible. Shared
-    # personal workspaces have the same stewardship requirement as organizations.
-    for member in store.all(
-            "SELECT m.workspace_id,m.role,w.kind FROM memberships m JOIN workspaces w ON w.id=m.workspace_id "
-            "WHERE m.user_id=? AND m.role IN ('owner','admin') AND w.deleted_at IS NULL", (uid,)):
-        wid = member["workspace_id"]
-        if store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='organizations'") and store.one(
-                "SELECT 1 FROM workspaces w JOIN organizations o ON o.id=w.organization_id "
-                "WHERE w.id=? AND o.status='deleted' AND (o.recover_until IS NULL OR o.recover_until<=?)", (wid, now())):
-            continue
-        others = store.all("SELECT m.role,u.status FROM memberships m JOIN users u ON u.id=m.user_id "
-                           "WHERE m.workspace_id=? AND m.user_id<>? AND u.deleted_at IS NULL", (wid, uid))
-        if member["kind"] == "personal" and not others:
-            continue
-        eligible = {row["role"] for row in others if row["status"] == "active"}
-        if (member["role"] == "owner" and "owner" not in eligible) or not eligible.intersection({"owner", "admin"}):
-            raise ServiceError(409, "ownership_required", "请先移交共享工作空间的所有权和管理权限")
+    check_ownership_continuity(store, uid)
 
 
 def depart_deleted_accounts(store) -> int:

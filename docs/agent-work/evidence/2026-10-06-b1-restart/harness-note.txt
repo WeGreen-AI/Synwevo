@@ -1,0 +1,1 @@
+First isolated fixture retained in sibling synwevo-b1-m3-20261006: temporary harness lacked __main__ guard, macOS multiprocessing re-entered seed and correctly tripped no-replay assertion, causing parse_failed. Fixed harness uses a new explicitly named synthetic run, no production change or external effect.

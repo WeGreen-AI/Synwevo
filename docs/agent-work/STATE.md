@@ -1,13 +1,14 @@
 # Synwevo 当前交付断点
 
-最后更新：2026-10-06T02:23:12.556057+00:00。协调者Codex `01a0f104-e57f-7092-ab67-50359f43b547`，主检出 `.coordinator.lock` 仍由本会话持有。
+最后更新：2026-10-06T07:33:06.065897+00:00。协调者Codex `01a0f104-e57f-7092-ab67-50359f43b547`，主检出 `.coordinator.lock` 仍由本会话持有。
 
-- 实施工作树：`.claude/worktrees/agent-billing`；分支`claude/agent-billing`，基线HEAD47c601e。主检出其他人的图标/Message工作保留。
-- 生产实际：DeepSeek代码源961acbf已部署，[Actions37362720332](https://github.com/WeGreen-AI/Synwevo/actions/runs/37362720332) attempt2 success；四应用镜像1358526d4d17、五服务healthy、五域健康/静态资源/OIDC起跳通过；备份20261006T014023Z。详见`evidence/2026-10-06-deepseek`，不要重新部署旧源。
-- 当前代码包：CR-045 Docs项目复制/组织模板发布遵守来源转出政策，保留独立旧副本；机器发布需源委托。Python3.12相关93通过，前端496、类型/构建与守卫通过；真实三语言拒绝/手机/减少动态效果/零副作用验证。代码未提交、未CI、未部署。
-- 并行验收：B1同一文件证据、错误行来源、缺附件/提取冲突、消息回执恢复、迟到审批提示补强，7项通过；`test_b1_chain.py`待随本包提交。Arendt正在准备真实进程停止/启动与七应用同运行浏览器核对，端口37772/3，临时脚本不进生产。
-- 本机CR-045隔离验收服务37771本会话持有，Playwright会话cr045已关闭；数据在`/private/tmp/synwevo-cr045-browser`，不重建或重放。截图和脱敏计数已持久保存。
-- 下一具体动作：审查最终diff并正常提交推送，跟踪新SHA的verify/deploy；CI期间继续B1实际进程与浏览器验收，不能将尚未验证项目写成完成。
+- 实施工作树：`.claude/worktrees/agent-billing`；分支`claude/agent-billing`，HEAD f1dae29（已推送main，基线47c601e）。主检出其他人的图标/Message工作保留。
+- 生产实际：f1dae29 已部署，[Actions37403925697](https://github.com/WeGreen-AI/Synwevo/actions/runs/37403925697) verify/deploy均success；完整Python5191通过5跳过、前端496通过、构建/守卫通过。四应用镜像22607710799d、五服务healthy；2026-10-06T07:07Z独立复查五域名、静态资源、统一登录、受保护管理/充值401通过；备份20261006T032043Z存在，未做恢复演练。详见evidence/2026-10-06-transfer-policy。不要重部署此源。
+- 当前未提交修复：Admin D11保护组织/共享空间唯一有效治理者；D13举报决定/审计/通知原子提交；D16 API治理与成功审计共事务，Docs任务事件提交后广播，三语言说明重新启用不恢复旧token。D11 127、D13初版69、D16 112、Docs任务29、旧token恢复1项本地通过；Account前端121、类型/构建通过。D13追加创建竞态已补强，扩展Message118独立项通过；两轮独立复核当前diff无阻断。
+- 并行验收：B1同一文件证据、错误行来源、缺附件/提取冲突、消息回执恢复、迟到审批提示补强，7项通过；`test_b1_chain.py`已随f1dae29提交。实际进程停止/启动与同运行八应用浏览器已完成：partial/end、1DOCX/1消息，真实下载内容/哈希通过；evidence/2026-10-06-b1-restart。
+- 本机CR-045服务37771及B1服务37772、对应Playwright会话均已关闭；数据在`/private/tmp/synwevo-cr045-browser`，不重建或重放。截图和脱敏计数已持久保存。
+- 本机Admin服务37774（PID67004→79410）、cr-admin/cr-moderator均已关闭；数据保留/private/tmp/synwevo-admin-continuity-20261006/isolated，seed/启用/审核均勿重放。已验证三语言启用说明、重认证后一次启用、390px/键盘/减少动态效果、唯一组织owner停用预览409、一次举报审核/审计/结果通知/待办关闭。证据evidence/2026-10-06-admin-continuity。
+- 下一具体动作：本地门槛已通过，审查暂存并正常提交推送。新SHA须经完整CI/CD才发布；生产仍f1dae29。CI期间推进D4/D18/D20，范围及证据已记录CODE_REVIEW。
 
 ## 外部条件与范围
 

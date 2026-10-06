@@ -1,0 +1,50 @@
+{
+  "baseline": "f1dae29ed028cc0c38aacb03dccc6da1f76047e6",
+  "worktree": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing",
+  "interpreter": "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+  "python_version": "3.12.6",
+  "changed_files": [
+    "services/identity/synwevo_identity/messaging_reports_routes.py",
+    "packages/core/synwevo_core/messaging.py",
+    "services/identity/tests/test_messaging_report_transactions.py"
+  ],
+  "tests": [
+    {
+      "phase": "旧实现回归（修改生产代码前）",
+      "result": "17 failed, 3 passed, 1 warning in 2.70s",
+      "log": "/private/tmp/synwevo-d13-before.log",
+      "scope": "新事务测试前20项：10项撤权、4项写入失败、事件提交时机、通知偏好/兼容控制"
+    },
+    {
+      "phase": "修复后针对性验证",
+      "result": "24 passed, 1 warning in 3.27s",
+      "log": "/private/tmp/synwevo-d13-after.log"
+    },
+    {
+      "phase": "最终相关验证（增加并发决定覆盖）",
+      "result": "69 passed, 1 warning in 19.88s",
+      "log": "/private/tmp/synwevo-d13-py312.log",
+      "command": "PYTHONPATH=\"$PWD/packages/core:$PWD/packages/auth-client/python:$PWD/services/identity:$PWD/apps/messages\" /private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python -m pytest services/identity/tests/test_messaging_reports.py services/identity/tests/test_messaging_report_transactions.py services/identity/tests/test_notifications.py services/identity/tests/test_notification_dispatch_atomic.py apps/messages/tests/test_messaging_r9.py -ra > /private/tmp/synwevo-d13-py312.log 2>&1"
+    }
+  ],
+  "checks": [
+    "scripts/check_boundaries.py passed: 792 Python / 413 frontend files, 11 module boundaries, 8 package dependency declarations",
+    "git diff --check on owned files passed"
+  ],
+  "covered_files": [
+    "services/identity/tests/test_messaging_reports.py",
+    "services/identity/tests/test_messaging_report_transactions.py",
+    "services/identity/tests/test_notifications.py",
+    "services/identity/tests/test_notification_dispatch_atomic.py",
+    "apps/messages/tests/test_messaging_r9.py"
+  ],
+  "new_refusal_codes": [],
+  "new_translation_text": [],
+  "limits": [
+    "仅当前工作树本地相关验证；没有生产访问、全套回归、迁移、提交或部署。",
+    "服务函数签名和返回结构不变；直接内部调用仍由调用者在外层事务承担鉴权、审计与通知。",
+    "通知偏好关闭时 emit 的合法 None 仍受尊重；真正持久化失败不再被路由吞掉，整个决定回滚。",
+    "durable通知/待办与决定一起提交；邮件/Push外部发送由既有异步投递器处理，本次没有调用外部消息。",
+    "after_commit 为进程内事件；账户服务与 Message 间没有新增广播通道，Message 继续在重同步时显示删除。"
+  ]
+}

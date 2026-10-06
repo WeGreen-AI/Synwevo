@@ -1,0 +1,37 @@
+{
+  "source_sha": "f1dae29ed028cc0c38aacb03dccc6da1f76047e6",
+  "run": 37403925697,
+  "verify_job": 112077115701,
+  "result": "success",
+  "runtime": {
+    "passed": "5191",
+    "skipped": "5",
+    "warnings": "242",
+    "seconds": "2973.10"
+  },
+  "frontend_tests": 496,
+  "frontend_source": "workspace test summaries in same verify log",
+  "checks": [
+    "boundaries",
+    "brand",
+    "design",
+    "component_names",
+    "logo",
+    "app_icons",
+    "typecheck",
+    "build",
+    "infra",
+    "Python/TypeScript SDK",
+    "deployment image runtime"
+  ],
+  "ci_temporary_directories_removed": 4171,
+  "runtime_free_MiB_final": 10456,
+  "verify_log_sha256": "9d4ab86ac959e21bce4dc2f3b89aed38ad07c864c78894768b7db341bd5efa80",
+  "skip_reasons": [
+    "Node not installed in runtime (2; collaboration separately tested in host verify)",
+    "Docker unavailable inside runtime (1)",
+    "isolated clamd not configured (1)",
+    "project LICENSE not selected (1)"
+  ],
+  "warning": "GitHub forced pinned Node20 actions onto Node24; workflow still succeeded; no unrequested dependency upgrade."
+}

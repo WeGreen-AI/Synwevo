@@ -412,3 +412,35 @@
 - `local-verification.json`保留本地源文件SHA256、命令/日志与浏览器计数；提交/CI/部署后追加准确版本关联。
 
 - 2026-10-06T02:23:12.556057+00:00 最后读取链复核补充：组织审批列表原来向非目标成员暴露清单。新增5场景中4项准确复现泄漏/分页范围，另一项夹具错用不存在的 suspended 状态，已纠正为 frozen，未削弱断言。列表在LIMIT前按有效目标成员过滤，详情/决定前复查成员及空间状态。最终Python3.12关联93 passed / 0 skipped / 22 warnings，33.32s（`/private/tmp/synwevo-cr045-py312-final2.log`）；源码哈希已更新。浏览器cr045已关闭，B1服务验收继续。
+
+- 2026-10-06T02:24:57.809299+00:00：30个任务内文件通过暂存秘密标记/敏感路径检查，正常提交推送`f1dae29ed028cc0c38aacb03dccc6da1f76047e6`，远程main快进；[Actions37403925697](https://github.com/WeGreen-AI/Synwevo/actions/runs/37403925697)正在运行，发布仍取决于该SHA完整verify门槛。未手工部署或绕过审批。
+
+- 2026-10-06T02:31Z：准确f1dae29代码的正向浏览器补验复用原隔离库；合成源组织政策由none改organization后，通过真实登录/空间切换/模板菜单发布一次。刷新后仍为发布1/源版本1；Store核对organization_templates=1、releases=1、project_copies=0。截图与allowed-publication.json已保存。不使用该结果替代跨空间个人Agent或生产验收。
+
+## 2026-10-06 B1/B3/B6 实际进程恢复与同运行浏览器
+
+- 源f1dae29的隔离服务在waiting_approval/review时实际停止PID49789，启动新PID56148后同flowrun_45fa79e79365 / apr_9a2c84d770a9仍等待，独立审批人owner以真实页面登录并批准一次，实际后台自动完成Docs/Message。没有重启后手动tick，未调用外部模型/支付或通知客户。
+- 最终partial/end，1项目/1任务/1真实DOCX/1业务消息，所有有副作用操作各一次；部分完成来自应保留的1条金额审核问题。页面刷新及深链接后再次Store计数一致。Forms/Extract/DataPrep/Tables/Approvals/Docs/Message与个人运行历史均以同ID核对。
+- PDF/Extract/异常清单/结果/DOCX全部经浏览器下载，PDF SHA256一致、提取页1行1/2、人工确认revision2、处理后12500.50、实际DOCX为Invoice INV-B1-0042和Amount 12500.50。截图含390px Message（无横溢、减少动态效果），已逐张目视；Flow控制台0异常。Message可选产物卡探测404 no_card如实记录，原链接下载正常。
+- 持久证据 `evidence/2026-10-06-b1-restart/`。准备阶段复用真实服务夹具/受控时钟；不是全链路纯UI创建，不冒称生产业务或备份恢复通过。首个临时seed缺macOS主入口保护的失败数据保留；修正脚本使用明确新隔离运行，生产实现未变。代码补测7项仍绑定f1dae29。
+
+## 2026-10-06 f1dae29 远程发布完成
+
+- Actions37403925697 / 源f1dae29：verify112077115701 success（02:23:56–03:19:09Z），deploy112091089338 success（03:19:14–03:21:10Z）；既有受限SSH自动发布，无手工替代部署。gh run view作业日志意外输出空文件，改用只读Jobs logs API取到实际日志，未据空日志宣称测试数量。
+- 07:07Z 独立远程核对：current.json、四应用OCI revision一致f1dae29，镜像sha256:22607710799da37fdc6a42b977f3a1ab9ef1dd8cd3ae042e0f17f1f2b1270298；accounts/docs/portal/messages/gateway running且healthy。恢复点/opt/synwevo/backups/20261006T032043Z存在，来源961acbf及数据库已核对，未做恢复演练。
+- 五正式域名readyz/根页/JS均200，工作空间OIDC起跳303至Accounts，匿名模型提供方/充值入口401。生产model_provider_versions/payment_settings_versions/billing_calls/billing_settlements仍0，Agent未开放；DeepSeek/live/CNY/欢迎100分配置已加载。不把部署等同正式模型/收款开放或生产已登录业务验收。
+- 证据 `evidence/2026-10-06-transfer-policy/{release-status,production-after-deploy,public-after-deploy}.json`。其后Admin D11/D13/D16修改仍仅本地，不属于本次上线。
+
+- f1dae29实际完整镜像测试5191 passed / 5 skipped / 242既有warnings，2973.10s；前端496及SDK/infra/守卫/类型/构建通过，CI结束仍10456MiB可用。运行镜像跳过项与前版相同并在ci-verification.json列明。
+
+
+## 2026-10-06 Admin D11/D13/D16 发布前验证
+
+- 源f1dae29加当前修复，源码SHA256、隔离真实UI及数据计数见 `evidence/2026-10-06-admin-continuity/verification.json` 和对应JSON/截图。
+- D11 25预期失败后127独立项通过；D13审核侧69通过，独立复核补发现创建竞态，追加15预期失败后48项通过（有测试重叠，不累计为独立总数）；D16最终112通过，Docs任务29通过、旧token禁用→启用仍拒绝1通过。所有这些最终组无失败/跳过，既有依赖弃用警告保留。
+- D16初次将入场reauth移入锁导致6个既有竞争用例失败，已恢复入场检查并保留锁内复核；Docs事件早于审计提交的新增2项先失败后修根因。没有改断言避错。
+- 真实浏览器/同一隔离数据：凭据重认证后一次启用；唯一组织所有者停用预览409，账户active；审核重启后同举报，removed/消息正文清空/审计1/通知1/待办done。三语言确认、390px无横溢/减少动态效果/键盘提交、截图目视通过。不涉及真实客户或外部付费调用。
+- 前端Account121、类型/构建通过；模块边界、品牌、设计、组件名通过。B1原始证据中的稳定Docs操作ID/路由按仓库规则增加有理由的STABLE分类；系统Python缺Pillow的Logo检查改用锁定Python3.12，22文件通过。未安装替代依赖或降低门槛。
+- 浏览器预期401/403/409、未开放组织付费503、测试进程重启短暂断线逐项记录；无JavaScript异常。当前只是本地验证，提交、CI、生产版本需分别追加。
+
+- 最终扩展Message回归118独立项通过：首跑104通过，另14项因沙箱不允许Clamd测试替身绑定127.0.0.1出现2失败/12setup错误；仅对受影响3文件授予回环端口后14通过（2.29s），没有改源码/断言。D13追加diff独立复核无阻断。隔离浏览器与37774服务已关闭，数据和证据保留。

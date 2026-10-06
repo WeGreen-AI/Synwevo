@@ -6,7 +6,7 @@ The identity service imports no application implementation.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 import math
 
@@ -68,7 +68,8 @@ def build_router(store: Store, ident, sessions, audit,
         return user
 
     @contextmanager
-    def mutation(request, body, action, object_id=None, *, admin=True, workspace=None, outcome=None):
+    def mutation(request, body, action, object_id=None, *, admin=True, workspace=None, outcome=None,
+                 transactional=True):
         # The audit row names the target workspace (never the administrator's own session workspace,
         # which audit() would otherwise fall back to) and, for creations, the object the route made:
         # a route may fill outcome["workspace"] / outcome["object_id"] once it knows them.
@@ -82,10 +83,20 @@ def build_router(store: Store, ident, sessions, audit,
         try:
             if not Sessions.reauth_fresh(request.state.session, "admin", strict=True):
                 raise ServiceError(403, "reauth_required", "这一步需要重新验证身份", {"scope": "admin"})
-            if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 500:
-                raise ServiceError(400, "missing_reason", "请写明理由（8 至 500 个字）")
-            meta["reason"] = reason.strip()
-            yield user, reason.strip()
+            # Local governance changes and their success audit commit together. Keep initial
+            # admission outside the lock, then refresh authority inside it. The debugger makes
+            # a separately authorized HTTP request and must never hold this database lock.
+            with store.tx() if transactional else nullcontext():
+                user = mutation_actor(request, admin=admin)
+                if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 500:
+                    raise ServiceError(400, "missing_reason", "请写明理由（8 至 500 个字）")
+                meta["reason"] = reason.strip()
+                yield user, reason.strip()
+                status = (outcome or {}).get("status", 200)
+                audit(request, f"api_platform.{action}", actor_id=user["id"], workspace_id=_ws(),
+                      object_kind="api_platform", object_id=_oid(), workspace_given=True,
+                      result="error" if status >= 500 else "denied" if status >= 400 else "ok",
+                      meta={**meta, "status": status})
         except ServiceError as e:
             audit(request, f"api_platform.{action}", actor_id=user["id"], workspace_id=_ws(),
                   object_kind="api_platform", object_id=_oid(), workspace_given=True,
@@ -96,12 +107,6 @@ def build_router(store: Store, ident, sessions, audit,
                   object_kind="api_platform", object_id=_oid(), workspace_given=True, result="error",
                   meta={**meta, "code": "journal_unavailable"})
             raise ServiceError(503, "journal_unavailable", "无法持久记录安全操作，请检查安全日志") from e
-        else:
-            status = (outcome or {}).get("status", 200)
-            audit(request, f"api_platform.{action}", actor_id=user["id"], workspace_id=_ws(),
-                  object_kind="api_platform", object_id=_oid(), workspace_given=True,
-                  result="error" if status >= 500 else "denied" if status >= 400 else "ok",
-                  meta={**meta, "status": status})
 
     def page(source: str, columns: str, args: tuple, *, limit: int, offset: int,
              order: str) -> dict:
@@ -537,7 +542,7 @@ def build_router(store: Store, ident, sessions, audit,
         # Read-only debugging can disclose document contents, so it also requires an explicit
         # confirmation and reason. Audit records no bearer, response, body, URL or query.
         outcome = {}
-        with mutation(request, body, "request", outcome=outcome):
+        with mutation(request, body, "request", outcome=outcome, transactional=False):
             allowed = {"reason", "credential", "method", "path", "query", "body"}
             if set(body) - allowed:
                 raise ServiceError(400, "unknown_field", "不支持额外的请求字段")

@@ -1,0 +1,30 @@
+{
+  "checked_at": "2026-10-06T07:09:39.072055+00:00",
+  "source_sha": "f1dae29ed028cc0c38aacb03dccc6da1f76047e6",
+  "run_id": 37403925697,
+  "url": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37403925697",
+  "status": "completed",
+  "conclusion": "success",
+  "jobs": [
+    {
+      "databaseId": 112077115701,
+      "name": "verify",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-10-06T02:23:56Z",
+      "completedAt": "2026-10-06T03:19:09Z"
+    },
+    {
+      "databaseId": 112091089338,
+      "name": "deploy",
+      "status": "completed",
+      "conclusion": "success",
+      "startedAt": "2026-10-06T03:19:14Z",
+      "completedAt": "2026-10-06T03:21:10Z"
+    }
+  ],
+  "deployed": true,
+  "previous_production_sha": "961acbf3ad3e363486261072552c5d91a7024c32",
+  "production_evidence": "production-after-deploy.json",
+  "public_evidence": "public-after-deploy.json"
+}

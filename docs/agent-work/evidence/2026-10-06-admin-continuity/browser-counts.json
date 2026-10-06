@@ -1,0 +1,64 @@
+{
+  "checked_at": "2026-10-06T07:29:04.957674+00:00",
+  "baseline": "f1dae29ed028cc0c38aacb03dccc6da1f76047e6",
+  "patches": [
+    "D11",
+    "D13",
+    "D16"
+  ],
+  "scope": "isolated fixtures only",
+  "account": {
+    "id": "u_9f919e9046a0",
+    "status": "active"
+  },
+  "credential": {
+    "client_id": "svc_06f4c7c31de7",
+    "disabled_at": null
+  },
+  "enable_audits": [
+    {
+      "action": "api_platform.credential.enable",
+      "result": "denied",
+      "object_id": "svc_06f4c7c31de7"
+    },
+    {
+      "action": "api_platform.credential.enable",
+      "result": "denied",
+      "object_id": "svc_06f4c7c31de7"
+    },
+    {
+      "action": "api_platform.credential.enable",
+      "result": "ok",
+      "object_id": "svc_06f4c7c31de7"
+    }
+  ],
+  "report": {
+    "id": "rp_9bcadee5614f",
+    "status": "removed",
+    "reviewed_by": "u_9f919e9046a0"
+  },
+  "message": {
+    "id": "msg_924bad8c32e2",
+    "deleted_at": 1791271675.60179,
+    "body_length": 0
+  },
+  "review_audits": [
+    {
+      "action": "messaging.report.review",
+      "result": "ok",
+      "object_id": "rp_9bcadee5614f"
+    }
+  ],
+  "notices": [
+    {
+      "kind": "conversation.reported",
+      "action_state": "done",
+      "user_id": "u_9f919e9046a0"
+    },
+    {
+      "kind": "conversation.report_removed",
+      "action_state": null,
+      "user_id": "u_184d6187f6a8"
+    }
+  ]
+}

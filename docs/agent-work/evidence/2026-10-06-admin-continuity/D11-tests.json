@@ -1,0 +1,78 @@
+{
+  "package": "D11",
+  "baseline_head": "f1dae29ed028cc0c38aacb03dccc6da1f76047e6",
+  "worktree": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing",
+  "python": "3.12.6",
+  "files": {
+    "services/identity/synwevo_identity/admin_operations.py": "c46379104903f99a1a141f5712b44f5871bb47849661f40367784271d96a0739",
+    "services/identity/synwevo_identity/profile.py": "88a711c093e317e634ae7ceb2317da839386cc759c17e7154aad06b7779d96d0",
+    "services/identity/synwevo_identity/ownership.py": "6067053f0a216276f59d1463710999f9b4e15859b34bba547877850d3f14623b",
+    "services/identity/tests/test_admin_ownership.py": "1bd6d7a314e01b3f28dddf10998c432c7abf179d1bd147a1b1569cadae9121ba"
+  },
+  "runs": {
+    "red": {
+      "tests": "25",
+      "errors": "0",
+      "failures": "25",
+      "skipped": "0",
+      "time": "4.105",
+      "log": "/private/tmp/synwevo-d11-20261006/red.log"
+    },
+    "green": {
+      "tests": "114",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "time": "14.633",
+      "log": "/private/tmp/synwevo-d11-20261006/green.log"
+    },
+    "edges": {
+      "tests": "13",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "time": "2.251",
+      "log": "/private/tmp/synwevo-d11-20261006/edges.log"
+    }
+  },
+  "unique_passing_tests": 127,
+  "red_note": "25 regression cases fail on original product code because refusal/stale preview incorrectly returns HTTP 200; 18 deselected.",
+  "green_note": "114 passed before two added restore cases; final edges run passed those 2 and 11 additional existing regression cases. Only whitespace wrapping changed in product after green.",
+  "checks": {
+    "boundaries": {
+      "exit_code": 0,
+      "log": "/private/tmp/synwevo-d11-20261006/boundaries.log"
+    },
+    "diff_check": {
+      "exit_code": 0,
+      "scope": "tracked authorized product files"
+    }
+  },
+  "behavior": [
+    "Ordinary suspension and account deletion share ownership continuity checks inside their existing writer transactions.",
+    "A departing owner requires another active undeleted owner; departing admin requires active owner/admin.",
+    "Workspace successor must retain organization membership for an attached workspace.",
+    "Frozen and recoverable governance remain protected; solo personal and expired/deleted resource exceptions follow deletion rules.",
+    "Suspension preview digest includes current governance state; restore and idempotent completed-result replay remain available."
+  ],
+  "codes": {
+    "new": [],
+    "reused": [
+      "organization_ownership_required",
+      "ownership_required",
+      "admin_preview_stale"
+    ]
+  },
+  "coordinator_handoff": "Existing ownership messages have zh-Hans/zh-Hant/en catalogue entries; no locale edits made. Admin UI rendering/browser verification remains coordinator scope.",
+  "not_run": [
+    "fullsuite",
+    "B1",
+    "browser",
+    "production",
+    "deploy"
+  ],
+  "limits": [
+    "No emergency suspension bypass policy added.",
+    "No migration, Git mutation, messaging, shared locale or progress document changes."
+  ]
+}

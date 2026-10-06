@@ -1,0 +1,46 @@
+{
+  "checked_at": "2026-10-06T02:53:42.414702+00:00",
+  "source_sha": "f1dae29ed028cc0c38aacb03dccc6da1f76047e6",
+  "downloads": [
+    {
+      "name": "invoice-b1.pdf",
+      "size": 892,
+      "sha256": "f6ac1ea72899aea5337e31b2eaafb04c64af4ba66ac6d8139e32d37bc812c5d8"
+    },
+    {
+      "name": "extask-e31a49db4893-r2.json",
+      "size": 2901,
+      "sha256": "c7bdf6e25a00ca6bffbb095bc8924dc002c5b949f2458194ac1623032c053da7"
+    },
+    {
+      "name": "dpu-a4487b21d9c4-issues.json",
+      "size": 359,
+      "sha256": "5ad110925fab4c3544bf27244fa0a7620025e27135353001a1fb01cfaa290617"
+    },
+    {
+      "name": "dset-392541d0b25d.json",
+      "size": 142,
+      "sha256": "2cda23b4d22335504d9e9927cefe9d7d6d839b2be6fb8836bc85d6e78a55d3c8"
+    },
+    {
+      "name": "001.docx",
+      "size": 36631,
+      "sha256": "1fb92c002504595552017ff3dbd05cd4b295ad4c5b7b252d4af66f429e48830e"
+    }
+  ],
+  "assertions": {
+    "same_forms_and_extract_pdf": true,
+    "extract_source_page_and_line": true,
+    "human_confirmed_revision": 2,
+    "dataprep_decimal": "12500.50",
+    "error_count": 1,
+    "source_origin": [
+      "extask_e31a49db4893",
+      1,
+      2
+    ],
+    "docx_text": "Invoice INV-B1-0042Amount 12500.50",
+    "template_fixture_row_not_used": true
+  },
+  "scope": "Isolated fixture; files downloaded using real browser UI, parsed without modifying contents."
+}

@@ -1,0 +1,37 @@
+{
+  "source_sha": "f1dae29ed028cc0c38aacb03dccc6da1f76047e6",
+  "flow_id": "flow_2d13aa2bff37",
+  "run_id": "flowrun_45fa79e79365",
+  "request_id": "freq_04f223c2695d",
+  "task_id": "extask_e31a49db4893",
+  "approval_id": "apr_9a2c84d770a9",
+  "workspace": "w_ad139b72c7c0",
+  "organization": "org_a83fbdefb7ad",
+  "conversation": "cv_07f1c4cbc134",
+  "users": {
+    "owner": "u_de105d972a86",
+    "editor": "u_fa5399d1f4ae",
+    "viewer": "u_6b04ab082f7f",
+    "other": "u_c1d11d827c94",
+    "admin": "u_01d82b28a4ad"
+  },
+  "table_id": "tbl_1e0cb8760a32",
+  "form_id": "frm_9eec1e6d0af9",
+  "recipe_id": "dpr_f5ce70fd0eef",
+  "template_id": "extpl_6615aa16a159",
+  "submission_id": "fsub_10d439927b1d",
+  "pdf_digest": "f6ac1ea72899aea5337e31b2eaafb04c64af4ba66ac6d8139e32d37bc812c5d8",
+  "prep": {
+    "issue_total": 1,
+    "output_dataset_id": "dset_392541d0b25d",
+    "run_id": "dpu_a4487b21d9c4",
+    "status": "partial"
+  },
+  "table_record": {
+    "changed": true,
+    "id": "rec_1222fd67c593",
+    "rev": 1
+  },
+  "status": "waiting_approval",
+  "step": "review"
+}

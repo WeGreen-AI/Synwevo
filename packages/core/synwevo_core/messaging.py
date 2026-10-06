@@ -57,7 +57,7 @@ from typing import Callable
 from . import quarantine
 from .errors import ServiceError
 from .identity import Identity
-from .organizations import current_membership
+from .organizations import Organizations, current_membership
 from .store import Store, new_id, now
 from . import messaging_search as fts
 from .messaging_presence import Presence
@@ -670,26 +670,31 @@ class Messaging:
         """A member reports a message they can see. What the organization's messaging managers
         get is exactly this: the reported message as it was at that moment (a snapshot, so a
         later edit cannot hide it), who sent it, who reported it and why — not the rest of the
-        conversation. One open report per message and reporter."""
+        conversation. One open report per message and reporter. Check the message and current
+        membership under the writer lock: a queued reporter must not resurrect an open report
+        after review removed its message. HTTP callers enclose audit and to-dos in this same
+        transaction; direct service callers get the same serialized report checks."""
         if reason not in REPORT_REASONS:
             raise ServiceError(400, "invalid_field", "举报原因无效", {"field": "reason", "allowed": list(REPORT_REASONS)})
-        msg = self.store.one("SELECT * FROM messages WHERE id=?", (mid,))
-        if not msg:
-            raise ServiceError(404, "no_message", "找不到该消息")
-        conv, me = self._member(msg["conversation_id"], uid)
-        if msg["seq"] < me["joined_seq"] or msg["kind"] != "text" or msg.get("deleted_at"):
-            raise ServiceError(404, "no_message", "找不到该消息")
-        if msg["sender_id"] == uid:
-            raise ServiceError(400, "invalid_field", "不能举报自己的消息", {"field": "message"})
-        if self.store.one("SELECT 1 AS x FROM message_reports WHERE message_id=? AND reporter_id=? AND status='open'", (mid, uid)):
-            raise ServiceError(409, "already_reported", "你已经举报过这条消息，管理员处理后会通知你")
-        att = (self.store.one("SELECT filename FROM message_attachments WHERE id=?", (msg["attachment_id"],)) if msg.get("attachment_id") else None) or {}
-        row = {"id": new_id("rp"), "organization_id": conv["organization_id"], "conversation_id": conv["id"], "message_id": mid, "reporter_id": uid,
-               "sender_id": msg["sender_id"], "reason": reason, "note": (str(note).strip()[:MAX_REPORT_NOTE] or None) if note else None,
-               "body_snapshot": msg["body"] or "", "attachment_name": att.get("filename"), "status": "open", "reviewed_by": None, "reviewed_at": None,
-               "decision_note": None, "created_at": now()}
-        self.store.insert("message_reports", row)
-        return self._report_out(row)
+        with self.store.tx():
+            msg = self.store.one("SELECT * FROM messages WHERE id=?", (mid,))
+            if not msg:
+                raise ServiceError(404, "no_message", "找不到该消息")
+            conv, me = self._member(msg["conversation_id"], uid)
+            Organizations(self.store, self.ident).require(conv["organization_id"], uid, active=True)
+            if msg["seq"] < me["joined_seq"] or msg["kind"] != "text" or msg.get("deleted_at"):
+                raise ServiceError(404, "no_message", "找不到该消息")
+            if msg["sender_id"] == uid:
+                raise ServiceError(400, "invalid_field", "不能举报自己的消息", {"field": "message"})
+            if self.store.one("SELECT 1 AS x FROM message_reports WHERE message_id=? AND reporter_id=? AND status='open'", (mid, uid)):
+                raise ServiceError(409, "already_reported", "你已经举报过这条消息，管理员处理后会通知你")
+            att = (self.store.one("SELECT filename FROM message_attachments WHERE id=?", (msg["attachment_id"],)) if msg.get("attachment_id") else None) or {}
+            row = {"id": new_id("rp"), "organization_id": conv["organization_id"], "conversation_id": conv["id"], "message_id": mid, "reporter_id": uid,
+                   "sender_id": msg["sender_id"], "reason": reason, "note": (str(note).strip()[:MAX_REPORT_NOTE] or None) if note else None,
+                   "body_snapshot": msg["body"] or "", "attachment_name": att.get("filename"), "status": "open", "reviewed_by": None, "reviewed_at": None,
+                   "decision_note": None, "created_at": now()}
+            self.store.insert("message_reports", row)
+            return self._report_out(row)
 
     def reports_for_organization(self, oid: str, *, status: str | None = "open") -> list[dict]:
         rows = self.store.all("SELECT * FROM message_reports WHERE organization_id=? " + ("AND status=? " if status else "") + "ORDER BY created_at DESC LIMIT 200",
@@ -699,7 +704,9 @@ class Messaging:
     def review_report(self, rid: str, uid: str, decision: str, note: str | None = None) -> dict:
         """`removed` deletes the reported message for everyone (as a group moderator would),
         `dismissed` leaves it. Other open reports of the same message are settled by the same
-        decision. Who may review is the route's check (org.messaging.manage, fresh reauth).
+        decision. The caller must check org.messaging.manage and fresh reauth in an enclosing
+        Store.tx(), alongside its audit and notifications. Direct service callers retain the
+        same decision/return contract; events wait for the outermost transaction's commit.
 
         The report is claimed (open → decision) in the same transaction that removes the message,
         before the message is touched: of two moderators deciding at once, exactly one decides and
@@ -708,11 +715,11 @@ class Messaging:
         if decision not in ("removed", "dismissed"):
             raise ServiceError(400, "invalid_field", "处理结果只能是 removed 或 dismissed", {"field": "decision"})
         note_v = (str(note).strip()[:MAX_REPORT_NOTE] or None) if note else None
-        ts = now()
         with self.store.tx() as t:
             r = t.execute("SELECT * FROM message_reports WHERE id=?", (rid,)).fetchone()
             if not r:
                 raise ServiceError(404, "no_report", "找不到该举报")
+            ts = now()
             claimed = t.execute("UPDATE message_reports SET status=?, reviewed_by=?, reviewed_at=?, decision_note=? "
                                 "WHERE id=? AND status='open'", (decision, uid, ts, note_v, rid)).rowcount
             if claimed != 1:
@@ -726,11 +733,14 @@ class Messaging:
                                                (r["message_id"],)).fetchall()]
             t.execute("UPDATE message_reports SET status=?, reviewed_by=?, reviewed_at=?, decision_note=? WHERE message_id=? AND status='open'",
                       (decision, uid, ts, None, r["message_id"]))
-        if decision == "removed":
-            msg = self.store.one("SELECT * FROM messages WHERE id=?", (r["message_id"],))
-            if msg:
-                self.publish(self._active_user_ids(r["conversation_id"]), {"type": "message_updated", "conversation_id": r["conversation_id"], "message": self._message_out(dict(msg))})
-        return {**self._report_out(self.store.one("SELECT * FROM message_reports WHERE id=?", (rid,))), "settled_with": also}
+            out = {**self._report_out(self.store.one("SELECT * FROM message_reports WHERE id=?", (rid,))), "settled_with": also}
+            if decision == "removed":
+                msg = self.store.one("SELECT * FROM messages WHERE id=?", (r["message_id"],))
+                if msg:
+                    recipients = self._active_user_ids(r["conversation_id"])
+                    event = {"type": "message_updated", "conversation_id": r["conversation_id"], "message": self._message_out(msg)}
+                    self.store.after_commit(lambda: self.publish(recipients, event))
+        return out
 
     def report_get(self, rid: str) -> dict:
         r = self.store.one("SELECT * FROM message_reports WHERE id=?", (rid,))
