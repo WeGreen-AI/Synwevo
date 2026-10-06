@@ -400,3 +400,15 @@
 - **独立核对01:41:34–40Z**：四应用镜像ID `sha256:1358526d4d1776dcf8b28cb115f65c0fb654fbbc2694a3ea3076278d3d8bd14e`、OCI revision与current.json均961acbf；accounts/docs/portal/messages/gateway为running且health精确为healthy。备份manifest来源a4b42c8，数据库存在；未做恢复演练。生产billing_calls/settlements/model_provider_versions/payment_settings_versions四表存在且均0；Accounts与Portal加载DeepSeek/live/CNY(scale6)/welcome100，Agent未列入名单。见 `production-after-deploy.json`。
 - 五个指定域名 `/readyz`、根页与根页引用JS均200；所适用的数据库/存储/worker/扫描器正常；匿名模型提供方与钱包充值选项401；工作空间OIDC起跳303至accounts.synwevo.com/oidc/authorize。见 `public-after-deploy.json`。检查脚本均exit0，无生产业务写入；没有重放模型请求、赠送、表单创建或支付。
 - 本次远程代码部署已完成，正式模型与收款配置仍须既有真实管理员重认证及商户信息。Agent没有公开启用，未完成已登录生产业务/支付验收。后续文档提交不改变运行产品源SHA，不触发重复发布。
+
+## 2026-10-06 CR-045 来源转出政策与B1补充验收（本地，待CI）
+
+- 基线HEAD47c601e，部署源961acbf；本轮只读核对Actions37362720332仍success、远程main47c601e。没有重部署旧源、重放模型/付款/客户通知。协调者锁由Codex当前会话持有。
+- 复制先复现：`test_request_refused_before_manifest_is_sent_to_target[none-…-browser]`预期403却201（`/private/tmp/synwevo-copy-policy-before.log`）。修复后UI/API申请前、审批及worker认领后事务内检查来源政策；拒绝/撤回可用；已完成副本独立。
+- 组织发布现在冻结head与来源/全组织受众政策在同一事务；未知政策、无导出权、撤权与冻结均拒绝。合法已发布版本仍可使用。二次复核发现仅目标空间委托可借真人源权限发布新bytes；新测试先失败（`/private/tmp/cr045-org-delegation-before.log`），随后增加显式源委托检查，保留合法UI跨空间维护与已发布组织资产复用。
+- Python3.12：7个相关文件88 passed / 0 skipped / 22既有依赖弃用warnings，33.26s（`/private/tmp/synwevo-cr045-py312.log`）；前端6工作区合计496通过，类型和全部构建通过。新增拒绝句与目录完整性两次发现翻译遗漏，修复后Docs145通过，其余351无需重复。边界/品牌/设计/组件名/Logo22/应用图标36守卫及diff通过。第一次资源检查误用系统Python缺Pillow，改用已锁定3.12环境后通过，未调整门槛。
+- 真实浏览器：隔离服务37771，合成账户真实登录；三语言各一次UI复制申请返回403，组织模板UI发布一次403；数据库复制申请/事件/副本/组织发布/版本均0。390x844 `scrollWidth=390`，对话框374，reduced-motion=true，Escape回焦点。控制台只有对应预期403及登录前401，没有JS异常。四张截图已目视核对，见`evidence/2026-10-06-transfer-policy/`。不替代生产登录验收。
+- B1–B6只读差距审计未发现新的产品缺陷；M1/M2/M4补充为同PDF哈希与段落来源、确认版本/逐行问题谱系、必填附件缺失/提取冲突阻断、真实消息写入后回执投影中断的安全对账、等待期间过期审批提示。7 passed / 0 skipped / 6既有warnings，6.393s；业务服务、PDF解析与worker未替换。`b1-test-summary.json`绑定文件哈希；故障注入仅明确的事件提示/回执更新。实际服务进程重启及同运行UI核对尚在执行，不写成通过。
+- `local-verification.json`保留本地源文件SHA256、命令/日志与浏览器计数；提交/CI/部署后追加准确版本关联。
+
+- 2026-10-06T02:23:12.556057+00:00 最后读取链复核补充：组织审批列表原来向非目标成员暴露清单。新增5场景中4项准确复现泄漏/分页范围，另一项夹具错用不存在的 suspended 状态，已纠正为 frozen，未削弱断言。列表在LIMIT前按有效目标成员过滤，详情/决定前复查成员及空间状态。最终Python3.12关联93 passed / 0 skipped / 22 warnings，33.32s（`/private/tmp/synwevo-cr045-py312-final2.log`）；源码哈希已更新。浏览器cr045已关闭，B1服务验收继续。

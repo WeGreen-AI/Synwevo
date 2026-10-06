@@ -1,0 +1,56 @@
+{
+  "worktree": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing",
+  "branch": "claude/agent-billing",
+  "head": "47c601e172816c2c9eb5c8069c9333feee83e0ff",
+  "changed_by_this_task": [
+    "tests/integration/test_b1_chain.py"
+  ],
+  "committed": false,
+  "result": {
+    "tests": "7",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "6.393"
+  },
+  "warnings": 6,
+  "warning_kind": "SWIG and Starlette/AnyIO dependency deprecations",
+  "exit_code": 0,
+  "test_sha256": "f262984750626c60d8ae7e9d637a3b45867c9f264bbaaee4315cbc812dda93ba",
+  "source_changes_during_run": [],
+  "command": [
+    "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+    "-B",
+    "-m",
+    "pytest",
+    "tests/integration/test_b1_chain.py",
+    "-p",
+    "no:cacheprovider",
+    "-o",
+    "addopts=--import-mode=importlib",
+    "-vv",
+    "--tb=short",
+    "-ra",
+    "--basetemp=/private/tmp/synwevo-b1-m124-20261006/pytest-1",
+    "--junitxml=/private/tmp/synwevo-b1-m124-20261006/run-1.xml"
+  ],
+  "logs": [
+    "/private/tmp/synwevo-b1-m124-20261006/run-1.log",
+    "/private/tmp/synwevo-b1-m124-20261006/run-1.xml",
+    "/private/tmp/synwevo-b1-m124-20261006/run-1-source.json"
+  ],
+  "implemented": {
+    "M1": "Original uploaded PDF SHA256/file/submission identity, verified page/segment substrings, confirmed task revision and DataPrep input/output row lineage, actual review_limit issue row/value/message/origins.",
+    "M2": "Required file rejection leaves collection waiting with no submission/extraction; real conflicting PDF cannot confirm even with acknowledge_unverified, creates no downstream data/review/release; human correction+confirmation resumes same run at revision 3.",
+    "M4": "Real message delivery commits before an injected receipt-update exception. Known queued send remains waiting, fresh factory reads actual message and reconciles original receipt without re-dispatch or changed prior step IDs. Active approval wait consumes approved/rejected/approved hints without moving; late rejected hint cannot override real approval."
+  },
+  "fault_injection": "Only receipt projection update and explicitly labeled event-delivery hints; original business operations, PDF reader, workers and Flows engine execute unchanged.",
+  "product_defects_found": [],
+  "not_run": [
+    "full suite",
+    "production requests",
+    "actual service-process restart",
+    "browser/UI acceptance"
+  ],
+  "remaining_scope": "M3 actual process restart and B6 UI/output reconciliation remain separate. This proves loss of success receipt projection after an acknowledged send, not a raw transport timeout with genuinely unknown dispatch."
+}

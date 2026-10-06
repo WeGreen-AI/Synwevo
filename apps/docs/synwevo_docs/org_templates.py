@@ -2,6 +2,8 @@
 
 Publishing needs the same authority as editing the template (an editor of its workspace) and
 an organization the workspace belongs to; every release is a frozen copy of the head version.
+New source content also needs current source access, export rights and outbound-policy approval
+for the whole organization. Those checks never retroactively revoke an authorized release.
 Anyone who is a member of the organization can list and use a release from any of the
 organization's workspaces; "using" creates an ordinary template in the current workspace with
 the release's file and fields and the origin recorded, so nothing downstream learns a new kind
@@ -13,8 +15,9 @@ from __future__ import annotations
 
 import json
 
-from synwevo_core import quarantine
-from synwevo_core.context import tenant as current_tenant
+from synwevo_core import authority, data_flow, quarantine
+from synwevo_core.apps import Apps, DOCS_APP_ID
+from synwevo_core.context import as_tenant, tenant as current_tenant
 from synwevo_core.errors import ServiceError
 from synwevo_core.organizations import current_membership
 from synwevo_core.store import new_id, now
@@ -114,14 +117,40 @@ class OrgTemplates:
         v = self.app.get_version(tid, t["head"])
         return t, v
 
-    def publish(self, tid: str, uid: str, description: str | None = None) -> dict:
+    def _release_source(self, tid: str, uid: str, source: str, oid: str, *, initial: bool = False,
+                        requested_authority: dict | None = None) -> tuple[dict, dict]:
+        """Read the current source head only after authorizing its transfer, inside tx()."""
+        if requested_authority is not None:
+            # A person's cross-workspace access cannot widen a machine delegation. Check
+            # its original workspace and live grant before changing the tenant context.
+            if (requested_authority.get("kind") != "delegated" or requested_authority.get("user_id") != uid
+                    or requested_authority.get("tenant") != source
+                    or not authority.check(self.store, requested_authority, need="write", app_id=DOCS_APP_ID, tenant=source)[0]):
+                raise ServiceError(403, "source_delegation_required", "发布新内容需要源工作空间的有效应用委托，请在源工作空间重新授权")
+        data_flow.check_organization_publication(self.store, user_id=uid, source=source, organization_id=oid)
+        if not Apps(self.store, self.ident).check_access(uid, DOCS_APP_ID, source)[0]:
+            raise data_flow.refusal("transfer_source_unavailable")
+        if initial and self._workspace_role(source, uid) not in EDITOR_ROLES:
+            raise ServiceError(403, "forbidden", "只有源工作空间的编辑者可以发布模板")
+        # A maintainer may act from another workspace in the organization, but only their
+        # current access to this source permits reading its bytes for a new release.
+        with as_tenant(source):
+            return self._frozen(tid)
+
+    def publish(self, tid: str, uid: str, description: str | None = None, *, requested_authority: dict | None = None) -> dict:
+        # Browser routes and unkeyed machine calls have no surrounding transaction;
+        # keyed machine calls nest here safely in Store's re-entrant BEGIN IMMEDIATE.
+        with self.store.tx():
+            return self._publish(tid, uid, description, requested_authority=requested_authority)
+
+    def _publish(self, tid: str, uid: str, description: str | None, *, requested_authority: dict | None) -> dict:
         org = self._current_org()
         if not org:
             raise ServiceError(400, "no_organization", "个人空间的模板不能发布到组织；请在组织的工作空间里发布")
         if org["status"] != "active":
             raise ServiceError(409, "organization_unavailable", "该组织当前不可用")
         member = self._org_member(org["id"], uid)
-        t, v = self._frozen(tid)
+        t, v = self._release_source(tid, uid, current_tenant(), org["id"], initial=True, requested_authority=requested_authority)
         if self.store.one("SELECT 1 AS x FROM organization_templates WHERE organization_id=? AND template_id=?", (org["id"], tid)):
             raise ServiceError(409, "already_published", "这个模板已经发布到组织；要发布新版本请用「更新发布」")
         pid, ts = new_id("ot"), now()
@@ -138,21 +167,27 @@ class OrgTemplates:
                                                              "slots": v["slots"] or [], "info": info, "note": v.get("note"), "released_by": uid, "released_at": ts})
         return self._out(self.store.one("SELECT * FROM organization_templates WHERE id=?", (pid,)), uid, member)
 
-    def update(self, pid: str, uid: str, description: str | None = None, *, set_description: bool = False) -> dict:
+    def update(self, pid: str, uid: str, description: str | None = None, *, set_description: bool = False,
+               requested_authority: dict | None = None) -> dict:
         """A new release from the source template's current head (and/or a new description).
-        Nothing changes for copies already made; the organization sees the new release."""
+        Nothing changes for copies already made; the organization sees the new release.
+        Machine callers pass their request authority; only fresh source content needs it."""
+        with self.store.tx():
+            return self._update(pid, uid, description, set_description=set_description, requested_authority=requested_authority)
+
+    def _update(self, pid: str, uid: str, description: str | None, *, set_description: bool, requested_authority: dict | None) -> dict:
         pub, member = self._get(pid, uid)
         if not self._can_manage(pub, uid, member):
             raise ServiceError(403, "forbidden", "只有源工作空间的编辑者或组织管理员可以维护这个共享模板")
-        source = self.store.one("SELECT * FROM templates WHERE id=? AND deleted=0", (pub["template_id"],))
-        if source and source["head"] != pub["version_no"]:
-            self.app.require_template_accepted(source)   # no new release from bytes a rescan rejected (CI-90)
+        source = self.store.one("SELECT * FROM templates WHERE id=? AND tenant=? AND deleted=0",
+                                (pub["template_id"], pub["source_tenant"]))
         changes: dict = {"updated_by": uid, "updated_at": now()}
         if set_description:
             changes["description"] = (str(description).strip()[:MAX_DESCRIPTION] or None) if description else None
         released = False
         if source and source["head"] != pub["version_no"]:
-            v = self.app.get_version(source["id"], source["head"])
+            source, v = self._release_source(source["id"], uid, pub["source_tenant"], pub["organization_id"],
+                                             requested_authority=requested_authority)
             no = pub["release_no"] + 1
             info = {**(source.get("info") or {}), "scan": source.get("scan")}
             changes.update({"release_no": no, "version_no": v["version_no"], "working_blob": v["working_blob"], "slots": v["slots"] or [], "info": info,

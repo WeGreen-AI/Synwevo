@@ -9,6 +9,7 @@ import type { Messages } from "@synwevo/ui/i18n-core";
  *  presented the same way; every other parameter is data and stays verbatim.
  *  `tests/refusals.test.ts` reads the server's refusals and holds this file to them. */
 export const refusalMessages = {
+  "只有源工作空间的编辑者可以发布模板": { en: "Only an editor in the source workspace can publish this template.", "zh-Hant": "只有來源工作空間的編輯者可以發佈模板" },
   // the live table room (docs-sheet-live.md §9): an editor that saves the whole model while the room is live, a live save with no room
   "这张表格正在实时协同：请刷新页面进入实时协同后再编辑": { en: "This table is being edited live. Reload the page to join the live editing, then edit.", "zh-Hant": "這張表格正在即時協作：請重新整理頁面進入即時協作後再編輯" },
   "这张表格没有正在进行的实时协同": { en: "This table is not being edited live.", "zh-Hant": "這張表格沒有正在進行的即時協作" },

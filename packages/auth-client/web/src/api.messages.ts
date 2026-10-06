@@ -2,6 +2,17 @@ import { hasMessage, joinMessages, registerMessages, t, type Messages } from '@s
 
 /** Presentation only: wire codes, details and original diagnostics remain on ApiError. */
 export const apiMessages: Messages = {
+  '发布新内容需要源工作空间的有效应用委托，请在源工作空间重新授权': { en: 'Publishing new content requires a valid integration delegation for the source workspace. Authorize the integration there and try again.', 'zh-Hant': '發佈新內容需要來源工作空間的有效應用委託，請在來源工作空間重新授權。' },
+  '组织包含无权访问来源内容的成员，当前数据流政策不允许发布。': { en: 'The organization includes members who cannot access the source content. The current data transfer policy does not allow publishing it.', 'zh-Hant': '組織包含無權存取來源內容的成員，目前的資料流政策不允許發佈。' },
+  '来源组织的数据流政策无法识别，请联系组织管理员。': { en: 'The source organization’s data transfer policy is not recognized. Contact an organization administrator.', 'zh-Hant': '來源組織的資料流政策無法識別，請聯絡組織管理員。' },
+  '来源空间已不可用，或你已失去其访问权限。': { en: 'The source workspace is unavailable or you no longer have access.', 'zh-Hant': '來源空間已不可用，或你已失去其存取權限。' },
+  '你没有将来源内容导出到其他空间的权限。': { en: 'You do not have permission to export the source content to another workspace.', 'zh-Hant': '你沒有將來源內容匯出到其他空間的權限。' },
+  '目标空间已不可用，或你已失去其访问权限。': { en: 'The target workspace is unavailable or you no longer have access.', 'zh-Hant': '目標空間已不可用，或你已失去其存取權限。' },
+  '来源空间禁止将内容转出。请联系空间所有者。': { en: 'The source workspace does not allow content transfers. Contact its owner.', 'zh-Hant': '來源空間禁止將內容轉出。請聯絡空間擁有者。' },
+  '目标包含无权访问来源内容的成员，当前数据流政策不允许转移。': { en: 'The target includes people without access to the source content. Its data transfer policy does not allow this transfer.', 'zh-Hant': '目標包含無權存取來源內容的成員，目前資料流政策不允許轉移。' },
+  '来源的数据流政策不允许向这个目标发送内容。': { en: 'The source data transfer policy does not allow sending content to this target.', 'zh-Hant': '來源的資料流政策不允許向這個目標傳送內容。' },
+  '来源内容只能在同一组织内转移。': { en: 'The source content can only be transferred within the same organization.', 'zh-Hant': '來源內容只能在同一組織內轉移。' },
+  '数据流政策已更新，请刷新后重试。': { en: 'The data transfer policy has changed. Refresh and try again.', 'zh-Hant': '資料流政策已更新，請重新整理後重試。' },
   '网络连接失败，请检查连接后重试。': { en: 'Network connection failed. Check your connection and try again.', 'zh-Hant': '網路連線失敗，請檢查連線後重試。' },
   '服务内部出错，请稍后重试。': { en: 'An internal server error occurred. Please try again later.', 'zh-Hant': '服務內部出錯，請稍後重試。' },
   '请求过于频繁，请稍后重试。': { en: 'Too many requests. Please try again later.', 'zh-Hant': '請求過於頻繁，請稍後重試。' },
@@ -29,6 +40,17 @@ export const apiMessages: Messages = {
 registerMessages(apiMessages);
 export const API_ERROR_SOURCE: Record<string, string> = {};
 function codes(names: string, source: string) { for (const code of names.split(' ')) API_ERROR_SOURCE[code] = source; }
+codes('source_delegation_required', '发布新内容需要源工作空间的有效应用委托，请在源工作空间重新授权');
+codes('transfer_organization_audience_denied', '组织包含无权访问来源内容的成员，当前数据流政策不允许发布。');
+codes('transfer_publication_policy_denied', '来源组织的数据流政策无法识别，请联系组织管理员。');
+codes('transfer_source_unavailable', '来源空间已不可用，或你已失去其访问权限。');
+codes('transfer_export_denied', '你没有将来源内容导出到其他空间的权限。');
+codes('transfer_target_unavailable', '目标空间已不可用，或你已失去其访问权限。');
+codes('transfer_source_closed', '来源空间禁止将内容转出。请联系空间所有者。');
+codes('transfer_audience_denied', '目标包含无权访问来源内容的成员，当前数据流政策不允许转移。');
+codes('transfer_audience_external transfer_organization_external', '来源的数据流政策不允许向这个目标发送内容。');
+codes('transfer_organization_denied transfer_organization_policy_denied', '来源内容只能在同一组织内转移。');
+codes('transfer_policy_changed', '数据流政策已更新，请刷新后重试。');
 codes('network network_error', '网络连接失败，请检查连接后重试。');
 codes('server_error internal_error', '服务内部出错，请稍后重试。');
 codes('rate_limited login_rate_limited too_many_attempts', '请求过于频繁，请稍后重试。');

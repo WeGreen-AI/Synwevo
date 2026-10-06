@@ -528,9 +528,11 @@ test("the comment drawer, the co-editing notice and copy requests present refusa
     setLocale("en");
     assert.equal(copyErrorText("approval_expired"), "The approval has expired. Request the copy again.");
     assert.equal(copyErrorText("target:target_write_required"), "You can no longer copy the project into the target workspace. Check that you are still an editor there.");
+    assert.equal(copyErrorText("transfer:transfer_source_closed"), "The current data transfer policy or export rights do not allow this copy. Check them before requesting it again.");
     assert.equal(copyErrorText("KeyError"), "Copying failed and nothing was created. Request the copy again later.");
     setLocale("zh-Hant");
     assert.equal(copyErrorText("source:not_found"), "來源項目已不可用。");
+    assert.equal(copyErrorText("transfer:transfer_audience_denied"), "目前資料流政策或匯出權限不允許複製到目標空間，請核對後重新申請。");
   } finally { setLocale("zh-Hans"); }
 });
 

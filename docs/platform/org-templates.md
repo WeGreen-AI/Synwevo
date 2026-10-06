@@ -2,6 +2,8 @@
 
 9.8「组织模板复用」：个人模板与组织共享模板的权限、版本、维护者和使用方式清楚；发布/更新/弃用保留旧任务可重现性，不因模板更新改变正在执行任务的含义。
 
+2026-10-06（CR-045）：初次发布与发布新源版本在同一事务内检查当前源空间成员、Docs 内容资格、导出权、整个组织的可见范围和数据流政策，再读取并冻结当前 head。`none` 拒绝；`audience` 要求组织的全部当前有效成员均已属于源空间；同组织 `organization` / `any` 允许。组织管理权本身不授予来源内容或导出权。既有冻结发布及已复制模板保持组织/目标所有权，来源撤权、删除或之后收紧政策不逆向撤销它们。只有说明且无新 head 时仍可维护；已有 update 端点遇到新 head 会一并发布，因此整次操作仍须源权限。见 [data-flow.md](data-flow.md) 与 `tests/integration/test_org_template_transfer_policy.py`。
+
 ## 1. 决策记录
 
 | 项目 | 结论 |
@@ -29,6 +31,8 @@
 
 **机器 API（CI-36）**：同一能力在 `/api/v1` 下——`GET /organization-templates`（分页）、`GET /organization-templates/{pid}`、`POST /templates/{tid}/publish`（幂等）、
 `POST /organization-templates/{pid}/releases`、`POST /organization-templates/{pid}/deprecate`、`POST /organization-templates/{pid}/use`（幂等，可绑定项目）。
+初次发布或包含新源版本的更新，委托还必须绑定源工作空间，且当时仍有该空间 Docs 写入资格；其他空间的委托不能借由委托人本人的跨空间权限读取新源内容（403 `source_delegation_required`）。已冻结版本的使用及没有新源内容的维护沿用既有组织权限。
+
 全部要求**委托令牌**（代表某个成员的客户端）：组织成员身份属于人，服务账户与 API 密钥没有它，答 403 `delegated_required`，不做静默降级。
 Python SDK：`list/iter/get_organization_template(s)`、`publish_template`、`release_organization_template`、`deprecate_organization_template`、`use_organization_template`；
 CLI：`synwevo-docs org-templates list|get|publish|release|deprecate|restore|use`。

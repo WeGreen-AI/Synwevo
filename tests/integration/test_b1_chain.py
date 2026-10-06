@@ -12,13 +12,15 @@ application's registered operation or public route (the Docs template project th
 service calls the WP7 ``configure`` helper uses). Nothing here writes a business table.
 
 Fault injection is limited to: rebuilding the factory on the same data directory (B3), rewinding
-the engine's own wait-event cursor so the decision event is read again (B3, as in
-apps/suite/tests/test_flows_approvals.py), and ticking the engine from two threads (B5).
+the engine's own wait-event cursor (B3), stale approval event hints while the real request is
+still waiting, losing a receipt update after Message has stored the real message (B4), and
+ticking the engine from two threads (B5). No business operation or reader is replaced.
 Workers that a deployment runs on timers are stepped explicitly: Extract's and DataPrep's
 ``tick``, Docs' ``_claim``/``_run``, Message's outbox worker and Suite's receipt reconcilers.
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import threading
@@ -32,7 +34,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from synwevo_core.apps import DOCS_APP_ID, MESSAGES_APP_ID
+from synwevo_core.capabilities import record_event
 from synwevo_core.context import as_tenant
+from synwevo_core.errors import ServiceError
 from synwevo_core.flows import Flows
 from synwevo_docs.definitions import TEMPLATE_FIELDS_SCHEMA, import_template_fields
 from synwevo_server.app import create_app
@@ -70,11 +74,14 @@ class Clock:
         self.at += seconds
 
 
-def invoice_pdf():
+def invoice_pdf(*, conflicting_reference=False):
     """A real one-page PDF with a text layer, as tests/integration/test_extract_reader.py makes it."""
     doc = fitz.open()
     page = doc.new_page()
-    page.insert_text((60, 80), f"Invoice: {REFERENCE}\nAmount: {AMOUNT}\nIssued: 2026-09-30")
+    text = f"Invoice: {REFERENCE}\nAmount: {AMOUNT}\nIssued: 2026-09-30"
+    if conflicting_reference:
+        text += "\nInvoice: INV-B1-CONFLICT"
+    page.insert_text((60, 80), text)
     data = doc.tobytes()
     doc.close()
     return data
@@ -233,36 +240,51 @@ class Chain:
     def read(self, operation, payload, *, user="editor"):
         return self.caps.invoke(operation, payload, user_id=self.w.users[user], workspace_id=self.w.a)["output"]
 
-    def to_approval(self):
-        """Start, a real submission, Extract parse + a person's confirmation, DataPrep run."""
+    def start(self):
         w = self.w
         self.rid = self.engine.start(self.fid, user_id=self.owner, version=1, parameters={},
                                      idempotency_key="b1-chain")["id"]
         self.engine.tick()
         assert self.run()["status"] == "waiting_input" and self.run()["step_id"] == "collect"
         request = decode(self.steps()["request"]["value_json"])
-        base = "/api/suite/public/forms/r/" + request["url"].rsplit("/", 1)[1]
+        self.form_url = "/api/suite/public/forms/r/" + request["url"].rsplit("/", 1)[1]
         sign_in(w, "editor")
-        up = w.client.post(base + "/files", data={"field_id": "f_invoice01"}, headers=CSRF,
-                           files={"file": ("invoice-b1.pdf", invoice_pdf(), "application/pdf")})
+
+    def submit_file(self, pdf):
+        """Submit actual bytes and let the registered reader parse them, without confirming."""
+        w = self.w
+        self.pdf_digest = hashlib.sha256(pdf).hexdigest()
+        up = w.client.post(self.form_url + "/files", data={"field_id": "f_invoice01"}, headers=CSRF,
+                           files={"file": ("invoice-b1.pdf", pdf, "application/pdf")})
         assert up.status_code == 200, up.text
-        sub = w.client.post(base + "/submit", headers=CSRF, json={
-            "version": 1, "answers": {"f_invoice01": [up.json()["id"]]}, "idempotency_key": "b1-form-submit"})
+        self.form_file_id = up.json()["id"]
+        sub = w.client.post(self.form_url + "/submit", headers=CSRF, json={
+            "version": 1, "answers": {"f_invoice01": [self.form_file_id]}, "idempotency_key": "b1-form-submit"})
         assert sub.status_code == 200, sub.text
         self.submission_id = sub.json()["submission_id"]
         self.tick()
         assert (self.run()["status"], self.run()["step_id"]) == ("waiting_input", "extract"), self.run()
         _, task = self.op("extract.task.create")
+        self.task_id = task["id"]
         self.api.state.extract.tick()  # the deployed reader parses the actual PDF
         parsed = self.read("extract.task.get", {"task_id": task["id"]})
         assert parsed["status"] == "waiting_input", parsed
+        return parsed
+
+    def to_approval(self):
+        """Start, a real submission, Extract parse + a person's confirmation, DataPrep run."""
+        self.start()
+        parsed = self.submit_file(invoice_pdf())
         assert parsed["values"]["reference"]["value"] == REFERENCE and parsed["values"]["amount"]["value"] == AMOUNT
         self.tick()  # a machine result is not a confirmed one: the flow keeps waiting for a person
         assert (self.run()["status"], self.run()["step_id"]) == ("waiting_input", "extract")
         # Person-only operation, called by the person while the flow waits.
-        w.caps.invoke("extract.task.confirm", {"task_id": task["id"], "revision": 1, "note": "Checked against the PDF"},
-                      user_id=w.users["editor"], workspace_id=w.a, via="ui")
-        self.task_id = task["id"]
+        self.caps.invoke("extract.task.confirm", {"task_id": self.task_id, "revision": 1, "note": "Checked against the PDF"},
+                         user_id=self.owner, workspace_id=self.w.a, via="ui")
+        self.to_review()
+
+    def to_review(self):
+        """Continue the confirmed extraction through real DataPrep and the approval request."""
         self.tick()
         assert (self.run()["status"], self.run()["step_id"]) == ("waiting_input", "prep"), self.run()
         assert self.api.state.dataprep.tick()
@@ -278,8 +300,8 @@ class Chain:
                          "state_version": current["state_version"], "decision": decision, "note": "B1 independent review"},
                          user_id=self.w.users["owner"], workspace_id=self.w.a, via="ui")
 
-    def to_end(self, tick=None):
-        """Docs input, Docs job and Message delivery, each settled by its own worker."""
+    def to_send(self, tick=None):
+        """Docs input and job settle; Message has accepted its durable queued send."""
         tick = tick or self.tick
         tick()
         assert (self.run()["status"], self.run()["step_id"]) == ("waiting_input", "materialize"), self.run()
@@ -296,6 +318,12 @@ class Chain:
         self.adapters.sync_jobs()
         tick()
         assert (self.run()["status"], self.run()["step_id"]) == ("waiting_input", "send"), self.run()
+        return made, job
+
+    def to_end(self, tick=None):
+        """Docs input, Docs job and Message delivery, each settled by its own worker."""
+        tick = tick or self.tick
+        made, job = self.to_send(tick)
         deliver(self.api, self.adapters)
         tick()
         return made, job
@@ -316,6 +344,13 @@ def dispatches(c):
 
 def group_messages(store, cid):
     return store.all("SELECT * FROM messages WHERE conversation_id=? AND kind!='system'", (cid,))
+
+
+def assert_no_release(c):
+    assert not {"materialize", "project", "job", "artifacts", "conversation", "send"} & set(c.steps())
+    assert count(c.store, "projects WHERE origin LIKE 'suite:%'") == 0
+    assert count(c.store, "jobs") == 0 and count(c.store, "artifacts") == 0
+    assert group_messages(c.store, c.w.cid) == []
 
 
 def assert_one_document_and_message(c, w, made, job):
@@ -366,8 +401,36 @@ def test_b1_form_pdf_to_approved_document_in_the_group(world):
     dataset = c.read("dataprep.dataset.get", {"dataset_id": prep["output_dataset_id"]})
     assert dataset["rows"][0]["values"] == {"reference": REFERENCE, "amount": AMOUNT_2DP}
     _, imported = c.op("extract.file.from_forms")
-    assert imported["source"]["submission_id"] == c.submission_id
-    assert c.read("extract.task.get", {"task_id": c.task_id})["confirmed_revision"] == 2
+    assert imported["source"] == {
+        "app": "forms", "workspace_id": w.a, "submission_id": c.submission_id,
+        "file_id": c.form_file_id, "form_id": c.s.form, "form_version": 1,
+        "answers_hash": c.read("forms.submission.get", {"submission_id": c.submission_id})["answers_hash"]}
+    assert imported["content_digest"] == c.pdf_digest
+    confirmed = c.read("extract.task.result", {"task_id": c.task_id, "revision": 2})
+    assert confirmed["file"]["id"] == imported["id"] and confirmed["file"]["content_digest"] == c.pdf_digest
+    assert confirmed["review"]["actor_id"] == w.users["editor"]
+    segments = c.read("extract.task.segments", {"task_id": c.task_id})["items"]
+    for field, expected in (("reference", REFERENCE), ("amount", AMOUNT)):
+        candidate, = confirmed["machine"][field]["candidates"]
+        evidence = candidate["evidence"]
+        assert candidate["verified"] and candidate["value"] == expected
+        assert evidence["source"]["page"] == 1
+        segment = next(s for s in segments if s["id"] == evidence["segment_id"])
+        assert segment["text"][evidence["start"]:evidence["end"]] == expected
+    _, source_dataset = c.op("dataprep.dataset.from_extract")
+    source, = source_dataset["source"]["tasks"]
+    assert {k: source[k] for k in ("task_id", "revision", "file_id", "content_digest", "template_id", "template_version")} == {
+        "task_id": c.task_id, "revision": 2, "file_id": imported["id"], "content_digest": c.pdf_digest,
+        "template_id": c.s.extract, "template_version": 1}
+    assert dataset["source"]["inputs"]["main"]["dataset_id"] == source_dataset["id"]
+    assert dataset["rows"][0]["origins"] == [[c.task_id, 1, 2]]
+    issues = c.read("dataprep.run.issues", {"run_id": prep["run_id"]})
+    assert issues["total"] == 1 and issues["next_offset"] is None
+    issue, = issues["items"]
+    assert {k: issue[k] for k in ("code", "step_id", "column_name", "value", "input_name", "source_row", "message")} == {
+        "code": "rule_failed", "step_id": "review_limit", "column_name": "amount", "value": AMOUNT_2DP,
+        "input_name": c.task_id, "source_row": 1, "message": "Amount above the review threshold"}
+    assert issue["params"]["origins"] == [[c.task_id, 1, 2]]
 
     # Tables holds the pending-review record; Approvals the decided request.
     record_run, record = c.op("tables.record.create")
@@ -388,6 +451,53 @@ def test_b1_form_pdf_to_approved_document_in_the_group(world):
     assert sorted(r["op"] for r in calls) == sorted(FLOW_CALLS) and {r["via"] for r in calls} == {"flow"}
     assert {r["user_id"] for r in calls} == {w.users["editor"]}
     assert dispatches(c) == len(FLOW_CALLS) and counts["agent.flow.started"] == 1
+
+
+def test_b2_missing_file_and_unresolved_extraction_do_not_start_downstream(world):
+    c = Chain(world)
+    c.start()
+    missing = world.client.post(c.form_url + "/submit", headers=CSRF, json={
+        "version": 1, "answers": {}, "idempotency_key": "b1-missing-file"})
+    assert missing.status_code == 422
+    assert ("f_invoice01", "required") in {(e["field"], e["code"]) for e in missing.json()["detail"]["errors"]}
+    c.tick()
+    assert (c.run()["status"], c.run()["step_id"]) == ("waiting_input", "collect")
+    assert count(c.store, "form_submissions") == 0 and count(c.store, "extract_tasks") == 0
+    assert set(c.steps()) == {"request", "collect"}
+    assert_no_release(c)
+
+    parsed = c.submit_file(invoice_pdf(conflicting_reference=True))
+    assert parsed["values"]["reference"]["status"] == "conflict"
+    assert {x["value"] for x in parsed["values"]["reference"]["candidates"]} == {REFERENCE, "INV-B1-CONFLICT"}
+    with pytest.raises(ServiceError) as refused:
+        c.caps.invoke("extract.task.confirm", {"task_id": c.task_id, "revision": 1,
+                      "note": "Fixture: acknowledgement cannot resolve conflicting evidence", "acknowledge_unverified": True},
+                      user_id=c.owner, workspace_id=world.a, via="ui")
+    assert (refused.value.status, refused.value.code) == (422, "review_unresolved")
+    for _ in range(2):
+        c.tick()
+    current = c.read("extract.task.get", {"task_id": c.task_id})
+    assert current["confirmed_revision"] is None and current["revision"] == 1
+    assert (c.run()["status"], c.run()["step_id"]) == ("waiting_input", "extract")
+    assert not {"dataset", "prep", "record", "approval", "review"} & set(c.steps())
+    for table in ("dataprep_datasets", "dataprep_runs", "tb_records", "approval_requests"):
+        assert count(c.store, table) == 0, table
+    assert_no_release(c)
+
+    # A real person's explicit correction and confirmation unlock the same run, not a replacement.
+    rid = c.rid
+    c.caps.invoke("extract.task.correct", {"task_id": c.task_id, "revision": 1, "values": {"reference": REFERENCE},
+                  "note": "Fixture: use the first invoice reference after reviewing both source lines"},
+                  user_id=c.owner, workspace_id=world.a, via="ui")
+    c.caps.invoke("extract.task.confirm", {"task_id": c.task_id, "revision": 2, "note": "Checked the correction",
+                  "acknowledge_unverified": True}, user_id=c.owner, workspace_id=world.a, via="ui")
+    c.to_review()
+    assert c.rid == rid
+    assert count(c.store, "form_submissions") == 1 and count(c.store, "extract_tasks") == 1
+    assert count(c.store, "tb_records") == 1 and count(c.store, "approval_requests") == 1
+    _, dataset = c.op("dataprep.dataset.from_extract")
+    assert dataset["source"]["tasks"][0]["revision"] == 3
+    assert_no_release(c)
 
 
 def test_b2_rejected_approval_ends_in_the_fail_branch_without_document_or_message(world):
@@ -441,6 +551,101 @@ def test_b3_rebuilt_factory_continues_after_the_decision_once(world):
             c.op(operation)  # exactly one run of each
         assert count(c.store, "flow_history WHERE run_id=? AND type='advanced' AND status='partial'", (c.rid,)) == 1
         assert dispatches(c) == len(FLOW_CALLS)
+
+
+def test_b4_delivered_message_survives_lost_receipt_update_without_replaying_effects(world, monkeypatch):
+    c = Chain(world)
+    c.to_approval()
+    c.decide("approve")
+    made, job = c.to_send()
+    before = {sid: (s["status"], s["op_run_id"], s["key"]) for sid, s in c.steps().items() if sid != "send"}
+    accepted, _ = c.op(f"{MESSAGES_APP_ID}.message.send")
+    assert accepted["status"] == "queued"
+    assert group_messages(c.store, world.cid) == []
+    lost = []
+    update_run = c.caps.update_run
+
+    def lose_receipt(run_id, status, **kw):
+        if run_id == accepted["id"] and status == "succeeded":
+            lost.append(run_id)
+            raise RuntimeError("B1 fault injection: delivery committed but receipt update lost")
+        return update_run(run_id, status, **kw)
+
+    # The real worker has committed its message; only the projection into the receipt is lost.
+    with monkeypatch.context() as fault:
+        fault.setattr(c.caps, "update_run", lose_receipt)
+        with pytest.raises(RuntimeError, match="delivery committed but receipt update lost"):
+            deliver(c.api, c.adapters)
+    assert lost == [accepted["id"]]
+    message, = group_messages(c.store, world.cid)
+    assert message["client_id"] == accepted["id"]
+    assert c.op(f"{MESSAGES_APP_ID}.message.send")[0]["status"] == "queued"
+    assert count(c.store, "app_events WHERE type='messages.message.recorded'") == 0
+    c.tick()
+    assert (c.run()["status"], c.run()["step_id"]) == ("waiting_input", "send")
+    assert c.steps()["send"]["status"] == "operation_wait"  # accepted queue is known, not an uncertain dispatch
+
+    fresh = create_app(str(world.store.root), role="all", start_jobs=False)
+    with TestClient(fresh, base_url=ORIGIN):
+        c.rebuild(fresh)
+        c.tick()  # the receipt has not been reconciled yet; never start another send
+        assert (c.run()["status"], c.run()["step_id"]) == ("waiting_input", "send")
+        inspected = c.read(f"{MESSAGES_APP_ID}.message.inspect", {"run_id": accepted["id"]})
+        assert inspected["delivery"] == "recorded" and inspected["message_id"] == message["id"]
+        assert c.op(f"{MESSAGES_APP_ID}.message.send")[0]["status"] == "queued"  # inspect is read-only
+        c.adapters.sync_messages()  # the production reconciler, no invented success receipt
+        c.tick()
+        assert c.run()["status"] == "partial"
+        settled, receipt = c.op(f"{MESSAGES_APP_ID}.message.send")
+        assert settled["id"] == accepted["id"] and settled["status"] == "succeeded"
+        assert receipt["message_id"] == message["id"] and receipt["seq"] == message["seq"]
+        assert c.steps()["send"]["op_run_id"] == accepted["id"] and c.steps()["send"]["attempt"] == 1
+        assert {sid: (s["status"], s["op_run_id"], s["key"]) for sid, s in c.steps().items() if sid != "send"} == before
+        deliver(c.api, c.adapters)
+        c.tick()
+        assert_one_document_and_message(c, world, made, job)
+        assert group_messages(c.store, world.cid)[0]["id"] == message["id"]
+        assert count(c.store, "messaging_outbox WHERE event_id=?", (accepted["id"],)) == 1
+        assert count(c.store, "app_events WHERE type='messages.message.recorded'") == 1
+        assert dispatches(c) == len(FLOW_CALLS)
+
+
+def test_b5_active_approval_wait_rereads_the_request_despite_stale_event_hints(world):
+    c = Chain(world)
+    c.to_approval()
+    pending = c.read("approvals.request.get", {"request_id": c.approval_id}, user="owner")
+    assert pending["status"] == "in_review"
+
+    def hint(status):
+        # Explicit event-delivery fault fixture, not a decision or a write to approval tables.
+        # Retain the pending revision/state_version even when the actual request advances.
+        with c.store.tx() as t:
+            event = record_event(t, type_="approvals.request." + status, app="approvals", workspace_id=world.a,
+                                 object_kind="approval_request", object_id=c.approval_id,
+                                 data={"request_id": c.approval_id, "revision": pending["revision"],
+                                       "state_version": pending["state_version"], "status": status})
+        return c.store.one("SELECT seq FROM app_events WHERE id=?", (event["id"],))["seq"]
+
+    for status in ("approved", "rejected", "approved"):
+        checks = c.steps()["review"]["checks"]
+        assert c.run()["due_at"] > c.clock()
+        seq = hint(status)
+        c.engine.tick()  # clock does not advance: only consuming the event can wake this wait
+        assert c.caps.cursor("flows.wait.v1") >= seq
+        assert c.steps()["review"]["checks"] == checks + 1
+        assert (c.run()["status"], c.run()["step_id"]) == ("waiting_approval", "review")
+        current = c.read("approvals.request.get", {"request_id": c.approval_id}, user="owner")
+        assert current["status"] == "in_review" and current["state_version"] == pending["state_version"]
+        assert_no_release(c)
+
+    c.decide("approve")
+    hint("rejected")  # an older contradictory hint arrives after the real approval, before continuation
+    made, job = c.to_end()
+    assert c.run()["status"] == "partial"
+    assert decode(c.steps()["route"]["value_json"]) == {"target": "materialize"}
+    assert c.read("approvals.request.get", {"request_id": c.approval_id}, user="owner")["status"] == "approved"
+    assert_one_document_and_message(c, world, made, job)
+    assert dispatches(c) == len(FLOW_CALLS)
 
 
 def test_b5_concurrent_ticks_during_docs_and_message_steps_make_one_of_each(world):

@@ -32,7 +32,7 @@ loading the business applications.
 from __future__ import annotations
 
 from .errors import ServiceError
-from .organizations import workspace_access_failure
+from .organizations import current_membership, workspace_access_failure
 from .store import Store, now
 
 OUTBOUND = ("none", "audience", "organization", "any")
@@ -67,6 +67,8 @@ REFUSALS = {
     "transfer_organization_policy_denied": "来源所属组织不允许其内容转移到组织以外的工作空间",
     "transfer_organization_external": "来源工作空间的内容只能留在所属组织内；对外发送的接收方可能不在组织内，这些内容不能随之发出",
     "transfer_policy_changed": "数据流政策已被其他人修改，请刷新后重试",
+    "transfer_organization_audience_denied": "组织有 {outside} 位当前成员不在来源工作空间，来源的数据流政策不允许向整个组织发布内容",
+    "transfer_publication_policy_denied": "来源所属组织的数据流政策无法识别，不能发布新内容，请联系组织管理员",
 }
 
 
@@ -154,6 +156,46 @@ def check(store: Store, *, user_id: str, source: str, target: str | None, extern
     return {"source": source, "target": target, "outbound": policy["outbound"], "revision": policy["revision"],
             "organization_outbound": cap["outbound"], "organization_revision": cap["revision"],
             "same_organization": same_org, "audience": len(audience)}
+
+
+def check_organization_publication(store: Store, *, user_id: str, source: str, organization_id: str) -> dict:
+    """Authorize new source content becoming owned by its organization.
+
+    Unlike ``check``, the recipient is the whole organization, not the caller's current
+    workspace (which may even be the source). The caller must hold a write transaction
+    across this check, its source-head read and publication. Application content access
+    and permission to publish are still the caller's responsibility. Never use this to
+    reauthorize readers of an already frozen, organization-owned release.
+    """
+    src = store.one("SELECT status, organization_id FROM workspaces WHERE id=? AND deleted_at IS NULL", (source,))
+    member = store.one("SELECT role, can_export FROM memberships WHERE workspace_id=? AND user_id=?",
+                       (source, user_id)) if src else None
+    if not src or src["status"] != "active" or not member or workspace_access_failure(store, source, user_id):
+        raise refusal("transfer_source_unavailable")
+    org = store.one("SELECT status FROM organizations WHERE id=?", (organization_id,))
+    if (not org or org["status"] != "active" or src["organization_id"] != organization_id
+            or not current_membership(store, organization_id, user_id)):
+        raise refusal("transfer_source_unavailable")
+    if member["role"] not in EXPORT_ROLES and not member["can_export"]:
+        raise refusal("transfer_export_denied")
+    policy = workspace_outbound(store, source)
+    cap = organization_outbound(store, organization_id)
+    if policy["outbound"] not in OUTBOUND[1:]:
+        raise refusal("transfer_source_closed")
+    if cap["outbound"] not in ORGANIZATION_OUTBOUND:
+        raise refusal("transfer_publication_policy_denied")
+    # Match organizations.current_membership: only active, non-deleted accounts count.
+    # Include members with no workspace membership, not just this workspace's readers.
+    audience = {r["user_id"] for r in store.all(
+        "SELECT m.user_id FROM organization_memberships m JOIN users u ON u.id=m.user_id "
+        "WHERE m.organization_id=? AND u.status='active' AND u.deleted_at IS NULL", (organization_id,))}
+    if policy["outbound"] == "audience":
+        outside = len(audience - _members(store, source))
+        if outside:
+            raise refusal("transfer_organization_audience_denied", outside=outside)
+    return {"source": source, "organization_id": organization_id, "outbound": policy["outbound"],
+            "revision": policy["revision"], "organization_outbound": cap["outbound"],
+            "organization_revision": cap["revision"], "audience": len(audience)}
 
 
 def set_workspace_outbound(store: Store, workspace_id: str, outbound: str, *, actor_id: str, revision: int) -> dict:

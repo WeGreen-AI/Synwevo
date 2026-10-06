@@ -102,6 +102,9 @@ _COPY_REASONS = {
     "delegation": {"zh-Hans": "发起申请的应用委托已失效，请重新授权并申请。", "zh-Hant": "發起申請的應用委託已失效，請重新授權並申請。",
                    "en": "The integration's delegation is no longer valid. Authorize it again before making a new request."},
     "source": {"zh-Hans": "源项目已不可用。", "zh-Hant": "來源項目已不可用。", "en": "The source project is no longer available."},
+    "transfer": {"zh-Hans": "当前数据流政策或导出权限不允许复制到目标空间，请核对后重新申请。",
+                 "zh-Hant": "目前資料流政策或匯出權限不允許複製到目標空間，請核對後重新申請。",
+                 "en": "The current data transfer policy or export rights do not allow this copy. Check them before requesting it again."},
     "failed": {"zh-Hans": "复制过程出错，没有创建任何内容。", "zh-Hant": "複製過程出錯，沒有建立任何內容。",
                "en": "Copying failed and nothing was created."},
     "copy_recovery_ambiguous": {"zh-Hans": "发现无法唯一确认的既有副本，已保留全部内容，需要管理员核对。",
@@ -117,7 +120,7 @@ def copy_failure_reason(reason: str | None, locale: str) -> str:
     language — as its body (CI-86)."""
     key = reason or ""
     if key not in _COPY_REASONS:
-        key = key.split(":", 1)[0] if key.split(":", 1)[0] in ("target", "source", "delegation") else "failed"
+        key = key.split(":", 1)[0] if key.split(":", 1)[0] in ("target", "source", "delegation", "transfer") else "failed"
     text = _COPY_REASONS[key]
     return text.get(locale, text["en"])
 

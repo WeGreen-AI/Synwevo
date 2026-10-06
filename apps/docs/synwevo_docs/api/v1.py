@@ -745,7 +745,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         if desc is not None and not isinstance(desc, str):
             raise ServiceError(400, "invalid", "description 必须是字符串", {"field": "description"})
         return idem.run(request, "/api/v1/templates/{tid}/publish", {"tid": tid, "body": body},
-                        lambda: shared_out(shared.publish(tid, uid, desc)),
+                        lambda: shared_out(shared.publish(tid, uid, desc, requested_authority=authority.describe_request(request))),
                         replay_check=lambda out: shared.get(out["id"], uid), status=201)
 
     @r.post("/organization-templates/{pid}/releases", status_code=201, summary="更新发布：源模板 head 有新版本时产生新一次发布，或只改说明（需委托令牌）",
@@ -756,7 +756,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         desc = body.get("description")
         if desc is not None and not isinstance(desc, str):
             raise ServiceError(400, "invalid", "description 必须是字符串", {"field": "description"})
-        out = shared.update(pid, uid, desc, set_description="description" in body)
+        out = shared.update(pid, uid, desc, set_description="description" in body, requested_authority=authority.describe_request(request))
         return {**shared_out(out), "released": out["released"]}
 
     @r.post("/organization-templates/{pid}/deprecate", summary="弃用或恢复组织共享模板（需委托令牌）",

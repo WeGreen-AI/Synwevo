@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 
-from . import authority
+from . import authority, data_flow
 from .errors import ServiceError
 from .identity import Identity, ROLE_RANK
 from .org_roles import OrgRoles
@@ -135,6 +135,15 @@ class ProjectCopies:
                               "AND u.status='active' AND u.deleted_at IS NULL", (wid,))
         return [r["user_id"] for r in rows if self.can_decide(oid, wid, r["user_id"])]
 
+    def can_review(self, oid: str, wid: str, uid: str) -> bool:
+        """The manifest belongs to the target audience, not all organization governors."""
+        return bool(current_membership(self.store, oid, uid)
+                    and OrgRoles(self.store).has(oid, uid, "org.approvals.decide")
+                    and self.store.one(
+                        "SELECT 1 FROM workspaces w JOIN memberships m ON m.workspace_id=w.id "
+                        "WHERE w.id=? AND w.organization_id=? AND w.status='active' "
+                        "AND w.deleted_at IS NULL AND m.user_id=?", (wid, oid, uid)))
+
     def requester_may_target(self, uid: str, wid: str) -> dict:
         """The target must be an active organization workspace the requester can write to."""
         ws = self.ident.get_workspace(wid)
@@ -172,6 +181,10 @@ class ProjectCopies:
                         or not authority.check(self.store, requested_authority, need="write", tenant=source_workspace_id)[0]):
                     raise ServiceError(403, "delegation_required", "发起复制申请的本人委托已失效")
             ws = self.requester_may_target(requester_id, target_workspace_id)
+            # The manifest itself reaches the target's approvers. Check before storing it
+            # or emitting copy.requested, under the same write lock as request creation.
+            data_flow.check(self.store, user_id=requester_id, source=source_workspace_id,
+                            target=target_workspace_id)
             name = (name or "").strip()[:100]
             if not name:
                 raise ServiceError(400, "invalid_field", "请为副本命名", {"field": "name"})
@@ -190,8 +203,15 @@ class ProjectCopies:
                 "status": "pending", "created_at": ts, "updated_at": ts, "expires_at": ts + PENDING_TTL_S})
             return self.get(cid)
 
-    def list_for_organization(self, oid: str, *, status: str | None = None, limit: int = 50) -> list[dict]:
-        where, args = "target_organization_id=?", [oid]
+    def list_for_organization(self, oid: str, *, reviewer_id: str, status: str | None = None, limit: int = 50) -> list[dict]:
+        if not current_membership(self.store, oid, reviewer_id) or not OrgRoles(self.store).has(oid, reviewer_id, "org.approvals.decide"):
+            return []
+        # Filter before LIMIT: another workspace's recent requests must neither leak nor
+        # crowd out older requests this reviewer can legitimately inspect.
+        where = ("target_organization_id=? AND target_workspace_id IN "
+                 "(SELECT w.id FROM workspaces w JOIN memberships m ON m.workspace_id=w.id "
+                 "WHERE w.organization_id=? AND w.status='active' AND w.deleted_at IS NULL AND m.user_id=?)")
+        args = [oid, oid, reviewer_id]
         if status:
             where += " AND status=?"; args.append(status)
         args.append(limit)
@@ -229,6 +249,11 @@ class ProjectCopies:
                 raise ServiceError(409, "not_pending", "这个申请已过期，请让申请人重新提交", {"status": "expired"})
             if version is not None and version != r["version"]:
                 raise ServiceError(409, "version_conflict", "申请已更新，请刷新后再决定", {"version": r["version"]})
+            if action == "approve":
+                # A target's approval cannot override the source's current export policy.
+                # Rejection/withdrawal remain available after the source closes exports.
+                data_flow.check(self.store, user_id=r["requester_id"], source=r["source_workspace_id"],
+                                target=r["target_workspace_id"])
             ts = now()
             status = "approved" if action == "approve" else "rejected"
             t.execute("UPDATE project_copies SET status=?, decided_by=?, decided_at=?, decision_reason=?, self_approved=?, approval_expires_at=?, "
@@ -329,4 +354,11 @@ class ProjectCopies:
         org = self.store.one("SELECT status FROM organizations WHERE id=?", (r["target_organization_id"],))
         if not org or org["status"] != "active":
             return "organization_unavailable"
+        try:
+            # CopyExecutor repeats this inside the publication transaction after claiming;
+            # a policy/member change during the earlier advisory check cannot race a copy.
+            data_flow.check(self.store, user_id=r["requester_id"], source=r["source_workspace_id"],
+                            target=r["target_workspace_id"])
+        except ServiceError as e:
+            return f"transfer:{e.code}"
         return None

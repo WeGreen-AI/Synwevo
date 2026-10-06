@@ -54,13 +54,13 @@ def build_router(store, ident, sessions, audit, *, notifier: Notifier) -> APIRou
                        limit: int = Query(50, ge=1, le=200)):
         uid = reviewer(request, oid)
         copies.sweep()
-        return {"items": [_view(x, uid) for x in copies.list_for_organization(oid, status=status or None, limit=limit)]}
+        return {"items": [_view(x, uid) for x in copies.list_for_organization(oid, reviewer_id=uid, status=status or None, limit=limit)]}
 
     @r.get("/{oid}/approvals/{aid}")
     def get_approval(request: Request, oid: str, aid: str):
         uid = reviewer(request, oid)
         x = copies.get(aid)
-        if not x or x["target_organization_id"] != oid:
+        if not x or x["target_organization_id"] != oid or not copies.can_review(oid, x["target_workspace_id"], uid):
             raise ServiceError(404, "no_copy_request", "找不到该复制申请")
         return _view(x, uid)
 
@@ -69,7 +69,7 @@ def build_router(store, ident, sessions, audit, *, notifier: Notifier) -> APIRou
         """`{"action": "approve"|"reject", "reason", "version"?}` — recent `admin` re-authentication."""
         uid = reviewer(request, oid, sensitive=True)
         x = copies.get(aid)
-        if not x or x["target_organization_id"] != oid:
+        if not x or x["target_organization_id"] != oid or not copies.can_review(oid, x["target_workspace_id"], uid):
             raise ServiceError(404, "no_copy_request", "找不到该复制申请")
         out = copies.decide(aid, uid, str(body.get("action") or ""), reason=str(body.get("reason") or ""), version=body.get("version"))
         audit(request, "organization.copy.decide", actor_id=uid, object_kind="project_copy", object_id=aid, result="ok",

@@ -1,0 +1,85 @@
+{
+  "checked_at": "2026-10-06T02:23:12.556057+00:00",
+  "base_head": "47c601e172816c2c9eb5c8069c9333feee83e0ff",
+  "state": "local verified patch; commit/CI/deployment not yet performed",
+  "file_sha256": {
+    "packages/core/synwevo_core/project_copies.py": "90446f09a062a713c989336f6efcd4bc7c1ff31b7dd2330d89491a94f2e41acc",
+    "packages/core/synwevo_core/data_flow.py": "0d9f4a2a48b747b751fcd3d45668014df1f1d542d4ae5538035fb8e81a1e3971",
+    "apps/docs/synwevo_docs/org_templates.py": "739e5d8a082d43fee9fd925c4a4342c2292a2530a2519be6438cb8ece85463df",
+    "apps/docs/synwevo_docs/api/v1.py": "73955a65bb4a5f552cccec57a7982b21cc32848f1615adf106864ffb5d170b52",
+    "apps/docs/synwevo_docs/copies.py": "cda29be6fa673eac32ad61fcee0538300c23f66b354c98bf62fd1347b32b5a5b",
+    "apps/docs/web/src/lib/refusals.ts": "b95f7d1fbe46bf3957331edc4d6d8474aec03e002de997cb7e03294549f693f9",
+    "apps/docs/web/src/messages.ts": "0873f1f06135c67da49b0d189d510fdecf375ed43f3d3284df5e0620a5050731",
+    "apps/docs/web/src/messages.refusals.ts": "a14ceac4c0f8998af223caeb0efb0f9bc40c6029387acea748a2b67f72f6eb28",
+    "packages/auth-client/web/src/api.messages.ts": "df2695ee1e755f6594051ab8e45e0c9fef379012770d02ca83453ade22900de4",
+    "tests/integration/test_copy_transfer_policy.py": "d647843ca9f434f0896518cee60407a768fec3f25a4c56b1cba47cc8387585e3",
+    "tests/integration/test_org_template_transfer_policy.py": "a7d1d7bd6b2d74dc5e4633710ce4929305a059445c04b6f481ef7a6b6501128c",
+    "tests/integration/test_b1_chain.py": "f262984750626c60d8ae7e9d637a3b45867c9f264bbaaee4315cbc812dda93ba",
+    "apps/docs/web/tests/refusals.test.ts": "1943aa6f4918ef48cde74670cea960c2745b5dddf8a75a1700534d8424d0e985",
+    "services/identity/synwevo_identity/approval_routes.py": "829b66afd54d2add62c5d5b2776206b3338ca727f7278ac09227f847171ccb55"
+  },
+  "python312": {
+    "passed": 93,
+    "failed": 0,
+    "skipped": 0,
+    "warnings": 22,
+    "seconds": 33.32,
+    "files": [
+      "tests/integration/test_copy_transfer_policy.py",
+      "tests/integration/test_project_copy.py",
+      "tests/integration/test_api_copy_requests.py",
+      "tests/integration/test_org_template_transfer_policy.py",
+      "tests/integration/test_org_templates.py",
+      "tests/integration/test_org_templates_v1.py",
+      "apps/docs/tests/test_refusal_details.py"
+    ],
+    "log": "/private/tmp/synwevo-cr045-py312-final2.log"
+  },
+  "frontend": {
+    "passed": 496,
+    "failed": 0,
+    "source": "351 unchanged suites passed in full workspace run; Docs final 145 passed after exact catalog sentence fix",
+    "logs": [
+      "/private/tmp/synwevo-cr045-front-tests-final.log",
+      "/private/tmp/synwevo-cr045-docs-tests-last.log"
+    ],
+    "typecheck": true,
+    "all_builds": true
+  },
+  "guards": [
+    "boundaries",
+    "brand",
+    "design",
+    "component_names",
+    "brand_assets",
+    "app_icon_assets",
+    "diff_check"
+  ],
+  "browser": {
+    "fixture": "Synthetic isolated identities, real login and service on127.0.0.1:37771; no production data/providers/payments",
+    "actions": [
+      "Real UI copy request attempted once in each zh-Hans/en/zh-Hant; all403transfer_source_closed",
+      "Real UI organization template publication attempted once;403transfer_source_closed",
+      "Escape closes modal and returns focus to project actions",
+      "390x844 reduced-motion; document width390, dialog width374; long synthetic projectname unchanged",
+      "Screenshots inspected; no overlap or horizontal overflow in refusal dialog"
+    ],
+    "console": "Only expected request403 entries; initial unauthenticated /api/auth/me401; no JS runtime exception observed",
+    "business_counts_after_rejections": {
+      "project_copies": 0,
+      "organization_templates": 0,
+      "organization_template_releases": 0,
+      "copy_events": 0,
+      "copied_projects": 0
+    },
+    "limitations": [
+      "Does not replace full production authenticated business acceptance",
+      "Does not prove successful organization publication in browser; backend covers allowed publication, old-version reuse and races",
+      "B1 full-chain process restart/browser proof is still separate work"
+    ]
+  },
+  "review_audience": {
+    "before": "Four regressions demonstrate leaked manifests or wrong pre-limit scope; fifth originally used invalid suspended fixture state, corrected to valid frozen.",
+    "after": "Five tests pass: membership loss, frozen/deleted target, organization-only reviewer with audience policy, filter before limit. Target viewer can still read with organization review capability."
+  }
+}

@@ -202,6 +202,7 @@ export function copyErrorText(code: string): string {
   if (Object.hasOwn(COPY_ERROR, code)) return t(COPY_ERROR[code]);
   if (code.startsWith("target:")) return t("你已不能把项目复制到目标工作空间；请确认你仍是它的编辑成员。");
   if (code.startsWith("source:")) return t("源项目已不可用。");
+  if (code.startsWith("transfer:")) return t("当前数据流政策或导出权限不允许复制到目标空间，请核对后重新申请。");
   if (code.startsWith("status:")) return t("申请的状态已改变。");
   return t("复制过程出错，没有创建任何内容；请稍后重新申请。");
 }

@@ -1,9 +1,11 @@
 # 个人项目复制到组织工作空间（CI-27）
 
 一个人在自己的个人空间里搭好的 Docs 项目（来源文件、模板与字段、样本规则、映射）可以申请复制到
-他所在组织的某个工作空间。**目标空间说了算**：申请要由一位持有 `org.approvals.decide` 且是目标空间
+他所在组织的某个工作空间。**来源政策与目标审批同时生效**：申请要由一位持有 `org.approvals.decide` 且是目标空间
 admin/owner 的成员批准；批准后由 Docs 的执行器创建一份独立的副本。原项目从头到尾不被写入，
 审批人只看到申请人确认过的清单，看不到申请人的个人空间。
+
+2026-10-06（CR-045）：申请在保存清单和通知目标前检查来源数据流政策；批准时及执行器认领后的复制事务内再次检查。政策拒绝时 HTTP 403 `transfer_*`，已批准但尚未执行的申请转为 `stale` / `transfer:<code>`，不创建副本。拒绝与撤回继续可用。已合法完成的独立副本不因来源之后关闭导出而失效。UI、机器 API 和执行器复用同一契约，详见 [data-flow.md](data-flow.md)。
 
 ## 1. 决策记录
 
@@ -45,11 +47,11 @@ pending ──approve──▶ approved ──claim──▶ running ──▶ d
 | 申请 `POST /api/projects/{pid}/copy-requests` | 项目在个人空间且本人是该空间 owner；目标可写；同一项目对同一目标只能有一个未完成申请 | 409 `source_not_personal` / 403 `source_owner_required` / 403 `target_write_required` / 409 `copy_already_requested` |
 | 申请时自行批准（`decide: "approve"` + `reason`） | 本人满足决定条件 | 403 `forbidden` |
 | 撤回 `POST /api/copy-requests/{cid}/withdraw` | 申请人；状态 pending 或 approved 未执行 | 409 `not_withdrawable` |
-| 列出/查看 `GET /api/auth/organizations/{oid}/approvals[/{aid}]` | 持 `org.approvals.decide` 的活跃组织成员（`can_decide` 逐项标出是否还需目标空间管理员身份） | 403 / 非成员 404 |
+| 列出/查看 `GET /api/auth/organizations/{oid}/approvals[/{aid}]` | 持 `org.approvals.decide` 且仍是目标活跃空间成员的活跃组织成员（`can_decide` 逐项标出是否还需管理员身份）；查询在分页限制前按目标成员身份过滤，成员撤销或空间停用/删除后列表不返回、详情404 | 403 / 非成员 404 |
 | 决定 `POST …/approvals/{aid}/decide` | `org.approvals.decide` + 目标空间 admin/owner + 近期重认证（`scope=admin`）+ 理由 ≥ 4 字 + 可选 `version` | 403 `forbidden` / 403 `reauth_required` / 400 `reason_required` / 409 `not_pending` / 409 `version_conflict` |
 
 平台管理员不因平台角色获得任何一项；组织 owner/admin 的基础集合含 `org.approvals.decide`，但仍必须是目标空间的管理员。
-审批人拿不到源项目：`GET /api/projects/{pid}` 在目标空间上下文里对源项目是 404，清单里也没有文件正文或下载入口。
+审批人拿不到源项目：`GET /api/projects/{pid}` 在目标空间上下文里对源项目是 404，清单里也没有文件正文或下载入口。组织管理权不会单独开放清单读取；来源政策计算的目标成员范围与审批列表/详情的实际读者保持一致。
 
 ## 4. 执行（Docs，`synwevo_docs.copies`）
 

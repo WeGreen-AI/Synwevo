@@ -6047,6 +6047,10 @@ export const messages = {
     "en": "The approval has expired. Request the copy again.",
     "zh-Hant": "批准已過期；請重新申請。"
   },
+  "当前数据流政策或导出权限不允许复制到目标空间，请核对后重新申请。": {
+    "en": "The current data transfer policy or export rights do not allow this copy. Check them before requesting it again.",
+    "zh-Hant": "目前資料流政策或匯出權限不允許複製到目標空間，請核對後重新申請。"
+  },
   "申请人不再拥有源项目。": {
     "en": "The requester no longer owns the source project.",
     "zh-Hant": "申請人不再擁有來源項目。"
