@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, Query, Request, Response
 
 from synwevo_core import journal
 from synwevo_core.api_platform import (Approvals, ControlPlaneAdapter, MANAGE_PERMISSION, SCOPES,
-                                      require_manage, resource_scopes)
+                                      require_manage, resource_scopes, request_idempotency_key)
 from synwevo_core.api_quotas import (CREDENTIAL_KINDS, FIELDS as QUOTA_FIELDS, LAYER_FIELDS, RANGES,
                                     WINDOW_S, Policies, RateGate, deployment_defaults)
 from synwevo_core.apps import DOCS_APP_ID, PLATFORM_APP_ID
@@ -543,11 +543,16 @@ def build_router(store: Store, ident, sessions, audit,
         # confirmation and reason. Audit records no bearer, response, body, URL or query.
         outcome = {}
         with mutation(request, body, "request", outcome=outcome, transactional=False):
-            allowed = {"reason", "credential", "method", "path", "query", "body"}
+            allowed = {"reason", "credential", "method", "path", "query", "body", "idempotency_key"}
             if set(body) - allowed:
                 raise ServiceError(400, "unknown_field", "不支持额外的请求字段")
+            options = {}
+            if "idempotency_key" in body:
+                options["idempotency_key"] = request_idempotency_key(
+                    body.get("method", "GET"), body.get("path"), body["idempotency_key"])
+            # Preserve older injected adapters when the optional field was not supplied.
             result = await require_adapter().request(body.get("credential"), body.get("method", "GET"),
-                body.get("path"), body.get("query", {}), body.get("body"))
+                body.get("path"), body.get("query", {}), body.get("body"), **options)
             # Awaiting the data-plane request can outlive logout, demotion or reauthentication.
             # Never deliver its business response under the admission-time browser authority.
             mutation_actor(request)

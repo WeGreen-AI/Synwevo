@@ -2202,7 +2202,8 @@ export declare class Client {
   /** One signed webhook.ping, one attempt; resolves with its delivery record. */
   pingSubscription(sid: string): Promise<WithMeta<Delivery>>;
   deliveries(sid: string, options?: { status?: DeliveryStatus }): AsyncGenerator<Delivery, void, undefined>;
-  redeliver(sid: string, did: string): Promise<WithMeta<Delivery>>;
+  /** Fresh key per call, reused by retries. Requires server redelivery idempotency; no unkeyed fallback. */
+  redeliver(sid: string, did: string, options?: IdempotencyOptions): Promise<WithMeta<Delivery>>;
   /** The workspace event feed from `cursor` to the current end (read scope). */
   events(options?: { cursor?: string; types?: string | readonly EventType[] }): AsyncGenerator<FeedEvent, void, undefined>;
 

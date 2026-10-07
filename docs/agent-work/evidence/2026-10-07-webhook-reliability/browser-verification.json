@@ -1,0 +1,170 @@
+{
+  "checks": [
+    {
+      "locale": "zh-Hans",
+      "attempts": [
+        {
+          "key": "05bac48a-5467-4353-9d6f-4495841eb985",
+          "outer_status": 403,
+          "status": 403,
+          "delivery_id": null
+        },
+        {
+          "key": "05bac48a-5467-4353-9d6f-4495841eb985",
+          "outer_status": 200,
+          "status": 202,
+          "delivery_id": "wh_8ad733e7c6a2"
+        },
+        {
+          "key": "05bac48a-5467-4353-9d6f-4495841eb985",
+          "outer_status": 200,
+          "status": 202,
+          "delivery_id": "wh_8ad733e7c6a2"
+        },
+        {
+          "key": "5198e75b-f852-42c9-ac0b-a563bb94611d",
+          "outer_status": 200,
+          "status": 202,
+          "delivery_id": "wh_2467c38fe4f2"
+        }
+      ],
+      "cancelled_without_request": true,
+      "new_rows_after_lost_response_retry": 1,
+      "new_rows_after_new_action": 2,
+      "keyboard": true,
+      "viewport_widths": [
+        1280,
+        390
+      ]
+    },
+    {
+      "locale": "en",
+      "attempts": [
+        {
+          "key": "d44cd027-87ce-4b19-948c-7b1b4abd9bb4",
+          "outer_status": 403,
+          "status": 403,
+          "delivery_id": null
+        },
+        {
+          "key": "d44cd027-87ce-4b19-948c-7b1b4abd9bb4",
+          "outer_status": 200,
+          "status": 202,
+          "delivery_id": "wh_839740c62c41"
+        },
+        {
+          "key": "d44cd027-87ce-4b19-948c-7b1b4abd9bb4",
+          "outer_status": 200,
+          "status": 202,
+          "delivery_id": "wh_839740c62c41"
+        },
+        {
+          "key": "f9d770b7-8518-490f-b115-4c30fdd6bbe4",
+          "outer_status": 200,
+          "status": 202,
+          "delivery_id": "wh_326e209fe8fb"
+        }
+      ],
+      "cancelled_without_request": true,
+      "new_rows_after_lost_response_retry": 1,
+      "new_rows_after_new_action": 2,
+      "keyboard": true,
+      "viewport_widths": [
+        1280,
+        390
+      ]
+    },
+    {
+      "locale": "zh-Hant",
+      "attempts": [
+        {
+          "key": "553dd4d8-546b-41bd-8c89-34cb707b5501",
+          "outer_status": 403,
+          "status": 403,
+          "delivery_id": null
+        },
+        {
+          "key": "553dd4d8-546b-41bd-8c89-34cb707b5501",
+          "outer_status": 200,
+          "status": 202,
+          "delivery_id": "wh_d1097b5bb37f"
+        },
+        {
+          "key": "553dd4d8-546b-41bd-8c89-34cb707b5501",
+          "outer_status": 200,
+          "status": 202,
+          "delivery_id": "wh_d1097b5bb37f"
+        },
+        {
+          "key": "5c8eac12-37ca-42b0-bfd9-fcac7e0e15de",
+          "outer_status": 200,
+          "status": 202,
+          "delivery_id": "wh_16a6610848de"
+        }
+      ],
+      "cancelled_without_request": true,
+      "new_rows_after_lost_response_retry": 1,
+      "new_rows_after_new_action": 2,
+      "keyboard": true,
+      "viewport_widths": [
+        1280,
+        390
+      ]
+    }
+  ],
+  "d4_overlap_checks": [
+    {
+      "locale": "zh-Hans",
+      "selection": null,
+      "request_body": {},
+      "stored_overlap_seconds": 86400,
+      "cancelled_without_rotation": true
+    },
+    {
+      "locale": "zh-Hans",
+      "selection": 0,
+      "request_body": {
+        "overlap_s": 0
+      },
+      "stored_overlap_seconds": 0,
+      "cancelled_without_rotation": true
+    },
+    {
+      "locale": "en",
+      "selection": null,
+      "request_body": {},
+      "stored_overlap_seconds": 86400,
+      "cancelled_without_rotation": true
+    },
+    {
+      "locale": "en",
+      "selection": 0,
+      "request_body": {
+        "overlap_s": 0
+      },
+      "stored_overlap_seconds": 0,
+      "cancelled_without_rotation": true
+    },
+    {
+      "locale": "zh-Hant",
+      "selection": null,
+      "request_body": {},
+      "stored_overlap_seconds": 86400,
+      "cancelled_without_rotation": true
+    },
+    {
+      "locale": "zh-Hant",
+      "selection": 0,
+      "request_body": {
+        "overlap_s": 0
+      },
+      "stored_overlap_seconds": 0,
+      "cancelled_without_rotation": true
+    }
+  ],
+  "page_errors": [],
+  "limits": [
+    "Chromium only",
+    "No receiver send; tests queue idempotent manual redelivery with workers stopped"
+  ]
+}

@@ -457,3 +457,10 @@
 - 五正式域名readyz、首页和首页JS均200；身份起跳303到Accounts；匿名模型提供方管理/充值接口401。生产登录后的业务修改未重放，本轮治理交互的隔离浏览器证据已固定源码哈希且与提交一致。
 - DeepSeek/live/CNY6/欢迎100分配置保留；正式提供方/支付配置版本、调用/结算记录仍为0，Agent未加入开放名单。不能把代码发布称为正式收费开放。
 - 用户要求本轮完成后暂停；所有子代理、临时浏览器/服务/worker均结束。D4/D18未提交代码、定向测试和私有恢复补丁保留；D20未改码。发布证据和断点使用纯docs提交保存，不触发下一次部署。
+
+## 2026-10-07 恢复与Webhook可靠性包（进行中）
+
+- Git/CI与11:32:35Z线上只读检查：远端e70929f，运行08d6700，四应用相同镜像/五服务与ClamAV健康；无生产业务副作用。证据 evidence/2026-10-07-webhook-reliability/production-before.json。
+- D18独立审查未发现新的权限/竞争阻断；隔离30万已发送行证明清理仍全表扫描，LIMIT只限删除量。查询计划与候选索引测量在attachment-scan-before.json；是本机合成数据测试，不是生产延迟承诺。新增索引升级回归先1项预期失败（/private/tmp/synwevo-d18-index-red.log），随后修复，最终验证待追加。
+- D18最终索引由真实Store启动创建：新增迁移/查询计划回归与附件、schema扩展关联共13 passed/1既有warning（/private/tmp/synwevo-d18-index-green.{log,xml}）。相同30万已发送合成行的查询中位0.017ms；加150条过期项删除100条中位0.390ms（三次回滚测量，SQLite3.53.2，本机非并发）。EXPLAIN使用ix_message_attachments_unused_expiry，无临时排序；完整条件与源码哈希见attachment-scan-after.json，不当作生产指标。
+- 本轮集成门槛：受影响Webhook/API管理187 passed/6既有warnings，附件与升级13 passed/1warning，生成契约9 passed/6warnings；500前端、Python SDK45、TS SDK34与类型、根目录typecheck/build、六守卫通过。三语言真实重认证/响应丢失重试与D4默认/零/取消复验通过，所有隔离浏览器及服务关闭。verification.json绑定最终源码哈希；仍待提交/CI/部署。

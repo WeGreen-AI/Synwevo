@@ -1204,36 +1204,48 @@ class Subscriptions:
             raise ServiceError(404, "not_found", "投递记录不存在")
         return delivery_public(row)
 
+    def replay_delivery(self, tenant: str, did: str) -> dict:
+        """Current history access to a cached receipt, resolved from its actual delivery id.
+
+        A pause or the redelivery window restricts new work, not reading an accepted receipt.
+        Never authorize this result through a new request's sid (including on key conflicts).
+        """
+        row = self.store.one("SELECT subscription_id FROM webhook_deliveries WHERE id=?", (did,))
+        if not row:
+            raise ServiceError(404, "not_found", "投递记录不存在")
+        return self.delivery(tenant, row["subscription_id"], did)
+
     def redeliver(self, tenant: str | None, sid: str, did: str) -> dict:
         """Queue the same event again as a new delivery (same webhook-id, new delivery id)."""
-        sub = self._row(tenant, sid)
-        orig = self.store.one("SELECT * FROM webhook_deliveries WHERE id=? AND subscription_id=?", (did, sid))
-        if not orig:
-            raise ServiceError(404, "not_found", "投递记录不存在")
-        if sub["status"] != "active":
-            raise ServiceError(409, "subscription_not_active", f"订阅当前为 {sub['status']}，恢复后才能重新投递")
-        ev = None
-        if orig.get("event_type") != PING_EVENT:
-            ev = self.store.one("SELECT occurred_at FROM job_events WHERE id=?", (orig["event_id"],))
-            if not ev:
-                raise ServiceError(409, "event_missing", "该事件已不存在，无法重新投递")
-        ref = ev["occurred_at"] if ev else orig["created_at"]
-        t = self.clock()
-        window = redelivery_window_s()
-        if t - ref > window:
-            raise ServiceError(409, "redelivery_window_expired", f"只能重新投递 {int(window // 86400)} 天内的事件",
-                               {"window_days": window / 86400})
-        new = new_id("wh")
         with self.store.tx() as c:
+            sub = self._row(tenant, sid)
+            orig = self.store.one("SELECT * FROM webhook_deliveries WHERE id=? AND subscription_id=?", (did, sid))
+            if not orig:
+                raise ServiceError(404, "not_found", "投递记录不存在")
+            if sub["status"] != "active":
+                raise ServiceError(409, "subscription_not_active", f"订阅当前为 {sub['status']}，恢复后才能重新投递")
+            ev = None
+            if orig.get("event_type") != PING_EVENT:
+                ev = self.store.one("SELECT occurred_at FROM job_events WHERE id=?", (orig["event_id"],))
+                if not ev:
+                    raise ServiceError(409, "event_missing", "该事件已不存在，无法重新投递")
+            ref = ev["occurred_at"] if ev else orig["created_at"]
+            t = self.clock()
+            window = redelivery_window_s()
+            if t - ref > window:
+                raise ServiceError(409, "redelivery_window_expired", f"只能重新投递 {int(window // 86400)} 天内的事件",
+                                   {"window_days": window / 86400})
+            new = new_id("wh")
             n = c.execute("SELECT COUNT(*) AS n FROM webhook_deliveries WHERE event_id=? AND subscription_id=? "
                           "AND redelivery_of IS NOT NULL", (orig["event_id"], sid)).fetchone()["n"]
             c.execute("INSERT INTO webhook_deliveries (id, event_id, event_seq, endpoint, status, attempts, next_attempt_at, "
                       "created_at, subscription_id, tenant, event_type, redelivery_of) VALUES (?,?,?,?,'pending',0,?,?,?,?,?,?)",
                       (new, orig["event_id"], orig.get("event_seq"), f"{SUB_ENDPOINT}{sid}:re:{n + 1}", t, t, sid,
                        sub["tenant"], orig.get("event_type"), did))
-        if self.dispatcher is not None:
-            self.dispatcher.notify()
-        return self.delivery(tenant, sid, new)
+            out = self.delivery(tenant, sid, new)
+            if self.dispatcher is not None:
+                self.store.after_commit(self.dispatcher.notify)
+        return out
 
 
 # ----------------------------------------------------------------------------- event feed

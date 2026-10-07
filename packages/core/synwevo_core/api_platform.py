@@ -7,6 +7,7 @@ their compatibility contract. A managed credential cannot shed its binding.
 from __future__ import annotations
 
 import json
+import re
 from typing import Protocol
 
 from .apps import Apps, DOCS_APP_ID
@@ -18,6 +19,16 @@ from .store import Store, new_id, now
 
 MANAGE_PERMISSION = "api_platform.manage"
 SCOPES = frozenset((SCOPE_READ, SCOPE_WRITE, SCOPE_MANAGE))
+DOCS_REDELIVERY_PATH = r"/api/v1/webhooks/subscriptions/[A-Za-z0-9_-]{1,100}/deliveries/[A-Za-z0-9_-]{1,100}/redeliver"
+
+
+def request_idempotency_key(method, path, value) -> str:
+    """The console's sole optional header capability; never an arbitrary header or URL."""
+    from .idempotency import validate_key
+    key = validate_key(value)
+    if method != "POST" or not isinstance(path, str) or not re.fullmatch(DOCS_REDELIVERY_PATH, path):
+        raise ServiceError(400, "request_not_allowed", "该接口或方法不在调试允许范围内")
+    return key
 
 
 def resource_scopes() -> dict[str, frozenset]:
@@ -64,7 +75,7 @@ CALL_COLUMNS = [("api_platform_calls", "error_code", "TEXT"), ("api_platform_cal
 class ControlPlaneAdapter(Protocol):
     def contract(self) -> dict: ...
     async def request(self, credential: str, method: str, path: str,
-                      query: dict, body: dict | None) -> dict: ...
+                      query: dict, body: dict | None, *, idempotency_key: str | None = None) -> dict: ...
     def webhook_overview(self, *, workspace_id: str = "", status: str = "", failing: bool = False,
                          limit: int = 25, offset: int = 0) -> dict: ...
     def webhook_pause(self, sid: str) -> dict: ...

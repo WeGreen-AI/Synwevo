@@ -1,0 +1,30 @@
+{
+  "typecheck": {
+    "exit_code": 0,
+    "seconds": 1.877,
+    "command": [
+      "npm",
+      "run",
+      "typecheck"
+    ]
+  },
+  "build": {
+    "exit_code": 0,
+    "seconds": 1.728,
+    "command": [
+      "npm",
+      "run",
+      "build"
+    ]
+  },
+  "frontend-tests": {
+    "exit_code": 0,
+    "seconds": 5.456,
+    "command": [
+      "npm",
+      "test",
+      "--workspaces",
+      "--if-present"
+    ]
+  }
+}

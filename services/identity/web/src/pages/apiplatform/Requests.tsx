@@ -14,17 +14,51 @@ export function Requests({ act, webhooks }: { act: (action: Action) => void; web
   const [cursor, setCursor] = useState('');
   const [selectedSid, setSelectedSid] = useState('');
   const [feed, setFeed] = useState('');
+  const perform = async (reason: string, method: string, target: string, query = {}, body?: unknown, idempotencyKey?: string) => {
+    const out = await requestMachine(credential, reason, method, target, query, body, idempotencyKey);
+    if (!out.secret) setResult(out); else setResult(null);
+    setCursor(typeof out.next_cursor === 'string' ? out.next_cursor : '');
+    return out;
+  };
   const run = (title: string, method: string, target: string, query = {}, body?: unknown) => act({ title,
     impact: <>{t('请求只使用你提供的服务凭据；管理员会话不带来任何业务数据权限。')} <code>{method} {target}</code></>,
-    run: async reason => {
-      const out = await requestMachine(credential, reason, method, target, query, body);
-      if (!out.secret) setResult(out); else setResult(null);
-      setCursor(typeof out.next_cursor === 'string' ? out.next_cursor : '');
-      return out;
-    } });
+    run: reason => perform(reason, method, target, query, body) });
   const items = Array.isArray(result?.items) ? result.items as Record<string, unknown>[] : [];
+  const redeliver = (item: Record<string, unknown>) => {
+    setFeed('');
+    const target = `/api/v1/webhooks/subscriptions/${selectedSid}/deliveries/${item.id}/redeliver`;
+    // The confirmation owns the key: reauthentication and transport retries rerun this closure.
+    const idempotencyKey = crypto.randomUUID();
+    act({ title: t('重新投递'),
+      impact: <div className="col gap8">
+        <span>{t('请求只使用你提供的服务凭据；管理员会话不带来任何业务数据权限。')}</span>
+        <span>{t('将为这条事件安排一次新的投递。若响应中断，请在此确认框内重试；关闭后重新发起会创建另一次投递。')}</span>
+        <code style={{ overflowWrap: 'anywhere' }}>POST {target}</code>
+      </div>,
+      run: reason => perform(reason, 'POST', target, {}, undefined, idempotencyKey) });
+  };
   const subscription = (s: Record<string, unknown>, op: string, title: string) => {
-    setFeed(''); run(title, 'POST', `/api/v1/webhooks/subscriptions/${s.id}/${op}`, {}, op === 'rotate-secret' ? { overlap_s: 0 } : undefined);
+    setFeed('');
+    const target = `/api/v1/webhooks/subscriptions/${s.id}/${op}`;
+    if (op !== 'rotate-secret') { run(title, 'POST', target); return; }
+    // Omission follows the service default; an explicit zero must survive request mapping.
+    let overlap: number | undefined;
+    act({ title,
+      impact: <div className="col gap8">
+        <span>{t('请求只使用你提供的服务凭据；管理员会话不带来任何业务数据权限。')}</span>
+        <span>{t('新签名密钥只显示一次。重叠期内投递同时携带新旧签名，请在此期间更新接收端；选择「立即失效」后，后续投递只使用新密钥签名。')}</span>
+        <label className="field">{t('签名密钥重叠期')}
+          <select className="input" defaultValue="" onChange={e => { overlap = e.target.value === '' ? undefined : Number(e.target.value); }}>
+            <option value="">{t('默认（24 小时）')}</option>
+            <option value="0">{t('立即失效')}</option>
+            <option value="600">{t('10 分钟')}</option>
+            <option value="3600">{t('1 小时')}</option>
+            <option value="86400">{t('24 小时')}</option>
+          </select>
+        </label>
+        <code style={{ overflowWrap: 'anywhere' }}>POST {target}</code>
+      </div>,
+      run: reason => perform(reason, 'POST', target, {}, overlap === undefined ? {} : { overlap_s: overlap }) });
   };
   return <section className="card card-b col gap12">
     <h2>{webhooks ? t('Webhook 订阅与投递') : t('受限请求调试')}</h2>
@@ -55,7 +89,7 @@ export function Requests({ act, webhooks }: { act: (action: Action) => void; web
       </article>)}
       {feed === 'deliveries' && items.map(item => <article className="api-platform-record row gap8 wrap" key={String(item.id)}>
         <code>{String(item.id)}</code><span>{String(item.status)}</span><span>{t('尝试次数')} · {String(item.attempts)}</span><span>{String(item.last_code ?? '')}</span>
-        <button className="btn" onClick={() => { setFeed(''); run(t('重新投递'), 'POST', `/api/v1/webhooks/subscriptions/${selectedSid}/deliveries/${item.id}/redeliver`); }}>{t('重新投递')}</button>
+        <button className="btn" onClick={() => redeliver(item)}>{t('重新投递')}</button>
       </article>)}
       {cursor && <button className="btn" onClick={() => run(t('下一页'), 'GET', feed === 'events' ? '/api/v1/events' : `/api/v1/webhooks/subscriptions/${selectedSid}/deliveries`, { limit: 25, cursor })}>{t('下一页')}</button>}
     </> : <>

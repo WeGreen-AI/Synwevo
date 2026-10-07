@@ -15,7 +15,7 @@ import urllib.parse
 import httpx
 
 from synwevo_core.errors import ServiceError
-from synwevo_core.api_platform import enforce_principal
+from synwevo_core.api_platform import DOCS_REDELIVERY_PATH, enforce_principal, request_idempotency_key
 from synwevo_core.machine import MachineAuth
 from synwevo_core.oidc import issuer
 
@@ -33,7 +33,7 @@ READ_ROUTES = (
 WEBHOOK_ROUTES = {
     "POST": (r"/api/v1/webhooks/subscriptions",
              rf"/api/v1/webhooks/subscriptions/{IDENTIFIER}/(pause|resume|rotate-secret)",
-             rf"/api/v1/webhooks/subscriptions/{IDENTIFIER}/deliveries/{IDENTIFIER}/redeliver"),
+             DOCS_REDELIVERY_PATH),
     "PATCH": (rf"/api/v1/webhooks/subscriptions/{IDENTIFIER}",),
     "DELETE": (rf"/api/v1/webhooks/subscriptions/{IDENTIFIER}",),
 }
@@ -170,7 +170,9 @@ class DocsControlPlane:
         return row["tenant"] if row else None
 
     async def request(self, credential: str, method: str, path: str,
-                      query: dict, body: dict | None) -> dict:
+                      query: dict, body: dict | None, *, idempotency_key: str | None = None) -> dict:
+        if idempotency_key is not None:
+            idempotency_key = request_idempotency_key(method, path, idempotency_key)
         if not isinstance(credential, str) or not 10 <= len(credential) <= 4096 or any(
                 c.isspace() for c in credential):
             raise ServiceError(400, "credential_required", "请输入独立的服务访问令牌或访问密钥")
@@ -204,6 +206,9 @@ class DocsControlPlane:
         # ASGITransport never opens a socket; base_url is an internal scope value only.
         # Each call constructs an empty cookie jar and sends ONLY the explicit bearer.
         transport = httpx.ASGITransport(app=self.api, raise_app_exceptions=False)
+        headers = {"Authorization": f"Bearer {credential}"}
+        if idempotency_key is not None:
+            headers["Idempotency-Key"] = idempotency_key
         try:
             # httpx transport timeouts do not put a deadline on an in-process ASGI app.
             # Do not hold a Store transaction across this await.
@@ -211,7 +216,7 @@ class DocsControlPlane:
                 async with httpx.AsyncClient(transport=transport, base_url="http://control-plane.internal",
                                             follow_redirects=False, timeout=15) as client:
                     async with client.stream(method, path, params=query, json=body,
-                                             headers={"Authorization": f"Bearer {credential}"}) as response:
+                                             headers=headers) as response:
                         chunks, size = [], 0
                         async for chunk in response.aiter_bytes():
                             size += len(chunk)
@@ -224,14 +229,25 @@ class DocsControlPlane:
                             raise ServiceError(502, "invalid_api_response", "机器接口没有返回 JSON 响应") from None
                         # Recheck after the real handler completed: revocation or narrowing while
                         # awaiting it must prevent delivery of data obtained under old authority.
-                        current = machine.verify(f"Bearer {credential}")
-                        if (current.get("tenant") != principal.get("tenant") or
-                                current.get("kind") != principal.get("kind") or
-                                not set(principal.get("scopes") or ()) <= set(current.get("scopes") or ())):
-                            raise ServiceError(403, "credential_authority_changed", "服务凭据权限已改变，请重新请求")
+                        with machine.store.tx():
+                            current = machine.verify(f"Bearer {credential}")
+                            if (current.get("tenant") != principal.get("tenant") or
+                                    current.get("kind") != principal.get("kind") or
+                                    not set(principal.get("scopes") or ()) <= set(current.get("scopes") or ())):
+                                raise ServiceError(403, "credential_authority_changed", "服务凭据权限已改变，请重新请求")
+                            if idempotency_key is not None:
+                                # HTTP dispatch may have outlived a subscription deletion, too.
+                                # Conflict metadata carries the same protected receipt id.
+                                rid = data.get("id") if response.status_code == 202 else None
+                                error = data.get("error")
+                                if response.status_code == 409 and isinstance(error, dict) and error.get("code") == "idempotency_conflict":
+                                    rid = (error.get("details") or {}).get("resource_id")
+                                if rid:
+                                    from .webhooks import Subscriptions
+                                    Subscriptions(machine.store).replay_delivery(current["tenant"], rid)
                         return {"status": response.status_code, "data": data,
                                 "request_id": response.headers.get("X-Request-ID"),
                                 "headers": {k: v for k, v in response.headers.items()
-                                            if k.lower() in ("etag", "retry-after", "x-request-id")}}
+                                            if k.lower() in ("etag", "retry-after", "x-request-id", "idempotent-replayed")}}
         except TimeoutError:
             raise ServiceError(504, "debug_request_timeout", "机器接口请求超时，请稍后重试") from None

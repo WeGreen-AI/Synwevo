@@ -7,13 +7,26 @@ import type { IncomingHttpHeaders } from 'node:http';
 import {
   ApiKey, Client, WorkspaceClient, ConflictError, credentialsFromEnv, isTerminal, SUCCESS_STATUSES, verifyWebhook,
   WaitTimeoutError, WebhookVerificationError,
-  type Artifact, type Job, type JobStatus, type SourceFile, type WebhookEvent,
+  type Artifact, type Delivery, type Job, type JobStatus, type SourceFile, type WebhookEvent,
   type JobOptions, type RawJobCounts, type JobRun, type JobItem, type JobEvent, type Page, type Upload,
 } from '@synwevo/docs-sdk';
 // The vendored-copy import from the README resolves to the same declarations.
 import * as vendored from '../synwevo-docs.mjs';
 
 const sameClient: typeof Client = vendored.Client;
+
+export async function redeliveryCompatibility(client: Client): Promise<Delivery> {
+  await client.redeliver('subscription', 'delivery');
+  await client.redeliver('subscription', 'delivery', {});
+  const receipt = await client.redeliver('subscription', 'delivery', { idempotencyKey: 'types:redelivery' });
+  const replayed: boolean = receipt.$meta.replayed;
+  // @ts-expect-error explicit keys must be strings
+  await client.redeliver('subscription', 'delivery', { idempotencyKey: 123 });
+  // @ts-expect-error retries are controlled by the transport, not a redelivery option
+  await client.redeliver('subscription', 'delivery', { retry: true });
+  console.log(replayed);
+  return receipt;
+}
 
 export async function uploadBoundary(client: Client, filePath: string): Promise<Upload> {
   const upload = await client.resumableUpload(filePath, { purpose: 'source' });

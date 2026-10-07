@@ -1,0 +1,67 @@
+{
+  "checked_at": "2026-10-07T12:12:08.477792+00:00",
+  "base_sha": "e70929f5be148449c327b5c97d019069a7564a9d",
+  "status": "local verified, not yet committed or deployed",
+  "source_sha256": {
+    "apps/docs/sdk/python/synwevo_docs_sdk/client.py": "be6767bdf7be20f46654f39dc0474ea8554141325c59d7d3b14d3a3799364d08",
+    "apps/docs/sdk/python/tests/test_redelivery.py": "910a914def8a4aa0f402aa40f14175dfed0f299fcc188df2547fa42acb7d099f",
+    "apps/docs/sdk/typescript/synwevo-docs.d.ts": "9bfd8cb149cad830f55b51ae843ce8e991e0ddaeb0f80cc54bf91ac579304b33",
+    "apps/docs/sdk/typescript/synwevo-docs.mjs": "b1f34c72f57c737d24ac9128cd95d2d397381f30e696a4693e54400bcd05ec50",
+    "apps/docs/sdk/typescript/test/redelivery.test.mjs": "bf67b2a4d72b5d1ff426100684d24df9da225a296fcfaa40d465d04324f2fc26",
+    "apps/docs/sdk/typescript/test/types-check.ts": "1308db467bb3b3f5140bf656ea2d45430667a6c931a438eb77522d5726a32880",
+    "apps/docs/synwevo_docs/api/v1_webhooks.py": "bc084965fc9e1119221c46667b747526277cd467417e6b845dfff2d533323ef0",
+    "apps/docs/synwevo_docs/control_plane.py": "5ea45b54577ac31f0e1478f78fb860b259e714ba98b7702ed7eb62248841895c",
+    "apps/docs/synwevo_docs/webhooks.py": "bba51feee33a762a80ca05e2202c08081af16c171e057466c47031c8224021ea",
+    "apps/docs/tests/test_webhook_redelivery_idempotency.py": "b00524048026e28525d942f8bf10ac9143c386ac583dab3138aee520441b83f5",
+    "apps/messages/tests/test_unused_attachments.py": "9adb79f8338a2dc37df62f6f43e99f28fe431a4b6e2a0dc85e5d755335d40bcd",
+    "apps/messages/web/src/messages.messages.ts": "163db2636a7b3f5f61341a14df4ab0e6a7587144e63d1b556367e32b1a6d431d",
+    "packages/core/synwevo_core/api_platform.py": "79e85a44d58e22e4bf9e426d882d63a3305212cca3579ae07040788cc38bce4e",
+    "packages/core/synwevo_core/messaging.py": "36030fab75b3a7870843432282bec5072190fe70e02bcb482f2a778c03de94e0",
+    "packages/core/synwevo_core/messaging_bridge.py": "1c6fae7a76ca76e54b9c88c7d5b48d2e40245f34c977a3a872058424dea31f74",
+    "services/identity/synwevo_identity/api_platform.py": "bb032a3bc90634b09b89c1d3670d5dca95af8dd64ebac3b253c7ed6820494fb5",
+    "services/identity/web/src/pages/api-platform.messages.ts": "94030038c04b14f736a212e47e6856d27e27da212c1ac8f53f8608944e464876",
+    "services/identity/web/src/pages/apiplatform/Requests.tsx": "7db5ce00d8bdf94835522f8242ceff430996cec52205c070558aa7f671a3a5d7",
+    "services/identity/web/src/pages/apiplatform/common.tsx": "ab169fbbe3b86c19a2a92d4ecd4cbc2aa952cb19aac40a723925aee8b265a6d1",
+    "services/identity/web/tests/api-platform-request.test.mjs": "59bc5d1246b98f2f84505a6e8a6190082ffac0b954f1101ff1591deab0fd069b",
+    "tests/integration/browser_webhook_overlap.py": "6c59c29f726bcea0451984d8d483c7bb56b64cbfb5d675b73764fec6c3a838c2",
+    "tests/integration/browser_webhook_redelivery.py": "2191967ce2622d20e7c82115310e5de79d5f9a09ff20a566008ee266150f1d6c",
+    "tests/integration/test_api_platform_redelivery_idempotency.py": "1b79f45d967976a029e5fc8fa4f8469b3889c2cef2a4fa50eae1c7d138459880"
+  },
+  "python_regressions": {
+    "backend_integration": {
+      "tests": "187",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "81.716"
+    },
+    "attachment_and_upgrade": {
+      "tests": "13",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.273"
+    },
+    "generated_contract": {
+      "tests": "9",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "4.730"
+    }
+  },
+  "frontend_tests": {
+    "passed": 500,
+    "failed": 0,
+    "skipped": 0
+  },
+  "sdk": {
+    "python_unittest_passed": 45,
+    "typescript_passed": 34,
+    "typescript_types": "passed"
+  },
+  "checks": "root typecheck/build, six guards, diff whitespace passed",
+  "browser": "real isolated composed server; three locales; reauth and lost committed response retry reuse key; fresh action new key; D4 default/zero/cancel/reset; keyboard/reduced-motion/1280/390; no page exceptions",
+  "visual_review": "parent inspected desktop Simplified Chinese and 390px English/Traditional Chinese confirmation screenshots; controls/text readable",
+  "production_limit": "only readonly predeployment check; no model/payment/message or webhook replay in production"
+}

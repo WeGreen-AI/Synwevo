@@ -1,0 +1,135 @@
+{
+  "head": "e70929f5be148449c327b5c97d019069a7564a9d",
+  "worktree": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing",
+  "python": "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+  "python_version": "3.12.6",
+  "node_version": "v23.6.1",
+  "status": "D20 frontend frozen for coordinator final build; D4 compatibility and D20 real-backend browser verification passed; no commit or deployment",
+  "changed_files": [
+    "services/identity/web/src/pages/apiplatform/Requests.tsx",
+    "services/identity/web/src/pages/apiplatform/common.tsx",
+    "services/identity/web/src/pages/api-platform.messages.ts",
+    "services/identity/web/tests/api-platform-request.test.mjs",
+    "tests/integration/browser_webhook_redelivery.py"
+  ],
+  "sha256": {
+    "services/identity/web/src/pages/apiplatform/Requests.tsx": "7db5ce00d8bdf94835522f8242ceff430996cec52205c070558aa7f671a3a5d7",
+    "services/identity/web/src/pages/apiplatform/common.tsx": "ab169fbbe3b86c19a2a92d4ecd4cbc2aa952cb19aac40a723925aee8b265a6d1",
+    "services/identity/web/src/pages/api-platform.messages.ts": "94030038c04b14f736a212e47e6856d27e27da212c1ac8f53f8608944e464876",
+    "services/identity/web/tests/api-platform-request.test.mjs": "59bc5d1246b98f2f84505a6e8a6190082ffac0b954f1101ff1591deab0fd069b",
+    "tests/integration/browser_webhook_redelivery.py": "2191967ce2622d20e7c82115310e5de79d5f9a09ff20a566008ee266150f1d6c"
+  },
+  "commands": [
+    {
+      "command": "node --test services/identity/web/tests/api-platform-request.test.mjs services/identity/web/tests/refusals.test.mjs",
+      "log": "/private/tmp/synwevo-d20-ui-final-tests.log",
+      "result": "13 passed (4 request mapping + 9 refusal catalog), 0 skipped"
+    },
+    {
+      "command": "npm run typecheck -w @synwevo/account-web",
+      "log": "/private/tmp/synwevo-d20-ui-typecheck.log",
+      "result": "passed"
+    },
+    {
+      "command": "npm run build -w @synwevo/account-web",
+      "log": "/private/tmp/synwevo-d20-ui-build.log",
+      "result": "passed"
+    },
+    {
+      "command": "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python scripts/check_boundaries.py",
+      "log": "/private/tmp/synwevo-d20-boundaries.log",
+      "result": "passed"
+    },
+    {
+      "command": "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python scripts/check_design.py",
+      "log": "/private/tmp/synwevo-d20-design.log",
+      "result": "passed"
+    },
+    {
+      "command": "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python scripts/check_component_names.py",
+      "log": "/private/tmp/synwevo-d20-component-names.log",
+      "result": "passed"
+    },
+    {
+      "command": "PYTHONPATH=\"$PWD/packages/core:$PWD/packages/auth-client/python:$PWD/services/identity:$PWD/apps/docs:$PWD/apps/portal:$PWD/apps/messages:$PWD/apps/suite:$PWD/infra/server\" /private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python tests/integration/browser_webhook_redelivery.py --artifacts /private/tmp/synwevo-d20-d4-browser-final --data /private/tmp/synwevo-d20-d4-fixture-final",
+      "log": "/private/tmp/synwevo-d20-d4-browser-final.log",
+      "result": "passed: 3 locales; 12 D20 attempts/6 new deliveries; 6 D4 rotations (default and zero per locale)/3 cancellations; 0 page errors"
+    }
+  ],
+  "evidence": "/private/tmp/synwevo-d20-d4-browser-final/verification.json",
+  "screenshots": "/private/tmp/synwevo-d20-d4-browser-final/redeliver-{zh-Hans,en,zh-Hant}-{1280,390}.png",
+  "cleanup": {
+    "test_pid": 45355,
+    "server_pid": 45355,
+    "server_thread_stopped": true,
+    "browser_closed": true,
+    "observed_child_pids": [
+      45374,
+      45375,
+      45407,
+      45408,
+      45409,
+      45412,
+      45414,
+      45418,
+      45419,
+      45449,
+      45450,
+      45452,
+      45453,
+      45482,
+      45483,
+      45485,
+      45486
+    ],
+    "remaining_owned_children": [],
+    "retained_fixture_data": "/private/tmp/synwevo-d20-d4-fixture-final"
+  },
+  "d4": "Existing rotation UI and browser_webhook_overlap.py preserved. On latest parent instruction, default/zero/cancel/reset were checked again using NEW /private/tmp/synwevo-d20-d4-fixture-final only; no old DB reuse.",
+  "new_refusal_codes": [],
+  "new_translation_texts": [
+    "将为这条事件安排一次新的投递。若响应中断，请在此确认框内重试；关闭后重新发起会创建另一次投递。",
+    "该接口或方法不在调试允许范围内"
+  ],
+  "limits": [
+    "Chromium only; browser test is opt-in and needs built account-web plus composed backend.",
+    "The key belongs to an open confirmation only; closing it or reloading ends that action.",
+    "Workers remained stopped: verified queuing/idempotent request retry, no external webhook delivery.",
+    "Run browser test again only with new --data and --artifacts paths; do not reuse retained fixture DB."
+  ],
+  "first_d20_run_cleanup": {
+    "test_pid": 41309,
+    "server_pid": 41309,
+    "server_thread_stopped": true,
+    "browser_closed": true,
+    "observed_child_pids": [
+      41336,
+      41349,
+      41356,
+      41357,
+      41358,
+      41361,
+      41363,
+      41395,
+      41396,
+      41399,
+      41400,
+      41402,
+      41403,
+      41430,
+      41431,
+      41433,
+      41434
+    ],
+    "remaining_owned_children": [],
+    "retained_fixture_data": "/private/tmp/synwevo-d20-fixture-first"
+  },
+  "resolved_findings": [
+    {
+      "code": "request_not_allowed",
+      "finding": "Existing backend error text became reachable through the new core validator and lacked console localization.",
+      "resolution": "Added Simplified Chinese source, English and Traditional Chinese entry to api-platform.messages.ts; final 13 tests passed.",
+      "before_log": "/private/tmp/synwevo-d20-ui-refusals.log"
+    }
+  ]
+}

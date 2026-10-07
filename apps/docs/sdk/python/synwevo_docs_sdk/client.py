@@ -1206,9 +1206,15 @@ class Client:
     def get_webhook_delivery(self, subscription_id: str, delivery_id: str) -> dict:
         return self._get(f"{API}/webhooks/subscriptions/{_q(subscription_id)}/deliveries/{_q(delivery_id)}")
 
-    def redeliver_webhook(self, subscription_id: str, delivery_id: str) -> dict:
+    def redeliver_webhook(self, subscription_id: str, delivery_id: str, *,
+                          idempotency_key: str | None = None) -> dict:
+        """Use a fresh key per call, reused by transport retries, or supply a stable key.
+
+        Requires a Docs server supporting redelivery idempotency; an unsupported-key
+        error is surfaced without retrying the operation without its key.
+        """
         return self._json("POST", f"{API}/webhooks/subscriptions/{_q(subscription_id)}/deliveries/"
-                                  f"{_q(delivery_id)}/redeliver", retry_safe=False)
+                                  f"{_q(delivery_id)}/redeliver", idempotency_key=self._key(idempotency_key))
 
     # ================================================================== workspace event feed
     def events_page(self, *, cursor: str | None = None, types: list[str] | None = None, limit: int | None = None) -> dict:

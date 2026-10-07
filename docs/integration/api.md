@@ -526,7 +526,10 @@ SYNWEVO_DOCS_WEBHOOK_EVENTS=job.completed,job.completed_with_errors,job.failed,j
 * DNS、连接、TLS 与响应头共用默认 15 秒总期限；每轮有界、公平访问不同接收器。暂停/撤销及恢复栅栏在发送前重查，在途结果不能复活已丢弃的投递。
 * 解析回调域名的解析器由同一进程内的所有应用共用：每个工作空间（部署级回调则每个地址）同时最多 2 个解析，超时放弃的解析在真正结束前仍然计入。创建、修改地址、恢复时的地址检查，同一工作空间一次一个；另有检查在进行、本空间仍有解析未结束、或解析器一时都被占用时，应答 429 `destination_check_busy`（带 `Retry-After`）：这不是对地址的判断，什么都没有改变，稍后原样重试即可。
 * 本服务自身的故障不算在接收端头上：投递时解析器一时都被占用，不计入尝试次数，也不影响订阅的健康度（连续失败与三天后停用），投递记录为 `resolver_busy`，约 15 秒后再试；ping 则就此结束并记为 `resolver_busy`。
-* 创建订阅、轮换签名密钥、ping、重投暂不提供持久幂等，携带 `Idempotency-Key` 明确返回 `400 idempotency_not_supported`；不要对这些操作自动重试造成重复副作用。
+* 创建订阅、轮换签名密钥、ping 不提供持久幂等，携带 `Idempotency-Key` 明确返回 `400 idempotency_not_supported`；不要自动重试这些操作。创建/轮换返回的一次性明文密钥不会写入重放缓存。
+* Docs 重投 `POST /api/v1/webhooks/subscriptions/{sid}/deliveries/{did}/redeliver` 支持可选 `Idempotency-Key`（1–255个可打印ASCII字符）。同一工作空间、调用方和键，在保留期内以相同参数重试，返回最初的 `202` 收据及 `Idempotent-Replayed: true`，只创建一条新投递；同一键改用其他订阅/原投递返回 `409 idempotency_conflict`。不带键的既有调用保持每次创建新投递的语义。
+* 重投收据与业务写入在同一事务保存，提交后唤醒投递器；当前机器权限和收据实际所属资源在每次请求时复核。撤权或资源删除后不能从缓存读出旧结果。订阅暂停或超过7天重投窗口会阻止新的重投，但不阻止有权调用方读取已受理收据。收据保存原状态；要查当前投递结果，请调用其详情GET，不将重放响应中的 `pending` 当成最新状态。
+* 重投幂等沿用默认24小时的保留策略（`SYNWEVO_DOCS_IDEMPOTENCY_TTL_HOURS`）；超过保留期不能依赖旧键阻止新操作，应先查询原投递。同一次用户确认及SDK传输重试应保留同一键，新意图使用新键。Python/TypeScript Docs SDK的重投方法默认每次方法调用生成新键，也接受显式键；应用跨进程恢复时自行保存并复用该键。新版SDK需要支持本契约的服务端；旧端若拒绝幂等头，SDK不会去掉头后盲目重试。Suite Webhook 是不同接口，其契约见 [Suite API](suite-api.md)。
 * 安全：默认要求 https；回调地址每次投递前解析，解析到内网地址时拒绝，除非在 `SYNWEVO_DOCS_WEBHOOK_ALLOW_PRIVATE` 白名单中；不跟随跳转。
 * 回调失败不影响产物查询与下载。
 

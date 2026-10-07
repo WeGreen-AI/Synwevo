@@ -1,0 +1,103 @@
+{
+  "synthetic_only": true,
+  "sqlite_version": "3.53.2",
+  "source_sha256": "36030fab75b3a7870843432282bec5072190fe70e02bcb482f2a778c03de94e0",
+  "query": "DELETE FROM message_attachments WHERE message_id IS NULL AND expires_at<=? AND id IN (SELECT id FROM message_attachments WHERE message_id IS NULL AND expires_at<=? ORDER BY expires_at,id LIMIT ?)",
+  "existing_indexes": [
+    {
+      "name": "sqlite_autoindex_message_attachments_1",
+      "sql": null
+    },
+    {
+      "name": "ix_message_attachments_conv",
+      "sql": "CREATE INDEX ix_message_attachments_conv ON message_attachments(conversation_id, created_at)"
+    },
+    {
+      "name": "ix_message_attachments_unused_expiry",
+      "sql": "CREATE INDEX ix_message_attachments_unused_expiry\n  ON message_attachments(expires_at, id) WHERE message_id IS NULL"
+    }
+  ],
+  "results": [
+    {
+      "label": "store_index_300k_history_no_expired",
+      "rows": 300000,
+      "median_ms": 0.017042038962244987,
+      "ms": [
+        0.0475000124424696,
+        0.017042038962244987,
+        0.013250159099698067
+      ],
+      "vm_steps_floor_1000": [
+        0,
+        0,
+        0
+      ],
+      "deleted_rolled_back": [
+        0,
+        0,
+        0
+      ],
+      "plan": [
+        {
+          "id": 4,
+          "parent": 0,
+          "notused": 92,
+          "detail": "SEARCH message_attachments USING INDEX sqlite_autoindex_message_attachments_1 (id=?)"
+        },
+        {
+          "id": 8,
+          "parent": 0,
+          "notused": 0,
+          "detail": "LIST SUBQUERY 1"
+        },
+        {
+          "id": 13,
+          "parent": 8,
+          "notused": 193,
+          "detail": "SEARCH message_attachments USING INDEX ix_message_attachments_unused_expiry (expires_at<?)"
+        }
+      ]
+    },
+    {
+      "label": "store_index_300k_history_150_expired",
+      "rows": 300150,
+      "median_ms": 0.38954196497797966,
+      "ms": [
+        0.43779192492365837,
+        0.38954196497797966,
+        0.35316613502800465
+      ],
+      "vm_steps_floor_1000": [
+        4000,
+        3000,
+        4000
+      ],
+      "deleted_rolled_back": [
+        100,
+        100,
+        100
+      ],
+      "plan": [
+        {
+          "id": 4,
+          "parent": 0,
+          "notused": 92,
+          "detail": "SEARCH message_attachments USING INDEX sqlite_autoindex_message_attachments_1 (id=?)"
+        },
+        {
+          "id": 8,
+          "parent": 0,
+          "notused": 0,
+          "detail": "LIST SUBQUERY 1"
+        },
+        {
+          "id": 13,
+          "parent": 8,
+          "notused": 193,
+          "detail": "SEARCH message_attachments USING INDEX ix_message_attachments_unused_expiry (expires_at<?)"
+        }
+      ]
+    }
+  ],
+  "store_bytes": 80588800
+}

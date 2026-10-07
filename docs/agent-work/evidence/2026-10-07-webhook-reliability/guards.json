@@ -1,0 +1,52 @@
+{
+  "boundaries": {
+    "exit_code": 0,
+    "seconds": 4.186,
+    "command": [
+      "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+      "scripts/check_boundaries.py"
+    ]
+  },
+  "brand": {
+    "exit_code": 0,
+    "seconds": 0.338,
+    "command": [
+      "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+      "scripts/check_brand.py"
+    ]
+  },
+  "design": {
+    "exit_code": 0,
+    "seconds": 0.277,
+    "command": [
+      "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+      "scripts/check_design.py"
+    ]
+  },
+  "component-names": {
+    "exit_code": 0,
+    "seconds": 1.771,
+    "command": [
+      "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+      "scripts/check_component_names.py"
+    ]
+  },
+  "brand-assets": {
+    "exit_code": 0,
+    "seconds": 1.086,
+    "command": [
+      "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+      "scripts/brand_assets.py",
+      "--check"
+    ]
+  },
+  "app-icons": {
+    "exit_code": 0,
+    "seconds": 0.441,
+    "command": [
+      "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+      "scripts/app_icon_assets.py",
+      "--check"
+    ]
+  }
+}

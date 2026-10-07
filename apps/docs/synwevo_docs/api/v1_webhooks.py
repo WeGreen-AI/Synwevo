@@ -15,6 +15,7 @@ from fastapi import APIRouter, Body, Request, Response
 
 from synwevo_core import authority
 from synwevo_core.errors import ServiceError
+from synwevo_core.idempotency import Idempotency
 
 from .. import webhooks as W
 
@@ -64,7 +65,7 @@ def build_router(app_, views, jobs, auth) -> APIRouter:
     def reject_idempotency(request: Request) -> None:
         # Secrets are returned once, never put in the generic plaintext replay cache. Until
         # these operations have a durable secret-safe replay contract, reject the header
-        # explicitly rather than silently duplicating a subscription/rotation/delivery.
+        # explicitly rather than silently duplicating a subscription/rotation/ping.
         if "Idempotency-Key" in request.headers:
             raise ServiceError(400, "idempotency_not_supported",
                                "此 Webhook 操作不支持 Idempotency-Key", {"field": "Idempotency-Key"})
@@ -134,12 +135,23 @@ def build_router(app_, views, jobs, auth) -> APIRouter:
         _, tenant = manage(request)
         return service(request).delivery(tenant, sid, did)
 
-    @r.post("/webhooks/subscriptions/{sid}/deliveries/{did}/redeliver", status_code=202, openapi_extra=_ox("admin"),
+    @r.post("/webhooks/subscriptions/{sid}/deliveries/{did}/redeliver", status_code=202, openapi_extra=_ox("admin", idempotent=True),
             summary="重新投递（新记录，webhook-id 不变；限 7 天内的事件）")
     def redeliver(request: Request, sid: str, did: str):
         _, tenant = manage(request)
-        reject_idempotency(request)
-        return service(request).redeliver(tenant, sid, did)
+        with store.tx():
+            # Gateway admission may precede a concurrent revocation. Re-verify the actual
+            # bearer under the writer lock, for new work AND cached/conflict presentation.
+            p = auth.verify(request.headers.get("Authorization"))
+            auth.require(p, "admin")
+            if workspace(p) != tenant:
+                raise ServiceError(403, "credential_authority_changed", "服务凭据权限已改变，请重新请求")
+            request.state.principal = p
+            svc = service(request)
+            return Idempotency(store).run(request,
+                "/api/v1/webhooks/subscriptions/{sid}/deliveries/{did}/redeliver", {"sid": sid, "did": did},
+                lambda: svc.redeliver(tenant, sid, did),
+                replay_check=lambda out: svc.replay_delivery(tenant, out["id"]), status=202)
 
     # ------------------------------------------------------------ event feed
     @r.get("/events", summary="本工作空间的事件流（游标分页；id 与 Webhook 的 webhook-id 相同）", openapi_extra=_ox("read"))

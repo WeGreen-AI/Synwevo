@@ -1,0 +1,27 @@
+{
+  "test_pid": 45355,
+  "server_pid": 45355,
+  "server_thread_stopped": true,
+  "browser_closed": true,
+  "observed_child_pids": [
+    45374,
+    45375,
+    45407,
+    45408,
+    45409,
+    45412,
+    45414,
+    45418,
+    45419,
+    45449,
+    45450,
+    45452,
+    45453,
+    45482,
+    45483,
+    45485,
+    45486
+  ],
+  "remaining_owned_children": [],
+  "retained_fixture_data": "/private/tmp/synwevo-d20-d4-fixture-final"
+}

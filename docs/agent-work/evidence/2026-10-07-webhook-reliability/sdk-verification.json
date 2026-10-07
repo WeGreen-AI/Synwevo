@@ -1,0 +1,91 @@
+{
+  "runtime": {
+    "python": "3.12.6 (main, Sep  6 2024, 19:03:47) [Clang 16.0.0 (clang-1600.0.26.3)]",
+    "executable": "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+    "sdk_import": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing/apps/docs/sdk/python/synwevo_docs_sdk/__init__.py",
+    "httpx": "0.28.1",
+    "node": "v23.6.1",
+    "typescript": "Version 7.0.2"
+  },
+  "environment": {
+    "scrubbed": [
+      "SYNWEVO_*",
+      "DOCWEAVE_*",
+      "PYTHONPATH",
+      "PYTHONHOME",
+      "PYTEST_ADDOPTS"
+    ],
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "source_before": {
+    "head": "e70929f5be148449c327b5c97d019069a7564a9d",
+    "aggregate_sha256": "18c12870a2101e7233cb33afcd951ae93482e48f4707b85afd101c940ffa4192"
+  },
+  "source_after": {
+    "head": "e70929f5be148449c327b5c97d019069a7564a9d",
+    "aggregate_sha256": "18c12870a2101e7233cb33afcd951ae93482e48f4707b85afd101c940ffa4192"
+  },
+  "sdk_sources_unchanged_during_tests": true,
+  "results": {
+    "python-sdk": {
+      "command": [
+        "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "apps/docs/sdk/python/tests",
+        "-v"
+      ],
+      "cwd": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing",
+      "exit_code": 0,
+      "seconds": 21.05,
+      "log": "/private/tmp/synwevo-d20-sdk-PWyx9h/python-sdk.log"
+    },
+    "typescript-sdk": {
+      "command": [
+        "node",
+        "--test",
+        "apps/docs/sdk/typescript/test/client.test.mjs",
+        "apps/docs/sdk/typescript/test/redelivery.test.mjs",
+        "apps/docs/sdk/typescript/test/suite.test.mjs"
+      ],
+      "cwd": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing",
+      "exit_code": 0,
+      "seconds": 0.21,
+      "log": "/private/tmp/synwevo-d20-sdk-PWyx9h/typescript-sdk.log"
+    },
+    "typescript-types": {
+      "command": [
+        "node_modules/.bin/tsc",
+        "--noEmit",
+        "--strict",
+        "--module",
+        "nodenext",
+        "--moduleResolution",
+        "nodenext",
+        "--target",
+        "es2022",
+        "apps/docs/sdk/typescript/test/types-check.ts"
+      ],
+      "cwd": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing",
+      "exit_code": 0,
+      "seconds": 0.38,
+      "log": "/private/tmp/synwevo-d20-sdk-PWyx9h/typescript-types.log"
+    },
+    "diff-check": {
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "--",
+        "apps/docs/sdk/python",
+        "apps/docs/sdk/typescript"
+      ],
+      "cwd": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing",
+      "exit_code": 0,
+      "seconds": 0.02,
+      "log": "/private/tmp/synwevo-d20-sdk-PWyx9h/diff-check.log"
+    }
+  }
+}

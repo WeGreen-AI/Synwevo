@@ -1051,8 +1051,14 @@ export class Client {
   deliveries(sid, { status } = {}) {
     return this.paginate(`/webhooks/subscriptions/${encodeURIComponent(sid)}/deliveries`, { status });
   }
-  redeliver(sid, did) {
-    return this.requestJson('POST', `/webhooks/subscriptions/${encodeURIComponent(sid)}/deliveries/${encodeURIComponent(did)}/redeliver`);
+  /** Fresh key per call, reused by retries. Requires server redelivery idempotency; no unkeyed fallback. */
+  redeliver(sid, did, { idempotencyKey = randomUUID() } = {}) {
+    if (typeof idempotencyKey !== 'string' || !idempotencyKey || idempotencyKey.length > 255
+      || /[^\x20-\x7e]/.test(idempotencyKey)) {
+      throw new ValidationError('idempotencyKey 必须是 1–255 个可打印 ASCII 字符（建议 UUID）', { field: 'Idempotency-Key' });
+    }
+    return this.requestJson('POST', `/webhooks/subscriptions/${encodeURIComponent(sid)}/deliveries/${encodeURIComponent(did)}/redeliver`,
+      { idempotencyKey });
   }
   /** The workspace event feed (same ids as webhook-id), from `cursor` to the current end. */
   events({ cursor, types } = {}) {

@@ -1,0 +1,138 @@
+{
+  "task": "D20 webhook redelivery idempotency backend",
+  "status": "backend_frozen_ready_for_parent_contract_export_and_independent_review",
+  "worktree": "/Users/lihiko/repo/wegreen/synwevo/.claude/worktrees/agent-billing",
+  "head_at_start": "e70929f5be148449c327b5c97d019069a7564a9d",
+  "owned_files": [
+    "apps/docs/synwevo_docs/api/v1_webhooks.py",
+    "apps/docs/synwevo_docs/webhooks.py",
+    "apps/docs/synwevo_docs/control_plane.py",
+    "packages/core/synwevo_core/api_platform.py",
+    "services/identity/synwevo_identity/api_platform.py",
+    "apps/docs/tests/test_webhook_redelivery_idempotency.py",
+    "tests/integration/test_api_platform_redelivery_idempotency.py"
+  ],
+  "contract": {
+    "route": "POST /api/v1/webhooks/subscriptions/{sid}/deliveries/{did}/redeliver",
+    "input": "Optional Idempotency-Key, validated by core.idempotency: 1..255 printable ASCII chars. Existing route has no business body parameters.",
+    "fingerprint": "{sid,did}; namespace = current workspace + caller lineage/client identity + POST + route template + key",
+    "success": "202 existing delivery_public response; keyed repeat returns original accepted response bytes and Idempotent-Replayed: true. GET delivery remains the source for current status.",
+    "conflict": "Changed sid/did in same key namespace returns 409 idempotency_conflict only after current cached-result access validation; resource id is error.details.resource_id.",
+    "ttl": "Existing core.idempotency TTL retained (default 24 hours). Pause/7-day event eligibility is not re-applied to a still-cached accepted receipt; after cache TTL, new-work rules apply.",
+    "replay_access": "Reauthenticate raw machine credential under the Store writer; cached delivery id resolves its actual current subscription. Require the same current admin/history permission and tenant as GET delivery; deleted subscription/result or revoked/narrowed credentials refuse. Ignore changed request sid for cached-result access checks.",
+    "atomicity": "New delivery and idempotency claim/response commit or roll back in one Store transaction; response persistence failure leaves neither. Dispatcher.notify runs only after outermost commit and never on replay or rollback.",
+    "unkeyed": "Each request continues to create a new delivery subject to existing active-subscription and 7-day window checks, now inside write transaction.",
+    "console": "Only optional JSON field idempotency_key:string. Shared validation restricts it to POST exact Docs redeliver path; no arbitrary header/URL. Replayed header returned as headers['idempotent-replayed']. Field absent calls adapter with original five positional arguments.",
+    "console_presentation": "After awaited Docs dispatch, recheck current machine authority and actual result id/409 conflict resource id under a transaction before returning data. Existing browser authority recheck retained.",
+    "secret_routes": "Create subscription and rotate-secret still reject Idempotency-Key with 400 idempotency_not_supported; no secret cached.",
+    "openapi": "Redeliver decorator now uses _ox('admin', idempotent=True); generated contract files untouched for parent export."
+  },
+  "risks_addressed": [
+    "Subscription state formerly checked before writer lock",
+    "Notification formerly ran before outer idempotency transaction committed",
+    "Cached response or conflict metadata could be authorized against a new request path instead of actual stored result",
+    "Console awaited response could outlive subscription deletion or credential authority"
+  ],
+  "verification": {
+    "red": {
+      "log": "/private/tmp/synwevo-d20-20261007/red.log",
+      "xml": "/private/tmp/synwevo-d20-20261007/red.xml",
+      "failed": 30,
+      "passed": 2,
+      "seconds": 13.01,
+      "exit_code": 1,
+      "note": "Old product implementation; 32 initial regression cases."
+    },
+    "first_fix": {
+      "log": "/private/tmp/synwevo-d20-20261007/green.log",
+      "xml": "/private/tmp/synwevo-d20-20261007/green.xml",
+      "failed": 1,
+      "passed": 33,
+      "seconds": 10.14,
+      "exit_code": 1,
+      "note": "Added 2 in-flight deletion cases. Remaining failure was test expecting resource_id at wrong HTTP error nesting; corrected to error.details.resource_id."
+    },
+    "conflict_red": {
+      "log": "/private/tmp/synwevo-d20-20261007/conflict-red.log",
+      "xml": "/private/tmp/synwevo-d20-20261007/conflict-red.xml",
+      "failed": 1,
+      "passed": 0,
+      "seconds": 1.07,
+      "exit_code": 1,
+      "note": "Additional deterministic test exposed the same nesting bug in new console conflict-response access recheck; fixed."
+    },
+    "final_targeted": {
+      "log": "/private/tmp/synwevo-d20-20261007/final.log",
+      "xml": "/private/tmp/synwevo-d20-20261007/final.xml",
+      "failed": 0,
+      "passed": 11,
+      "seconds": 5.88,
+      "exit_code": 0,
+      "command": "PYTHONDONTWRITEBYTECODE=1 /private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/bin/python -B -m pytest apps/docs/tests/test_webhook_redelivery_idempotency.py::test_conflict_checks_cached_delivery_subscription_before_disclosing_metadata 'tests/integration/test_api_platform_redelivery_idempotency.py::test_inflight_cached_response_is_withheld_after_service_authority_changes[conflict_deleted]' apps/docs/tests/test_webhook_redelivery.py::test_redelivery_keeps_the_webhook_id apps/docs/tests/test_webhook_redelivery.py::test_redelivery_window_is_seven_days apps/docs/tests/test_webhook_redelivery.py::test_redelivery_needs_admin_scope_and_the_right_workspace apps/docs/tests/test_webhook_subscriptions.py::test_secret_producing_posts_refuse_unsupported_idempotency_before_mutation tests/integration/test_api_platform.py::test_debugger_uses_only_explicit_machine_and_object_scope tests/integration/test_api_platform_races.py::test_debugger_withholds_real_response_after_inflight_authority_change -p no:cacheprovider -o addopts=--import-mode=importlib -vv --tb=short -ra --basetemp=/private/tmp/synwevo-d20-20261007/final-tmp --junitxml=/private/tmp/synwevo-d20-20261007/final.xml > /private/tmp/synwevo-d20-20261007/final.log 2>&1",
+      "note": "Both unresolved/new conflict cases plus 9 existing compatibility cases; no full-suite rerun."
+    },
+    "expected_unique_passed": 44,
+    "expected_new_regressions_passed": 35,
+    "expected_existing_regressions_passed": 9,
+    "boundaries": {
+      "log": "/private/tmp/synwevo-d20-20261007/boundaries.log",
+      "passed": true
+    },
+    "diff_check": {
+      "passed": true,
+      "scope": "Seven D20 owned files"
+    },
+    "warnings": "Existing Starlette/anyio and SWIG deprecation warnings only",
+    "runtime": "Python 3.12.6, pytest 9.1.1, existing isolated venv",
+    "services": "All pytest commands exited; workers and loopback receivers owned by fixtures. No persistent services started.",
+    "verified_unique_passed": 44,
+    "unresolved_cases": []
+  },
+  "untouched": [
+    "D18",
+    "migrations/schema",
+    "SDK (Popper)",
+    "UI (Chandra)",
+    "generated OpenAPI/docs (parent)",
+    "state documents"
+  ],
+  "pending": [
+    "Parent-generated OpenAPI export",
+    "Independent integration review",
+    "SDK and UI owners' corresponding changes"
+  ],
+  "commits_or_deployment": false,
+  "frozen_at_utc": "2026-10-07T11:45:39.068571+00:00",
+  "head_at_freeze": "e70929f5be148449c327b5c97d019069a7564a9d",
+  "files": [
+    {
+      "path": "apps/docs/synwevo_docs/api/v1_webhooks.py",
+      "sha256": "bc084965fc9e1119221c46667b747526277cd467417e6b845dfff2d533323ef0"
+    },
+    {
+      "path": "apps/docs/synwevo_docs/webhooks.py",
+      "sha256": "bba51feee33a762a80ca05e2202c08081af16c171e057466c47031c8224021ea"
+    },
+    {
+      "path": "apps/docs/synwevo_docs/control_plane.py",
+      "sha256": "5ea45b54577ac31f0e1478f78fb860b259e714ba98b7702ed7eb62248841895c"
+    },
+    {
+      "path": "packages/core/synwevo_core/api_platform.py",
+      "sha256": "79e85a44d58e22e4bf9e426d882d63a3305212cca3579ae07040788cc38bce4e"
+    },
+    {
+      "path": "services/identity/synwevo_identity/api_platform.py",
+      "sha256": "bb032a3bc90634b09b89c1d3670d5dca95af8dd64ebac3b253c7ed6820494fb5"
+    },
+    {
+      "path": "apps/docs/tests/test_webhook_redelivery_idempotency.py",
+      "sha256": "b00524048026e28525d942f8bf10ac9143c386ac583dab3138aee520441b83f5"
+    },
+    {
+      "path": "tests/integration/test_api_platform_redelivery_idempotency.py",
+      "sha256": "1b79f45d967976a029e5fc8fa4f8469b3889c2cef2a4fa50eae1c7d138459880"
+    }
+  ],
+  "recovery_patch": "/private/tmp/synwevo-d20-20261007/d20.patch"
+}

@@ -393,6 +393,7 @@ export const messages = {
   "文件「{filename}」被判定为恶意内容，已拒绝": { en: "“{filename}” was identified as malicious and was refused", "zh-Hant": "檔案「{filename}」被判定為惡意內容，已拒絕" },
   "该附件未通过安全检查，已被拒绝并隔离": { en: "This attachment failed the security check and has been rejected and quarantined", "zh-Hant": "這個附件未通過安全檢查，已被拒絕並隔離" },
   "附件不存在或已使用": { en: "This attachment does not exist or has already been sent", "zh-Hant": "附件不存在或已使用" },
+  "未发送的附件已过期，请重新上传": { en: "This unsent attachment has expired. Please upload it again.", "zh-Hant": "未傳送的附件已過期，請重新上傳" },
   "不支持的表情": { en: "This emoji is not supported", "zh-Hant": "不支援的表情" },
   "请选择要转发到的会话": { en: "Choose the conversations to forward to", "zh-Hant": "請選擇要轉發到的會話" },
   "搜索至少需要 2 个字符": { en: "Enter at least 2 characters to search", "zh-Hant": "搜尋至少需要 2 個字元" },

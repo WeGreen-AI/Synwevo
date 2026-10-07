@@ -102,6 +102,10 @@ CREATE TABLE IF NOT EXISTS message_attachments (
   scan TEXT, status TEXT NOT NULL CHECK (status IN ('accepted','rejected')), created_at REAL NOT NULL, expires_at REAL
 );
 CREATE INDEX IF NOT EXISTS ix_message_attachments_conv ON message_attachments(conversation_id, created_at);
+-- Additive: Store also installs this on current-version databases. Sent history is excluded
+-- so a minute's bounded cleanup does not scan or sort every historic attachment under the writer.
+CREATE INDEX IF NOT EXISTS ix_message_attachments_unused_expiry
+  ON message_attachments(expires_at, id) WHERE message_id IS NULL;
 -- v24 (CI-74): a person's messaging privacy switches. `show_presence` (default on) and
 -- `read_receipts` (default OFF) — both mutual: hiding yours hides everyone's from you.
 CREATE TABLE IF NOT EXISTS messaging_settings (
@@ -160,6 +164,7 @@ MAX_VOICE_MS = 5 * 60 * 1000
 #: Rendered inline (with `nosniff` + a sandboxing CSP): images and voice; everything else downloads.
 INLINE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", *VOICE_TYPES}
 ATTACHMENT_UNUSED_S = 3600
+ATTACHMENT_SWEEP_BATCH = 100
 #: Forwarding: one message to at most this many conversations per request.
 MAX_FORWARD_TARGETS = 5
 HISTORY_FROM = ("join", "all")
@@ -1290,6 +1295,8 @@ class Messaging:
                 a = t.execute("SELECT * FROM message_attachments WHERE id=? AND conversation_id=? AND uploader_id=? AND status='accepted'", (attachment_id, cid, uid)).fetchone()
                 if not a or a["message_id"]:
                     raise ServiceError(404, "no_attachment", "附件不存在或已使用")
+                # Check after acquiring the writer: an upload may expire while send waits.
+                self._require_unexpired_attachment(a)
             row = t.execute("SELECT last_seq FROM conversations WHERE id=?", (cid,)).fetchone()
             seq = row["last_seq"] + 1
             mid_ = new_id("msg")
@@ -1634,6 +1641,11 @@ class Messaging:
         out["scan"] = scan
         return out
 
+    @staticmethod
+    def _require_unexpired_attachment(a: dict | sqlite3.Row) -> None:
+        if a["message_id"] is None and a["expires_at"] is not None and a["expires_at"] <= now():
+            raise ServiceError(410, "attachment_expired", "未发送的附件已过期，请重新上传")
+
     def attachment_for_download(self, aid: str, uid: str) -> dict:
         """The attachment row, for a member who may read the message it hangs on — and only while
         its bytes are accepted. Rejected by a rescan (or on bytes whose quarantine verdict stands although
@@ -1653,13 +1665,23 @@ class Messaging:
             raise ServiceError(404, "no_attachment", "找不到该附件")
         if a["status"] == "rejected" or quarantine.verdict(self.store, a["blob"]):
             raise ServiceError(410, "rejected_malware", "该附件未通过安全检查，已被拒绝并隔离")
+        self._require_unexpired_attachment(a)
         return dict(a)
 
     def sweep_unused_attachments(self) -> int:
-        rows = self.store.all("SELECT id FROM message_attachments WHERE message_id IS NULL AND expires_at<?", (now(),))
-        for r in rows:
-            self.store.execute("DELETE FROM message_attachments WHERE id=?", (r["id"],))
-        return len(rows)
+        """Drop one bounded batch of expired, unbound rows; shared blob bytes stay intact.
+
+        Selection and conditional deletion share the writer transaction with send's binding,
+        so cleanup cannot remove an attachment that a concurrent send has already accepted.
+        """
+        with self.store.tx() as t:
+            ts = now()
+            return t.execute(
+                "DELETE FROM message_attachments WHERE message_id IS NULL AND expires_at<=? AND id IN "
+                "(SELECT id FROM message_attachments WHERE message_id IS NULL AND expires_at<=? "
+                "ORDER BY expires_at,id LIMIT ?)",
+                (ts, ts, ATTACHMENT_SWEEP_BATCH),
+            ).rowcount
 
     # ------------------------------------------------------------------ who to tell
     def recipients_for(self, cid: str, message: dict) -> dict[str, str]:

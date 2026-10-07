@@ -2,6 +2,11 @@ import { registerMessages } from '@synwevo/ui';
 
 // Module-local copy. API resource IDs, scopes, request IDs and user-authored data stay literal.
 const entries: [string, string, string][] = [
+  ['该接口或方法不在调试允许范围内', 'This endpoint or method is not allowed in the request console.', '此介面或方法不在偵錯允許範圍內'],
+  ['将为这条事件安排一次新的投递。若响应中断，请在此确认框内重试；关闭后重新发起会创建另一次投递。', 'This schedules a new delivery for this event. If the response is interrupted, retry in this confirmation dialog. Closing it and starting again creates another delivery.', '將為這條事件安排一次新的投遞。若回應中斷，請在此確認框內重試；關閉後重新發起會建立另一次投遞。'],
+  ['签名密钥重叠期', 'Signing secret overlap', '簽章金鑰重疊期'],
+  ['默认（24 小时）', 'Default (24 hours)', '預設（24 小時）'],
+  ['新签名密钥只显示一次。重叠期内投递同时携带新旧签名，请在此期间更新接收端；选择「立即失效」后，后续投递只使用新密钥签名。', 'The new signing secret is shown once. Deliveries carry both signatures during the overlap; update your receiver during this time. Choosing "Immediately" makes subsequent deliveries use only the new secret.', '新簽章金鑰只顯示一次。重疊期內投遞同時攜帶新舊簽章，請在此期間更新接收端；選擇「立即失效」後，後續投遞只使用新金鑰簽章。'],
   ['重新启用需审批仍然有效，已撤销的令牌不会恢复。恢复备份后，此客户端可能因停用记录再次停用，届时需重新核验并启用。', 'Enabling requires a currently valid approval and does not restore revoked tokens. After a backup restore, the disablement record may disable this client again; recheck its authority before enabling it again.', '重新啟用需審批仍然有效，已撤銷的權杖不會恢復。還原備份後，此用戶端可能因停用記錄再次停用，屆時需重新核驗並啟用。'],
   ['{count} 个订阅', '{count} subscriptions', '{count} 個訂閱'],
   ['API 管理导航', 'API administration navigation', 'API 管理導覽'],

@@ -581,7 +581,8 @@ class BridgeWorker:
     """Turns outbox rows into card messages, in the process that serves conversations (the
     `messages` role, or `all`), so the fan-out reaches the open streams. Polls the outbox (one
     indexed read every quarter second; woken at once on `all`, where Docs shares the process) and
-    reconciles object-conversation membership after each delivery and once a minute."""
+    reconciles object-conversation membership after each delivery and once a minute. The same
+    minute tick also removes a bounded batch of expired, unsent attachment rows."""
 
     POLL_S = 0.25
     SWEEP_S = 60.0
@@ -630,6 +631,7 @@ class BridgeWorker:
 
     def sweep(self) -> int:
         self._last_sweep = time.monotonic()
+        self.messaging.sweep_unused_attachments()
         return self.objects.reconcile_all()
 
     def pending(self) -> list[dict]:

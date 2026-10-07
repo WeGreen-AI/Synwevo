@@ -6134,6 +6134,7 @@ paths:
             type: string
             title: Did
         - $ref: "#/components/parameters/XRequestID"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "202":
           description: Successful Response
@@ -6147,6 +6148,8 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+            Idempotent-Replayed:
+              $ref: "#/components/headers/Idempotent-Replayed"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -6157,6 +6160,8 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         5XX:
           $ref: "#/components/responses/ServerError"
       security:

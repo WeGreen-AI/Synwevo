@@ -130,8 +130,11 @@ export function Secret({ result, close }: { result: Outcome; close: () => void }
   </Modal>;
 }
 
-export async function requestMachine(credential: string, reason: string, method: string, path: string, query = {}, body?: unknown): Promise<Outcome> {
-  const out = await post<{ status: number; data: Outcome; request_id?: string }>(BASE + '/request', { credential, reason, method, path, query, body });
+export async function requestMachine(credential: string, reason: string, method: string, path: string, query = {}, body?: unknown, idempotencyKey?: string): Promise<Outcome> {
+  const out = await post<{ status: number; data: Outcome; request_id?: string }>(BASE + '/request', {
+    credential, reason, method, path, query, body,
+    ...(idempotencyKey === undefined ? {} : { idempotency_key: idempotencyKey }),
+  });
   if (out.status >= 400) {
     const detail = out.data.error as { code?: string; message?: string } | undefined;
     const e = new ApiError(out.status, detail?.code || 'machine_request_failed', detail?.message || 'machine_request_failed', { console_request: true });
