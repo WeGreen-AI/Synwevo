@@ -1,0 +1,41 @@
+{
+  "commit": "5ffec9d3b035132da22ce27aea7650bd95c40c55",
+  "platform": "Darwin",
+  "architecture": "arm64",
+  "python": "3.12.6",
+  "logical_cpus": 15,
+  "rows": 10000,
+  "fields": 2,
+  "concurrency": 1,
+  "workload": "Synthetic unique number + dependent formula; real capability transactions, no HTTP/network",
+  "insert_100x100_s": 7.69669650006108,
+  "batch_max_s": 0.14567662519402802,
+  "filter_sort_first_50_s": [
+    0.37411179207265377,
+    0.35657187504693866,
+    0.3715404998511076,
+    0.35239504114724696,
+    0.37266345880925655,
+    0.3586774580180645,
+    0.36713937507010996,
+    0.35063458303920925,
+    0.36701162508688867,
+    0.35647104191593826
+  ],
+  "filter_sort_p95_s": 0.37411179207265377,
+  "paginate_50x200_s": 18.03399920882657,
+  "unique_record_ids": 10000,
+  "over_limit_error": "record_limit",
+  "partial_batch": {
+    "succeeded": 1,
+    "failed": 1
+  },
+  "peak_rss_bytes": 154337280,
+  "budgets": {
+    "insert_s": 120,
+    "batch_max_s": 10,
+    "filter_sort_p95_s": 5,
+    "pagination_s": 30
+  },
+  "limitations": "Local Apple arm64 single worker; excludes HTTP/browser and production load; no extrapolation to concurrency."
+}

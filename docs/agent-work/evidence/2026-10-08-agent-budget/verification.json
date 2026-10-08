@@ -1,0 +1,52 @@
+{
+  "recorded_at": "2026-10-08T14:20:10.956253+00:00",
+  "base_sha": "5ffec9d3b035132da22ce27aea7650bd95c40c55",
+  "scope": "CR-070 unreserved Agent call fence recovery and budget explanation",
+  "source_sha256": {
+    "apps/suite/synwevo_suite/agent/gateway.py": "67295da5c8b03db7bcd44a064a24be83815657f498ed252f1900d086f580c0a5",
+    "apps/suite/synwevo_suite/agent/recovery.py": "c97de6a14f4f6373307b4ae6a44dd543ba99dd8ad1e85c585f48efa47416d252",
+    "packages/core/synwevo_core/billing/ledger.py": "cb84231bdbb878fd76c1d692fcacc28284b9f0da1561fd2b8512f066deb3fb41",
+    "apps/suite/tests/test_agent_cost_admission.py": "e5e43f3913d43aa951df7a5505436ce37e29999720106bb1d2a49d44ec542dbe",
+    "apps/suite/web/src/apps/agent/BudgetDialog.tsx": "de55ba3072ee72a3cb4a7a1759b0cf944e073ea7c1b8f3b706b0f8447ef92c63",
+    "apps/suite/web/src/apps/agent/budget.messages.ts": "3dc7c3937551376de911f02c08756513aa5d58c7a70dd671884681cb843a0f0a",
+    "apps/suite/web/src/apps/agent/chat.messages.ts": "8964a3f23a5d2c6abb0208d96daf412e6474a12608ff603b556c863ff19130ff",
+    "apps/suite/web/src/apps/agent/payer-budget.messages.ts": "995685924dcfc888252b0b18fa173be4722ef0bc5d915f4dda5a04bb4e2a420e",
+    "apps/suite/web/src/apps/agent/refusals.ts": "a4a57f59fe1167eba37a51e099106a28d634b9b84cce81909371363351d56f4a"
+  },
+  "tests": {
+    "regression_before_fix": "2 failures: successful first call became pending after refused next reservation",
+    "billing_and_recovery_related": {
+      "passed": 132,
+      "failed": 0
+    },
+    "all_agent_backend": {
+      "collected": 415,
+      "initial_passed": 414,
+      "initial_failed": 0,
+      "initial_setup_errors": 1,
+      "setup_error_reason": "Sandbox EPERM on loopback HTTP fixture bind",
+      "unchanged_loopback_test_with_permission_passed": 1
+    },
+    "suite_frontend": {
+      "passed": 145,
+      "failed": 0
+    },
+    "suite_typecheck": "passed",
+    "suite_build": "passed",
+    "repository_guards": "all six passed; asset guards used locked Python with Pillow"
+  },
+  "log_sha256": {
+    "synwevo-agent-reservation-before-20261008.log": "a6c99842a053dceb79f29476ecf61111984b161a0169b1239e8ce1dd5991ccbe",
+    "synwevo-agent-reservation-after-20261008.log": "bdfd22ae91ec019cdf9935816d056c48198f7a7d001703a08a6994edf319ef1a",
+    "synwevo-agent-final-20261008.xml": "b03d5d09093908546f91d25fd0cad907bef6e00e19b52587fed601ad7587a48e",
+    "synwevo-agent-loopback-20261008.xml": "473fe66d948c1c6412f3d35b1ff3b73e2bbd11d2dbdf6a32301eb93f80bc106b",
+    "synwevo-agent-budget-build-20261008.log": "b89363af2f10ba8b34e1d274fc92e73d32693e07bcfa7bf2b1cc488d6f361a60"
+  },
+  "ci": "Pending for commit containing these source hashes",
+  "no_new_paid_model_call": true,
+  "personal_budget": "Explicit user instruction: keep paused; unchanged",
+  "limitations": [
+    "Browser uses isolated real application and quote endpoint, with explicitly synthetic upstream and wallet; no provider generation or payment.",
+    "Production recovery and deployment require the new exact-SHA CI/CD."
+  ]
+}

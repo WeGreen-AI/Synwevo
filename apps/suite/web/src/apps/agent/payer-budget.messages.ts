@@ -35,7 +35,7 @@ export const payerBudgetCopy = {
   capacity: ['用量计算达到安全处理上限，当前无法可靠计算已用、预留或剩余预算。新的付费调用会被阻止；仍可停用或修改上限，修改不会绕过此限制。', 'Usage has reached the safe accounting capacity. Spent, held and remaining amounts cannot be calculated reliably. New paid calls are blocked. You can still disable or change limits; changes do not bypass this restriction.', '用量計算達到安全處理上限，目前無法可靠計算已用、預留或剩餘預算。新的付費呼叫會被阻止；仍可停用或修改上限，修改不會繞過此限制。'],
   inconsistent: ['费用记录尚无法核对，当前无法可靠计算已用、预留或剩余预算。新的付费调用会被阻止；仍可停用或修改上限。请联系管理员核对记录。', 'Accounting records cannot be reconciled, so spent, held and remaining amounts are unavailable. New paid calls are blocked. You can still disable or change limits. Contact an administrator to reconcile the records.', '費用記錄尚無法核對，目前無法可靠計算已用、預留或剩餘預算。新的付費呼叫會被阻止；仍可停用或修改上限。請聯絡管理員核對記錄。'],
   edit: ['编辑个人支出上限', 'Edit personal spending limits', '編輯個人支出上限'],
-  enable: ['启用本单位的个人支出上限', 'Enable personal spending limits for this unit', '啟用本單位的個人支出上限'],
+  enable: ['允许个人付费调用（取消勾选即暂停）', 'Allow personal paid calls (uncheck to pause)', '允許個人付費呼叫（取消勾選即暫停）'],
   precision: ['使用小数点，不加千位分隔符，最多 {scale} 位小数；允许零。最小金额单位为 {amount}。', 'Use a decimal point without grouping separators, with up to {scale} decimal places. Zero is allowed. The smallest amount is {amount}.', '使用小數點，不加千位分隔符，最多 {scale} 位小數；允許零。最小金額單位為 {amount}。'],
   invalidAmount: ['请输入零或支持范围内的正十进制金额，不使用负号、指数或分隔符。', 'Enter zero or a supported positive decimal amount without a sign, exponent or grouping separators.', '請輸入零或支援範圍內的正十進位金額，不使用負號、指數或分隔符。'],
   tooPrecise: ['小数位超过此单位支持的精度，请按提示修改。', 'This amount exceeds the unit’s decimal precision. Adjust it to the stated precision.', '小數位超過此單位支援的精度，請按提示修改。'],

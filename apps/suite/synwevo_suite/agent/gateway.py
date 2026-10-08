@@ -62,6 +62,22 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+def release_unreserved_call(transaction, key: str) -> bool:
+    """Release a fenced intent only when no reservation or observation ever existed.
+
+    Caller either owns the failed dispatch path or has fenced a terminal turn. A missing
+    link alone is insufficient: a crash may have committed the ledger's reservation.
+    Keep the immutable request fence, so this logical call can never be replayed.
+    """
+    return bool(transaction.execute(
+        "UPDATE agent_metered_calls SET metering_state='released' WHERE id=? "
+        "AND metering_state IN ('pending','released') AND call_key IS NULL AND attempt_key IS NULL "
+        "AND NOT EXISTS(SELECT 1 FROM billing_calls b WHERE b.run_key=agent_metered_calls.run_key "
+        "AND b.logical_call_id=agent_metered_calls.logical_id) "
+        "AND NOT EXISTS(SELECT 1 FROM agent_model_observations o WHERE o.call_id=agent_metered_calls.id)",
+        (key,)).rowcount)
+
+
 def _open_platform_breaker(store, *, environment: str, reason_code: str,
                            fallback: Callable[[], object] | None = None) -> str:
     """THE seam an upstream HTTP 402 (the operator's provider balance is empty) closes paid
@@ -555,11 +571,15 @@ class MeteredDeepSeek:
             self._observe(key, ticket, route, result.attempt, completed=True, claim=claim, input_bound=bound)
             self._recovered()
             return result
-        except BaseException:
+        except BaseException as exc:
             # cancel_call releases only proven unsent/known consumption. Unknown holds remain
             # until their immutable deadline, even when cancellation occurs just after dispatch.
             if call_key:
                 self.ledger.cancel_call(call_key)
+            elif isinstance(exc, BillingError):
+                with self.store.tx() as transaction:
+                    if release_unreserved_call(transaction, key):
+                        exc.not_dispatched = True
             raise
 
     def _observe(self, key, ticket, route, attempt, *, completed, claim=None, ending=None, input_bound=None):
@@ -716,7 +736,9 @@ class MeteredTurnProvider:
             exc.usage_reliability = exc.attempt.usage_reliability
             raise
         except BillingError as exc:
-            error = ProviderError("billing_" + exc.code, UNAVAILABLE if exc.code in CLOSED_CODES
+            code = ("run_call_limit_exceeded" if exc.code == "run_budget_exceeded"
+                    and getattr(exc, "limit_kind", None) == "calls" else exc.code)
+            error = ProviderError("billing_" + code, UNAVAILABLE if exc.code in CLOSED_CODES
                                   else RUN_TIME_TOO_SHORT if exc.code == "run_time_too_short"
                                   else "本次运行的预算或用量状态暂不允许继续，请查看费用记录")
             if getattr(exc, "not_dispatched", False):

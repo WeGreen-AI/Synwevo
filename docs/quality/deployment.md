@@ -863,3 +863,10 @@ activation, so no historical mail is being replayed to enable SMTP.
 For a rollback to a release before `06fc4cf`, restore `config/compose.before-smtp.yaml` as well,
 keeping SMTP disabled for that older transport implementation. Do not run the new SMTP credentials
 through the pre-fix transport, which lacked explicit certificate verification.
+
+
+## 2026-10-08 Agent 首次受控启用准备
+
+操作者：所有者授权的Codex协调者。已核对生产25b084f完整CI/CD成功。当前待发布5ffec9d相对25b084f的apps/suite、apps/portal、infra/server及core/billing无差异；新发布只涉及支付/通知恢复、测试维护及blob分类。为优先完成真实Agent链路，先在已验证的25b084f沿operations§11.1执行二级开关恢复：备份runtime.env、保留五个应用并添加agent、持有现有deploy.lock、仅重建portal，不更新镜像/治理/业务数据。成本策略、提供方、价格与指定所有者放行名单已真实发布。付款入口仍关闭，等待5ffec9d完整CI和部署；公开放量仍受§11.3观察门槛。以下追加真实执行回执，准备不表示已成功。
+
+12:35:19Z执行成功：已持有deploy.lock并确认准确25b084f镜像，备份/opt/synwevo/config/runtime.env.bak-agent-20261008T123519Z；portal force-recreate后Healthy。证据agent-activation/activation-applied.json；没有重复部署其它角色、没有运行模型或付款。浏览器与健康验证继续。

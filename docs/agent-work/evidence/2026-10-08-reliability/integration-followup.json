@@ -1,0 +1,30 @@
+{
+  "source_sha": "5ffec9d3b035132da22ce27aea7650bd95c40c55",
+  "observed_at": "2026-10-08T12:34:16.005488+00:00",
+  "integration_initial": {
+    "collected": 1347,
+    "passed": 1336,
+    "failed": 6,
+    "setup_errors": 5,
+    "cause": "All 11 failures/errors were EPERM binding isolated loopback listeners in the execution sandbox."
+  },
+  "authorized_loopback_followups": [
+    {
+      "selected": 2,
+      "passed": 2,
+      "seconds": 4.05
+    },
+    {
+      "selected": 9,
+      "passed": 9,
+      "seconds": 6.61
+    }
+  ],
+  "guards": "six passed",
+  "logs": {
+    "synwevo-integration-followup-20261008.log": "bbc07d87742e959b74972294fcf80803894f1ff65cec6fa617473cb65c07d71a",
+    "synwevo-pipeline-loopback-20261008.log": "a1db81e28863e82af2c83618601f0d2f2ea9a5848df061b5d62d62b414a0d2d3",
+    "synwevo-integration-loopback-remaining-20261008.log": "3d2f357b09ce0f37a16d3ab384854f679d0fec5006d358fca5b8e32b51dabfcf"
+  },
+  "full_linux_ci": "in progress: 37776600173; not yet a passing release"
+}

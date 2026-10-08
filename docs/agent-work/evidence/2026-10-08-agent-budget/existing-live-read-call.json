@@ -1,0 +1,32 @@
+{
+  "observed_at_unix": 1791463795,
+  "production_sha": "25b084f0ff5d6897d3086ddda9356f1073562ef0",
+  "run_id": "turn_62e3a05ef023",
+  "status": "succeeded",
+  "model": "deepseek-flash",
+  "calls": 3,
+  "input_tokens": 24850,
+  "output_tokens": 2292,
+  "actual_tools": [
+    {
+      "operation": "docweave.project.list",
+      "status": "succeeded",
+      "via": "agent"
+    },
+    {
+      "operation": "docweave.project.get",
+      "status": "succeeded",
+      "via": "agent"
+    }
+  ],
+  "provider_evidence": "3 HTTP200 complete SSE streams with trusted terminal usage and matching provider request IDs",
+  "cost_micro_CNY_exact": "295378/25",
+  "sale_micro_CNY_exact": "590756/25",
+  "charged_micro_CNY": 23630,
+  "sale_exactly_twice_cost": true,
+  "wallet_projection_consistent": true,
+  "new_artifact_created": false,
+  "scope": "User-initiated existing personal conversation. Read-only metadata audit; no new model call, no message content read.",
+  "personal_spending": "User explicitly chose to keep personal spending paused. No further paid acceptance calls.",
+  "limitation": "Proves existing read-tool/model/usage path, not the planned Forms artifact creation or cross-workspace transfer."
+}

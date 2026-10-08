@@ -29,6 +29,7 @@ export const budgetCopy = {
   amount: ['预算（{unit}）', 'Budget ({unit})', '預算（{unit}）'],
   precision: ['最多 {scale} 位小数；使用小数点，不加千位分隔符。最小金额单位：{amount}。', 'Up to {scale} decimal places; use a decimal point without grouping separators. Smallest amount: {amount}.', '最多 {scale} 位小數；使用小數點，不加千位分隔符。最小金額單位：{amount}。'],
   calls: ['最多调用次数', 'Maximum calls', '最多呼叫次數'],
+  callsHelp: ['一项任务可能需要多次模型调用来查找应用、处理结果并回答。次数与金额分别限制本次任务，达到任一上限就停止；增加次数不会提高金额上限。', 'A task may need several model calls to find apps, process results and answer. Calls and amount independently limit this task; either limit stops it. More calls do not increase the amount limit.', '一項任務可能需要多次模型呼叫來查找應用、處理結果並回答。次數與金額分別限制本次任務，達到任一上限就停止；增加次數不會提高金額上限。'],
   seconds: ['运行期限（秒）', 'Run duration (seconds)', '執行期限（秒）'],
   limits: ['调用次数为 1–{calls}，运行期限为 {min}–{seconds} 秒（至少能完成一次模型调用）。', 'Choose 1–{calls} calls and {min}–{seconds} seconds (enough for at least one whole model call).', '呼叫次數為 1–{calls}，執行期限為 {min}–{seconds} 秒（至少能完成一次模型呼叫）。'],
   deadline: ['运行截止时间', 'Run deadline', '執行截止時間'],

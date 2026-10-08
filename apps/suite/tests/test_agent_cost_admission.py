@@ -192,3 +192,43 @@ def test_later_cost_refusal_preserves_completed_tool_and_known_usage(paid):
     assert len(g.store.all('SELECT * FROM agent_tool_calls')) == 1
     assert len(g.store.all('SELECT * FROM billing_usage')) == 1
     assert len(g.store.all('SELECT * FROM model_cost_admissions')) == 1
+
+
+@pytest.mark.parametrize(('quote_args', 'code'), [
+    ({'max_calls': 1}, 'billing_run_call_limit_exceeded'),
+    ({'budget': 297}, 'billing_run_budget_exceeded'),
+])
+def test_reservation_refusal_keeps_completed_usage_and_recovers_legacy_fence(paid, quote_args, code):
+    from synwevo_suite.agent.recovery import MeteringRecovery
+    g = paid
+    g.holder['body'] = event({'tool_calls': [{'index': 0, 'id': 'fixture-workspaces', 'type': 'function',
+        'function': {'name': 'list_workspaces', 'arguments': '{}'}}]})
+    g.holder['body'] += event(finish='tool_calls', usage=USAGE) + b'data: [DONE]\n\n'
+    turn = start(g, g.issue(**quote_args))
+    g.agent._run(turn['turn_id'])
+    query = 'SELECT status,error_code,usage_state,input_tokens,output_tokens FROM agent_turns'
+    assert g.store.one(query)['usage_state'] == 'known'
+    expected = {'status': 'failed', 'error_code': code, 'usage_state': 'known',
+                'input_tokens': 13, 'output_tokens': 7}
+    assert g.store.one(query) == expected
+    assert len(g.seen) == 1 and g.balance().booked == 958 and g.balance().held == 0
+    assert len(g.store.all('SELECT * FROM billing_attempts')) == 1
+    assert len(g.store.all('SELECT * FROM billing_usage')) == 1
+    assert len(g.store.all('SELECT * FROM agent_tool_calls')) == 1
+    unsent = g.store.one("SELECT * FROM agent_metered_calls WHERE logical_id='step:2'")
+    assert unsent['call_key'] is None and unsent['attempt_key'] is None
+    assert unsent['metering_state'] == 'released'
+    # Older releases left this unsent fence pending after reserve_call refused. A restart
+    # must fix the projection using local facts, without replaying tools or spending money.
+    g.store.execute("UPDATE agent_metered_calls SET metering_state='pending' WHERE id=?", (unsent['id'],))
+    g.store.execute("UPDATE agent_turns SET usage_state='pending'")
+    def forbidden(*args, **kwargs):
+        pytest.fail('Recovery attempted a provider call or payment authorization')
+    g.model.transport = httpx.MockTransport(forbidden)
+    g.model.current_authority = forbidden
+    worker = MeteringRecovery(gateway=g.model)
+    assert not worker.run_once().failures
+    assert not worker.run_once().failures
+    assert g.store.one(query) == expected
+    assert len(g.store.all("SELECT * FROM agent_events WHERE type='usage.reconciled'")) == 1
+    assert len(g.store.all('SELECT * FROM billing_settlements')) == 1

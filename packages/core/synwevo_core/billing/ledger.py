@@ -578,7 +578,11 @@ class Ledger:
                               "JOIN billing_journal j ON j.id=s.journal_id JOIN billing_calls c ON c.id=s.call_key "
                               "WHERE c.run_key=?", (run["id"],)).fetchone()[0]
             if calls[0] >= run["max_calls"] or spent + calls[1] + amount > run["budget"]:
-                raise BillingError("run_budget_exceeded")
+                error = BillingError("run_budget_exceeded")
+                # Preserve the ledger's public code; adapters can explain which fixed
+                # limit refused this call without guessing from a later balance read.
+                error.limit_kind = "calls" if calls[0] >= run["max_calls"] else "amount"
+                raise error
             account = self._context_account(t, run["unit"], context)
             if self._frozen(t, account):
                 raise BillingError("wallet_frozen")

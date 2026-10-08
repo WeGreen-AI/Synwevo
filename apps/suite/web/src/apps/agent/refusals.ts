@@ -15,7 +15,7 @@ import type { ChatText } from './chat.messages';
 
 export type RefusalKind = 'funds' | 'org_funds' | 'frozen' | 'org_frozen' | 'org_limit' | 'org_payer' | 'limit' | 'no_limit' | 'brake'
   | 'suspended' | 'breaker' | 'allowlist' | 'call_cap' | 'not_configured' | 'consent' | 'consent_changed' | 'price_changed'
-  | 'content_input' | 'content_output' | 'access_suspended' | 'effort' | 'too_long' | 'quote';
+  | 'content_input' | 'content_output' | 'access_suspended' | 'effort' | 'too_long' | 'quote' | 'run_calls' | 'run_budget';
 /** "personal": pay with the personal wallet instead (an organization payer refused); "wallet":
  *  open the wallet page on the account service (a frozen wallet says why there); "requote":
  *  confirm the changed price; "reconfirm": get a new quote for unchanged terms (an expired or used
@@ -50,12 +50,16 @@ const TEXT: Record<RefusalKind, [ChatText, NextStep]> = {
   effort: ['refusedEffort', 'settings'],
   too_long: ['refusedTooLong', null],
   quote: ['refusedQuote', 'reconfirm'],
+  run_calls: ['refusedRunCalls', null],
+  run_budget: ['refusedRunBudget', null],
 };
 /** The sentence for each kind (for tests and documentation). */
 export const REFUSAL_TEXT: Record<RefusalKind, ChatText> = Object.fromEntries(
   Object.entries(TEXT).map(([kind, [text]]) => [kind, text])) as Record<RefusalKind, ChatText>;
 
 const EXACT: Record<string, RefusalKind> = {
+  billing_run_call_limit_exceeded: 'run_calls',
+  billing_run_budget_exceeded: 'run_budget',
   billing_insufficient_funds: 'funds', insufficient_funds: 'funds',
   billing_wallet_frozen: 'frozen', wallet_frozen: 'frozen',
   // Organization payment (org-payments): the member's or the workspace's monthly limit, and a

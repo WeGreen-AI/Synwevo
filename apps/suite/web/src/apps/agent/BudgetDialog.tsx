@@ -101,7 +101,7 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
   const [quote, setQuote] = useState<Quote | null>(null);
   const [phase, setPhase] = useState<Phase>('loading');
   const [budget, setBudget] = useState('');
-  const [calls, setCalls] = useState('1');
+  const [calls, setCalls] = useState('6');
   const [seconds, setSeconds] = useState('300');
   const [pendingParams, setPendingParams] = useState<QuoteParams | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -147,7 +147,7 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
         setCalls(String(reuse.max_calls));
         setSeconds(String(reuse.run_seconds));
       }
-      setCalls((value) => { try { boundedCount(value, result.max_calls_limit); return value; } catch { return '1'; } });
+      setCalls((value) => { try { boundedCount(value, result.max_calls_limit); return value; } catch { return String(Math.min(6, result.max_calls_limit)); } });
       setSeconds((value) => { try { boundedCount(value, result.run_seconds_limit, runSecondsMin(result)); return value; } catch { return String(Math.max(runSecondsMin(result), Math.min(300, result.run_seconds_limit))); } });
       setPhase('editing');
     } catch (failure) {
@@ -419,8 +419,9 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
           <label className="field" htmlFor={`${id}-calls`}>{m('calls')}
             <input id={`${id}-calls`} className="input" type="number" inputMode="numeric" min={1} max={offer.max_calls_limit} step={1} required value={calls}
               disabled={phase !== 'editing' || changed} onChange={(event) => { setCalls(event.target.value); setIssue(null); }}
-              aria-invalid={issue?.field === 'counts'} aria-describedby={`${id}-limits${issue ? ` ${id}-issue` : ''}`} />
+              aria-invalid={issue?.field === 'counts'} aria-describedby={`${id}-calls-help ${id}-limits${issue ? ` ${id}-issue` : ''}`} />
           </label>
+          <p id={`${id}-calls-help`} className="muted small">{m('callsHelp')}</p>
           <label className="field" htmlFor={`${id}-seconds`}>{m('seconds')}
             <input id={`${id}-seconds`} className="input" type="number" inputMode="numeric" min={runSecondsMin(offer)} max={offer.run_seconds_limit} step={1} required value={seconds}
               disabled={phase !== 'editing' || changed} onChange={(event) => { setSeconds(event.target.value); setIssue(null); }}

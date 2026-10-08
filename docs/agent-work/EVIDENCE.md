@@ -543,3 +543,13 @@ CR-066追加：旧客户端更新其它设置时省略渠道字段，96f73ab可�
 真实Admin已发布成本策略v1、两倍售价price_9fa1a7cbc022、提供方v1/凭据v1；所有者加入受控放行名单。支付v1密封保存且disabled，原唯一Stripe回调于12:12:52Z启用并复核；没有创建付款或调用模型。配置和官方只读状态见evidence/2026-10-08-agent-activation新增四份JSON。
 
 Actions37771066812对应769a98d：构建通过，完整镜像4443通过/1失败/3跳过/78警告，1619.28s，部署跳过。失败为payment_topup_intents.request_hash未登记blob分类；其实际代码是规范化充值参数的SHA-256，不持有文件引用。补充生产LOOKALIKES说明，保留全部原断言，原3项集成检查通过。证据ci-failure-classification.json包含原日志指纹，新SHA全CI尚待。
+
+## 2026-10-08 Agent正式启用、真实读工具及收尾修复
+
+25b084f按operations§11.1在12:35:19Z启用Agent，portal healthy、五个原应用保留。操作备份与回执见activation-applied.json；没有手动发布待验代码。本人已同意DeepSeek处理并自行完成3次真实模型调用及Docs list/get，usage可信、成本与两倍售价精确对齐、账本无差异，见agent-budget/existing-live-read-call.json。没有新Forms产物或跨空间验收；用户明确保持个人支出暂停，没有追加付费调用。
+
+CR-070回归先在旧实现2项失败，修复后132关联通过；全Agent415项初跑414通过/1回环端口EPERM，原测试在授权loopback后1通过。前端145、类型/构建/六守卫通过；三语言/390×844/键盘/减少动态效果见agent-budget/browser-qa.md，源码及日志指纹见verification.json。CI/CD仍待新提交。
+
+Tables真实独立Store容量10000行、50页无重复遗漏、上限及混合批次均通过，详细计时/环境/初始验收脚本修正在tables-capacity目录；不推断线上并发性能。WP9依据已合并机器API与真实集成证据修正旧未开始状态，没有重复实现。
+
+最新用户要求完成当前轮后暂停；不再开启后续工作包。真实充值仍需当前代码完整CI/CD、Admin重认证启用和有权付款人支付验收。
