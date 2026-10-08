@@ -1,0 +1,9 @@
+{
+  "checked_at": "2026-10-08T04:45:34.190064+00:00",
+  "path": "/opt/synwevo/backups/20261008T044220Z",
+  "manifest_present": true,
+  "database_present": true,
+  "source_image": "synwevo:8ba2956750c2080d300fa17523bcc391e85cae40",
+  "source_matches_previous": true,
+  "restoration_exercised": false
+}

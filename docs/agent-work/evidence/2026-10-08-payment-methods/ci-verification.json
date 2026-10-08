@@ -1,0 +1,46 @@
+{
+  "source_sha": "25b084f0ff5d6897d3086ddda9356f1073562ef0",
+  "run": 37724156180,
+  "verify_job": 113138387470,
+  "deploy_job": 113152450395,
+  "result": "success",
+  "runtime": {
+    "passed": 5335,
+    "skipped": 5,
+    "warnings": 243,
+    "seconds": 2994.01
+  },
+  "frontend_tests": 507,
+  "python_sdk": {
+    "tests_passed": 47,
+    "subtests_passed": 38
+  },
+  "typescript_sdk_tests": 34,
+  "checks": [
+    "boundaries",
+    "brand",
+    "design",
+    "component_names",
+    "logo",
+    "app_icons",
+    "typecheck",
+    "build",
+    "frontend",
+    "live sheet clients with Node",
+    "infra",
+    "Python/TypeScript SDK",
+    "deployment image runtime"
+  ],
+  "ci_temporary_directories_removed": 4314,
+  "runtime_free_MiB_final": 10365,
+  "verify_log_sha256": "e8d68272664da1fcde0d926bcf12379ce4b9f1afb56055f23ec8443d91dd588d",
+  "deploy_log_sha256": "604e73e208a150319378efedf904e82e2b003813e588b48eb4eac3bd3e9e3c7c",
+  "skip_reasons": [
+    "[1] apps/docs/tests/test_sheet_live_clients.py:41: real-room client tests need Node: node is not installed",
+    "[1] apps/docs/tests/test_encrypted_files.py:430: CLAMD_TEST_ADDRESS is not set (a clamd with AlertEncryptedArchive yes)",
+    "[1] apps/docs/tests/test_licensing.py:160: 本项目尚未选定 LICENSE",
+    "[1] tests/integration/test_platform_tooling.py:284: 本机没有 docker",
+    "[1] tests/integration/test_platform_tooling.py:460: needs Node and the workspace's node_modules (the verify job has both)"
+  ],
+  "warnings_note": "243 warnings: existing dependency deprecations plus one CI temporary-directory cleanup warning (Directory not empty in test_path_upload_is_restricted). Test passed; diagnostic retained, no test/assertion suppression or rerun. Runtime ended with 10365 MiB free. Investigate cleanup lifecycle before next unrelated CI maintenance; not declared fixed."
+}

@@ -51,13 +51,26 @@
     "new payment configuration needs merchant verification and webhook secret",
     "rollback build must retain new-field reader after publishing first explicit channel version"
   ],
-  "product_commit": "96f73ab61d29e54239166817254fc3db722f5322",
-  "ci": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37722051839",
-  "ci_status": "superseded; cancellation requested before deployment for proven legacy-editor regression",
+  "product_commit": "25b084f0ff5d6897d3086ddda9356f1073562ef0",
+  "ci": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37724156180",
+  "ci_status": "success",
   "legacy_editor_regression": {
     "baseline_sha": "96f73ab61d29e54239166817254fc3db722f5322",
     "baseline_result": "FAILED: expected no-change refusal, got 200 and reset channels",
     "fixed_result": "40 payment/governance tests passed",
     "semantics": "Omitted payment_methods preserves current explicit channels; legacy versions retain legacy shape."
-  }
+  },
+  "superseded_ci": {
+    "id": 37722051839,
+    "conclusion": "cancelled",
+    "verify_job": 113131712627,
+    "deploy_job": 113138361828,
+    "deploy_duration_seconds": 0,
+    "reason": "new proven legacy-editor regression fixed before deployment"
+  },
+  "ci_checked_at": "2026-10-08T04:47:13.514447+00:00",
+  "ci_stage": "completed",
+  "ci_verify_job": 113138387470,
+  "deploy_status": "success",
+  "post_deployment": "4 application revisions match, 6 healthy containers, 5 public hosts/JS, OIDC and anonymous boundaries verified; production Agent/payment activation remains incomplete"
 }

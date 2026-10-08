@@ -1,0 +1,121 @@
+{
+  "checked_at": "2026-10-08T03:58:12.016894+00:00",
+  "product_commit": "25b084f0ff5d6897d3086ddda9356f1073562ef0",
+  "files": [
+    {
+      "path": "packages/core/synwevo_core/billing/payment_settings.py",
+      "sha256": "afeb70283505d3d397eb77dc104cee5dafcf7ae2846882f3e0090e81c38082d9",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "packages/ui/src/i18n-core.ts",
+      "sha256": "933052541155a47cb827c0f89c39d6604df56644a13d0c2a43b8de6a3a087d0c",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "packages/ui/tests/i18n.test.ts",
+      "sha256": "5dafa9100704e8ddcbfb55d7c3ae699bb7a61851dd49f94d65938b5b38476767",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/synwevo_identity/payment_routes.py",
+      "sha256": "8e41f1fcaa8718ec2f86d60363c00c14fc32be60be31de2a8cf657dab8a08a97",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/synwevo_identity/payments.py",
+      "sha256": "2686a508f5dac04d20d99797fddbae8d5a93f5f712ad6379e46d521ffa0de3af",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/tests/test_admin_payments.py",
+      "sha256": "62a84b08c4e84410196d502492da7b266c703ddc73b824fa9ff89577be0baae2",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/tests/test_wallet_topups.py",
+      "sha256": "8d6fe589985b116232fe1c8b40c95d08978f871c4407cbd447c587ff3d2cfaf6",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/src/governance/PaymentsTab.tsx",
+      "sha256": "c09afd64361072cb42b5b8975d7d9d68148ddb4d7a34cc10a12dfcf18d0288dd",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/src/governance/payments.messages.ts",
+      "sha256": "f60206b834aef34d8f606cd40fb5a8cb06b09faf7f83ac1ca6781043e789806b",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/src/org-billing.messages.ts",
+      "sha256": "2e31732264fd1b1c053564d014059665893ca2a1ee316361edb9d674c423569b",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/src/pages/account/TopupDialog.tsx",
+      "sha256": "b30ccdda7f226959fd002f4a115805c22327510dc2007b15d3bbde82495e929f",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/src/pages/account/wallet.messages.ts",
+      "sha256": "c35de959aa7403600889feeb65e7e105469b539410f47c84d9099041cd22e046",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/src/pages/account/walletModel.ts",
+      "sha256": "55dab6e01704bb235d68ce8b3a20422d6b4f2394ec78a651dd15803463515518",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/src/pages/org/OrganizationBilling.tsx",
+      "sha256": "594b3c2c90556d02f6ec39522a2291341ccbbe1fd2459a144d3e0789de04722d",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/tests/wallet-pages.test.mjs",
+      "sha256": "b996c8c630496123d1aa3c7b2962f67770aad078ef5ea4ad5bbc5d924946c6cb",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/src/lib/paymentMethods.ts",
+      "sha256": "b530fe41bb16a246e4a3064d2a152c8cc883071fff40b2b8edfe1190c601100e",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/tests/fixtures/payment-methods.tsx",
+      "sha256": "bf51c5dcfff7fe0b67498919a0139d0d410b3525d16aa5043ea563678e0298f9",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/tests/payment-methods.browser.mjs",
+      "sha256": "13ef47c39046ce0a681f21ef6f66fae475d6e46169d7debc559f2e00764ae661",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    },
+    {
+      "path": "services/identity/web/tests/payment-methods.test.mjs",
+      "sha256": "f184d1911bc9eab86dccd491927af153c0aaeb6c219883d1123d95e6b327b15f",
+      "git_blob_matches": true,
+      "working_tree_matches": true
+    }
+  ],
+  "scope": "Binds recorded code/test hashes to the pushed Git commit. Does not certify CI or deployment."
+}
