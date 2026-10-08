@@ -1,5 +1,12 @@
 # Vultr Tokyo deployment — current record
 
+## Current release · 2026-10-08 15:21 UTC
+
+**Running source: a41ea08a50b9047c8cf5bdd23ab982751b50d38c.** [Actions37792532752](https://github.com/WeGreen-AI/Synwevo/actions/runs/37792532752) verify/deploy succeeded. Runtime 5453 passed, 5 skipped, 242 deprecation warnings; original guards/build/type/frontend/SDK checks retained. All four application OCI revisions/current.json match; six containers healthy; five public domains, JavaScript assets, anonymous authorization boundaries and OIDC start verified. The Agent gateway/recovery/ledger file hashes match the locally verified source. Backup: `/opt/synwevo/backups/20261008T152122Z`.
+
+Agent remains enabled with the existing allowlist and limits. Owner's personal spending remains paused. Payment settings v1 were last verified disabled; activation and a human real-card payment remain unverified. Additional read-only historical-usage audit did not execute because automatic approval timed out twice. Browser inspection was rejected because the active window contained unrelated private content; no bypass or payment mutation. User requested pause after this round. Evidence: `docs/agent-work/evidence/2026-10-08-agent-budget/release-result.json`. Older sections below are historical.
+
+
 ## 2026-10-07 — Webhook reliability and bounded attachment cleanup (8ba2956)
 
 Running product source is `8ba2956750c2080d300fa17523bcc391e85cae40`. [Actions37619470838](https://github.com/WeGreen-AI/Synwevo/actions/runs/37619470838) verified the exact source and deployed through the existing receiver at13:11:50UTC. Runtime5328 passed/5 skipped, frontend500, Python SDK47 plus38 subtests, TypeScript SDK34 and remaining build/guard gates passed. Independent14:39UTC checks matched all four application OCI revisions and imageID `sha256:9b83c825a6594924aaff67e6b3a918f9de2beb4e4d6838cf691477800305337e`; five services and public roots/readiness/static assets passed, as did anonymous boundary and OIDC-start checks. Backup `/opt/synwevo/backups/20261007T131123Z` identifies08d6700; no restore drill was performed. Evidence: `docs/agent-work/evidence/2026-10-07-webhook-reliability`.

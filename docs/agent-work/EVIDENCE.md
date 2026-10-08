@@ -553,3 +553,11 @@ CR-070回归先在旧实现2项失败，修复后132关联通过；全Agent415�
 Tables真实独立Store容量10000行、50页无重复遗漏、上限及混合批次均通过，详细计时/环境/初始验收脚本修正在tables-capacity目录；不推断线上并发性能。WP9依据已合并机器API与真实集成证据修正旧未开始状态，没有重复实现。
 
 最新用户要求完成当前轮后暂停；不再开启后续工作包。真实充值仍需当前代码完整CI/CD、Admin重认证启用和有权付款人支付验收。
+
+## 2026-10-08 本轮最终发布及暂停断点
+
+Agent/充值/通知修复a41ea08经Actions37792532752完整verify与deploy成功，于15:21:52Z完成；完整镜像5453通过/5跳过/242弃用警告（2811.72秒）。生产四应用OCI/current.json、六健康容器及gateway/recovery/ledger哈希核对通过；五域readyz/JS、匿名拒绝和OIDC起跳通过。备份20261008T152122Z。精确证据见agent-budget/{release-result,ci-status,production-after-deploy,public-after-deploy}.json。
+
+5个skip为镜像无Node的真实客户端/SDK、无CLAMD_TEST_ADDRESS、未选LICENSE、镜像无docker；Node客户端在前置真实Node阶段执行，其他限制未伪装通过。警告为依赖及旧Pillow/测试cookie弃用，无测试失败。
+
+收尾仍未完成：生产旧失败turn的元数据恢复审计因自动审批两次超时未执行；浏览器恢复支付管理页的读取被自动审批拒绝（当前实际为无关私人PDF）。充值最后核实v1 disabled，未改变，真人重认证及真实卡支付仍缺证据。没有新模型调用、Checkout、配置绕过或手动部署。用户明确本轮后暂停，保存恢复步骤并停止新增工作。

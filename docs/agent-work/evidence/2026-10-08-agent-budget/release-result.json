@@ -1,0 +1,33 @@
+{
+  "recorded_at": "2026-10-08T16:50:09.550218+00:00",
+  "sha": "a41ea08a50b9047c8cf5bdd23ab982751b50d38c",
+  "workflow_url": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37792532752",
+  "verify_job": 113363407609,
+  "deploy_job": 113388683269,
+  "verify_completed": "2026-10-08T15:19:34Z",
+  "deploy_completed": "2026-10-08T15:21:52Z",
+  "runtime": {
+    "passed": 5453,
+    "skipped": 5,
+    "warnings": 242,
+    "seconds": 2811.72
+  },
+  "verification_log_sha256": "6f3130b2a5d050a49cd3741c48accd2ac2605daf25891db495add95187c953da",
+  "backup": "/opt/synwevo/backups/20261008T152122Z",
+  "production_checks": {
+    "four_app_oci_revisions_match": true,
+    "six_containers_healthy": true,
+    "agent_enabled": true,
+    "gateway_recovery_ledger_source_hashes_match_verified_source": true,
+    "five_public_domains_ready": true,
+    "javascript_assets_available": true,
+    "anonymous_management_and_wallet_read_denied": true,
+    "oidc_start_accounts_redirect": true
+  },
+  "not_verified": [
+    "Historical pending usage recovery in production: read-only audit did not run because automatic approval review timed out twice. Local recovery regressions and exact deployed source are verified.",
+    "Payment settings activation: existing live sealed v1 was disabled at last verified read. Current browser inspection rejected because selected window was an unrelated private PDF. No payment setting mutation this round.",
+    "Real card payment, signed credit receipt, new Agent artifact and cross-workspace production task remain unverified."
+  ],
+  "human_pause": "Finish this round then pause. Personal spending remains paused; no additional model call or checkout was created."
+}
