@@ -1,0 +1,26 @@
+{
+  "checked_at": "2026-10-08T06:41:55.679744+00:00",
+  "environment": "live",
+  "merchant_country": "HK",
+  "merchant_type": "individual",
+  "card_payments_active": true,
+  "matching_callbacks": 1,
+  "endpoint_id": "we_1UOB1ZEMgc4r7oEcqTYP9tLI",
+  "url": "https://accounts.synwevo.com/api/auth/payments/stripe/webhook",
+  "enabled_events": [
+    "charge.dispute.created",
+    "charge.succeeded",
+    "checkout.session.async_payment_failed",
+    "checkout.session.async_payment_succeeded",
+    "checkout.session.completed",
+    "checkout.session.expired"
+  ],
+  "status": "disabled",
+  "api_version": null,
+  "signing_secret_stored_locally": true,
+  "private_file_mode": "0o600",
+  "platform_configuration_published": false,
+  "checkout_created": false,
+  "payment_made": false,
+  "next": "Seal credentials through existing authenticated Admin payment settings, then enable this exact endpoint before opening checkout."
+}

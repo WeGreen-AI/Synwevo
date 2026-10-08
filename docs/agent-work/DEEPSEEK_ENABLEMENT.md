@@ -10,7 +10,7 @@
 
 ## 当前配置进度（2026-10-08）
 
-分时日历v1已发布（2026-10-07T14:58:27Z，ao_d7da658ed75f）；仅登记此次相关国庆假期，不宣称完整年度日历。官方成本价price_85f4371761b6已发布，草稿mpd_3870d36aa953/rev2/published；2026-10-08T04:44:43Z生产只读复查二者唯一版本保留，不再请求重复重认证/发布。正式零售倍率尚待所有者明确选择，成本/风险策略、提供方与付款方放行尚未配置，Agent开关未打开。支付渠道修复25b084f已通过CI、部署及线上核验；用户要求本次核验后暂停，当前状态见STATE。
+分时日历v1已发布（2026-10-07T14:58:27Z，ao_d7da658ed75f）；仅登记此次相关国庆假期，不宣称完整年度日历。官方成本价price_85f4371761b6已发布，草稿mpd_3870d36aa953/rev2/published；2026-10-08T04:44:43Z生产只读复查二者唯一版本保留，不再请求重复重认证/发布。正式零售倍率尚待所有者明确选择，成本/风险策略、提供方与付款方放行尚未配置，Agent开关未打开。支付渠道修复25b084f已通过CI、部署及线上核验；用户现已明确要求持续推进，撤销旧暂停边界；当前状态见STATE。
 
 首发参数已准备并经真实校验器/网关公式检查：evidence/2026-10-08-agent-activation/activation-preparation.json。单Flash、官方分时成本、拟2倍售价、输入65536/输出8192、none/low、平台日成本20元、并发4、个人并发1、放行名单；欢迎额度仍1元。2倍为准备值而非已发布价格，依据统一需求§28.5已请用户决定2倍/1倍，尚未收到答复；实际生效时间、期限与价格ID在发布时确定。2026-10-08T02:20Z官方只读检查已确认CNY余额高于准备的1元停止及21元预警阈值；较晚发布时仍须核对最新余额。配置文件不含密钥或会话。
 
@@ -28,9 +28,9 @@
 
 2026-10-07用户已确认使用现有**香港个人商户**（Stripe展示名Hiko Sphere）收款；不再等待另一家公司的资料。用户指定的本机 `strip_api.txt` 已仅通过Stripe官方 `GET /v1/account` 做只读核验：live、HK、individual、默认HKD、charges/payouts enabled、card_payments active。该文件已被Git忽略且未跟踪，权限0600；密钥没有复制到证据、前端、runtime.env或日志。默认HKD不改变平台既定CNY钱包/收款币种，也不代表所有渠道/币种已可用。
 
-仍需平台真实管理员在既有重认证门禁内发布支付设置、配置Webhook签名密钥，核实所选银行卡渠道的CNY收款并完成受控真实充值/回调/入账验证；微信/支付宝目前不可用，首发不选这些渠道。真实回调地址为 `https://accounts.synwevo.com/api/auth/payments/stripe/webhook`；事件列表和验收见 `docs/platform/wallet-payments.md`。已知Stripe展示名不当作未经返回/核实的法定姓名。脱敏账户证据为 `evidence/2026-10-07-webhook-reliability/stripe-account-readiness.json`；接口依据：[Stripe Retrieve account](https://docs.stripe.com/api/accounts/retrieve)（2026-10-07读取）。本轮未创建收银台、扣款、创建Webhook或发布支付配置。
+仍需平台真实管理员在既有重认证门禁内发布支付设置、配置Webhook签名密钥，核实所选银行卡渠道的CNY收款并完成受控真实充值/回调/入账验证；微信/支付宝目前不可用，首发不选这些渠道。真实回调地址为 `https://accounts.synwevo.com/api/auth/payments/stripe/webhook`；事件列表和验收见 `docs/platform/wallet-payments.md`。已知Stripe展示名不当作未经返回/核实的法定姓名。脱敏账户证据为 `evidence/2026-10-07-webhook-reliability/stripe-account-readiness.json`；接口依据：[Stripe Retrieve account](https://docs.stripe.com/api/accounts/retrieve)（2026-10-07读取）。本轮未创建收银台或扣款，平台支付配置尚未发布。2026-10-08T06:41:55Z已创建Synwevo专属Webhook并停用投递，具体恢复记录见下。
 
-2026-10-07T12:46Z完整只读列表补验：该live账户默认支付配置中card可用且on；alipay/wechat_pay均不可用且off；指定Synwevo回调匹配数量0。见stripe-channel-readiness.json。该调查时Checkout固定三渠道；现已在25b084f修复为受治理的非空渠道选择，可发布仅银行卡配置。渠道版本仍未发布，不能将代码修复当作真实CNY收款通过。官方接口：[Webhook列表](https://docs.stripe.com/api/webhook_endpoints/list)、[支付方式配置列表](https://docs.stripe.com/api/payment_method_configurations/list)。
+2026-10-07T12:46Z完整只读列表补验：该live账户默认支付配置中card可用且on；alipay/wechat_pay均不可用且off；当时指定Synwevo回调匹配数量0。见stripe-channel-readiness.json。该调查时Checkout固定三渠道；现已在25b084f修复为受治理的非空渠道选择，可发布仅银行卡配置。渠道版本仍未发布，不能将代码修复当作真实CNY收款通过。官方接口：[Webhook列表](https://docs.stripe.com/api/webhook_endpoints/list)、[支付方式配置列表](https://docs.stripe.com/api/payment_method_configurations/list)。
 
 `/admin?tab=payments` 未正确配置之前，充值返回 unavailable，不创建假订单；不能用测试钱包赠送证明真实充值成功。组织付款沿现有 `org.billing.manage` 与成员支出授权。
 
@@ -57,4 +57,12 @@ DeepSeek 团队您好：
 
 请注明答复适用的账号类型、模型、条款版本与生效日期。谢谢。
 
-2026-10-08T04:44:43Z复查：生产为25b084f，成本价格1，提供方/成本策略/支付版本/调用/结算仍0，Agent未开放。正式零售倍率仍待所有者按MASTER_PROMPT§28.5确认；已按本次发布核验后的指令暂停。
+2026-10-08T04:44:43Z复查：生产为25b084f，成本价格1，提供方/成本策略/支付版本/调用/结算仍0，Agent未开放。正式零售倍率仍待所有者按MASTER_PROMPT§28.5确认；用户在06:31Z后明确恢复持续执行，旧暂停边界已撤销。
+
+## 2026-10-08 恢复正式开放的新增证据
+
+唯一指定回调 `we_1UOB1ZEMgc4r7oEcqTYP9tLI` 已创建并经GET确认disabled，仅6个项目事件；在后台密封签名密钥前不启用。摘要 `evidence/2026-10-08-agent-activation/stripe-callback-prepared.json` 不含秘密；本机0600恢复文件 `/private/tmp/synwevo-stripe-live-callback-20261008.json` 含密钥，禁止输出/提交。继续前读实际状态并复用此ID，不重复创建。香港country_spec的CNY支持/Flash模型存在/上游余额控制阈值复查通过，不能替代实际收款或生产模型验收。
+
+付款设置准备为银行卡、人民币原值入账，10/50/100元套餐，自定义10–1000元，每账户每小时5单/每天20单/未完成3单/每天1000元；真实PaymentSpec对暂不开启和最终开启两版均校验通过。先发布关闭充值但密钥已密封版本，再启用同一回调，最后受治理开启充值。准备文件payment-activation-preparation.json无密钥，尚未发布。首笔10元真实付款必须由有权付款人完成。
+
+正式零售倍率仍需明确选择；已给出2倍/1倍具体方案。浏览器工具受Chrome窗口切换、扩展连接/IAB阻止影响，已请求稳定的model-costs窗口；不以直接写库/伪造管理员会话绕过。

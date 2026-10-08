@@ -1,0 +1,55 @@
+{
+  "prepared_at": "2026-10-08T06:47:30.563083+00:00",
+  "status": "prepared_not_published",
+  "config_while_sealing_keys": {
+    "enabled": false,
+    "operator_name": "Hiko Sphere",
+    "payment_methods": [
+      "card"
+    ],
+    "packages": [
+      {
+        "id": "cny-10",
+        "amount_minor": 1000,
+        "label": null
+      },
+      {
+        "id": "cny-50",
+        "amount_minor": 5000,
+        "label": null
+      },
+      {
+        "id": "cny-100",
+        "amount_minor": 10000,
+        "label": null
+      }
+    ],
+    "custom_amount": true,
+    "min_amount_minor": 1000,
+    "max_amount_minor": 100000,
+    "velocity": {
+      "max_orders_per_hour": 5,
+      "max_orders_per_day": 20,
+      "max_pending": 3,
+      "max_amount_per_day_minor": 100000
+    }
+  },
+  "activation_change": {
+    "enabled": true
+  },
+  "crediting": "CNY face value only; no exchange or bonus, governed server-side cny-fen-identity-v1",
+  "validation": "Existing PaymentSpec accepted both disabled staging and enabled final configuration",
+  "webhook_endpoint": "we_1UOB1ZEMgc4r7oEcqTYP9tLI",
+  "order_of_operations": [
+    "Publish disabled version and sealed keys via authenticated Admin",
+    "Enable this exact Stripe endpoint and verify readiness",
+    "Publish enabled payment version through same Admin gate",
+    "Authorized user completes CNY10 Checkout; inspect signed event, once-only ledger credit and receipt"
+  ],
+  "not_done": [
+    "Admin credential publication",
+    "Webhook activation",
+    "Checkout/payment/receipt acceptance"
+  ],
+  "warning": "No secret or administrator session in this preparation. Merchant/country support does not prove card acceptance."
+}

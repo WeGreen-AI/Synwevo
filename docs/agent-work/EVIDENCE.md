@@ -507,3 +507,13 @@ CR-066追加：旧客户端更新其它设置时省略渠道字段，96f73ab可�
 - 5正式域名根页/readyz/引用JS均200；工作空间OIDC303至Accounts，匿名治理/充值401。上述证据在evidence/2026-10-08-payment-methods。生产登录后的支付/模型操作未重放，真实UI证据仍是同源码的隔离后端验收，不冒称真实支付。
 - 04:44:43Z生产治理只读：日历1/成本价price_85f4371761b6保留，提供方/成本策略/支付配置/调用/结算均0，Agent未开放。正式零售倍率待用户明确答复；用户登录及成本价发布不能替代售价决策。production-after-25b084f.json保存在Agent启用证据目录。
 - 按用户“本次发布核验完成后暂停”保存断点；所有代理/隔离服务/浏览器与CI只读watch均已结束，仅提交文档证据、不触发新部署。全范围目标仍未完成。恢复先读取STATE并核对锁、Git和真实生产状态，复用已发布日历/成本价。
+
+
+## 2026-10-08 继续正式开放（撤销旧暂停边界）
+
+- 用户明确“Agent正式启用，真实充值开放，并且之后不要暂停了，持续做”；goal已active，本任务06:31:57Z独占取得协调者锁。Git main47c7876、当前CI37724156180成功，06:32:05Z生产仍25b084f、日历1/成本1、其他配置/调用0，没有重复部署。
+- 06:41:55Z使用用户指定的live Stripe凭据，经官方API重新核实HK个人商户与card_payments active，完整列表确认原无指定回调；创建Synwevo专属we_1UOB1ZEMgc4r7oEcqTYP9tLI，立即disabled并GET复核。仅订阅6个项目处理事件，未修改其他回调、未创建Checkout或付款。请求具有稳定幂等键；secret仅本机0600恢复文件，证据只收录脱敏摘要stripe-callback-prepared.json。官方依据 https://docs.stripe.com/api/webhook_endpoints/create 和 /update 于本轮读取。
+- 06:43:33Z官方只读country_specs/HK确认CNY在supported_payment_currencies；DeepSeek模型Flash存在/账户可用且高于控制阈值，精确余额/密钥未记录。这不是实际卡支付或模型验收，见live-readiness-resumed.json。
+- 正式倍率再次给出2倍/1倍具体方案并等待明确商业决定。真实Admin窗口因用户切换、扩展连接解析和IAB客户端阻止暂不可操作，已给出model-costs稳定窗口请求；没有提取cookie、伪造会话或直接写治理表。独立只读验收路径由子代理准备，不阻止继续其他工作。
+
+- 付款准备配置采用人民币原值入账、卡渠道、10/50/100元套餐、自定义10–1000元与有界频率；锁定Python3.12下真实PaymentSpec对disabled/最终enabled均通过。未打开Store、未调用支付；仅准备证据payment-activation-preparation.json。
