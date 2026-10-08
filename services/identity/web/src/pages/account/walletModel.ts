@@ -3,6 +3,8 @@
  *  chart geometry and the top-up states. No request is made here and no figure is invented:
  *  every number on the pages is one of the server's, re-expressed. */
 
+import { paymentMethods, type PaymentMethod } from '../../lib/paymentMethods';
+
 export type PayerKind = 'user' | 'organization';
 export interface Payer { kind: PayerKind; id: string }
 export interface PayerOption extends Payer { name: string | null }
@@ -30,6 +32,7 @@ export interface CallsPage { environment: 'test' | 'live'; payer: Payer; period:
 export interface TopupPackage { id: string; amount_minor: number; label: string }
 export interface TopupOptions {
   available: boolean; reason?: string | null; currency: string; packages: TopupPackage[];
+  payment_methods: PaymentMethod[];
   /** Optional: false hides the free amount even when bounds are published. */
   custom_amount?: boolean; min_amount_minor: number | null; max_amount_minor: number | null;
 }
@@ -220,7 +223,8 @@ export function entryKindLabel(kind: string, delta: string): string {
 export function topupClosedReason(options: TopupOptions | null, failureStatus: number | null): string | null {
   if (failureStatus === 404) return 'not_configured';
   if (!options) return null;
-  return options.available ? null : options.reason || 'not_configured';
+  if (!options.available) return options.reason || 'not_configured';
+  return paymentMethods(options.payment_methods).length ? null : 'not_configured';
 }
 export type TopupView = TopupState | 'cancelled' | 'slow';
 /** Which message the return page shows. The provider's final answer wins; until then a slow

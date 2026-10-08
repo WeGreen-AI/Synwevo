@@ -3,7 +3,7 @@
 The shared contract (org-payments package, consumed by the usage pages):
 
   GET  /api/auth/wallet/topup-options?payer_kind=&payer_id=
-       -> {available, reason?, currency, packages: [{id, amount_minor, label}], min_amount_minor, max_amount_minor}
+       -> {available, reason?, currency, payment_methods, packages: [{id, amount_minor, label}], min_amount_minor, max_amount_minor}
   POST /api/auth/wallet/topups {payer_kind, payer_id, package_id? | amount_minor, challenge_token?}
        -> {order_id, checkout_url}      (CSRF by the platform gate; Turnstile when configured)
   GET  /api/auth/wallet/topups/{order_id}
@@ -24,6 +24,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from synwevo_core.billing.org_payers import manages_billing
+from synwevo_core.billing.payment_settings import payment_methods
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
 from synwevo_core.sessions import Sessions
@@ -84,9 +85,11 @@ def build_router(ident: Identity, sessions: Sessions, audit, topups: TopupServic
         base = {"currency": "CNY", "payer_kind": kind, "payer_id": pid}
         if resolved is None:
             return {**base, "available": False, "reason": reason, "packages": [],
+                    "payment_methods": [],
                     "min_amount_minor": None, "max_amount_minor": None}
         spec = resolved.spec
         out = {**base, "available": True, "packages": topups.packages(spec),
+               "payment_methods": payment_methods(spec),
                "custom_amount": spec["custom_amount"],
                "min_amount_minor": spec["min_amount_minor"] if spec["custom_amount"] else None,
                "max_amount_minor": spec["max_amount_minor"] if spec["custom_amount"] else None,

@@ -3,8 +3,8 @@
 A data service only (the Admin route supplies current authorization, reason, idempotency and
 audit in the same Store transaction). Off by default: with no published version, or one with
 ``enabled=false``, or no stored credentials, top-ups are "not configured" and the product says
-so. The provider is Stripe (owner decision §6.1): Checkout in CNY with card, WeChat Pay and
-Alipay. Packages and amount bounds are server-side: a browser never decides an amount.
+so. The provider is Stripe (owner decision §6.1): Checkout in CNY with an administrator-selected
+subset of card, WeChat Pay and Alipay. Packages, channels and amount bounds are server-side.
 
 Keys are bound to the billing environment: a ``test`` deployment accepts only Stripe test-mode
 keys (``sk_test_`` / ``rk_test_``), ``live`` only live-mode keys, so a test instance cannot
@@ -21,7 +21,7 @@ import re
 import time
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator, model_serializer, model_validator
 
 from .. import sealed
 from ..errors import ServiceError
@@ -31,6 +31,13 @@ KEY_PURPOSE = "platform-payment-key"
 PROVIDER = "stripe"
 MERCHANT = "stripe-platform"
 MAX_AMOUNT_MINOR = 10_000_000          # CNY 100,000 per top-up: an upper bound on any setting
+PaymentMethod = Literal["card", "wechat_pay", "alipay"]
+PAYMENT_METHODS: tuple[PaymentMethod, ...] = ("card", "wechat_pay", "alipay")
+
+
+def payment_methods(spec: dict) -> list[PaymentMethod]:
+    """Effective channels of a validated version. Legacy versions offered all three."""
+    return list(spec.get("payment_methods", PAYMENT_METHODS))
 
 
 class Strict(BaseModel):
@@ -60,11 +67,28 @@ class VelocitySpec(Strict):
 class PaymentSpec(Strict):
     enabled: bool
     operator_name: str = Field(min_length=1, max_length=120)
+    payment_methods: list[PaymentMethod] = Field(default_factory=lambda: list(PAYMENT_METHODS),
+                                               min_length=1, max_length=3)
     packages: list[PackageSpec] = Field(max_length=12)
     custom_amount: bool
     min_amount_minor: int = Field(ge=1, le=MAX_AMOUNT_MINOR)
     max_amount_minor: int = Field(ge=1, le=MAX_AMOUNT_MINOR)
     velocity: VelocitySpec
+
+    @field_validator("payment_methods")
+    @classmethod
+    def selected_methods(cls, value):
+        if len(set(value)) != len(value):
+            raise ValueError("duplicate payment method")
+        return [method for method in PAYMENT_METHODS if method in value]
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_shape(self, handler):
+        out = handler(self)
+        # Do not rewrite historical JSON or turn an unchanged legacy draft into a new version.
+        if "payment_methods" not in self.model_fields_set:
+            out.pop("payment_methods", None)
+        return out
 
     @field_validator("operator_name")
     @classmethod

@@ -38,7 +38,8 @@ from urllib.parse import quote, urlencode
 import httpx
 
 from synwevo_core.billing import BillingError, DisputeNotice, Ledger, PaymentReceipt, Unit
-from synwevo_core.billing.payment_settings import MERCHANT, PROVIDER, PaymentSettings
+from synwevo_core.billing.payment_settings import (MERCHANT, PROVIDER, PAYMENT_METHODS, PaymentMethod,
+                                                  PaymentSettings, payment_methods)
 from synwevo_core.billing import risk
 from synwevo_core.billing.wallet_config import (CURRENCY, EXCHANGE_VERSION, cny_unit, environment_from_env,
                                                 fen_to_units, units_from_env)
@@ -125,7 +126,8 @@ class PaymentProvider(Protocol):
     name: str
 
     def create_checkout(self, *, order_id: str, amount_minor: int, currency: str, product_name: str,
-                        success_url: str, cancel_url: str, environment: str, expires_at: int) -> "Checkout": ...
+                        success_url: str, cancel_url: str, environment: str, expires_at: int,
+                        payment_methods: list[PaymentMethod]) -> "Checkout": ...
 
 
 @dataclass(frozen=True)
@@ -147,20 +149,25 @@ class StripeCheckout:
         self._timeout = timeout
 
     def create_checkout(self, *, order_id: str, amount_minor: int, currency: str, product_name: str,
-                        success_url: str, cancel_url: str, environment: str, expires_at: int) -> Checkout:
+                        success_url: str, cancel_url: str, environment: str, expires_at: int,
+                        payment_methods: list[PaymentMethod] | tuple[PaymentMethod, ...] = PAYMENT_METHODS) -> Checkout:
+        if (not payment_methods or len(set(payment_methods)) != len(payment_methods)
+                or any(method not in PAYMENT_METHODS for method in payment_methods)):
+            raise ProviderUnavailable("payment_methods")
         params = {
             "mode": "payment",
             "client_reference_id": order_id,
             "line_items": [{"quantity": 1, "price_data": {
                 "currency": currency.lower(), "unit_amount": amount_minor,
                 "product_data": {"name": product_name}}}],
-            "payment_method_types": ["card", "wechat_pay", "alipay"],
-            "payment_method_options": {"wechat_pay": {"client": "web"}},
+            "payment_method_types": list(payment_methods),
             "success_url": success_url, "cancel_url": cancel_url,
             "expires_at": expires_at,
             "metadata": {"order_id": order_id, "environment": environment},
             "payment_intent_data": {"metadata": {"order_id": order_id, "environment": environment}},
         }
+        if "wechat_pay" in payment_methods:
+            params["payment_method_options"] = {"wechat_pay": {"client": "web"}}
         headers = {"Authorization": "Bearer " + self._secret, "Idempotency-Key": "checkout-" + order_id,
                    "Content-Type": "application/x-www-form-urlencoded"}
         try:
@@ -341,6 +348,7 @@ class TopupService:
             checkout = self.provider_factory(resolved.secret_key).create_checkout(
                 order_id=order_id, amount_minor=amount, currency=CURRENCY,
                 product_name=spec["operator_name"], environment=self.environment, expires_at=expires,
+                payment_methods=payment_methods(spec),
                 success_url=f"{page}?topup={order_id}&result=success",
                 cancel_url=f"{page}?topup={order_id}&result=cancel")
         except ProviderUnavailable:

@@ -3,6 +3,7 @@ import { ApiError, get, post } from '@synwevo/auth-client';
 import { Modal, useI18n, type Translator } from '@synwevo/ui';
 import { isChallengeError, useChallenge } from '../org/Challenge';
 import { ErrorNotice, errorText } from './common';
+import { paymentMethodsText } from '../../lib/paymentMethods';
 import { WALLET_API, minorFromText, payerKey, payerQuery, paymentText, safeCheckout, topupClosedReason, withQuery,
   type Payer, type TopupOptions } from './walletModel';
 import './wallet.messages';
@@ -78,7 +79,7 @@ export function TopupChoices({ options, choice, custom, onChoice, onCustom }: {
  *  order and returns the checkout address; the wallet is credited only by the provider's signed
  *  confirmation, which the return page then reports. */
 export default function TopupDialog({ payer, payerName, onClose }: { payer: Payer; payerName: string; onClose: () => void }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [options, setOptions] = useState<TopupOptions | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [choice, setChoice] = useState<string>('');
@@ -88,7 +89,7 @@ export default function TopupDialog({ payer, payerName, onClose }: { payer: Paye
   const [armed, setArmed] = useState(false);
   // Turnstile is the account service's decision (its challenge settings for "topup"); a refusal
   // asking for it arms the widget for the next attempt.
-  const challenge = useChallenge('topup', { enabled: options?.available === true, armed });
+  const challenge = useChallenge('topup', { enabled: options?.available === true && !topupClosedReason(options, null), armed });
   const hint = useId();
 
   useEffect(() => {
@@ -137,7 +138,8 @@ export default function TopupDialog({ payer, payerName, onClose }: { payer: Paye
       {open && options && <>
         <TopupChoices options={options} choice={choice} custom={custom} onChoice={setChoice} onCustom={setCustom} />
         {challenge.element}
-        <p className="small muted" id={hint}>{t('付款在支付服务商的安全页面完成（银行卡、微信支付或支付宝）。到账以支付服务商的确认为准；充值后不可退款，余额只能用于 Synwevo 的服务。')}</p>
+        <p className="small muted" id={hint}>{t('付款在支付服务商的安全页面完成，可用支付方式：{methods}。到账以支付服务商的确认为准；充值后不可退款，余额只能用于 Synwevo 的服务。', {
+          methods: paymentMethodsText(options.payment_methods, t, locale) })}</p>
         <ErrorNotice error={error ? topupErrorText(error, t) : null} />
       </>}
     </div>

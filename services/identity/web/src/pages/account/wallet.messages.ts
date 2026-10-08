@@ -79,7 +79,7 @@ registerMessages({
   '其他金额': { en: 'Another amount', 'zh-Hant': '其他金額' },
   '金额（{currency}）': { en: 'Amount ({currency})', 'zh-Hant': '金額（{currency}）' },
   '{min} 至 {max}，最多两位小数。': { en: '{min} to {max}, at most two decimal places.', 'zh-Hant': '{min} 至 {max}，最多兩位小數。' },
-  '付款在支付服务商的安全页面完成（银行卡、微信支付或支付宝）。到账以支付服务商的确认为准；充值后不可退款，余额只能用于 Synwevo 的服务。': { en: 'You pay on the payment provider’s secure page (card, WeChat Pay or Alipay). The balance is credited when the provider confirms the payment. Top-ups are non-refundable and can only be used for Synwevo services.', 'zh-Hant': '付款在支付服務商的安全頁面完成（銀行卡、微信支付或支付寶）。到帳以支付服務商的確認為準；充值後不可退款，餘額只能用於 Synwevo 的服務。' },
+  '付款在支付服务商的安全页面完成，可用支付方式：{methods}。到账以支付服务商的确认为准；充值后不可退款，余额只能用于 Synwevo 的服务。': { en: 'You pay on the payment provider’s secure page. Available payment methods: {methods}. The balance is credited when the provider confirms the payment. Top-ups are non-refundable and can only be used for Synwevo services.', 'zh-Hant': '付款在支付服務商的安全頁面完成，可用支付方式：{methods}。到帳以支付服務商的確認為準；充值後不可退款，餘額只能用於 Synwevo 的服務。' },
   '前往付款': { en: 'Continue to payment', 'zh-Hant': '前往付款' },
   '正在前往付款…': { en: 'Opening payment…', 'zh-Hant': '正在前往付款…' },
   '付款页面地址无效，未跳转。请稍后重试。': { en: 'The payment page address was not valid, so you were not redirected. Try again later.', 'zh-Hant': '付款頁面網址無效，未跳轉。請稍後重試。' },

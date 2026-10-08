@@ -1,0 +1,14 @@
+{
+  "checked_at": "2026-10-08T02:20:04.331267+00:00",
+  "read_only": true,
+  "endpoint": "https://api.deepseek.com/user/balance",
+  "threshold_unit": "CNY",
+  "close_threshold": "1",
+  "warning_threshold": "21",
+  "http_status": 200,
+  "is_available": true,
+  "cny_entry_present": true,
+  "above_close_threshold": true,
+  "above_warning_threshold": true,
+  "notes": "Threshold predicates only; no exact balance, key, inference, payment or configuration mutation"
+}

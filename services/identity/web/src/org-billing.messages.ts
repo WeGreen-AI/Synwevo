@@ -25,9 +25,9 @@ export const messages = {
   "选择充值金额（人民币）。充值后不可退款。": { en: "Choose an amount (CNY). Top-ups are final and cannot be refunded.", "zh-Hant": "選擇儲值金額（人民幣）。儲值後不可退款。" },
   "其他金额": { en: "Another amount", "zh-Hant": "其他金額" },
   "金额（元），可充值 {min} 至 {max}": { en: "Amount (CNY), from {min} to {max}", "zh-Hant": "金額（元），可儲值 {min} 至 {max}" },
-  "付款在支付服务的收银台完成（银行卡、微信支付或支付宝）。只有支付服务的签名通知确认到账后，金额才会计入组织钱包并出现在账单中。": {
-    en: "You pay on the payment service's checkout page (card, WeChat Pay or Alipay). The amount reaches the organization wallet and the statement only after the payment service's signed notice confirms it.",
-    "zh-Hant": "付款在支付服務的收銀台完成（銀行卡、微信支付或支付寶）。只有支付服務的簽名通知確認到帳後，金額才會計入組織錢包並出現在帳單中。" },
+  "付款在支付服务的收银台完成，可用支付方式：{methods}。只有支付服务的签名通知确认到账后，金额才会计入组织钱包并出现在账单中。": {
+    en: "You pay on the payment service's checkout page. Available payment methods: {methods}. The amount reaches the organization wallet and the statement only after the payment service's signed notice confirms it.",
+    "zh-Hant": "付款在支付服務的收銀台完成，可用支付方式：{methods}。只有支付服務的簽章通知確認到帳後，金額才會計入組織錢包並出現在帳單中。" },
   "前往支付": { en: "Continue to payment", "zh-Hant": "前往支付" },
   "正在打开收银台…": { en: "Opening the checkout…", "zh-Hant": "正在開啟收銀台…" },
   "充值暂未开放": { en: "Top-ups are not open yet.", "zh-Hant": "儲值暫未開放" },

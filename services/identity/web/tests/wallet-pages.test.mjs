@@ -126,8 +126,10 @@ test('model, conversation and member bars keep the server order and sum the rest
 
 // ------------------------------------------------------------------ top-up decisions
 test('top-up is offered only when the server says so; a missing top-up service is the same honest closed state', () => {
-  const open = { available: true, currency: 'CNY', packages: [{ id: 'p1', amount_minor: 5000, label: '50' }], min_amount_minor: 100, max_amount_minor: 100000 };
+  const open = { available: true, currency: 'CNY', payment_methods: ['card'], packages: [{ id: 'p1', amount_minor: 5000, label: '50' }], min_amount_minor: 100, max_amount_minor: 100000 };
   assert.equal(model.topupClosedReason(open, null), null);
+  for (const payment_methods of [[], undefined, null, ['unknown']])
+    assert.equal(model.topupClosedReason({ ...open, payment_methods }, null), 'not_configured');
   assert.equal(model.topupClosedReason({ ...open, available: false, reason: 'not_configured', packages: [] }, null), 'not_configured');
   assert.equal(model.topupClosedReason({ ...open, available: false, reason: null }, null), 'not_configured');
   assert.equal(model.topupClosedReason({ ...open, available: false, reason: 'email_unverified' }, null), 'email_unverified');

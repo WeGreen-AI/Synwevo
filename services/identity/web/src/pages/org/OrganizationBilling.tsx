@@ -21,6 +21,8 @@ import { FlowError, Loading, useAction } from "./AuthFlow";
 import { isChallengeError, useChallenge } from "./Challenge";
 import { orgPath, roleSource, type Organization } from "./types";
 import { cnyText, fenText, parseYuan, yuanInput } from "../../governance/billing-money";
+import { paymentMethodsText } from "../../lib/paymentMethods";
+import { topupClosedReason, type TopupOptions } from "../account/walletModel";
 import "../account/topup.messages";
 import "../../org-billing.messages";
 
@@ -28,8 +30,6 @@ type Unit = { code: string; scale: number };
 interface MemberGrant { user_id: string; email: string; display_name: string | null; role: string; revision: number; enabled: boolean; monthly_limit: string; spent_this_month: string; held: string }
 interface Billing { organization_id: string; environment: string | null; currency: "CNY"; unit: Unit; month_start: number;
   wallet: { booked: string; held: string; available: string; frozen: boolean }; members: MemberGrant[] }
-interface TopupOptions { available: boolean; reason?: string; currency: "CNY"; packages: { id: string; amount_minor: number; label: string }[];
-  custom_amount?: boolean; min_amount_minor: number | null; max_amount_minor: number | null }
 interface StatementItem { seq: string; id: string; kind: string; delta: string; created_at: number; member_id?: string; member_email?: string | null }
 interface Statement { items: StatementItem[]; next_after_seq: string | null }
 interface TopupStatus { order_id: string; status: "pending" | "paid" | "failed" | "expired"; amount_minor: number; currency: string; credited_at?: number }
@@ -149,11 +149,11 @@ function TopupReturn({ orderId, cancelled, onCredited, onDismiss }: { orderId: s
   </div>;
 }
 
-function OrganizationTopup({ organization }: { organization: Organization }) {
+export function OrganizationTopup({ organization }: { organization: Organization }) {
   const { t, locale } = useI18n(); const id = useId(); const action = useAction();
   const [options, setOptions] = useState<TopupOptions | null>(null); const [loadError, setLoadError] = useState<unknown>(null);
   const [choice, setChoice] = useState<string>(""); const [custom, setCustom] = useState("");
-  const challenge = useChallenge("topup", { enabled: !!options?.available });
+  const challenge = useChallenge("topup", { enabled: !!options?.available && !topupClosedReason(options, null) });
   useEffect(() => {
     const abort = new AbortController();
     get<TopupOptions>(`/api/auth/wallet/topup-options?payer_kind=organization&payer_id=${encodeURIComponent(organization.id)}`, abort.signal)
@@ -163,7 +163,8 @@ function OrganizationTopup({ organization }: { organization: Organization }) {
   }, [organization.id]);
   if (loadError) return <FlowError error={loadError} />;
   if (!options) return <Loading />;
-  if (!options.available) return <p className="notice" role="note">{t(UNAVAILABLE[options.reason || ""] || "充值暂未开放")}</p>;
+  const closed = topupClosedReason(options, null);
+  if (closed) return <p className="notice" role="note">{t(UNAVAILABLE[closed] || "充值暂未开放")}</p>;
   const customFen = choice === "custom" ? parseYuan(custom, (options.max_amount_minor ?? 0) / 100) : null;
   const customOk = customFen !== null && customFen >= (options.min_amount_minor ?? 1) && customFen <= (options.max_amount_minor ?? 0);
   const ready = choice !== "" && (choice !== "custom" || customOk) && (!challenge.required || !!challenge.token);
@@ -193,7 +194,8 @@ function OrganizationTopup({ organization }: { organization: Organization }) {
     </fieldset>
     {challenge.element}
     <FlowError error={action.error} />
-    <p className="tiny muted">{t("付款在支付服务的收银台完成（银行卡、微信支付或支付宝）。只有支付服务的签名通知确认到账后，金额才会计入组织钱包并出现在账单中。")}</p>
+    <p className="tiny muted">{t("付款在支付服务的收银台完成，可用支付方式：{methods}。只有支付服务的签名通知确认到账后，金额才会计入组织钱包并出现在账单中。", {
+      methods: paymentMethodsText(options.payment_methods, t, locale) })}</p>
     <div className="org-actions"><button className="btn primary" disabled={!ready || action.busy}>{t(action.busy ? "正在打开收银台…" : "前往支付")}</button></div>
   </form>;
 }

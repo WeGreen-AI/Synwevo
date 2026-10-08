@@ -1,0 +1,21 @@
+{
+  "packages/core/synwevo_core/billing/payment_settings.py": "c7639b9c428920c7f6f2ea01b61b276fcb68453e594b9f151b0f1cc74bb7617b",
+  "packages/ui/src/i18n-core.ts": "933052541155a47cb827c0f89c39d6604df56644a13d0c2a43b8de6a3a087d0c",
+  "packages/ui/tests/i18n.test.ts": "5dafa9100704e8ddcbfb55d7c3ae699bb7a61851dd49f94d65938b5b38476767",
+  "services/identity/synwevo_identity/payment_routes.py": "8e41f1fcaa8718ec2f86d60363c00c14fc32be60be31de2a8cf657dab8a08a97",
+  "services/identity/synwevo_identity/payments.py": "2686a508f5dac04d20d99797fddbae8d5a93f5f712ad6379e46d521ffa0de3af",
+  "services/identity/tests/test_admin_payments.py": "6ea866a9ce8515400d45f0f1469b769c496836de317aa2013286a65e01964bb7",
+  "services/identity/tests/test_wallet_topups.py": "8d6fe589985b116232fe1c8b40c95d08978f871c4407cbd447c587ff3d2cfaf6",
+  "services/identity/web/src/governance/PaymentsTab.tsx": "c09afd64361072cb42b5b8975d7d9d68148ddb4d7a34cc10a12dfcf18d0288dd",
+  "services/identity/web/src/governance/payments.messages.ts": "f60206b834aef34d8f606cd40fb5a8cb06b09faf7f83ac1ca6781043e789806b",
+  "services/identity/web/src/org-billing.messages.ts": "2e31732264fd1b1c053564d014059665893ca2a1ee316361edb9d674c423569b",
+  "services/identity/web/src/pages/account/TopupDialog.tsx": "b30ccdda7f226959fd002f4a115805c22327510dc2007b15d3bbde82495e929f",
+  "services/identity/web/src/pages/account/wallet.messages.ts": "c35de959aa7403600889feeb65e7e105469b539410f47c84d9099041cd22e046",
+  "services/identity/web/src/pages/account/walletModel.ts": "55dab6e01704bb235d68ce8b3a20422d6b4f2394ec78a651dd15803463515518",
+  "services/identity/web/src/pages/org/OrganizationBilling.tsx": "594b3c2c90556d02f6ec39522a2291341ccbbe1fd2459a144d3e0789de04722d",
+  "services/identity/web/tests/wallet-pages.test.mjs": "b996c8c630496123d1aa3c7b2962f67770aad078ef5ea4ad5bbc5d924946c6cb",
+  "services/identity/web/src/lib/paymentMethods.ts": "b530fe41bb16a246e4a3064d2a152c8cc883071fff40b2b8edfe1190c601100e",
+  "services/identity/web/tests/fixtures/payment-methods.tsx": "bf51c5dcfff7fe0b67498919a0139d0d410b3525d16aa5043ea563678e0298f9",
+  "services/identity/web/tests/payment-methods.browser.mjs": "13ef47c39046ce0a681f21ef6f66fae475d6e46169d7debc559f2e00764ae661",
+  "services/identity/web/tests/payment-methods.test.mjs": "f184d1911bc9eab86dccd491927af153c0aaeb6c219883d1123d95e6b327b15f"
+}

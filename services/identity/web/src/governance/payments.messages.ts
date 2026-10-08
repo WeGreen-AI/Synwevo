@@ -10,9 +10,13 @@ registerMessages({
   "支付设置": { en: "Payment settings", "zh-Hant": "支付設定" },
 
   // ---- payment settings
-  "钱包充值通过 Stripe 托管收银台以人民币收款（银行卡、微信支付、支付宝）。套餐与金额只由这里决定，浏览器不能指定金额；资金只在签名校验通过的支付通知到达后入账。充值后不可退款。": {
-    en: "Wallet top-ups are collected in CNY through Stripe's hosted checkout (card, WeChat Pay, Alipay). Packages and amounts are decided only here, never by the browser; money is credited only when a signature-verified payment notification arrives. Top-ups are not refundable.",
-    "zh-Hant": "錢包儲值透過 Stripe 託管收銀台以人民幣收款（銀行卡、微信支付、支付寶）。套餐與金額只由這裡決定，瀏覽器不能指定金額；資金只在簽章驗證通過的支付通知到達後入帳。儲值後不可退款。" },
+  "钱包充值通过 Stripe 托管收银台以人民币收款，使用此处选择的支付方式。套餐与金额只由这里决定，浏览器不能指定金额；资金只在签名校验通过的支付通知到达后入账。充值后不可退款。": {
+    en: "Wallet top-ups are collected in CNY through Stripe's hosted checkout using the payment methods selected here. Packages and amounts are decided only here, never by the browser; money is credited only when a signature-verified payment notification arrives. Top-ups are not refundable.",
+    "zh-Hant": "錢包儲值透過 Stripe 託管收銀台以人民幣收款，使用此處選擇的支付方式。套餐與金額只由這裡決定，瀏覽器不能指定金額；資金只在簽章驗證通過的支付通知到達後入帳。儲值後不可退款。" },
+  "支付方式（至少选择一项）": { en: "Payment methods (select at least one)", "zh-Hant": "支付方式（至少選擇一項）" },
+  "仅选择商户已开通的支付方式，选择不代表渠道资格已验证": { en: "Select only payment methods already activated for the merchant. Selecting a method does not verify channel eligibility.", "zh-Hant": "僅選擇商戶已開通的支付方式，選擇不代表渠道資格已驗證" },
+  "请至少选择一种支付方式。": { en: "Select at least one payment method.", "zh-Hant": "請至少選擇一種支付方式。" },
+  "已选支付方式": { en: "Selected payment methods", "zh-Hant": "已選支付方式" },
   "此部署尚未配置计费环境，不能开启充值。": { en: "This deployment has no billing environment configured, so top-ups cannot be opened.", "zh-Hant": "此部署尚未設定計費環境，不能開啟儲值。" },
   "钱包单位中没有 CNY（精度至少到分），付款无法入账；请先在部署配置中加入 CNY 钱包单位。": { en: "The wallet units have no CNY unit (at least fen precision), so payments cannot be credited; add a CNY wallet unit to the deployment configuration first.", "zh-Hant": "錢包單位中沒有 CNY（精度至少到分），付款無法入帳；請先在部署設定中加入 CNY 錢包單位。" },
   "计费环境": { en: "Billing environment", "zh-Hant": "計費環境" },

@@ -19,7 +19,11 @@ function remember(result: string, provenance: Rendered): string {
 }
 /** Compose already translated UI messages without losing their locale provenance. */
 export function joinMessages(parts: string[], separator = ' · '): string {
-  return remember(parts.join(separator), { parts: [...parts], separator });
+  const result = parts.join(separator);
+  // A one-part error (e.g. a gateway response without a request ID) must retain its
+  // original provenance, not replace it with a composition pointing to itself.
+  if (parts.includes(result)) return result;
+  return remember(result, { parts: [...parts], separator });
 }
 export const hasMessage = (source: string): boolean => Object.hasOwn(catalog, source);
 

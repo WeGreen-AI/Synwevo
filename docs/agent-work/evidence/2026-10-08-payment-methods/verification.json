@@ -1,0 +1,52 @@
+{
+  "checked_at": "2026-10-08T03:15:58.497884+00:00",
+  "environment": "isolated test; not production or payment acceptance",
+  "base_sha": "c478288fb50d31fe50598cbf1e9b3273638310ed",
+  "tests": {
+    "python_payments": 39,
+    "machine_contract_i18n": 5,
+    "frontend": 507,
+    "typecheck": "passed",
+    "build": "passed",
+    "guards": "passed",
+    "ui_fixture_browser": "Raman reported 6 Chromium tests; mocked API responses, not backend acceptance"
+  },
+  "real_browser": {
+    "browser": "Safari via CUA",
+    "origin": "http://127.0.0.1:37778",
+    "checks": [
+      "actual password login",
+      "legacy three methods displayed",
+      "empty selection refused",
+      "card-only confirmation",
+      "server required admin reauthentication",
+      "real password reauth and publish",
+      "revision 2 persisted",
+      "personal topup card-only",
+      "organization topup card-only in Simplified Chinese, English, Traditional Chinese",
+      "390x844 organization topup screenshot: text wraps and payment button accessible"
+    ],
+    "screenshots": "CUA screenshots retained in conversation; no separate PNG export",
+    "published_revision": 2,
+    "payment_methods": [
+      "card"
+    ],
+    "topup_orders": 0,
+    "paid_transactions": 0,
+    "synthetic_allowance": "CNY 1 audited fixture grant, not a payment",
+    "not_checked": [
+      "real Stripe Checkout creation/payment",
+      "production activation",
+      "browser console/network inspector"
+    ]
+  },
+  "i18n_regression": {
+    "baseline": "RangeError reproduced from HEAD i18n-core single-part error",
+    "fixed_test": "passed; locale changes preserve message provenance"
+  },
+  "limitations": [
+    "formal retail multiplier and production admin reauthentication remain pending",
+    "new payment configuration needs merchant verification and webhook secret",
+    "rollback build must retain new-field reader after publishing first explicit channel version"
+  ]
+}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatDate, formatNumber, getLocale, messageParams, normalizeLocale, registerMessages, resolveLocale, setLocale, subscribeLocale, translate, validateMessages } from '../src/i18n-core.ts';
+import { formatDate, formatNumber, getLocale, joinMessages, messageParams, normalizeLocale, registerMessages, resolveLocale, setLocale, subscribeLocale, translate, validateMessages } from '../src/i18n-core.ts';
 import { messages } from '../src/messages.ts';
 
 test('locale selection respects explicit preference, browser order, script and region', () => {
@@ -45,6 +45,17 @@ test('formatting uses Intl for the chosen locale without changing input values',
     assert.equal(formatDate(date, { dateStyle: 'medium', timeZone: 'UTC' }, locale), new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' }).format(date));
   }
   assert.equal(n, 12345.67);
+});
+
+test('one-part retained errors can be translated again without self-referential provenance', () => {
+  registerMessages({ '验收：支付配置已变化': { en: 'Acceptance: payment settings changed', 'zh-Hant': '驗收：支付配置已變化' } });
+  const rendered = translate('en', '验收：支付配置已变化');
+  const error = joinMessages([rendered], ' ');
+  assert.equal(translate('en', error), rendered);
+  assert.equal(translate('zh-Hant', error), '驗收：支付配置已變化');
+  assert.equal(translate('zh-Hans', joinMessages(['', error], '')), '验收：支付配置已变化');
+  const detailed = joinMessages([error, 'Request ID: fixture'], ' ');
+  assert.equal(translate('zh-Hant', detailed), '驗收：支付配置已變化 Request ID: fixture');
 });
 
 test('locale notifications work without localStorage and unsubscribe cleanly', () => {

@@ -136,6 +136,7 @@ def test_without_payment_settings_top_up_says_not_configured_and_creates_nothing
     r = c.get("/api/auth/wallet/topup-options")
     assert r.status_code == 200 and r.json()["available"] is False and r.json()["reason"] == "not_configured"
     assert r.json()["currency"] == "CNY" and r.json()["packages"] == []
+    assert r.json()["payment_methods"] == []
     r = post(c, "/api/auth/wallet/topups", {"package_id": "cny-10"})
     assert r.status_code == 503 and r.json()["error"] == "topup_not_configured"
     assert world["stripe"].requests == [] and world["store"].all("SELECT * FROM payment_topups") == []
@@ -148,6 +149,7 @@ def test_options_list_server_priced_packages(world):
     r = world["login"]("alice").get("/api/auth/wallet/topup-options")
     body = r.json()
     assert body["available"] is True and body["currency"] == "CNY"
+    assert body["payment_methods"] == ["card", "wechat_pay", "alipay"]
     assert body["packages"] == [{"id": "cny-10", "amount_minor": 1000, "label": None},
                                 {"id": "cny-50", "amount_minor": 5000, "label": "Fixture 50"}]
     assert (body["min_amount_minor"], body["max_amount_minor"]) == (500, 20000)
@@ -156,6 +158,57 @@ def test_options_list_server_priced_packages(world):
 
 
 # ---------------------------------------------------------------- checkout
+@pytest.mark.parametrize("payer_kind", ["user", "organization"])
+def test_card_only_configuration_reaches_options_and_stripe_for_each_payer(world, payer_kind):
+    world["configure"]({**SPEC, "payment_methods": ["card"]})
+    body = {"package_id": "cny-10", "payer_kind": payer_kind}
+    if payer_kind == "organization":
+        org = Organizations(world["store"], world["ident"]).create(
+            world["users"]["alice"]["id"], "Fixture Org", "Fixture WS", "fixture-card-only")
+        body["payer_id"] = org["organization"]["id"]
+    c = world["login"]("alice")
+    options = c.get("/api/auth/wallet/topup-options", params={k: v for k, v in body.items() if k != "package_id"})
+    assert options.status_code == 200 and options.json()["payment_methods"] == ["card"]
+    result = post(c, "/api/auth/wallet/topups", body)
+    assert result.status_code == 201, result.text
+    form = parse_qs(world["stripe"].requests[-1].content.decode())
+    assert form["payment_method_types[0]"] == ["card"]
+    assert not any(k.startswith("payment_method_options") or k == "payment_method_types[1]" for k in form)
+    assert world["store"].one("SELECT settings_revision FROM payment_topups")["settings_revision"] == 1
+    assert cny_booked(world) == 0
+
+
+def test_a_channel_change_applies_to_new_orders_but_does_not_block_an_open_payment(world):
+    world["configure"]({**SPEC, "payment_methods": ["wechat_pay"]})
+    c = world["login"]("alice")
+    first = post(c, "/api/auth/wallet/topups", {"package_id": "cny-10"})
+    assert first.status_code == 201
+    form = parse_qs(world["stripe"].requests[-1].content.decode())
+    assert form["payment_method_types[0]"] == ["wechat_pay"]
+    assert form["payment_method_options[wechat_pay][client]"] == ["web"]
+    world["configure"]({**SPEC, "payment_methods": ["card"]}, {"action": "keep"})
+    second = post(c, "/api/auth/wallet/topups", {"package_id": "cny-10"})
+    assert second.status_code == 201
+    form = parse_qs(world["stripe"].requests[-1].content.decode())
+    assert form["payment_method_types[0]"] == ["card"]
+    assert "payment_method_options[wechat_pay][client]" not in form
+    rows = world["store"].all("SELECT order_id,settings_revision FROM payment_topups ORDER BY settings_revision")
+    assert rows == [{"order_id": first.json()["order_id"], "settings_revision": 1},
+                    {"order_id": second.json()["order_id"], "settings_revision": 2}]
+    event = session_event(first.json()["order_id"])
+    assert deliver(world, event).status_code == 200
+    assert deliver(world, event).status_code == 200
+    assert cny_booked(world) == 1000 * 10**4, "旧渠道的已验证付款仍且只入账一次"
+
+
+def test_browser_cannot_expand_governed_payment_channels(world):
+    world["configure"]({**SPEC, "payment_methods": ["card"]})
+    c = world["login"]("alice")
+    r = post(c, "/api/auth/wallet/topups", {"package_id": "cny-10", "payment_methods": ["alipay"]})
+    assert r.status_code == 400 and r.json()["error"] == "topup_amount_invalid"
+    assert not world["stripe"].requests and not world["store"].all("SELECT * FROM payment_topups")
+
+
 def test_a_top_up_creates_a_server_priced_stripe_checkout_and_credits_nothing_yet(world):
     world["configure"]()
     c = world["login"]("alice")

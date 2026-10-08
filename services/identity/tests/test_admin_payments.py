@@ -113,6 +113,35 @@ def test_a_live_key_is_refused_on_a_test_deployment_and_enabling_needs_credentia
     assert world["store"].all("SELECT * FROM payment_settings_versions") == []
 
 
+def test_channels_are_validated_governed_versioned_and_idempotent(world):
+    c = world["login"]("fin")
+    for invalid in ([], ["card", "card"], ["unknown"], ["card", 1], None, "card", ["Card"]):
+        r = publish(c, spec={**SPEC, "payment_methods": invalid})
+        assert r.status_code == 400 and r.json()["error"] == "payment_config_invalid", r.text
+    assert world["store"].all("SELECT * FROM payment_settings_versions") == []
+    spec = {**SPEC, "payment_methods": ["alipay", "card"]}
+    r = publish(c, spec=spec)
+    assert r.status_code == 200, r.text
+    assert r.json()["state"]["spec"]["payment_methods"] == ["card", "alipay"]
+    assert publish(c, spec=spec).json()["operation_id"] == r.json()["operation_id"]
+    assert publish(c, spec={**SPEC, "payment_methods": ["card"]}).status_code == 409
+    assert c.get("/api/admin/billing/payments").json()["spec"]["payment_methods"] == ["card", "alipay"]
+    assert len(world["store"].all("SELECT * FROM payment_settings_versions")) == 1
+    unchanged = publish(c, revision=1, spec={**SPEC, "payment_methods": ["card", "alipay"]},
+                        credential={"action": "keep"}, key="fixture_same_methods_01")
+    assert unchanged.status_code == 409 and unchanged.json()["error"] == "payment_no_change"
+
+
+def test_legacy_payment_spec_retains_its_shape_and_no_change_semantics(world):
+    c = world["login"]("fin")
+    assert publish(c).status_code == 200
+    assert c.get("/api/admin/billing/payments").json()["spec"] == SPEC
+    r = publish(c, revision=1, credential={"action": "keep"}, key="fixture_legacy_no_change")
+    assert r.status_code == 409 and r.json()["error"] == "payment_no_change"
+    raw = world["store"].one("SELECT spec_json FROM payment_settings_versions")
+    assert "payment_methods" not in json.loads(raw["spec_json"])
+
+
 def test_only_the_billing_permissions_reach_money_and_writes_need_a_fresh_confirmation(world):
     aud = world["login"]("aud")
     assert aud.get("/api/admin/billing/finance").status_code == 403

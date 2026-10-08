@@ -1,6 +1,6 @@
 # 钱包充值、拒付与财务（org-payments，2026-10-05）
 
-所有者决定（agent_deepseek_prompt §6.1）：钱包币种人民币；支付渠道 Stripe Checkout（银行卡、微信支付、支付宝），
+所有者决定（agent_deepseek_prompt §6.1）：钱包币种人民币；支付渠道 Stripe Checkout（支持银行卡、微信支付、支付宝，由管理员按商户已开通资格选择），
 以人民币收款；**充值后不退款**（条款与定价页须写明，本期没有退款流程）；拒付/争议仍要处理（冻结钱包、记录分录、
 钱包不为负）；组织可以替成员付费。本页记录已实现的行为与边界，未实现的事项写在最后。
 
@@ -21,15 +21,31 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
 `checkout.session.completed`、`checkout.session.async_payment_succeeded`、`checkout.session.async_payment_failed`、
 `checkout.session.expired`、`charge.succeeded`、`charge.dispute.created`（设置页显示同一列表）。
 
+### 可用支付方式（2026-10-08）
+
+支付版本的 `payment_methods` 是 `card`、`wechat_pay`、`alipay` 的非空、不重复子集；服务端按此顺序规范化。
+新界面不预选，要求管理员明确选择；选择不代表 Stripe 已批准该渠道或该币种，仍须核对商户资格并验收。
+发布沿用财务管理权限、管理员重认证、理由、修订号和幂等审计。个人与组织充值共用这份配置；客户端不能扩大渠道。
+`GET /api/auth/wallet/topup-options` 返回配置中的实际列表，未配置时为 `[]`。这不是 Stripe 的实时资格探测。
+
+历史版本没有该字段时继续解释为三种方式，读取及未修改提交保留原 JSON 形状。订单的 `settings_revision` 固定渠道版本；
+修改只作用于新收银台，不阻止旧收银台经有效签名与账本校验入账，也不把 Stripe 拒绝偷偷降级为其它渠道。
+仅选银行卡时不发送微信专属选项。使用既有
+[Checkout 静态支付方式参数](https://docs.stripe.com/api/checkout/sessions/create)（2026-10-08 核对），不引入动态渠道扩张。
+
+无需数据库迁移。新字段发布后，旧程序不能读取该新版本；因此先完整发布支持版本，再启用渠道配置。
+发布新字段后，恢复构建须保留该字段读取支持（包括历史收据读取），优先向前修复并在管理员界面关闭新充值、保留凭据。
+不能直接回退到不识别该字段的旧程序，也不能靠删除版本或改数据库伪装兼容；完整备份恢复仍遵守原支付对账与恢复门槛。
+
 ## 2. 充值流程
 
-1. 账户页请求 `GET /api/auth/wallet/topup-options` 得到服务端定价的套餐与上下限；`POST /api/auth/wallet/topups`
+1. 账户页请求 `GET /api/auth/wallet/topup-options` 得到服务端定价的套餐、支付方式与上下限；`POST /api/auth/wallet/topups`
    只接受 `package_id` 或上下限内的 `amount_minor`（分），浏览器不能指定入账额度。要求已验证邮箱；配置 Turnstile 时
    要求 `challenge_token`（动作 `topup`）；每个账户的每小时/每天订单数、同时未完成订单数、每天金额上限由支付设置给出。
    限额检查与它放行的订单行在同一个写事务里：同时到达的两个请求（连点、批量试卡）不能一起越过限额。
 2. 服务端写入不可变的 `billing_orders`（`exchange_version=cny-fen-identity-v1`：入账单位 = 分 × 10^(scale−2)，精确）
    与 `payment_topups` 生命周期行，再向 Stripe 创建 Checkout Session：`mode=payment`、`currency=cny`、
-   `payment_method_types=[card,wechat_pay,alipay]`、`payment_method_options[wechat_pay][client]=web`、
+   `payment_method_types=<订单固定的配置版本所选方式>`，仅在包含微信时发送 `payment_method_options[wechat_pay][client]=web`、
    成功/取消地址回到账户源站发起充值的页面（个人：`/account/wallet?topup=<订单>&result=success|cancel`；组织：
    `/organizations/<组织>?topup=<订单>&result=success|cancel`）、订单号写入
    `client_reference_id` 与 metadata、`Idempotency-Key=checkout-<订单>`、有效期 1 小时。创建失败返回 502
