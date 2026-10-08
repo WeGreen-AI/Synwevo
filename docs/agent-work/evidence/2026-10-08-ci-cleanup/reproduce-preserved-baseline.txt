@@ -1,0 +1,25 @@
+EVIDENCE: lifespan + root cleanup returned; parser threads: ['parse_0']
+EVIDENCE: real parser entered put_json_blob AFTER cleanup returned
+EVIDENCE: rmtree reached blobs after scanning/removing its old contents
+EVIDENCE: parser recreated blob children: 1
+EVIDENCE: OSError(66, 'Directory not empty')
+.
+=============================== warnings summary ===============================
+reproduce.py::test_reproduce
+  /private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/80146fec-e8b8-43eb-aafb-6b062986dc5d/scratchpad/venv312/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+reproduce.py::test_reproduce
+reproduce.py::test_reproduce
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+reproduce.py::test_reproduce
+reproduce.py::test_reproduce
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+reproduce.py::test_reproduce
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 6 warnings in 0.66s
+sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute

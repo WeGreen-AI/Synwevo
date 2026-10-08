@@ -229,14 +229,30 @@ def _release_factory_resources() -> None:
     completed TestClient lifespan can therefore retain its Store and route graph. Only
     pytest clears these recomputable classifications; production caching is unchanged.
     """
+    from concurrent.futures import ThreadPoolExecutor
     import gc
+    import time
 
     from fastapi.dependencies.models import (
         _is_async_gen_callable_cached, _is_coroutine_callable_cached, _is_gen_callable_cached,
     )
-    from synwevo_core.workers import stop_all
+    from synwevo_core.workers import live, stop_all
 
+    # Docs registers its App, but not the executor's lazily created threads. close()
+    # cancels queued parses with wait=False: running parses can still publish blobs.
+    # Capture owned pools before stopping, then join after submissions have been closed.
+    pools = [pool for worker in live()
+             if isinstance(pool := getattr(worker, "parse_pool", None), ThreadPoolExecutor)]
+    deadline = time.monotonic() + 3.0
     left = stop_all(wait=3.0)
+    for pool in pools:
+        # ThreadPoolExecutor has no bounded public shutdown wait. In the pinned Python
+        # test runtime, _threads lets us share the existing worker deadline, not hang
+        # indefinitely or delete fixture evidence while a parser is still writing.
+        for thread in tuple(pool._threads):
+            thread.join(max(0.0, deadline - time.monotonic()))
+            if thread.is_alive():
+                left.append(thread.name)
     _is_gen_callable_cached.cache_clear()
     _is_async_gen_callable_cached.cache_clear()
     _is_coroutine_callable_cached.cache_clear()

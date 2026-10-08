@@ -1,0 +1,42 @@
+{
+  "checked_at": "2026-10-08T07:16:31.187609+00:00",
+  "baseline": "7964fd9",
+  "product_baseline": "25b084f0ff5d6897d3086ddda9356f1073562ef0",
+  "status": "locally_verified_not_pushed",
+  "cause": "running parse executor threads were not joined before passed tmp_path deletion",
+  "change": "join registered App parse_pool threads within existing shared 3s deadline; timeout fails teardown and retains evidence",
+  "verification": {
+    "deterministic_baseline_reproduction": "real HTTP CSV parsing and blob write reproduces ENOTEMPTY",
+    "new_regressions": "failed before, passed after",
+    "targeted": {
+      "passed": 38,
+      "failed": 0,
+      "skipped": 0,
+      "warnings": 6,
+      "seconds": 13.91,
+      "tmp_dirs_removed": 38,
+      "pytest_cleanup_warning": "treated as error"
+    },
+    "retention_unittest": {
+      "passed": 4,
+      "seconds": 5.605
+    },
+    "guards": "six passed",
+    "not_run": [
+      "full Linux runtime CI",
+      "unrelated frontend checks"
+    ]
+  },
+  "sources": {
+    "conftest.py": "0a718c97d25cf4f5e6fa6df90f7e94cefda9db511a94e67e2544425f892326f0",
+    "apps/docs/tests/test_parse_cleanup_lifecycle.py": "5157bdbc19563f1b3e330e673f8c3dc6efcac4054f426557309c8dbfe4ca2b5a",
+    "infra/production/tests/test_pytest_retention.py": "d66af912533fb377f9cfaa09e5e20094db9d1c017e0be54cf58ebfce4cc90ff1"
+  },
+  "logs": {
+    "targeted.log": "1d4fef42189745df7ed6104b5ca04c584e3e6f54cf21cdc401a1985b336c604d",
+    "retention-after.log": "940c47952c5b02934703510d292a71cea5e1ac50f759cdadea4037e95ebdd78b",
+    "reproduce-preserved-baseline.log": "71fda61b1343ee6ed79c984358d53b1fba850450729162a163c7dc466aa73d79",
+    "regression-before.log": "1b840931699816ad69dcb544b5106f748605750cdf72467ef23b0c77c82ddbd9",
+    "retention-before.log": "8d19492b84764e861fdc4f23a80ec718913b710ec5ca737e3f268728a4254fa8"
+  }
+}

@@ -1,0 +1,9 @@
+test_cleanup_waits_for_root_teardown_and_keeps_all_failed_phases (infra.production.tests.test_pytest_retention.PytestRetentionTests.test_cleanup_waits_for_root_teardown_and_keeps_all_failed_phases) ... ok
+test_default_keeps_passed_tmp_path (infra.production.tests.test_pytest_retention.PytestRetentionTests.test_default_keeps_passed_tmp_path) ... ok
+test_opt_in_requires_ci_and_disallows_early_builtin_cleanup (infra.production.tests.test_pytest_retention.PytestRetentionTests.test_opt_in_requires_ci_and_disallows_early_builtin_cleanup) ... ok
+test_unfinished_parser_fails_teardown_and_preserves_evidence (infra.production.tests.test_pytest_retention.PytestRetentionTests.test_unfinished_parser_fails_teardown_and_preserves_evidence) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 5.605s
+
+OK

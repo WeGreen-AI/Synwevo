@@ -109,6 +109,54 @@ class PytestRetentionTests(unittest.TestCase):
         self.assertEqual(len({p.parent.resolve() for p in (root / "pytest-tmp").glob("*/case.marker")}), 1)
         self.assertNotIn("CI tmp_path:", result.stdout)
 
+    def test_unfinished_parser_fails_teardown_and_preserves_evidence(self):
+        root, result = self.run_session('''
+            import threading
+            import pytest
+            from synwevo_core.store import Store
+            from synwevo_docs.services import App
+            from synwevo_docs.engine import sources
+
+            @pytest.fixture
+            def held_upload(tmp_path, monkeypatch, release_factory_resources):
+                app = App(Store(tmp_path / "data"))
+                started, resume = threading.Event(), threading.Event()
+                original_parse = sources.parse_source
+                def held_parse(*args, **kwargs):
+                    parsed = original_parse(*args, **kwargs)
+                    started.set()
+                    assert resume.wait(15), "synthetic parser gate timed out"
+                    return parsed
+                monkeypatch.setattr(sources, "parse_source", held_parse)
+                namespace = release_factory_resources.__globals__
+                release = namespace["_release_factory_resources"]
+                def checked_release():
+                    try:
+                        release()  # must report the real parser that exceeded the deadline
+                    finally:
+                        # Let the child exit even when checking the old, broken cleanup.
+                        resume.set()
+                        app.close()
+                        app.parse_pool.shutdown(wait=True, cancel_futures=True)
+                monkeypatch.setitem(namespace, "_release_factory_resources", checked_release)
+                return app, started
+
+            def test_upload(tmp_path, held_upload):
+                app, started = held_upload
+                pid = app.create_project("Synthetic retained parser fixture")["id"]
+                app.add_source(pid, "fixture.csv", b"name,value\\nsynthetic,1\\n")
+                assert started.wait(5)
+                (tmp_path / "case.marker").write_text("unfinished parser evidence")
+        ''')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Background workers outlived test teardown: ['parse_0']", result.stdout)
+        self.assertIn("1 error", result.stdout)
+        self.assertIn("CI tmp_path: removed=0", result.stdout)
+        self.assertNotIn("CI tmp_path cleanup failed", result.stdout)
+        self.assertEqual({p.read_text() for p in (root / "pytest-tmp").glob("*/case.marker")},
+                         {"unfinished parser evidence"})
+        self.assertTrue(list((root / "pytest-tmp").glob("test_upload*/data/blobs/*/*")))
+
     def test_opt_in_requires_ci_and_disallows_early_builtin_cleanup(self):
         for ci, extra in (("false", ()), ("true", ("-o", "tmp_path_retention_policy=failed"))):
             with self.subTest(ci=ci, extra=extra):
