@@ -1,0 +1,38 @@
+{
+  "verified_at": "2026-10-08T11:39:18.999202+00:00",
+  "verification": "Actual production Chrome admin receipts; current session recently reauthenticated by owner",
+  "cost_policy": {
+    "revision": 1,
+    "operation_id": "ao_50e7aad24bc5",
+    "published_at_hkt": "2026-10-08 19:31:11"
+  },
+  "sale_price": {
+    "id": "price_9fa1a7cbc022",
+    "operation_id": "ao_1bff5aa7340a",
+    "published_at_hkt": "2026-10-08 19:34:43",
+    "cost_price_id": "price_85f4371761b6",
+    "multiplier": "2",
+    "owner_explicitly_approved": true,
+    "terms_ref": "synwevo-agent-cny-2x-2026-10-08",
+    "rates_cny_per_million": {
+      "peak": {
+        "input_uncached": "4",
+        "input_cached": "0.08",
+        "output": "16"
+      },
+      "off_peak": {
+        "input_uncached": "2",
+        "input_cached": "0.04",
+        "output": "8"
+      }
+    }
+  },
+  "provider": "Prepared but not published; current browser awaits owner entering provided private key",
+  "payments": "Not enabled",
+  "source_recheck": {
+    "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+    "checked_on": "2026-10-08",
+    "result": "Flash model route DeepSeek-V4.1-Flash and CNY cost rates still match published cost version",
+    "rate_limit_page": "Fetch timed out; official pricing page lists Flash concurrency 2500"
+  }
+}

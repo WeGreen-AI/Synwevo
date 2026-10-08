@@ -1,0 +1,19 @@
+{
+  "checked_at": "2026-10-08T12:12:52.556686+00:00",
+  "endpoint_id": "we_1UOB1ZEMgc4r7oEcqTYP9tLI",
+  "url": "https://accounts.synwevo.com/api/auth/payments/stripe/webhook",
+  "previous_status": "disabled",
+  "status": "enabled",
+  "enabled_events": [
+    "charge.dispute.created",
+    "charge.succeeded",
+    "checkout.session.async_payment_failed",
+    "checkout.session.async_payment_succeeded",
+    "checkout.session.completed",
+    "checkout.session.expired"
+  ],
+  "platform_credential_publication_seen": true,
+  "created_another_endpoint": false,
+  "checkout_created": false,
+  "payment_made": false
+}

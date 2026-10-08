@@ -1,0 +1,24 @@
+{
+  "checked_at": "2026-10-08T12:21:59.415326+00:00",
+  "source_sha": "769a98d84179b2a6c53d3783467ecc3ffbbb5743",
+  "run_id": 37771066812,
+  "url": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37771066812",
+  "verify": "failure",
+  "deploy": "skipped",
+  "runtime": {
+    "passed": 4443,
+    "failed": 1,
+    "skipped": 3,
+    "warnings": 78,
+    "seconds": 1619.28
+  },
+  "failure": "payment_topup_intents.request_hash missing from blob reference classification",
+  "root_cause": "SHA-256 of canonical payer/amount/package selectors is an idempotency fingerprint, never a stored-blob reference; new schema omitted required LOOKALIKES registration.",
+  "fix": "Register the column and explain its meaning in the production blob_refs inventory; retain all existing assertions.",
+  "local_regression": {
+    "test": "tests/integration/test_blob_references.py",
+    "passed": 3,
+    "log_sha256": "cf426ab35f3b06fccef8290fde5325d90af130a79da1d1752031518df77c4236"
+  },
+  "failed_ci_log_sha256": "61e6790863c4f8e82e08a54526a9c666190b6b28cd1d89cc8a2df2be24954a07"
+}

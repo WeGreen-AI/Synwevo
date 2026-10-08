@@ -1,0 +1,55 @@
+{
+  "checked_at": "2026-10-08T12:13:52.732505+00:00",
+  "provider": {
+    "revision": 1,
+    "credential_revision": 1,
+    "operation_id": "ao_0da99f60b32e",
+    "published_at": "2026-10-08T12:05:26Z",
+    "requested_model": "deepseek-flash",
+    "confirmed_route": "deepseek-flash",
+    "model_source": "DeepSeek-V4.1-Flash:official-models-pricing-2026-10-08",
+    "sale_price_id": "price_9fa1a7cbc022",
+    "cost_price_id": "price_85f4371761b6",
+    "valid_until": "2026-10-15T11:00:00Z",
+    "input_token_ceiling": 65536,
+    "output_token_ceiling": 8192,
+    "reasoning_efforts": [
+      "none",
+      "low"
+    ],
+    "charge_incomplete": []
+  },
+  "risk": {
+    "allowlisted_payer_kind": "user",
+    "allowlisted_payer_id": "u_3f48e19e364e",
+    "limits_remain_enforced": true
+  },
+  "payments": {
+    "credential_configured": true,
+    "enabled": false,
+    "payment_methods": [
+      "card"
+    ],
+    "operator_name": "Hiko Sphere",
+    "packages_cny": [
+      10,
+      50,
+      100
+    ],
+    "custom_min_cny": 10,
+    "custom_max_cny": 1000
+  },
+  "verified_database_counts": {
+    "billing_calls": 0,
+    "billing_settlements": 0,
+    "billing_prices": 2,
+    "model_price_drafts": 1,
+    "model_provider_versions": 1,
+    "model_provider_credentials": 1,
+    "model_cost_policy_versions": 1,
+    "payment_settings_versions": 1,
+    "billing_band_schedules": 1
+  },
+  "secret_handling": "Authorized existing 0600 files transferred through native local editor clipboard to intended Admin secure fields; clipboard overwritten with public model/merchant text; editor documents closed; browser save/update-password prompts declined. No secret values printed or committed. Temporary raw webhook entry file removed, original restricted recovery file retained.",
+  "live_model_or_payment_acceptance": false
+}

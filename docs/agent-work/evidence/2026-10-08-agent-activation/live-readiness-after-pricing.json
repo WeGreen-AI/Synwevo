@@ -1,0 +1,15 @@
+{
+  "checked_at": "2026-10-08T11:41:02.362925+00:00",
+  "read_only": true,
+  "stripe_country_spec": "HK",
+  "cny_in_supported_payment_currencies": true,
+  "stripe_source": "https://docs.stripe.com/api/country_specs/retrieve",
+  "deepseek_flash_available": true,
+  "deepseek_balance_available": true,
+  "deepseek_cny_above_close_threshold_1": true,
+  "deepseek_cny_at_least_warn_threshold_21": true,
+  "not_checked": [
+    "Real card acceptance and settlement in CNY",
+    "Production model request and billing"
+  ]
+}

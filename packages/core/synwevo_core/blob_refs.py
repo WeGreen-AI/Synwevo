@@ -58,6 +58,7 @@ LOOKALIKES: tuple[tuple[str, str, str], ...] = (
     ("billing_payment_events", "payload_sha256", "已验证支付事件的完整性指纹，不是 blob 引用"),
     ("billing_chargebacks", "payload_sha256", "已验证拒付通知的完整性指纹，不是 blob 引用"),
     ("payment_webhook_inbox", "payload_sha256", "支付渠道通知原文的 SHA-256（原文不保存），不是 blob 引用"),
+    ("payment_topup_intents", "request_hash", "充值幂等请求参数的指纹，不保存请求正文，不是 blob 引用"),
     ("flow_runs", "input_digest", "固定流程输入与幂等请求的指纹，不是 blob 引用"),
     ("extract_files", "content_digest", "source content integrity, not a blob access path"),
     ("extract_versions", "definition_digest", "immutable extraction template fingerprint"),

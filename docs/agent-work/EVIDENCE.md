@@ -537,3 +537,9 @@ CR-066追加：旧客户端更新其它设置时省略渠道字段，96f73ab可�
 最终证据见evidence/2026-10-08-reliability/verification.json及browser-qa.md。1538项账户/迁移初跑唯一失败为新管理路由未登记；补齐精确权限及无副作用矩阵，29项全矩阵通过。全前端528、类型/构建/六守卫通过。来源指纹绑定提交前源码；Linux完整CI与新版本部署尚未执行。
 
 用户明确选择成本×2。Chrome真实管理回执显示成本策略v1/ao_50e7aad24bc5于19:31:11 HKT发布；其他正式配置继续准备，不能由此声称Agent/真实充值已经开放。
+
+## 2026-10-08 正式治理配置和发布门槛失败
+
+真实Admin已发布成本策略v1、两倍售价price_9fa1a7cbc022、提供方v1/凭据v1；所有者加入受控放行名单。支付v1密封保存且disabled，原唯一Stripe回调于12:12:52Z启用并复核；没有创建付款或调用模型。配置和官方只读状态见evidence/2026-10-08-agent-activation新增四份JSON。
+
+Actions37771066812对应769a98d：构建通过，完整镜像4443通过/1失败/3跳过/78警告，1619.28s，部署跳过。失败为payment_topup_intents.request_hash未登记blob分类；其实际代码是规范化充值参数的SHA-256，不持有文件引用。补充生产LOOKALIKES说明，保留全部原断言，原3项集成检查通过。证据ci-failure-classification.json包含原日志指纹，新SHA全CI尚待。
