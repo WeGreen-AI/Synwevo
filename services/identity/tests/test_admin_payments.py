@@ -142,6 +142,18 @@ def test_legacy_payment_spec_retains_its_shape_and_no_change_semantics(world):
     assert "payment_methods" not in json.loads(raw["spec_json"])
 
 
+def test_legacy_editor_cannot_reset_explicit_channels_by_omitting_the_field(world):
+    c = world["login"]("fin")
+    assert publish(c, spec={**SPEC, "payment_methods": ["card"]}).status_code == 200
+    same = publish(c, revision=1, credential={"action": "keep"}, key="fixture_legacy_keep_channels")
+    assert same.status_code == 409 and same.json()["error"] == "payment_no_change"
+    updated = publish(c, revision=1, spec={**SPEC, "operator_name": "Updated fixture merchant"},
+                      credential={"action": "keep"}, key="fixture_legacy_edit_operator")
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["state"]["spec"]["payment_methods"] == ["card"]
+    assert updated.json()["state"]["revision"] == 2
+
+
 def test_only_the_billing_permissions_reach_money_and_writes_need_a_fresh_confirmation(world):
     aud = world["login"]("aud")
     assert aud.get("/api/admin/billing/finance").status_code == 403

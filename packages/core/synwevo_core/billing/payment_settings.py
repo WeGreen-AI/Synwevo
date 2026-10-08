@@ -211,6 +211,11 @@ class PaymentSettings:
         before = self.read()
         if before["revision"] != expected_revision:
             raise ServiceError(409, "payment_revision_conflict", "支付配置已变化，请保留输入并重新读取")
+        if "payment_methods" not in spec.model_fields_set and before["spec"] is not None \
+                and "payment_methods" in before["spec"]:
+            # A cached old editor does not know this field. Preserve the administrator's
+            # explicit subset when it edits other settings; omission must never widen it.
+            spec = spec.model_copy(update={"payment_methods": payment_methods(before["spec"])})
         if credential.action == "revoke" and not credential.override_open_checkouts:
             # Revoking deletes the webhook signing secret: a customer who then pays a checkout that
             # is still open is charged but can never be credited. Close top-ups (keep the keys)

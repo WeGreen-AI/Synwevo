@@ -1,10 +1,10 @@
 {
-  "packages/core/synwevo_core/billing/payment_settings.py": "c7639b9c428920c7f6f2ea01b61b276fcb68453e594b9f151b0f1cc74bb7617b",
+  "packages/core/synwevo_core/billing/payment_settings.py": "afeb70283505d3d397eb77dc104cee5dafcf7ae2846882f3e0090e81c38082d9",
   "packages/ui/src/i18n-core.ts": "933052541155a47cb827c0f89c39d6604df56644a13d0c2a43b8de6a3a087d0c",
   "packages/ui/tests/i18n.test.ts": "5dafa9100704e8ddcbfb55d7c3ae699bb7a61851dd49f94d65938b5b38476767",
   "services/identity/synwevo_identity/payment_routes.py": "8e41f1fcaa8718ec2f86d60363c00c14fc32be60be31de2a8cf657dab8a08a97",
   "services/identity/synwevo_identity/payments.py": "2686a508f5dac04d20d99797fddbae8d5a93f5f712ad6379e46d521ffa0de3af",
-  "services/identity/tests/test_admin_payments.py": "6ea866a9ce8515400d45f0f1469b769c496836de317aa2013286a65e01964bb7",
+  "services/identity/tests/test_admin_payments.py": "62a84b08c4e84410196d502492da7b266c703ddc73b824fa9ff89577be0baae2",
   "services/identity/tests/test_wallet_topups.py": "8d6fe589985b116232fe1c8b40c95d08978f871c4407cbd447c587ff3d2cfaf6",
   "services/identity/web/src/governance/PaymentsTab.tsx": "c09afd64361072cb42b5b8975d7d9d68148ddb4d7a34cc10a12dfcf18d0288dd",
   "services/identity/web/src/governance/payments.messages.ts": "f60206b834aef34d8f606cd40fb5a8cb06b09faf7f83ac1ca6781043e789806b",

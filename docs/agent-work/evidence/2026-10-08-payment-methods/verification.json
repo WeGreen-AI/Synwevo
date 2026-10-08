@@ -3,7 +3,7 @@
   "environment": "isolated test; not production or payment acceptance",
   "base_sha": "c478288fb50d31fe50598cbf1e9b3273638310ed",
   "tests": {
-    "python_payments": 39,
+    "python_payments": 40,
     "machine_contract_i18n": 5,
     "frontend": 507,
     "typecheck": "passed",
@@ -24,7 +24,9 @@
       "revision 2 persisted",
       "personal topup card-only",
       "organization topup card-only in Simplified Chinese, English, Traditional Chinese",
-      "390x844 organization topup screenshot: text wraps and payment button accessible"
+      "390x844 organization topup screenshot: text wraps and payment button accessible",
+      "Safari network inspector after reload: topup-options, billing, statement and assets HTTP 200",
+      "Safari Console after reload: no error or warning entries"
     ],
     "screenshots": "CUA screenshots retained in conversation; no separate PNG export",
     "published_revision": 2,
@@ -36,9 +38,9 @@
     "synthetic_allowance": "CNY 1 audited fixture grant, not a payment",
     "not_checked": [
       "real Stripe Checkout creation/payment",
-      "production activation",
-      "browser console/network inspector"
-    ]
+      "production activation"
+    ],
+    "isolated_browser": "closed"
   },
   "i18n_regression": {
     "baseline": "RangeError reproduced from HEAD i18n-core single-part error",
@@ -48,5 +50,14 @@
     "formal retail multiplier and production admin reauthentication remain pending",
     "new payment configuration needs merchant verification and webhook secret",
     "rollback build must retain new-field reader after publishing first explicit channel version"
-  ]
+  ],
+  "product_commit": "96f73ab61d29e54239166817254fc3db722f5322",
+  "ci": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37722051839",
+  "ci_status": "superseded; cancellation requested before deployment for proven legacy-editor regression",
+  "legacy_editor_regression": {
+    "baseline_sha": "96f73ab61d29e54239166817254fc3db722f5322",
+    "baseline_result": "FAILED: expected no-change refusal, got 200 and reset channels",
+    "fixed_result": "40 payment/governance tests passed",
+    "semantics": "Omitted payment_methods preserves current explicit channels; legacy versions retain legacy shape."
+  }
 }

@@ -29,6 +29,7 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
 `GET /api/auth/wallet/topup-options` 返回配置中的实际列表，未配置时为 `[]`。这不是 Stripe 的实时资格探测。
 
 历史版本没有该字段时继续解释为三种方式，读取及未修改提交保留原 JSON 形状。订单的 `settings_revision` 固定渠道版本；
+一旦当前版本明确指定渠道，旧客户端省略该字段时保留当前渠道；要改变它必须显式提交新的非空列表，不能因编辑运营方等其它字段意外扩大渠道。
 修改只作用于新收银台，不阻止旧收银台经有效签名与账本校验入账，也不把 Stripe 拒绝偷偷降级为其它渠道。
 仅选银行卡时不发送微信专属选项。使用既有
 [Checkout 静态支付方式参数](https://docs.stripe.com/api/checkout/sessions/create)（2026-10-08 核对），不引入动态渠道扩张。
