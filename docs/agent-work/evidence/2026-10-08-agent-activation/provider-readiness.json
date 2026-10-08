@@ -1,0 +1,22 @@
+{
+  "checked_at": "2026-10-07T14:44:40.147707+00:00",
+  "read_only": true,
+  "provider": "deepseek",
+  "/models": {
+    "error_type": "URLError"
+  },
+  "balance": {
+    "http_status": 200,
+    "is_available": true,
+    "cny_positive": true
+  },
+  "models": {
+    "http_status": 200,
+    "deepseek_flash_listed": true,
+    "checked_at": "2026-10-07T14:46:51.514677+00:00"
+  },
+  "notes": [
+    "Initial models GET failed with URLError; one bounded retry",
+    "No inference request, payment or provider mutation"
+  ]
+}

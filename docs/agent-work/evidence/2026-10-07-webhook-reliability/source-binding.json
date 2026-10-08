@@ -1,0 +1,9 @@
+{
+  "checked_at": "2026-10-07T12:44:05.004980+00:00",
+  "source_sha": "8ba2956750c2080d300fa17523bcc391e85cae40",
+  "bound_hashes": 23,
+  "all_git_blobs_and_worktree_files_match": true,
+  "product_changes_after_commit": false,
+  "local_verification": "verification.json",
+  "limits": "This binds local evidence to source; CI and running image need independent release evidence."
+}

@@ -1,0 +1,87 @@
+{
+  "status": "prepared_not_published",
+  "source_sha": "8ba2956750c2080d300fa17523bcc391e85cae40",
+  "sources_checked_on": "2026-10-08",
+  "sources": [
+    "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+    "https://api-docs.deepseek.com/quick_start/rate_limit/"
+  ],
+  "model": "deepseek-flash",
+  "input_token_ceiling": 65536,
+  "output_token_ceiling": 8192,
+  "reasoning_efforts": [
+    "none",
+    "low"
+  ],
+  "validity": "Set at publication, at most seven days; recheck source and calendar before extension",
+  "cost_rates_cny_per_million": {
+    "peak": {
+      "input_uncached": "2",
+      "input_cached": "0.04",
+      "output": "8"
+    },
+    "off_peak": {
+      "input_uncached": "1",
+      "input_cached": "0.02",
+      "output": "4"
+    }
+  },
+  "proposed_sale_multiplier": "2",
+  "incomplete_charging": {
+    "length": false,
+    "content_filter": false,
+    "provider_interrupted": false,
+    "client_cancelled": false
+  },
+  "cost_policy": {
+    "enabled": true,
+    "unit": {
+      "code": "CNY",
+      "scale": 6
+    },
+    "daily_budget": "20000000",
+    "weekly_budget": "100000000",
+    "monthly_budget": "300000000",
+    "unknown_budget": "800000",
+    "max_inflight": 4,
+    "max_unknown": 4,
+    "max_call_cost": "200000",
+    "traffic": {
+      "platform_rpm": 20,
+      "platform_tpm": 1000000,
+      "payer_rpm": 6,
+      "payer_tpm": 200000,
+      "payer_inflight": 1,
+      "wait_seconds": 30,
+      "max_waiting": 8,
+      "max_waiting_per_payer": 1
+    },
+    "risk": {
+      "allowlist_only": true,
+      "payer_window_s": 3600,
+      "payer_window_cost": "2000000",
+      "route_window_s": 3600,
+      "route_window_cost": "10000000",
+      "balance_warn": "21000000",
+      "balance_close": "1000000",
+      "balance_poll_s": 300,
+      "reconcile_tolerance": "1000000",
+      "pending_alert": "400000"
+    }
+  },
+  "not_yet_done": [
+    "Publish cost price and markup sale price through signed administrator preview",
+    "Publish cost policy and configure allowlisted payer",
+    "Recheck upstream balance against the selected close threshold",
+    "Publish provider with sealed credential through administrator reauthentication",
+    "Bind actual price IDs and set a future route expiry",
+    "Back up host config and enable Agent through existing operations flow",
+    "Real controlled production model/tool/ledger acceptance"
+  ],
+  "limitations": [
+    "No credential, published price ID or administrator session is stored here",
+    "Proposed retail markup is not a published price",
+    "Positive balance alone does not prove the selected close threshold passes",
+    "Public expansion retains the existing multiday reconciliation gate"
+  ]
+}

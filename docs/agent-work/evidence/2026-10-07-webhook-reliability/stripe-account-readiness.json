@@ -1,0 +1,31 @@
+{
+  "checked_at": "2026-10-07T12:36:03.120448+00:00",
+  "source": "Stripe GET /v1/account",
+  "key_mode": "live",
+  "read_only": true,
+  "http_status": 200,
+  "country": "HK",
+  "business_type": "individual",
+  "default_currency": "hkd",
+  "charges_enabled": true,
+  "payouts_enabled": true,
+  "details_submitted": true,
+  "capabilities": {
+    "card_payments": "active",
+    "transfers": "active"
+  },
+  "requirements": {
+    "currently_due": null,
+    "past_due": null,
+    "disabled_reason": null,
+    "pending_verification": null
+  },
+  "limits": [
+    "Account read only; no checkout, payment, endpoint creation or merchant mutation",
+    "Owner selected the returned individual merchant; display name is not treated as a verified legal personal name",
+    "Card capability is active; WeChat Pay/Alipay capability and actual payments not verified",
+    "Local credential is ignored by Git and mode 0600; no key/account ID copied to evidence",
+    "No governed production payment settings published"
+  ],
+  "owner_decision": "Use this existing Hong Kong individual merchant"
+}

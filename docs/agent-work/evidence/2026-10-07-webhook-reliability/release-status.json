@@ -1,0 +1,195 @@
+{
+  "source_sha": "8ba2956750c2080d300fa17523bcc391e85cae40",
+  "recorded_at": "2026-10-07T14:43:04.263350+00:00",
+  "ci": {
+    "conclusion": "success",
+    "createdAt": "2026-10-07T12:13:27Z",
+    "headSha": "8ba2956750c2080d300fa17523bcc391e85cae40",
+    "jobs": [
+      {
+        "completedAt": "2026-10-07T13:09:45Z",
+        "conclusion": "success",
+        "databaseId": 112785797099,
+        "name": "verify",
+        "startedAt": "2026-10-07T12:13:30Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-07T12:13:31Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-07T12:13:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T12:13:34Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+            "number": 2,
+            "startedAt": "2026-10-07T12:13:31Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T12:13:35Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
+            "number": 3,
+            "startedAt": "2026-10-07T12:13:34Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T12:13:37Z",
+            "conclusion": "success",
+            "name": "Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+            "number": 4,
+            "startedAt": "2026-10-07T12:13:35Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T12:14:04Z",
+            "conclusion": "success",
+            "name": "Install locked dependencies",
+            "number": 5,
+            "startedAt": "2026-10-07T12:13:37Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T12:17:15Z",
+            "conclusion": "success",
+            "name": "Verify and build",
+            "number": 6,
+            "startedAt": "2026-10-07T12:14:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T13:09:40Z",
+            "conclusion": "success",
+            "name": "Verify the deployment runtime",
+            "number": 7,
+            "startedAt": "2026-10-07T12:17:15Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T13:09:40Z",
+            "conclusion": "success",
+            "name": "Runtime test disk diagnostics",
+            "number": 8,
+            "startedAt": "2026-10-07T13:09:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T13:09:40Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+            "number": 14,
+            "startedAt": "2026-10-07T13:09:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T13:09:44Z",
+            "conclusion": "success",
+            "name": "Post Run actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065",
+            "number": 15,
+            "startedAt": "2026-10-07T13:09:40Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T13:09:44Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+            "number": 16,
+            "startedAt": "2026-10-07T13:09:44Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T13:09:44Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 17,
+            "startedAt": "2026-10-07T13:09:44Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37619470838/job/112785797099"
+      },
+      {
+        "completedAt": "2026-10-07T13:11:50Z",
+        "conclusion": "success",
+        "databaseId": 112808974562,
+        "name": "deploy",
+        "startedAt": "2026-10-07T13:09:50Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-07T13:09:52Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-07T13:09:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T13:09:56Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+            "number": 2,
+            "startedAt": "2026-10-07T13:09:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T13:11:45Z",
+            "conclusion": "success",
+            "name": "Deploy through restricted SSH command",
+            "number": 3,
+            "startedAt": "2026-10-07T13:09:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T13:11:48Z",
+            "conclusion": "success",
+            "name": "Verify public health",
+            "number": 4,
+            "startedAt": "2026-10-07T13:11:45Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T13:11:48Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+            "number": 8,
+            "startedAt": "2026-10-07T13:11:48Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-07T13:11:48Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-10-07T13:11:48Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37619470838/job/112808974562"
+      }
+    ],
+    "status": "completed",
+    "updatedAt": "2026-10-07T13:11:52Z",
+    "url": "https://github.com/WeGreen-AI/Synwevo/actions/runs/37619470838"
+  },
+  "production_image_id": "sha256:9b83c825a6594924aaff67e6b3a918f9de2beb4e4d6838cf691477800305337e",
+  "production_check": "2026-10-07T14:39:58.472538+00:00",
+  "public_check": "2026-10-07T14:39:55.981564+00:00",
+  "backup": {
+    "path": "/opt/synwevo/backups/20261007T131123Z",
+    "manifest_present": true,
+    "source_image": "synwevo:08d6700cd524da10163643dbf97f7e1a113a4bd7",
+    "database_present": true
+  },
+  "deploy_log_sha256": "3a0475ccab6e061e1b52b4812394b6d51cb30b48b8bd6fbc5109e7efeff5f946",
+  "limits": [
+    "No authenticated production business writes replayed; isolated browser and full runtime tests are separate evidence",
+    "Recovery point checked; no restore drill",
+    "Agent and payment settings remain unpublished; no live payment verification"
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "checked_at": "2026-10-07T12:46:04.819289+00:00",
+  "read_only": true,
+  "webhook_list": {
+    "http_status": 200,
+    "complete": true
+  },
+  "matching_synwevo_endpoint_count": 0,
+  "matching_synwevo_endpoints": [],
+  "payment_method_configuration_list": {
+    "http_status": 200,
+    "complete": true
+  },
+  "payment_method_configurations": [
+    {
+      "active": true,
+      "is_default": true,
+      "livemode": true,
+      "methods": {
+        "card": {
+          "available": true,
+          "display_value": "on"
+        },
+        "alipay": {
+          "available": false,
+          "display_value": "off"
+        },
+        "wechat_pay": {
+          "available": false,
+          "display_value": "off"
+        }
+      }
+    }
+  ],
+  "limits": [
+    "No Stripe mutation, payment or webhook delivery",
+    "Configuration availability does not verify currency, amount or a real checkout",
+    "No endpoint secrets are returned by this list; platform configuration remains unpublished"
+  ]
+}

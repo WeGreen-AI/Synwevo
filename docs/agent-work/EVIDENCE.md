@@ -464,3 +464,26 @@
 - D18独立审查未发现新的权限/竞争阻断；隔离30万已发送行证明清理仍全表扫描，LIMIT只限删除量。查询计划与候选索引测量在attachment-scan-before.json；是本机合成数据测试，不是生产延迟承诺。新增索引升级回归先1项预期失败（/private/tmp/synwevo-d18-index-red.log），随后修复，最终验证待追加。
 - D18最终索引由真实Store启动创建：新增迁移/查询计划回归与附件、schema扩展关联共13 passed/1既有warning（/private/tmp/synwevo-d18-index-green.{log,xml}）。相同30万已发送合成行的查询中位0.017ms；加150条过期项删除100条中位0.390ms（三次回滚测量，SQLite3.53.2，本机非并发）。EXPLAIN使用ix_message_attachments_unused_expiry，无临时排序；完整条件与源码哈希见attachment-scan-after.json，不当作生产指标。
 - 本轮集成门槛：受影响Webhook/API管理187 passed/6既有warnings，附件与升级13 passed/1warning，生成契约9 passed/6warnings；500前端、Python SDK45、TS SDK34与类型、根目录typecheck/build、六守卫通过。三语言真实重认证/响应丢失重试与D4默认/零/取消复验通过，所有隔离浏览器及服务关闭。verification.json绑定最终源码哈希；仍待提交/CI/部署。
+- 46个本任务文件经秘密/敏感路径与diff检查，正常提交推送8ba2956750c2080d300fa17523bcc391e85cae40；Actions37619470838于12:13:27Z启动。当前verify运行，生产仍08d6700；未手工部署、未重放生产业务。
+- 2026-10-07T12:29:30.386624+00:00 用户明确本次发布核验后暂停；仅完成在途8ba2956，不再开始实现。用户回复已有商户账户，法定名称/注册地仍待补充；未据此宣称已配置Stripe或真实收款通过。
+
+- 2026-10-07T12:36Z 用户提供Stripe凭据文件后，官方账户只读检查200：live/HK/individual、卡支付和结算启用；未执行付款、创建Webhook或发布平台支付配置。用户先前“香港公司”的假设需修正为个人商户待确认，展示名不作为法定名称。脱敏摘要stripe-account-readiness.json不含密钥或账户ID，完整必要商户名称仅保存在本机0600临时摘要。
+
+- 用户随后明确“使用这个个人商户”：以已核验香港个人商户继续，不再将香港公司法定名称作为等待项。展示名Hiko Sphere已确认用于识别该商户，不将它臆断为法定个人姓名；默认HKD也未用于改写CNY产品规则。正式支付配置/回调/真实充值仍待恢复后完成。
+
+- 12:46Z Stripe官方支付配置/Webhook完整列表200，card available/on、alipay与wechat_pay unavailable/off，Synwevo指定回调0。证据stripe-channel-readiness.json不含其它业务URL、账户ID或密钥；没有新增Webhook、修改商户或调用Checkout。当前充值关闭，恢复后须先解决固定三渠道与商户可用渠道的差异。
+
+
+## 2026-10-07 发布完成与 2026-10-08 Agent 启用准备（覆盖上文在途状态）
+
+- Actions37619470838准确源8ba2956：verify112785797099于13:09:45Z成功，deploy112808974562于13:11:50Z成功。完整镜像5328 passed/5 skipped/242 warnings（3039.56s）、前端500、Python SDK47及38子测试、TS SDK34，类型/构建/六守卫/infra/真实Node协作检查通过；CI成功清理4308个临时目录，结束磁盘10366MiB。ci-verification.json列出5个跳过原因。原始verify日志SHA256为e88eb1f6db77c28c38f06d1563d8e8bf5e6db6ded329164f1a0ffc81b88bb9a1。本机watch网络错误不作为CI结论。
+- 14:39Z生产独立只读：四应用镜像均sha256:9b83c825a6594924aaff67e6b3a918f9de2beb4e4d6838cf691477800305337e，OCI/current.json均8ba；五服务healthy，附件部分索引存在且真实查询计划使用。备份20261007T131123Z含DB/manifest、来源08d6700，未做恢复演练。五域首页/readyz/引用JS均200、匿名后台与充值接口401、OIDC起跳303。production-after-deploy.json、public-after-deploy.json及release-status.json保存真实时间/结果。
+- source-binding.json将23个最终源码/测试SHA256与8ba Git blob核对，无产品漂移；上述证据位于evidence/2026-10-07-webhook-reliability。代码已发布，Agent激活与支付另行验收。
+- 用户随后要求优先上线Agent，并完成真实管理员登录；浏览器通过现有重认证，于14:58:27Z发布分时日历v1，操作ao_d7da658ed75f。2026-10-08T01:52:38Z通过Store(migrate=False)及query_only只读复查：日历只有1版、对应admin_operations记录存在；价格草稿/已发布价格/成本策略/提供方/支付/模型调用/结算仍0，Agent未开放。不重复日历发布。
+- 官方DeepSeek只读API于14:44Z确认账户可用且CNY余额正；models首次URLError，一次有界重试于14:46:51Z返回200并列出deepseek-flash。没有推理/扣费请求，也不公开精确上游余额；provider-readiness.json保留失败及重试事实。
+- 2026-10-08再次查官方价格与限速文档，准备单Flash首发配置，成本为峰谷官方价、拟2倍售价、64Ki输入/8Ki输出、none/low、放行名单。真实校验器与网关上界公式核对12项约束通过（成本0.196609元/售价预留0.393217元），日历10月7日节假日与10月8日工作日切换正确。该检查没有Store、网络、资金或密钥，不替代生产发布或模型验收。证据evidence/2026-10-08-agent-activation/{activation-preparation,preparation-validation,production-state,provider-readiness}.json。
+- 当前Mac锁定，已请求用户手动解锁；CUA无法继续已登录后台。未绕过管理员会话/重认证、未直写配置表，未创建新loop。断点已保存，继续动作是发布实际价格/预算/提供方及真实Agent验收；Stripe支付渠道准备不阻挡欢迎额度验证。
+
+- 浏览器随后恢复可操作；真实后台保存成本价草稿mpd_3870d36aa953/rev1（2026-10-08T02:00:45Z），已核对CNY6、模型deepseek-flash、峰值2/0.04/8、低谷1/0.02/4与09:00HKT生效时间。获取签名预览后发布触发站内重认证，口令未自动填充，页面提示请输入口令，未发生发布；已请用户在站内用口令/安全密钥完成。未重复新建草稿，未绕过门禁。
+
+- 2026-10-08T02:05:10Z生产只读核对草稿仍为mpd_3870d36aa953/rev1/draft，完整费率与实际保存内容一致；价格已发布数0、日历数1、模型调用数0。production-draft-state.json记录真实服务器状态，不因点击发布按钮就宣称成功。

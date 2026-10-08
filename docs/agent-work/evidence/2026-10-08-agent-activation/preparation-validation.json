@@ -1,0 +1,24 @@
+{
+  "checked_at": "2026-10-08T01:55:54.453139+00:00",
+  "scope": "Local validation of prepared configuration only; no Store, network, key, funds or provider request",
+  "preparation_sha256": "0d5f44d7dd39bdbcf1473b415494dc4d71b824d53ebb59eccd9c30f11235f94f",
+  "cost_upper_bound_micro_cny": 196609,
+  "sale_upper_bound_micro_cny": 393217,
+  "constraints": {
+    "concurrency_headroom": true,
+    "unknown_covers_inflight": true,
+    "call_budget_covers_peak": true,
+    "unknown_budget_covers_calls": true,
+    "payer_tpm_covers_request": true,
+    "traffic_consistent": true,
+    "velocity_covers_concurrent_calls": true,
+    "balance_close_covers_unknown": true,
+    "balance_warning_covers_day": true,
+    "tolerance_and_pending_alert": true,
+    "welcome_covers_one_maximum_call": true,
+    "initial_allowlist_stage": true
+  },
+  "observed_calendar_revision": 1,
+  "calendar_transition_checks": "2026-10-07 holiday off_peak; 2026-10-08 weekday peak",
+  "result": "passed"
+}

@@ -1,0 +1,128 @@
+{
+  "checked_at": "2026-10-08T02:05:10.059794+00:00",
+  "read_only": true,
+  "current": {
+    "image": "synwevo:8ba2956750c2080d300fa17523bcc391e85cae40",
+    "previous_image": "synwevo:08d6700cd524da10163643dbf97f7e1a113a4bd7",
+    "backup": "/opt/synwevo/backups/20261007T131123Z",
+    "at": "20261007T131123Z"
+  },
+  "governance": {
+    "counts": {
+      "billing_calls": 0,
+      "billing_settlements": 0,
+      "billing_prices": 0,
+      "model_price_drafts": 1,
+      "model_provider_versions": 0,
+      "model_provider_credentials": 0,
+      "model_cost_policy_versions": 0,
+      "payment_settings_versions": 0,
+      "billing_band_schedules": 1
+    },
+    "calendar": {
+      "revision": 1,
+      "spec": {
+        "holiday_utc_offset_minutes": 480,
+        "holidays": [
+          {
+            "date": "2026-10-01",
+            "name": "国庆节 2026"
+          },
+          {
+            "date": "2026-10-02",
+            "name": "国庆节 2026"
+          },
+          {
+            "date": "2026-10-03",
+            "name": "国庆节 2026"
+          },
+          {
+            "date": "2026-10-04",
+            "name": "国庆节 2026"
+          },
+          {
+            "date": "2026-10-05",
+            "name": "国庆节 2026"
+          },
+          {
+            "date": "2026-10-06",
+            "name": "国庆节 2026"
+          },
+          {
+            "date": "2026-10-07",
+            "name": "国庆节 2026"
+          }
+        ],
+        "peak_windows": [
+          {
+            "end": "04:00",
+            "start": "01:00",
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          },
+          {
+            "end": "10:00",
+            "start": "06:00",
+            "weekdays": [
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        ],
+        "source_ref": "api-docs.deepseek.com/zh-cn/quick_start/pricing:2026-10-07"
+      },
+      "operation_id": "ao_d7da658ed75f",
+      "created_at": 1791385107
+    },
+    "calendar_operation": {
+      "id": "ao_d7da658ed75f",
+      "action": "admin.model_price.schedule.publish",
+      "target_id": "deepseek",
+      "created_at": 1791385107.7090242
+    },
+    "price_drafts": [
+      {
+        "id": "mpd_3870d36aa953",
+        "revision": 1,
+        "status": "draft",
+        "price_id": null,
+        "updated_at": 1791424845,
+        "spec": {
+          "effective_from": 1791421200,
+          "input_cached": "0.04",
+          "input_uncached": "2",
+          "model": "deepseek-flash",
+          "name": "DeepSeek Flash 成本 2026-10-08",
+          "off_peak": {
+            "input_cached": "0.02",
+            "input_uncached": "1",
+            "output": "4"
+          },
+          "output": "8",
+          "previous_price_id": null,
+          "provider": "deepseek",
+          "purpose": "cost",
+          "terms_ref": "api-docs.deepseek.com/zh-cn/quick_start/pricing:2026-10-08",
+          "unit": {
+            "code": "CNY",
+            "scale": 6
+          }
+        }
+      }
+    ]
+  },
+  "portal_config": {
+    "SYNWEVO_SUITE_APPS": "forms,tables,dataprep,approvals,extract",
+    "SYNWEVO_AGENT_PROVIDER": "deepseek",
+    "SYNWEVO_BILLING_ENVIRONMENT": "live",
+    "SYNWEVO_BILLING_WELCOME_MINOR": "100"
+  }
+}
