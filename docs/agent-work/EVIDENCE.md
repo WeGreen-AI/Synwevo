@@ -521,3 +521,19 @@ CR-066追加：旧客户端更新其它设置时省略渠道字段，96f73ab可�
 ## 2026-10-08 CI 临时目录解析线程竞争修复
 
 基线产品25b084f/文档7964fd9。真实HTTP上传、解析和blob发布的确定性调度复现ENOTEMPTY；原根清理未等待App惰性解析线程。pytest清理现在在原3秒总预算内等待，超时明确teardown失败并保留夹具，没有rmtree重试或吞警告。38项定向通过（6项已有弃用警告）、4项保留策略子进程通过、六守卫通过；新增回归在原实现失败。证据及源码哈希：evidence/2026-10-08-ci-cleanup/verification.json。尚未跑新Linux完整CI；本地提交随后续功能批次整合，不单为测试清理重启生产。
+
+## 2026-10-08T07:23:48.131696+00:00 暂停前本地状态
+
+用户要求立即暂停。e577fc9已本地提交清理修复，无新推送/部署。通知恢复core新增12项通过；包含其在内通知原子派发/通知服务/平台配置共75项通过（1项已有Starlette弃用警告），日志/private/tmp/synwevo-notification-related-20261008.log。未执行新UI浏览器验收或完整CI。33870合成验收服务PID83471正常关闭，输出Application shutdown complete/Finished server process；没有SMTP、模型或真实支付。其他并行修复保留未提交，不能作为已验证发布。
+
+并行任务暂停报告已收齐并保存在evidence/2026-10-08-paused：治理测试59通过/1失败，前端最终改动未复验，充值幂等缺迁移且未验证。不能把协调者之前75项已通过结果扩展为全部新增功能通过。三个子代理已关闭。
+
+### 2026-10-08 恢复后的未发布修复
+
+通知恢复backend/core定向120通过、六守卫通过，详见[evidence/2026-10-08-reliability/notification-backend-verification.md](evidence/2026-10-08-reliability/notification-backend-verification.md)。新增充值请求持久绑定迁移9通过，指纹在[payment-intent-migration.json](evidence/2026-10-08-reliability/payment-intent-migration.json)。以上绑定e577fc9上的未提交源码；尚未完成全量CI、浏览器或部署。
+
+## 2026-10-08 可靠性发布前门槛与正式价格决定
+
+最终证据见evidence/2026-10-08-reliability/verification.json及browser-qa.md。1538项账户/迁移初跑唯一失败为新管理路由未登记；补齐精确权限及无副作用矩阵，29项全矩阵通过。全前端528、类型/构建/六守卫通过。来源指纹绑定提交前源码；Linux完整CI与新版本部署尚未执行。
+
+用户明确选择成本×2。Chrome真实管理回执显示成本策略v1/ao_50e7aad24bc5于19:31:11 HKT发布；其他正式配置继续准备，不能由此声称Agent/真实充值已经开放。

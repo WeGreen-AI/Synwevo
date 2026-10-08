@@ -26,6 +26,7 @@ from .test_admin_runs import flow as flow_run_fixture, run as op_run_fixture
 from synwevo_core import platform_access
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
+from synwevo_core.notifications import Notifier, RETRY_DELAYS_S
 from synwevo_core.organizations import Organizations
 from synwevo_core.platform_access import (PERMISSIONS, ROLE_ORDER, ROLES, SUPER_ADMIN, PlatformAccess,
                                           catalogue)
@@ -112,6 +113,9 @@ ROUTES = [
     ("GET", "/api/admin/identity-providers", "platform.config.view", False),
     ("GET", "/api/admin/mail", "platform.mail.view", False),
     ("POST", "/api/admin/mail/{mid}/retry", "platform.mail.manage", True),
+    ("GET", "/api/admin/notification-recovery", "platform.mail.view", False),
+    ("POST", "/api/admin/notification-recovery/{nid}/preview", "platform.mail.manage", False),
+    ("POST", "/api/admin/notification-recovery/{nid}/execute", "platform.mail.manage", True),
     ("GET", "/api/admin/app-runs", "platform.apps.view", False),
     ("GET", "/api/admin/app-runs/summary", "platform.apps.view", False),
     ("GET", "/api/admin/app-runs/{run_id}", "platform.apps.view", False),
@@ -184,6 +188,12 @@ def world(tmp_path, monkeypatch):
         draft, _ = catalogue.create(spec=PRICE_SPEC, actor_id=root["id"],
                                     idempotency_key="matrix_draft_fixture")
     plain = verified(store, ident, "plain@example.test")
+    # Synthetic exhausted email enqueue fixture, through the real notifier. A permitted
+    # preview must succeed; a permitted execute still requires strict re-authentication.
+    notifier = Notifier(store)
+    notification = notifier.security_change(plain["id"], "password_changed")
+    for _ in range(len(RETRY_DELAYS_S) + 1):
+        notifier.retry_delivery(notification["id"], "notification_enqueue_failed")
     # One run of each kind, so the run routes have a row to answer about (admin_runs).
     op_run_fixture(store, "run_matrix_fixture", user=plain, workspace=ident.workspaces_for(plain["id"])[0]["id"])
     flow_run_fixture(store, "fr_matrix_fixture", user=plain)
@@ -201,6 +211,7 @@ def world(tmp_path, monkeypatch):
         return c
 
     w = {"api": api, "store": store, "ident": ident, "root": root, "plain": plain, "login": login,
+         "nid": notification["id"],
          "draft_id": draft["id"], "cost_price_id": cost_price_id, "report_id": report["id"],
          "wid": ident.workspaces_for(plain["id"])[0]["id"]}
     yield w
@@ -236,7 +247,7 @@ LEGACY_WID = "default"
 
 def _path(template, w, *, legacy: str | None = None):
     wid = legacy if legacy and template.endswith(HISTORICAL) else w["wid"]
-    return template.format(uid=w["plain"]["id"], wid=wid, mid="mail_fixture_missing",
+    return template.format(uid=w["plain"]["id"], wid=wid, mid="mail_fixture_missing", nid=w["nid"],
                            draft_id=w["draft_id"], run_id="run_matrix_fixture", flow_run_id="fr_matrix_fixture",
                            oid="org_fixture_missing", action="freeze", gid="pg_fixture_missing",
                            freeze_id="freeze_fixture_missing",
@@ -265,6 +276,10 @@ def _risk_body(path):
 def _call(client, method, path, w):
     if method == "GET":
         return client.get(path)
+    if path.startswith("/api/admin/notification-recovery/"):
+        return post(client, path, {"reason": REASON, "preview_token": "matrix-not-confirmed",
+                                   "idempotency_key": "matrix_notification_recovery_0001"}
+                    if path.endswith("/execute") else {})
     if path.startswith(("/api/admin/billing/payments", "/api/admin/billing/grants", "/api/admin/billing/freezes")):
         # Money administration: a well-formed but unconfirmed request (no strict re-authentication).
         return client.request(method, path, json={"reason": REASON, "idempotency_key": "matrix_billing_admin_0001"},
@@ -335,6 +350,7 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
     # matrix runs, so the undo routes have something to act on: a permitted caller reaches the
     # preview (200) and the strict re-authentication (reauth_required), not a state refusal.
     legacy_owner = _assigned_legacy_workspace(world)
+    notification_before = Notifier(world["store"]).email_recovery_row(world["nid"])
     c = world["login"](holder(world, role))
     for method, template, permission, dangerous in ROUTES:
         path = _path(template, world, legacy=LEGACY_WID)
@@ -372,6 +388,8 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
     assert world["ident"].get_workspace(LEGACY_WID)["status"] == "active"
     assert {r["user_id"] for r in world["store"].all("SELECT user_id FROM memberships WHERE workspace_id=?",
                                                      (LEGACY_WID,))} == {legacy_owner["id"]}
+    assert Notifier(world["store"]).email_recovery_row(world["nid"]) == notification_before
+    assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action='admin.notification.recover_enqueue'")
 
 
 def test_no_platform_permission_sees_404_everywhere_including_owners_and_workspace_admins(world):

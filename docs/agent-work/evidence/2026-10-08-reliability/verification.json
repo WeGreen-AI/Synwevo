@@ -1,0 +1,65 @@
+{
+  "base_commit": "e577fc975370dc0e23e686db5d7aef86efbf9a0c",
+  "checked_at": "2026-10-08T11:34:07.047140+00:00",
+  "checks": {
+    "identity_initial": {
+      "tests": 1538,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0,
+      "junit_sha256": "f4d114445bb4740ee4f18300fa0de92b25bc29491c73dd7dee706246866fc778"
+    },
+    "admin_matrix_final": {
+      "tests": 29,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "junit_sha256": "4f5faaddad6fa56e2b2c637270534c29fbc5c91390a4434dc376fc1b3b5fd323"
+    },
+    "payment_intent_migration": {
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "junit_sha256": "74e828002db9eebf586fa2392756e668a2586663fe617fdeb1c646f3121a157c"
+    }
+  },
+  "identity_failure_resolution": "Only initial failure was strict admin route inventory missing three new paths. Added exact permissions, real synthetic eligible fixture, denial/no-write assertions. Full 29-test matrix now passes. No product changes after initial identity run.",
+  "frontend": {
+    "all_workspace_tests_passed": 528,
+    "failed": 0,
+    "typecheck": "passed",
+    "all_apps_build": "passed",
+    "final_account_build": "passed after final UI changes"
+  },
+  "guards": "six passed",
+  "browser": "See browser-qa.md; synthetic environment only, no live money/model/SMTP",
+  "production": "Not deployed; full Linux CI pending",
+  "source_sha256": {
+    "packages/core/synwevo_core/notifications.py": "18047ec9889d9b40a26482f3e6731facd0d7d039fcf1b53cc52b58c3085bd9a6",
+    "packages/core/synwevo_core/store.py": "d89ecab107d25dd4212e5aa489f54f9d1c04ab304ab507bbdb177f06ba131506",
+    "packages/core/synwevo_core/suite_schema/payments.py": "5be16b3ea8d4baa1f1647b8bf26befc41edb7bfd245ee05a2dbac68f992956f3",
+    "services/identity/synwevo_identity/admin_routes.py": "0bc09ad0838cb82920bc9956775e14eb75d2f4fb458a39edb2bb0edfeb459079",
+    "services/identity/synwevo_identity/payment_routes.py": "9aa54231226de860c45130e5cd153d08557e42c0bf290d3a42ffaa23f256ac59",
+    "services/identity/synwevo_identity/payments.py": "2ebeb390ffbd5ece9572ea85d55cd4da0e8daac77f03628dd50ae5d0c47d910f",
+    "services/identity/tests/test_platform_access.py": "0fd9554e4e33c7e009c9702ff0b4fadc9f6a061add7ff23183a341c12ccaf672",
+    "services/identity/tests/test_wallet_topups.py": "4392f9d6cb50c4828a9ab372188a1a5f97721a750affc2a7501740864872515b",
+    "services/identity/web/src/governance/GovernanceTabs.tsx": "bf144bbc862be6f3be8e26838de479ccbffe66a599d4966304aa7d442f75d9ba",
+    "services/identity/web/src/pages/account/TopupDialog.tsx": "f8a9348f4b1704309b90a30cec9ebaf68c8dac26a0112e2613de5543eb7b1f09",
+    "services/identity/web/src/pages/account/TopupStatus.tsx": "33423a135b586a3175d1463ed7a06f7addebb6ceb73ef040a4a763aa8a1c2585",
+    "services/identity/web/src/pages/account/topup.messages.ts": "969057e251fb3ce953b87b372fcd1f38335b8644412d8e8c3e6b522add1b39bb",
+    "services/identity/web/src/pages/account/walletModel.ts": "db87b02a1122e17d9974287c70dd83c34612b0f08cb06dfcdac5d044cfacfa20",
+    "services/identity/web/tests/payment-methods.test.mjs": "810ead03fbf60950186e671669f713f97024bcc85567b0b91e8e8bc3ecfbb592",
+    "services/identity/web/tests/refusals.test.mjs": "a277b8116c7c58c127dc550d51f41ee328c34f33ba51f44c3e9117e4ab275303",
+    "services/identity/web/tests/wallet-pages.test.mjs": "9881faaf2bf1721fd52685c380d6354a7b9c54ecd5da0fb459469bebdd1cf6cd",
+    "services/identity/synwevo_identity/admin_notification_recovery.py": "fdaf9f49b7b9e39cbf139d2073d1a31c3bff9f94d268041bbfe0c53465422233",
+    "services/identity/tests/test_admin_notification_recovery.py": "2e8b9bff35dbe50efb98363f24f6fc83da3ca8a1fe8e6bac6f49d944e5030b66",
+    "services/identity/tests/test_notification_enqueue_recovery.py": "387bdc033b5551b47d024833039b945e8d96246c67ad4d9f8a42acaefd98d2b1",
+    "services/identity/tests/test_topup_idempotency.py": "5626e3e93f9ea72dbdc3e92b2a9570ca868ccfd7871d92d9afed510314057c8a",
+    "services/identity/web/src/governance/NotificationRecovery.tsx": "8966f5438e7f3fb7fec0297257469d707593bc4e6d56a4d909171ed49f496b81",
+    "services/identity/web/src/governance/notification-recovery.messages.ts": "4c31df95dee29a00bf6e098320f8255e93a5baae3e65ce18c40cf22f2c8f9310",
+    "services/identity/web/tests/notification-recovery.test.mjs": "6ae4025864571e976f61cd7969034958e46ad22f74f4a62ad6f2afa393a6ad8c",
+    "services/identity/web/tests/topup-idempotency.test.mjs": "426f42e80488d7a1d237c93da948ecd92445fab20bffd4693dc1d6427223130d",
+    "tests/integration/test_payment_topup_intents_schema.py": "c08b399abe46c8d61f77d35fef71ea7c35cd65882e11f342410f24ad5581ba8a"
+  }
+}

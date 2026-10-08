@@ -4,8 +4,10 @@ The shared contract (org-payments package, consumed by the usage pages):
 
   GET  /api/auth/wallet/topup-options?payer_kind=&payer_id=
        -> {available, reason?, currency, payment_methods, packages: [{id, amount_minor, label}], min_amount_minor, max_amount_minor}
-  POST /api/auth/wallet/topups {payer_kind, payer_id, package_id? | amount_minor, challenge_token?}
-       -> {order_id, checkout_url}      (CSRF by the platform gate; Turnstile when configured)
+  POST /api/auth/wallet/topups {payer_kind, payer_id, package_id? | amount_minor, idempotency_key?, challenge_token?}
+       -> {order_id, status, creation_status, checkout_url?, replayed}
+       201 new / 200 replay / 202 verifying; same key with different intent -> 409.
+       Omitted keys retain legacy independent creation, with no retry guarantee.
   GET  /api/auth/wallet/topups/{order_id}
        -> {order_id, status: pending|paid|failed|expired, amount_minor, credited_at?, ...}
   GET  /api/auth/wallet/receipts/{order_id}   -> the receipt of a credited order (JSON)
@@ -64,7 +66,7 @@ def build_router(ident: Identity, sessions: Sessions, audit, topups: TopupServic
         row = topups._row(order_id)
         if row is None:
             raise ServiceError(404, "topup_not_found", "找不到这个充值订单")
-        if row["initiator_id"] != user["id"]:
+        if row["payer_kind"] == "organization" or row["initiator_id"] != user["id"]:
             allowed = False
             if row["payer_kind"] == "organization":
                 try:
@@ -82,7 +84,8 @@ def build_router(ident: Identity, sessions: Sessions, audit, topups: TopupServic
         kind, pid = payer(user, payer_kind, payer_id)
         private(response)
         resolved, reason = topups.configuration()
-        base = {"currency": "CNY", "payer_kind": kind, "payer_id": pid}
+        base = {"currency": "CNY", "payer_kind": kind, "payer_id": pid,
+                "initiator_id": user["id"], "environment": topups.environment}
         if resolved is None:
             return {**base, "available": False, "reason": reason, "packages": [],
                     "payment_methods": [],
@@ -103,8 +106,14 @@ def build_router(ident: Identity, sessions: Sessions, audit, topups: TopupServic
     @router.post("/api/auth/wallet/topups", status_code=201)
     def create(request: Request, response: Response, body: dict = Body(...)):
         user = current(request)
-        if not isinstance(body, dict) or set(body) - {"payer_kind", "payer_id", "package_id", "amount_minor", "challenge_token"}:
+        if not isinstance(body, dict) or set(body) - {"payer_kind", "payer_id", "package_id", "amount_minor", "challenge_token",
+                                                     "idempotency_key", "initiator_id", "environment"}:
             raise ServiceError(400, "topup_amount_invalid", "请选择一个充值套餐或填写充值金额")
+        # New UI pins its original session/environment even for organization payers. A login
+        # or deployment switch must not reinterpret its saved request as a new actor's intent.
+        if (("initiator_id" in body and body["initiator_id"] != user["id"])
+                or ("environment" in body and body["environment"] != topups.environment)):
+            raise ServiceError(409, "topup_context_changed", "充值账户或环境已变化，请返回原账户核实订单")
         kind, pid = payer(user, body.get("payer_kind"), body.get("payer_id"))
         if not user.get("email_verified_at"):
             raise ServiceError(403, "email_verification_required", "请先验证邮箱再继续")
@@ -112,15 +121,17 @@ def build_router(ident: Identity, sessions: Sessions, audit, topups: TopupServic
         if (package_id is not None and (not isinstance(package_id, str) or len(package_id) > 40)) or (
                 amount is not None and type(amount) is not int):
             raise ServiceError(400, "topup_amount_invalid", "请选择一个充值套餐或填写充值金额")
-        resolved, _ = topups.configuration()
-        if resolved is None:
-            raise ServiceError(503, "topup_not_configured", "充值暂未开放")
-        _challenge(request).require(request, body, "topup", audit=audit)
-        result = topups.create(initiator=user, payer_kind=kind, payer_id=pid, package_id=package_id, amount_minor=amount)
+        if "idempotency_key" in body and body["idempotency_key"] is None:
+            raise ServiceError(400, "topup_idempotency_invalid", "充值请求标识无效")
+        result = topups.create(initiator=user, payer_kind=kind, payer_id=pid, package_id=package_id, amount_minor=amount,
+                               idempotency_key=body.get("idempotency_key"),
+                               require_challenge=lambda: _challenge(request).require(request, body, "topup", audit=audit))
         # The amount and payer are financial metadata, not content: the audit row says who
         # started which order, never a card or a provider secret.
-        audit(request, "wallet.topup.created", actor_id=user["id"], object_kind="payment_order",
-              object_id=result["order_id"], result="ok", meta={"payer_kind": kind}, workspace_given=True)
+        if not result["replayed"]:
+            audit(request, "wallet.topup.created", actor_id=user["id"], object_kind="payment_order",
+                  object_id=result["order_id"], result="ok", meta={"payer_kind": kind}, workspace_given=True)
+        response.status_code = (202 if result["creation_status"] == "verifying" else 200 if result["replayed"] else 201)
         private(response)
         return result
 

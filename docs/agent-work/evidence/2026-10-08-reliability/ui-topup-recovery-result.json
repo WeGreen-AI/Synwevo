@@ -1,0 +1,13 @@
+{
+  "provider_test_double_calls": 1,
+  "orders": [
+    {
+      "order_id": "top_354ccce2b879",
+      "status": "creating",
+      "amount_minor": 1000,
+      "failure_code": "provider_unknown"
+    }
+  ],
+  "intent_count": 1,
+  "payments": 0
+}

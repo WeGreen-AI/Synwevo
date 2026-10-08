@@ -715,6 +715,7 @@ INDEXES = [
     ("ix_events_tenant", "job_events", ("tenant", "seq")),
     # A subscription's delivery log, and dropping its pending deliveries on pause/delete.
     ("ix_wh_sub", "webhook_deliveries", ("subscription_id", "status")),
+    ("ix_mail_notification_ref", "mail_outbox", ("kind", "ref_id")),
 ]
 
 V2_COLUMNS = [
@@ -737,6 +738,9 @@ V2_COLUMNS = [
 PLATFORM_SETTINGS_DELIVERY_COLUMNS = [
     ("notification_deliveries", "defer_reason", "TEXT"),
     ("notification_deliveries", "policy_revision", "INTEGER"),
+    # Only newly emitted deliveries identify their atomic enqueue lineage. Existing rows
+    # remain NULL: an old failure code alone cannot prove that no mail was ever queued.
+    ("notification_deliveries", "enqueue_protocol", "TEXT CHECK (enqueue_protocol IS NULL OR enqueue_protocol='atomic-v1')"),
 ]
 
 JSON_COLS = {"record_rule", "output", "notes", "structure", "options", "ocr", "corrections", "slots", "editor", "data",

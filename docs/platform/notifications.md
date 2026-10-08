@@ -71,7 +71,7 @@
 
 ## 4. 邮件投递（`synwevo_identity/notify.py`）
 
-账户服务的 `NotificationDispatcher` 每 30 秒取 `pending` 且到期的投递：读者不存在/已禁用 → skipped；读者在免打扰时段（按其时区，安全通知除外）→ `not_before` 推到时段结束；否则**先在事务里把状态翻成 `queued`**（两个账户进程不会重复寄），再按读者语言渲染并 `Mailer.enqueue`（kind=`notification`，与邀请邮件同一个 outbox、同样的重试与管理页）。同一读者同一批里的多条普通通知合成一封汇总；`critical` 单独立即寄。邮件未配置 → skipped（原因可见）；入队失败 → 退避重试 5/15/60/240 分钟后 failed。`digest` 偏好只是把 `not_before` 推后 30 分钟，让同期事件落到同一批。
+账户服务的 `NotificationDispatcher` 每 30 秒取 `pending` 且到期的投递：读者不存在/已禁用 → skipped；读者在免打扰时段（按其时区，安全通知除外）→ `not_before` 推到时段结束。每位读者的当前资格、偏好和摘要预算在同一写事务内重查；标记 `queued`、`Mailer.enqueue` 与全部 `mail_id` 关联在同一保存点内提交，任一步失败就一起回滚。这里是本地入队，SMTP 由邮件 worker 随后执行；`queued` 不表示已寄出。同一读者同一批里的多条普通通知合成一封汇总；`critical` 单独立即寄。邮件未配置 → skipped（原因可见）；入队失败 → 退避重试 5/15/60/240 分钟，第五次失败转为 failed。`digest` 偏好只是把 `not_before` 推后 30 分钟，让同期事件落到同一批。
 
 **寄出前复核（CI-68）。** 非安全投递在真正寄出前再检查一次（`Notifier.stale_reason`）：读者已在站内读过/归档 → skipped `read in app`；该类别邮件此刻已关 → `channel off`；会话类条目再看读者在该会话的实时状态——已不是成员 → `no longer a member`、已静音、「不通知」或定时静音 `muted_until` 尚未到期（CI-74）→ `conversation muted`、读游标之后没有未撤回的消息（读完了，或唯一的未读被撤回）→ `nothing unread`。推送队列走同一复核。
 
@@ -100,3 +100,16 @@
 `PlatformSettings`由唯一Store保存完整覆盖快照。发布、恢复默认和历史回滚都追加新版本；派发无进程缓存，在每收件人写事务中读取当前版本。`defer_reason`区分首次聚合、预算、免打扰与重试，只有旧版本预算等待能提前复核。旧投递迁移保持原`not_before`和未知版本NULL，不虚构执行确认。冻结/删除组织、当前成员资格、未读/静音/撤回均在入队前重新检查。
 
 配置界面与使用步骤见[管理员说明](admin-operations.md#配置与发布边界)；本批证据见[B3记录](../quality/admin-b3-settings-20260930.md)。私信邮件默认关闭、主动开启、无逐条邮件规则保持不变。
+
+
+## 通知入队失败的受控恢复（2026-10-08，整合验证中）
+
+邮件管理中的“通知入队失败”仅显示通知编号、收件账户编号、类别、累计次数、更新时间与规范化错误。不返回通知正文、参数、业务目标或旧服务商错误原文。`platform.mail.view` 可查看；`platform.mail.manage` 经签名预览、理由、近期管理员重认证才能恢复排队。预览固定操作者、来源、对象和状态版本；状态变化或预览过期后必须重新预览。同一幂等键重复执行返回原回执，变参拒绝；变更、审计和持久回执在同一事务提交。
+
+恢复仅适用于 email / failed / attempts≥5 / mail_id为空 / 精确错误码 `notification_enqueue_failed`，且投递从创建时即带 `enqueue_protocol=atomic-v1`。直接存在相同通知引用的邮件也会阻止恢复。迁移仅增加可空来源列和邮件引用索引；所有历史行保持NULL，不根据错误码、更新时间或Git发布日期猜测其来源，后续派发也不会将历史行升级为可重试。旧摘要中仅首条通知被存为邮件引用，因此“未查到邮件”本身不证明历史通知从未入队。
+
+确认后只将原投递置回pending、安排一次当前资格检查，保留通知编号、去重键和累计尝试次数，清除旧的等待原因/预算版本。派发器仍检查账户、当前邮件偏好、已读/归档、会话成员与静音/未读、免打扰和摘要预算。等待不消耗尝试；再次入队失败立即回到failed，成功则关联实际outbox邮件。回执表示“已安排恢复”，不表示已寄出或收件箱收到。
+
+不处理push重发、SMTP结果不明或已经关联邮件的重投，也不自动恢复来源不明的旧失败。滚动部署可与当前25b084f原子派发器共存：旧生产者创建的行不带标记，保持不可恢复；新行由两版原子派发器处理均不会出现部分入队。回退仅到包含原子派发修复8552091的版本（如25b084f）；保留新列与原业务记录，不回滚资金或通知事实。
+
+接口：`GET /api/admin/notification-recovery` 按通知/账户编号查询并分页；`POST /api/admin/notification-recovery/{id}/preview`；`POST /api/admin/notification-recovery/{id}/execute` 接受 `preview_token`、理由和幂等键。当前实现及验证状态以 `docs/agent-work/STATE.md` 为准，本文不代表已部署。

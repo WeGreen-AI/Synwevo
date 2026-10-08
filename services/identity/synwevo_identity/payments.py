@@ -38,6 +38,7 @@ from urllib.parse import quote, urlencode
 import httpx
 
 from synwevo_core.billing import BillingError, DisputeNotice, Ledger, PaymentReceipt, Unit
+from synwevo_core.billing.org_payers import manages_billing
 from synwevo_core.billing.payment_settings import (MERCHANT, PROVIDER, PAYMENT_METHODS, PaymentMethod,
                                                   PaymentSettings, payment_methods)
 from synwevo_core.billing import risk
@@ -116,7 +117,7 @@ def _form(value: Any, prefix: str = "") -> list[tuple[str, str]]:
 
 
 class ProviderUnavailable(Exception):
-    """The provider could not create a checkout (network, 5xx, refusal). Nothing was charged."""
+    """No usable checkout response. The remote side effect may already have happened."""
 
 
 class PaymentProvider(Protocol):
@@ -182,6 +183,8 @@ class StripeCheckout:
             body = response.json()
         except ValueError:
             raise ProviderUnavailable("body") from None
+        if not isinstance(body, dict):
+            raise ProviderUnavailable("body")
         session_id, url = body.get("id"), body.get("url")
         if (not isinstance(session_id, str) or not session_id.startswith("cs_") or len(session_id) > 200
                 or not isinstance(url, str) or not url.startswith(CHECKOUT_HOST) or len(url) > 2048):
@@ -285,14 +288,83 @@ class TopupService:
             raise ServiceError(409, "topup_daily_amount", "已超过今日充值金额上限，请明天再试")
 
     # ------------------------------------------------------------------ create
+    def _authorize(self, initiator_id: str, payer_kind: str, payer_id: str) -> None:
+        """Current authority, including replays and the response after the provider returns."""
+        user = self.store.one("SELECT status,deleted_at,email_verified_at FROM users WHERE id=?", (initiator_id,))
+        if not user or user["status"] != "active" or user["deleted_at"] is not None:
+            raise ServiceError(401, "unauthorized", "请先登录可用账户")
+        if not user["email_verified_at"]:
+            raise ServiceError(403, "email_verification_required", "请先验证邮箱再继续")
+        if not ((payer_kind == "user" and payer_id == initiator_id) or
+                (payer_kind == "organization" and manages_billing(self.store, payer_id, initiator_id))):
+            raise ServiceError(403, "payer_forbidden", "你不能为这个付款方充值或查看其订单")
+        if self.frozen(payer_kind, payer_id):
+            raise ServiceError(409, "wallet_frozen", "该钱包因支付争议已被冻结，暂不能充值")
+
+    def _intent(self, initiator_id: str, key: str | None, request_hash: str) -> dict | None:
+        if key is None:
+            return None
+        intent = self.store.one(
+            "SELECT order_id,request_hash FROM payment_topup_intents "
+            "WHERE environment=? AND initiator_id=? AND idempotency_key=?",
+            (self.environment, initiator_id, key))
+        if intent is None:
+            return None
+        if intent["request_hash"] != request_hash:
+            raise ServiceError(409, "topup_idempotency_conflict", "这次充值请求的内容已变化，请先核实原订单")
+        row = self._row(intent["order_id"])
+        if row is None:
+            # An unavailable mapping is never permission to dispatch again.
+            raise ServiceError(503, "topup_unavailable", "充值暂不可用，请稍后再试")
+        return row
+
+    def _creation_result(self, row: dict, *, replayed: bool) -> dict:
+        """Call under Store.tx: only an active, currently authorized checkout gets a URL.
+
+        Package/channel edits apply to new orders; an existing order keeps its immutable terms.
+        Closing top-ups or replacing/revoking credentials withholds its old checkout address.
+        No provider lookup or create is ever performed here.
+        """
+        self._authorize(row["initiator_id"], row["payer_kind"], row["payer_id"])
+        out = {**self.status(row), "checkout_url": None, "replayed": replayed}
+        if row["status"] == "creating" or out["status"] != "pending":
+            return out
+        current, _ = self.configuration()
+        original = self.settings.read(row["settings_revision"])
+        latest = self.settings.read()
+        if current is None or original["credential_revision"] != latest["credential_revision"]:
+            out.update(creation_status="blocked", reason="payment_configuration_changed")
+        elif row["checkout_url"] and row["checkout_session_id"]:
+            out.update(creation_status="ready", checkout_url=row["checkout_url"])
+        else:
+            out.update(creation_status="verifying")
+        return out
+
     def create(self, *, initiator: dict, payer_kind: str, payer_id: str, package_id: str | None,
-               amount_minor: int | None) -> dict:
-        resolved, reason = self.configuration()
+               amount_minor: int | None, idempotency_key: str | None = None, require_challenge=None) -> dict:
+        # Compatibility: omitted keys retain independent-create semantics. Only keyed requests
+        # can recover a lost response; the UI always sends a key persisted before dispatch.
+        if idempotency_key is not None and not _ident(idempotency_key):
+            raise ServiceError(400, "topup_idempotency_invalid", "充值请求标识无效")
+        if ((package_id is None) == (amount_minor is None)
+                or (package_id is not None and (not isinstance(package_id, str) or len(package_id) > 40))
+                or (amount_minor is not None and type(amount_minor) is not int)):
+            raise ServiceError(400, "topup_amount_invalid", "请选择一个充值套餐或填写充值金额")
+        # Hash the original selector, not its current price or settings revision. A replay after
+        # an administrator reprices a package must recover the first order, never reprice it.
+        request_hash = hashlib.sha256(json.dumps(
+            {"payer_kind": payer_kind, "payer_id": payer_id, "package_id": package_id, "amount_minor": amount_minor},
+            sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        resolved, _ = self.configuration()
+        self._authorize(initiator["id"], payer_kind, payer_id)
+        with self.store.tx():
+            self._authorize(initiator["id"], payer_kind, payer_id)
+            previous = self._intent(initiator["id"], idempotency_key, request_hash)
+            if previous is not None:
+                return self._creation_result(previous, replayed=True)
         if resolved is None:
             raise ServiceError(503, "topup_not_configured", "充值暂未开放")
         spec = resolved.spec
-        if (package_id is None) == (amount_minor is None):
-            raise ServiceError(400, "topup_amount_invalid", "请选择一个充值套餐或填写充值金额")
         if package_id is not None:
             package = next((p for p in spec["packages"] if p["id"] == package_id), None)
             if package is None:
@@ -303,18 +375,22 @@ class TopupService:
                     spec["min_amount_minor"] <= amount_minor <= spec["max_amount_minor"]):
                 raise ServiceError(400, "topup_amount_invalid", "请选择一个充值套餐或填写充值金额")
             amount = amount_minor
-        if self.frozen(payer_kind, payer_id):
-            raise ServiceError(409, "wallet_frozen", "该钱包因支付争议已被冻结，暂不能充值")
+        # Turnstile can make an external call, so run it before the transaction. Replays above
+        # only read an existing order and need no second use of a consumed challenge token.
+        if require_challenge is not None:
+            require_challenge()
         order_id = new_id("top")
         credit = fen_to_units(amount, self.unit)
         now = self.clock()
         expires = now + CHECKOUT_TTL_S
-        # The limits and the order they admit are one write transaction, so two requests at once
-        # (a burst of card tests, a double click) cannot both pass the open-order, hourly, daily
-        # or amount limit. The ledger order follows in the ledger's own transaction.
+        # Admission and the original intent commit together. The ledger deliberately requires
+        # its own durable transaction; a crash between these steps remains 'creating' and is
+        # never redispatched by a retry.
         with self.store.tx():
-            # Share the settings writer's lock: either this open order is visible to revocation,
-            # or revocation/closure wins and no checkout can use the earlier resolved key.
+            self._authorize(initiator["id"], payer_kind, payer_id)
+            previous = self._intent(initiator["id"], idempotency_key, request_hash)
+            if previous is not None:
+                return self._creation_result(previous, replayed=True)
             current, _ = self.configuration()
             if current is None:
                 raise ServiceError(503, "topup_not_configured", "充值暂未开放")
@@ -327,6 +403,10 @@ class TopupService:
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'creating',?,?)",
                 (order_id, self.environment, PROVIDER, payer_kind, payer_id, initiator["id"], package_id, amount,
                  CURRENCY, self.unit.code, credit, resolved.revision, now, expires))
+            if idempotency_key is not None:
+                self.store.execute(
+                    "INSERT INTO payment_topup_intents(environment,initiator_id,idempotency_key,request_hash,order_id,created_at) "
+                    "VALUES (?,?,?,?,?,?)", (self.environment, initiator["id"], idempotency_key, request_hash, order_id, now))
         try:
             self.ledger.create_payment_order(
                 order_id=order_id, payer_user_id=initiator["id"], provider=PROVIDER, merchant_id=MERCHANT,
@@ -339,6 +419,19 @@ class TopupService:
             if exc.code in ("organization_unavailable", "account_unavailable"):
                 raise ServiceError(409, "topup_payer_unavailable", "该付款方当前不能充值") from None
             raise ServiceError(503, "topup_unavailable", "充值暂不可用，请稍后再试") from None
+        # Authority/settings may change while the ledger records its order. Refuse before
+        # dispatch if that happened. This check makes no external calls; revocation during
+        # an already-dispatched request is handled again before releasing a checkout URL.
+        try:
+            with self.store.tx():
+                self._authorize(initiator["id"], payer_kind, payer_id)
+                current, _ = self.configuration()
+                if current is None or current.revision != resolved.revision:
+                    raise ServiceError(409, "payment_revision_conflict", "充值配置已变化，请刷新后重试")
+        except ServiceError:
+            self.store.execute("UPDATE payment_topups SET status='failed',failure_code='dispatch_refused' "
+                               "WHERE order_id=? AND status='creating'", (order_id,))
+            raise
         # Back to where the payment was started: a person's wallet, or the organization's
         # payments section for an organization top-up. Both pages poll the order status.
         base = (self.return_base or "").rstrip("/")
@@ -352,13 +445,16 @@ class TopupService:
                 success_url=f"{page}?topup={order_id}&result=success",
                 cancel_url=f"{page}?topup={order_id}&result=cancel")
         except ProviderUnavailable:
-            self.store.execute("UPDATE payment_topups SET status='failed',failure_code='provider_unavailable' "
+            # A timeout/5xx is not proof that checkout creation failed. Keep the original
+            # intent in 'creating' until signed provider evidence resolves it. Never redispatch.
+            self.store.execute("UPDATE payment_topups SET failure_code='provider_unknown' "
                                "WHERE order_id=? AND status='creating'", (order_id,))
-            raise ServiceError(502, "topup_provider_unavailable", "支付服务暂时无法创建收银台，未扣款，请稍后再试") from None
-        self.store.execute("UPDATE payment_topups SET status='pending',checkout_session_id=?,checkout_url=?,expires_at=? "
-                           "WHERE order_id=? AND status='creating'",
-                           (checkout.session_id, checkout.url, checkout.expires_at, order_id))
-        return {"order_id": order_id, "checkout_url": checkout.url}
+        else:
+            self.store.execute("UPDATE payment_topups SET status='pending',checkout_session_id=?,checkout_url=?,expires_at=? "
+                               "WHERE order_id=? AND status='creating'",
+                               (checkout.session_id, checkout.url, checkout.expires_at, order_id))
+        with self.store.tx():
+            return self._creation_result(self._row(order_id), replayed=False)
 
     # ------------------------------------------------------------------ read
     def _row(self, order_id: str) -> dict | None:
@@ -369,15 +465,14 @@ class TopupService:
 
     def status(self, row: dict) -> dict:
         state = row["status"]
-        if state == "creating" and row["created_at"] < self.clock() - 300:
-            state = "failed"
-        elif state == "creating":
+        if state == "creating":
             state = "pending"
         elif state == "pending" and row["expires_at"] is not None and row["expires_at"] <= self.clock():
             state = "expired"
         out = {"order_id": row["order_id"], "status": state, "amount_minor": row["amount_minor"],
                "currency": row["currency"], "payer_kind": row["payer_kind"], "payer_id": row["payer_id"],
-               "created_at": row["created_at"]}
+               "created_at": row["created_at"], "expires_at": row["expires_at"],
+               "creation_status": "verifying" if row["status"] == "creating" else "resolved"}
         if row["credited_at"] is not None:
             out["credited_at"] = row["credited_at"]
         return out

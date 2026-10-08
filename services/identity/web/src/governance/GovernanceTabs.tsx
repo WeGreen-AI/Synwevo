@@ -4,6 +4,7 @@ import { fmtTime, useI18n, useToast } from "@synwevo/ui";
 import { useDebounced } from "../lib/hooks";
 import { useAdminData, useAdminPage } from "./data";
 import { ActionDialog } from "./ActionDialog";
+import { NotificationRecovery } from "./NotificationRecovery";
 import { PageControls } from "./ListControls";
 import { MAIL_STATE } from "./labels";
 import { permitted, type Held } from "./access";
@@ -57,7 +58,7 @@ export function MailTab({ onDenied, held }: Props) {
   const mode = (load.data as (typeof load.data & { delivery_mode?: string }))?.delivery_mode;
   const kinds: Record<string, string> = { reset: t("账户找回"), verify: t("邮箱验证"), invite: t("邀请"), invitation: t("邀请"), security: t("安全通知"), email_change: t("邮箱变更") };
   const failure = (code: string | null) => !code ? "—" : code === "delivery_unknown" || code === "delivery_in_progress" ? t("投递结果不确定，禁止自动重发") : code === "superseded" ? t("已生成替代邮件") : t("投递失败；请检查邮件服务配置。");
-  return <section className="card card-b col gap12">
+  return <div className="col gap16" style={{ minWidth: 0 }}><section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{t("邮件投递")}</h2><button className="btn sm" disabled={load.loading} onClick={load.reload}>{t("刷新")}</button></div>
     {mode && <p className="notice" role="status">{mode === "file" ? t("当前为本地文件模式：邮件仅写入本地文件，没有真正寄出。") : mode === "disabled" ? t("邮件服务尚未配置。") : t("当前为 SMTP 模式；已寄出表示邮件服务器已接受，不代表已到达收件箱。")}</p>}
     <p className="muted small">{t("只显示投递记录，不显示邮件内容。重试找回和验证邮件会生成新链接并使旧链接失效；邀请由工作空间管理员在「成员与邀请」中重发。安全通知和投递结果不确定的邮件不能重发。")}</p>
@@ -79,7 +80,7 @@ export function MailTab({ onDenied, held }: Props) {
       impact={t("为原收件人 {email} 对应账户的当前邮箱生成新链接。旧链接失效，结果会写入审计记录。", { email: retry.to_addr })}
       run={reason => post<{ delivery: Delivery }>(`/api/admin/mail/${encodeURIComponent(retry.id)}/retry`, { reason })}
       onClose={() => setRetry(null)} onDone={result => { setRetry(null); load.reload(); setNotice(t("新邮件已排队：{email}。请刷新查看投递状态。", { email: result.delivery.to_addr })); }} />}
-  </section>;
+  </section><NotificationRecovery held={held} onDenied={onDenied} /></div>;
 }
 
 type Organization = { id: string; name: string; status: string; role: string | null; members: number; workspaces: number; recover_until: number | null };

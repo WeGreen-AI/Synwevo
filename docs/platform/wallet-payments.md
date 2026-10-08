@@ -49,8 +49,8 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
    `payment_method_types=<订单固定的配置版本所选方式>`，仅在包含微信时发送 `payment_method_options[wechat_pay][client]=web`、
    成功/取消地址回到账户源站发起充值的页面（个人：`/account/wallet?topup=<订单>&result=success|cancel`；组织：
    `/organizations/<组织>?topup=<订单>&result=success|cancel`）、订单号写入
-   `client_reference_id` 与 metadata、`Idempotency-Key=checkout-<订单>`、有效期 1 小时。创建失败返回 502
-   `topup_provider_unavailable`（“未扣款”），订单记为失败。
+   `client_reference_id` 与 metadata、`Idempotency-Key=checkout-<订单>`、有效期 1 小时。上游超时、5xx 或响应不完整时，
+   保留原订单为 `creating`，接口返回 202 / `creation_status=verifying`；未收到结果不代表远端没有创建收银台。
 3. Stripe 回调 Webhook：校验 `Stripe-Signature`（`t=` 时间戳与一个或多个 `v1=`；HMAC-SHA256(`"{t}.{原始请求体}"`,
    签名密钥)；常量时间比较；时间差 300 秒以内）。只有通过校验的事件写入持久收件箱 `payment_webhook_inbox`（按事件 ID
    去重；只保存白名单事实与请求体 SHA-256，不存客户姓名、邮箱、地址或卡信息）。同一事件 ID 携带不同事实被拒绝。
@@ -69,7 +69,23 @@ Stripe 后台需要把 Webhook 指向 `https://<账户域名>/api/auth/payments/
    `charge.succeeded`，未收到则为空，不编造）、付款时间（Stripe 记录这笔付款成功的时间：签名事件自身的 `created`，
 存于收件箱 `provider_created_at`；未知时不显示，绝不用处理时间代替——复审 payments-3）、入账时间（本平台入账的处理时间，
 重试或补跑时可能晚于付款时间）、运营方名称（发布时的设置版本）、Stripe 支付单号。只有发起人
-   或该组织当前的付费管理者可以读取订单与收据。
+   或该组织当前的付费管理者可以读取订单与收据；发起组织充值的人失去付款管理权后也不能继续读取。
+
+### 充值请求恢复（2026-10-08，待本轮发布）
+
+新界面在第一次请求前，将随机 `idempotency_key`、原套餐或金额及环境、发起人、付款方保存到当前标签页的
+`sessionStorage`。不保存支付密钥、卡号、挑战令牌或 Checkout 地址。网络失败、双击及刷新恢复沿用原键与原参数；
+服务端每次重新检查当前身份、付款权限和钱包冻结。同键异参返回 409；首次 201、重放 200、尚无可靠结果 202。
+原键按 `environment + initiator_id` 隔离，付款方和原选择进入请求哈希；改价后重放仍读取原订单。
+
+`payment_topup_intents` 与订单生命周期在同一写事务占位，不可更新、删除或替换；账本仍使用已有独立耐久事务。
+外部挑战与支付网络调用不占数据库写锁。创建后权限或配置变化会阻止释放付款链接，但无法撤回浏览器此前已取得的链接。
+只在原订单有可信 `paid/failed/expired` 终态时，界面允许明确重新选择金额、生成新请求。未知结果不按超时推断失败，
+不自动再调用提供方；由后续有效签名事件解决，缺少事件时仍需运营核实。当前没有主动查询提供方的对账操作界面。
+
+这是兼容的新增表：旧订单不回填虚构请求键，旧调用省略键仍是独立下单，因此旧客户端没有跨请求恢复保证。
+部署窗口必须先更新服务端再使用新版界面；回滚不得删除映射或未知订单，且恢复构建必须保留本节幂等契约后才能重新开放充值。
+同一标签页刷新可恢复；关闭标签页、清除浏览器存储或换设备不保证找回客户端意图，服务端原键映射仍保留。
 
 ## 3. 拒付（争议）
 

@@ -158,6 +158,34 @@ def test_options_list_server_priced_packages(world):
 
 
 # ---------------------------------------------------------------- checkout
+def test_legacy_requests_without_a_key_are_independent_orders(world):
+    """Regression evidence: losing the first POST response used to duplicate every UI retry.
+    Old callers that omit a key retain independent-create semantics; the new UI must send one.
+    """
+    world["configure"]()
+    c = world["login"]("alice")
+    first = post(c, "/api/auth/wallet/topups", {"package_id": "cny-10"})
+    retry = post(c, "/api/auth/wallet/topups", {"package_id": "cny-10"})
+    assert first.status_code == retry.status_code == 201
+    assert first.json()["order_id"] != retry.json()["order_id"]
+    assert len(world["stripe"].requests) == 2
+
+
+def test_lost_create_response_replays_the_original_order_without_velocity_or_provider(world):
+    world["configure"]({**SPEC, "velocity": {**SPEC["velocity"], "max_orders_per_hour": 1, "max_pending": 1}})
+    c = world["login"]("alice")
+    body = {"package_id": "cny-10", "idempotency_key": "fixture-lost-response"}
+    first = post(c, "/api/auth/wallet/topups", body)
+    assert first.status_code == 201, first.text
+    # The browser loses this response and repeats its original intent, not a new checkout.
+    retry = post(c, "/api/auth/wallet/topups", body)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["order_id"] == first.json()["order_id"]
+    assert retry.json()["checkout_url"] == first.json()["checkout_url"]
+    assert len(world["stripe"].requests) == 1
+    assert world["store"].one("SELECT COUNT(*) AS n FROM payment_topups")["n"] == 1
+
+
 @pytest.mark.parametrize("payer_kind", ["user", "organization"])
 def test_card_only_configuration_reaches_options_and_stripe_for_each_payer(world, payer_kind):
     world["configure"]({**SPEC, "payment_methods": ["card"]})
@@ -248,14 +276,18 @@ def test_the_browser_cannot_choose_an_amount_outside_the_server_rules(world):
     assert world["stripe"].requests[-1].content.decode().count("unit_amount%5D=777") == 1
 
 
-def test_a_provider_failure_is_reported_honestly_and_charges_nothing(world):
+def test_a_provider_500_is_unknown_and_does_not_claim_failure_or_credit(world):
     world["configure"]()
     world["stripe"].fail = True
     c = world["login"]("alice")
     r = post(c, "/api/auth/wallet/topups", {"package_id": "cny-10"})
-    assert r.status_code == 502 and r.json()["error"] == "topup_provider_unavailable"
+    # A 500 carries no proof that the remote side effect did not happen. The previous
+    # assertion ('failed', "nothing charged") was stronger than the observed evidence.
+    assert r.status_code == 202 and r.json()["creation_status"] == "verifying"
+    assert r.json()["checkout_url"] is None
     row = world["store"].one("SELECT status,failure_code FROM payment_topups")
-    assert row == {"status": "failed", "failure_code": "provider_unavailable"}
+    assert row == {"status": "creating", "failure_code": "provider_unknown"}
+    assert cny_booked(world) == 0
 
 
 def test_velocity_limits_bound_open_orders(world):

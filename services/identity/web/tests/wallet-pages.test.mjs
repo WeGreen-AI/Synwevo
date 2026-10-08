@@ -161,6 +161,18 @@ test('the return page shows the provider’s final answer first, then a slow con
   assert.ok(model.POLL_LIMIT_MS > 0 && model.POLL_LIMIT_MS <= 5 * 60_000);
 });
 
+test('an unknown create result stays distinct after polling stops or a cancelled return, until an actual terminal state', () => {
+  for (const slow of [false, true]) for (const cancelled of [false, true]) {
+    assert.equal(model.topupView('pending', slow, cancelled, 'verifying'), 'verifying');
+    assert.equal(model.topupFinal('pending'), false);
+  }
+  // GET status uses resolved for an existing session even while payment is still pending.
+  assert.equal(model.topupView('pending', false, false, 'resolved'), 'pending');
+  assert.equal(model.topupView('pending', true, false, 'resolved'), 'slow');
+  for (const final of ['paid', 'failed', 'expired'])
+    assert.equal(model.topupView(final, true, true, 'resolved'), final);
+});
+
 test('an unknown ledger entry kind is named by its direction, never shown as a raw code', () => {
   assert.equal(model.entryKindLabel('sale', '-5'), '已结算消费');
   assert.equal(model.entryKindLabel('future_kind', '5'), '其他入账');
@@ -220,6 +232,33 @@ test('the return page: paid links the receipt and draws the success mark; failed
   assert.ok(waiting.includes('稍后再看') && !waiting.includes('/receipts/'));
   const slow = render(h(status.TopupStatusView, { ...base, view: 'slow', status: { ...order, status: 'pending' }, canRefresh: true }));
   assert.ok(slow.includes('刷新状态') && slow.includes('不需要重复付款'));
+});
+
+test('the original order card describes unknown creation honestly without a time promise or another payment action', () => {
+  const order = { order_id: 'top_unknown_fixture', status: 'pending', creation_status: 'verifying', amount_minor: 1000, currency: 'CNY' };
+  const base = { error: null, onRefresh() {}, onDismiss() {}, onRetry() {} };
+  for (const slow of [false, true]) {
+    const view = model.topupView(order.status, slow, true, order.creation_status);
+    const html = render(h(status.TopupStatusView, { ...base, view, status: order, canRefresh: slow }));
+    assert.match(html, /充值请求结果待核实/);
+    assert.match(html, /原充值请求与订单已保留/);
+    assert.match(html, /可能需要管理员核实/);
+    assert.match(html, /top_unknown_fixture/);
+    assert.match(html, /aria-live="polite"/);
+    assert.doesNotMatch(html, /通常只需几秒|正在确认付款|充值已到账|重新充值|查看收据|topup-spinner/);
+    assert.equal(html.includes('刷新状态'), slow);
+  }
+  const { title, body } = status.TOPUP_TEXT.verifying;
+  for (const locale of ['zh-Hans', 'zh-Hant', 'en']) {
+    assert.ok(ui.hasMessage(title) && ui.hasMessage(body));
+    const translated = ui.translate(locale, title) + ' ' + ui.translate(locale, body);
+    assert.doesNotMatch(translated, /几秒|幾秒|seconds|Confirming your payment/);
+    if (locale === 'en') {
+      assert.match(translated, /original top-up request and order/);
+      assert.match(translated, /administrator/);
+      assert.doesNotMatch(translated, /[\u3400-\u9fff]/);
+    }
+  }
 });
 
 test('balance figures: the ledger’s four numbers, the test-environment notice and a frozen wallet', () => {

@@ -16,6 +16,7 @@ before(async () => {
   wallet = await server.ssrLoadModule('/src/pages/account/walletModel.ts');
   ui = await server.ssrLoadModule('@synwevo/ui');
   await server.ssrLoadModule('/src/pages/account/wallet.messages.ts');
+  await server.ssrLoadModule('/src/pages/account/topup.messages.ts');
   await server.ssrLoadModule('/src/org-billing.messages.ts');
 });
 after(async () => { await server?.close(); });

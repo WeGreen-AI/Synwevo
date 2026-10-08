@@ -37,7 +37,9 @@ export interface TopupOptions {
   custom_amount?: boolean; min_amount_minor: number | null; max_amount_minor: number | null;
 }
 export type TopupState = 'pending' | 'paid' | 'failed' | 'expired';
-export interface TopupStatus { order_id: string; status: TopupState; amount_minor: number; currency?: string; credited_at?: number; created_at?: number; payer_kind?: PayerKind; payer_id?: string }
+/** Creation outcome, separate from payment status: GET may say resolved for an unpaid session. */
+export type TopupCreationStatus = 'verifying' | 'ready' | 'blocked' | 'resolved';
+export interface TopupStatus { order_id: string; status: TopupState; creation_status?: TopupCreationStatus; amount_minor: number; currency?: string; credited_at?: number; created_at?: number; payer_kind?: PayerKind; payer_id?: string }
 export interface Receipt {
   order_id: string; status: 'paid'; amount_minor: number; currency: string; method?: string | null; provider?: string;
   provider_reference?: string | null; paid_at?: number | null; credited_at?: number | null; operator_name?: string | null;
@@ -226,11 +228,13 @@ export function topupClosedReason(options: TopupOptions | null, failureStatus: n
   if (!options.available) return options.reason || 'not_configured';
   return paymentMethods(options.payment_methods).length ? null : 'not_configured';
 }
-export type TopupView = TopupState | 'cancelled' | 'slow';
-/** Which message the return page shows. The provider's final answer wins; until then a slow
- *  confirmation, then a checkout the person left, then plain waiting. */
-export function topupView(status: TopupState | undefined, slow: boolean, cancelled: boolean): TopupView {
+export type TopupView = TopupState | 'cancelled' | 'slow' | 'verifying';
+/** A terminal payment state wins. An unknown creation outcome stays distinct even after the
+ *  polling deadline or a cancel query parameter; neither proves that a checkout ever opened. */
+export function topupView(status: TopupState | undefined, slow: boolean, cancelled: boolean,
+                          creationStatus?: TopupCreationStatus): TopupView {
   if (status && status !== 'pending') return status;
+  if (creationStatus === 'verifying') return 'verifying';
   return slow ? 'slow' : cancelled ? 'cancelled' : 'pending';
 }
 /** Whether the status page should keep asking: only while the order is still pending. */

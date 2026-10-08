@@ -6,10 +6,12 @@ import { errorText } from './common';
 import { POLL_LIMIT_MS, WALLET_API, paymentText, pollDelay, topupFinal, topupView,
   type TopupStatus as Status, type TopupView } from './walletModel';
 import './wallet.messages';
+import './topup.messages';
 
 /** What each state says. A cancelled checkout is still asked about: a payment can complete after
  *  the browser came back, and only the provider's signed confirmation decides. */
 export const TOPUP_TEXT: Record<TopupView, { title: string; body: string; tone: 'info' | 'ok' | 'warn' | 'err' }> = {
+  verifying: { title: '充值请求结果待核实', body: '尚未确认支付服务商是否已创建付款页面。原充值请求与订单已保留，请勿重复充值。状态可能需要管理员核实；你可以稍后刷新，或向管理员提供订单号。', tone: 'warn' },
   pending: { title: '正在确认付款', body: '支付服务商确认后余额会自动更新，通常只需几秒。可以留在此页，也可以稍后回来查看。', tone: 'info' },
   paid: { title: '充值已到账', body: '金额已计入钱包，可以继续使用。', tone: 'ok' },
   failed: { title: '付款没有完成', body: '这笔订单没有扣款，余额未变化。可以重新发起充值。', tone: 'err' },
@@ -93,7 +95,7 @@ export default function TopupStatusPanel({ orderId, cancelled, onPaid, onDismiss
     return () => { abort.abort(); window.clearTimeout(timer); };
   }, [orderId, tick]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const view = topupView(status?.status, slow, cancelled);
+  const view = topupView(status?.status, slow, cancelled, status?.creation_status);
   useEffect(() => { if (topupFinal(status?.status)) heading.current?.focus(); }, [status?.status]);
   const answered = error instanceof ApiError && !error.upstream && error.status >= 400 && error.status < 500;
   return <TopupStatusView view={view} status={status} headingRef={heading}

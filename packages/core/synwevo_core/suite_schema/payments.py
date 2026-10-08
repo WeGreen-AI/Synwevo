@@ -10,6 +10,9 @@
   payload. The ledger's payment and dispute verifiers read it inside their own transaction.
 * ``payment_topups`` — a top-up order's lifecycle (creating → pending → paid | failed | expired).
   Money is never here: the immutable ``billing_orders`` row and the ledger journal are the facts.
+* ``payment_topup_intents`` — immutable client-intent binding, scoped by environment and actual
+  initiator. A lost HTTP response can recover its original order without creating another payment.
+  Historical orders are not assigned invented keys; older application code ignores this table.
 
 Receipt times (review payments-3, 2026-10-05): ``payment_webhook_inbox.provider_created_at`` is
 the signed event's own ``created`` time (when the provider recorded it), set once and then fixed.
@@ -90,6 +93,27 @@ WHEN NEW.order_id<>OLD.order_id OR NEW.environment<>OLD.environment OR NEW.provi
 BEGIN SELECT RAISE(ABORT,'immutable_payment_order'); END;
 CREATE TRIGGER IF NOT EXISTS payment_topups_no_delete BEFORE DELETE ON payment_topups
 BEGIN SELECT RAISE(ABORT,'immutable_payment_order'); END;
+CREATE TABLE IF NOT EXISTS payment_topup_intents (
+    environment TEXT NOT NULL CHECK(environment IN ('test','live')),
+    initiator_id TEXT NOT NULL REFERENCES users(id),
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    order_id TEXT NOT NULL UNIQUE REFERENCES payment_topups(order_id),
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY(environment,initiator_id,idempotency_key)
+);
+CREATE TRIGGER IF NOT EXISTS payment_intents_order_scope BEFORE INSERT ON payment_topup_intents
+WHEN NOT EXISTS(SELECT 1 FROM payment_topups WHERE order_id=NEW.order_id
+ AND environment=NEW.environment AND initiator_id=NEW.initiator_id)
+BEGIN SELECT RAISE(ABORT,'payment_intent_order_scope'); END;
+CREATE TRIGGER IF NOT EXISTS payment_intents_no_update BEFORE UPDATE ON payment_topup_intents
+BEGIN SELECT RAISE(ABORT,'immutable_payment_intent'); END;
+CREATE TRIGGER IF NOT EXISTS payment_intents_no_delete BEFORE DELETE ON payment_topup_intents
+BEGIN SELECT RAISE(ABORT,'immutable_payment_intent'); END;
+CREATE TRIGGER IF NOT EXISTS payment_intents_no_replace BEFORE INSERT ON payment_topup_intents
+WHEN EXISTS(SELECT 1 FROM payment_topup_intents WHERE order_id=NEW.order_id
+ OR (environment=NEW.environment AND initiator_id=NEW.initiator_id AND idempotency_key=NEW.idempotency_key))
+BEGIN SELECT RAISE(ABORT,'immutable_payment_intent'); END;
 """
 
 #: Added column: older rows have no provider time (NULL) and may receive it once.

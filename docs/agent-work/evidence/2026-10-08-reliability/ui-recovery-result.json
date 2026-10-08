@@ -1,0 +1,15 @@
+{
+  "notification": {
+    "notification_id": "n_77f4a06ee64d",
+    "status": "pending",
+    "attempts": 5,
+    "mail_id": null,
+    "enqueue_protocol": "atomic-v1"
+  },
+  "operation": {
+    "id": "ao_fdbc4b5ccf3a",
+    "action": "admin.notification.recover_enqueue",
+    "target_id": "n_77f4a06ee64d"
+  },
+  "mail_outbox_count": 0
+}

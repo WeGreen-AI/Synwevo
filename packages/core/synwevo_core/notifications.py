@@ -35,6 +35,7 @@ reports back through ``action_state``.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from datetime import datetime, timedelta, timezone
@@ -69,6 +70,7 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','queued','skipped','failed')),
   not_before REAL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, mail_id TEXT,
   updated_at REAL NOT NULL,
+  enqueue_protocol TEXT CHECK (enqueue_protocol IS NULL OR enqueue_protocol='atomic-v1'),
   PRIMARY KEY (notification_id, channel)
 );
 CREATE INDEX IF NOT EXISTS ix_notif_delivery_due ON notification_deliveries(status, not_before);
@@ -404,9 +406,9 @@ class Notifier:
                        dedupe_key, row["params"], row["target"], row["action_state"], row["created_at"]))
             if email_mode in ("immediate", "digest"):
                 not_before = row["created_at"] + (DIGEST_WINDOW_S if email_mode == "digest" and not critical else 0)
-                t.execute("INSERT INTO notification_deliveries (notification_id,channel,status,not_before,updated_at,defer_reason) VALUES (?,?,?,?,?,?)",
+                t.execute("INSERT INTO notification_deliveries (notification_id,channel,status,not_before,updated_at,defer_reason,enqueue_protocol) VALUES (?,?,?,?,?,?,?)",
                           (row["id"], "email", "pending", not_before, now(),
-                           "aggregation" if email_mode == "digest" and not critical else None))
+                           "aggregation" if email_mode == "digest" and not critical else None, "atomic-v1"))
             else:
                 t.execute("INSERT INTO notification_deliveries (notification_id,channel,status,not_before,updated_at,last_error) "
                           "VALUES (?,?,?,?,?,?)", (row["id"], "email", "skipped", None, now(), "channel off"))
@@ -742,6 +744,86 @@ class Notifier:
         return item
 
     # ------------------------------------------------------------------ the e-mail outbox side
+    @staticmethod
+    def _email_recovery_metadata(row: dict) -> dict:
+        """No content or arbitrary transport error crosses this governance boundary."""
+        blocked = (
+            "not_failed" if row["status"] != "failed" else
+            "mail_already_queued" if row["mail_id"] or row["has_mail"] else
+            "historical_delivery" if row["enqueue_protocol"] != "atomic-v1" else
+            "unverified_failure" if row["last_error"] != "notification_enqueue_failed" else
+            "retry_not_exhausted" if row["attempts"] <= len(RETRY_DELAYS_S) else None
+        )
+        return {key: row[key] for key in ("notification_id", "user_id", "category", "status", "attempts", "updated_at")} | {
+            "error_code": ("notification_enqueue_failed" if row["last_error"] == "notification_enqueue_failed"
+                           else "notification_delivery_failed" if row["last_error"] else None),
+            "recoverable": blocked is None, "blocked_reason": blocked,
+        }
+
+    def email_recovery_row(self, notification_id: str) -> dict:
+        """A metadata snapshot for the authorized admin service, not an authorization grant.
+
+        Newly emitted rows carry atomic-v1 from birth. An old row never gains that marker
+        merely because a newer dispatcher touched it. A direct outbox match additionally
+        vetoes recovery, but its absence cannot establish historical digest membership.
+        """
+        row = self.store.one(
+            "SELECT d.notification_id,d.status,d.attempts,d.updated_at,d.last_error,d.mail_id,"
+            "d.not_before,d.defer_reason,d.policy_revision,d.enqueue_protocol,n.user_id,n.category,"
+            "EXISTS(SELECT 1 FROM mail_outbox m WHERE m.kind='notification' AND m.ref_id=d.notification_id) AS has_mail "
+            "FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id "
+            "WHERE d.notification_id=? AND d.channel='email'", (notification_id,))
+        if not row:
+            raise ServiceError(404, "notification_delivery_missing", "找不到该通知投递记录")
+        version = hashlib.sha256(json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+        return self._email_recovery_metadata(row) | {"version": version}
+
+    def email_recovery_page(self, *, q: str = "", limit: int = 25, offset: int = 0,
+                            snapshot: int | None = None) -> dict:
+        if (not isinstance(q, str) or len(q) > 100 or type(limit) is not int or not 1 <= limit <= 100
+                or type(offset) is not int or not 0 <= offset <= 2**63 - 1
+                or (snapshot is not None and (type(snapshot) is not int or not 0 <= snapshot <= 2**63 - 1))):
+            raise ServiceError(400, "bad_notification_page", "通知查询参数无效")
+        with self.store.tx():
+            high = int(self.store.one("SELECT COALESCE(MAX(seq),0) AS n FROM notifications")["n"])
+            snapshot = high if snapshot is None else min(snapshot, high)
+            where = ("d.channel='email' AND d.status='failed' AND n.seq<=? "
+                     "AND (?='' OR instr(d.notification_id,?)>0 OR instr(n.user_id,?)>0)")
+            params = (snapshot, q, q, q)
+            total = int(self.store.one(
+                "SELECT COUNT(*) AS n FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id WHERE " + where,
+                params)["n"])
+            rows = self.store.all(
+                "SELECT d.notification_id,d.status,d.attempts,d.updated_at,d.last_error,d.mail_id,d.enqueue_protocol,n.user_id,n.category,"
+                "EXISTS(SELECT 1 FROM mail_outbox m WHERE m.kind='notification' AND m.ref_id=d.notification_id) AS has_mail "
+                "FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id WHERE " + where +
+                " ORDER BY n.seq DESC LIMIT ? OFFSET ?", (*params, limit, offset))
+        return {"items": [self._email_recovery_metadata(row) for row in rows], "total": total,
+                "limit": limit, "offset": offset, "snapshot": snapshot,
+                "next_offset": offset + len(rows) if offset + len(rows) < total else None}
+
+    def recover_email_enqueue(self, notification_id: str, version: str) -> dict:
+        """Schedule one eligibility cycle; caller owns authorization, preview and audit.
+
+        The enclosing admin transaction commits this change with its durable receipt. The
+        dispatcher remains the only enqueuer and rechecks preferences, read state and budget.
+        Cumulative attempts are never reset: another enqueue failure is immediately terminal.
+        """
+        with self.store.tx():
+            row = self.email_recovery_row(notification_id)
+            if row["version"] != version:
+                raise ServiceError(409, "notification_delivery_changed", "通知状态已变化，请重新预览")
+            if not row["recoverable"]:
+                raise ServiceError(409, "notification_not_recoverable", "该通知不能安全恢复排队",
+                                   {"blocked_reason": row["blocked_reason"]})
+            changed = self.store.execute(
+                "UPDATE notification_deliveries SET status='pending',not_before=?,updated_at=?,defer_reason=NULL,policy_revision=NULL "
+                "WHERE notification_id=? AND channel='email' AND status='failed' AND attempts=? AND updated_at=?",
+                (now(), now(), notification_id, row["attempts"], row["updated_at"]))
+            if changed != 1:
+                raise ServiceError(409, "notification_delivery_changed", "通知状态已变化，请重新预览")
+        return {"notification_id": notification_id, "status": "pending", "attempts": row["attempts"], "recovery_scheduled": True}
+
     def due_deliveries(self, limit: int = 200) -> list[dict]:
         ts = now()
         revision = self.conversation_digest_policy()["revision"]

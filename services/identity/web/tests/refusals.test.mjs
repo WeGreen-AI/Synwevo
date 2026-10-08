@@ -49,6 +49,7 @@ const SERVER = [
   { file: ID + "account_routes.py", surfaces: ["account"] },
   { file: ID + "admin_routes.py", surfaces: ["admin"] },
   { file: ID + "admin_operations.py", surfaces: ["admin"] },
+  { file: ID + "admin_notification_recovery.py", surfaces: ["admin"] },
   { file: ID + "ownership.py", surfaces: ["account", "admin"] },
   { file: ID + "admin_settings.py", surfaces: ["admin"] },
   { file: ID + "admin_model_prices.py", surfaces: ["admin"] },
@@ -129,6 +130,7 @@ const SERVER = [
   { file: CORE + "project_copies.py", fns: ["decide"], surfaces: ["org"] },
   { file: CORE + "project_copies.py", surfaces: [], why: "a copy is requested and withdrawn in Synwevo Docs, which words its own refusals" },
   { file: CORE + "notifications.py", fns: ["set_preferences"], surfaces: ["account"] },
+  { file: CORE + "notifications.py", fns: ["email_recovery_row", "email_recovery_page", "recover_email_enqueue"], surfaces: ["admin"] },
   { file: CORE + "notifications.py", surfaces: [], why: "the shared notification centre sends only the filters and ids it lists" },
   { file: CORE + "push.py", surfaces: ["account"] },
   { file: CORE + "challenge.py", surfaces: ["signin"] },
@@ -439,6 +441,27 @@ test("model-provider route and settings refusals are scanned and localized throu
   for (const file of files) assert.ok(found.some(r => r.file === file), file);
   for (const r of found) {
     assert.deepEqual(placeOf(r).surfaces, ['admin']);
+    assert.ok(pages.admin.ui.hasMessage(r.text), `${r.code}: ${r.text}`);
+    reads('admin', r.status, r.code, r.text, {}, Object.fromEntries(['zh-Hans', 'zh-Hant', 'en'].map(locale =>
+      [locale, pages.admin.ui.translate(locale, r.text)])));
+  }
+});
+
+test("notification recovery and its core refusals reach the real Admin catalogue in all three languages", () => {
+  const recoveryFunctions = ['email_recovery_row', 'email_recovery_page', 'recover_email_enqueue'];
+  const found = refusals().all.filter(r => r.file === ID + 'admin_notification_recovery.py'
+    || r.file === CORE + 'notifications.py' && recoveryFunctions.some(fn => r.fn === fn || r.fn.endsWith(`.${fn}`)));
+  const expectedCodes = ['notification_recovery_bad_request', 'notification_not_recoverable', 'admin_operation_failed',
+    'notification_delivery_missing', 'bad_notification_page', 'notification_delivery_changed'];
+  for (const code of expectedCodes) assert.ok(found.some(r => r.code === code), `${code} must actually be scanned`);
+  for (const r of found) {
+    assert.deepEqual(placeOf(r).surfaces, ['admin'], `${r.file}: ${r.fn}`);
+    assert.equal(Object.hasOwn(API_ONLY, r.text), false, 'recovery refusals are not exempted from UI coverage');
+  }
+  // Shared preview/reason/idempotency errors already have established defaults. Require the
+  // notification-specific sentences themselves, including both not-recoverable wordings.
+  const specific = new Map(found.filter(r => expectedCodes.includes(r.code)).map(r => [r.text, r]));
+  for (const r of specific.values()) {
     assert.ok(pages.admin.ui.hasMessage(r.text), `${r.code}: ${r.text}`);
     reads('admin', r.status, r.code, r.text, {}, Object.fromEntries(['zh-Hans', 'zh-Hant', 'en'].map(locale =>
       [locale, pages.admin.ui.translate(locale, r.text)])));

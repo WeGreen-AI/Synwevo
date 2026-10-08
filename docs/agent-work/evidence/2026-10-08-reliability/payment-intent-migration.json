@@ -1,0 +1,12 @@
+{
+  "checked_at": "2026-10-08T10:51:58.189005+00:00",
+  "base_head": "e577fc9",
+  "scope": "uncommitted additive payment intent migration; not deployed",
+  "tests": 9,
+  "failures": 0,
+  "errors": 0,
+  "source_sha256": {
+    "packages/core/synwevo_core/suite_schema/payments.py": "5be16b3ea8d4baa1f1647b8bf26befc41edb7bfd245ee05a2dbac68f992956f3",
+    "tests/integration/test_payment_topup_intents_schema.py": "c08b399abe46c8d61f77d35fef71ea7c35cd65882e11f342410f24ad5581ba8a"
+  }
+}
