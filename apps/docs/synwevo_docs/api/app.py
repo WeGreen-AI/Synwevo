@@ -444,6 +444,14 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     def source_options(sid: str, body: dict = Body(...)):
         return app_.set_source_options(sid, body)
 
+    @api.post("/api/sources/{sid}/scan/retry", status_code=202)
+    def retry_source_scan(request: Request, sid: str, body: dict = Body(...)):
+        if set(body) != {"version"}:
+            raise ServiceError(400, "invalid", "请求仅包含来源版本", {"field": "version"})
+        desc = authority.describe_request(request)
+        return app_.retry_source_scan(sid, body["version"], actor_kind="user" if desc.get("user_id") else "system",
+                                      actor_id=desc.get("user_id") or desc.get("key_id"), request=request)
+
     @api.get("/api/sources/{sid}/view")
     def source_view(sid: str, sheet: str | None = None, offset: int = 0, limit: int = Query(200, le=2000), block: int | None = None):
         return views.source_view(sid, sheet, offset, limit, block)

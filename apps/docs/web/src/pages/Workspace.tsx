@@ -274,7 +274,7 @@ function Workspace() {
   const bAmp = blockIdx != null ? `&block=${blockIdx}` : "";
 
   // source view (non-grid parts are rendered from this response; grids page separately)
-  const srcKey = file ? `${file.id}:${file.version}:${file.status}:${blockIdx ?? ""}` : "";
+  const srcKey = file ? `${file.id}:${file.version}:${file.status}:${file.scan?.status ?? ""}:${file.scan?.retry_exhausted ?? ""}:${blockIdx ?? ""}` : "";
   useEffect(() => {
     findRequest.current?.abort();
     setSrcView(null);

@@ -110,6 +110,7 @@ WRITES = [
     ("post", "/api/projects/{pid}/jobs", {"json": {"formats": ["docx"]}}),
     ("delete", "/api/sources/{sid}", {}),
     ("put", "/api/sources/{sid}/options", {"json": {"sheet": "客户"}}),
+    ("post", "/api/sources/{sid}/scan/retry", {"json": {"version": 1}}),
     ("post", "/api/templates/builtin", {"json": {"name": "x", "kind": "builtin_doc"}}),
     ("post", "/api/projects/{pid}/desensitize", {"json": {"file_ids": []}}),
 ]

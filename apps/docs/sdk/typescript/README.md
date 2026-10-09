@@ -232,6 +232,22 @@ or any other registry**. `npm pack` in this directory builds a local tarball (th
 declarations and this README) that another project can install by path, and `npm test` runs the
 contract tests. It has no dependencies and is not one of the repository's npm workspaces.
 
+## Source scan recovery
+
+`waitForFile` immediately rejects with `APIError` code `scan_retry_exhausted` for a
+`scan_failed` source with `scan.retry_exhausted === true`, or `scan_too_large` when
+`scan.status === 'too_large'`. `details` preserves the full source response. Other pending
+scan states continue polling; the helper never starts a new scan cycle.
+
+To retry explicitly, refresh with `getFile(fid)` and call
+`retrySourceScan(fid, { version: source.version })` using that refreshed version. This
+write-scope command returns `SourceFile` (202) without automatic HTTP retries, including
+after 429 or 401. Only `scan_failed` + `scan.status === 'error'` + `retry_exhausted === true`
+is eligible. The server atomically checks/increments the version; duplicate, stale or
+ineligible calls return 409. After a failed/uncertain response, refresh before explicitly
+deciding whether to retry. Cycles default to six attempts; `scan.attempts` is cumulative
+across manual cycles, while optional `cycle_attempts` counts the current cycle.
+
 ## Reproducible synthetic acceptance
 
 The runner imports the shared `acceptance/make_kit.py` unchanged and starts the real server using

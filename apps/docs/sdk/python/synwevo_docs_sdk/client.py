@@ -37,7 +37,7 @@ from .source_types import (CSVOptions, CorrectionValue, SourceStructure, SourceV
 from .job_types import (Artifact, ArtifactsPage, CancelledJob, ItemArtifact, Job, JobEvent, JobEventsPage,
                         JobItem, JobItemsPage, JobListItem, JobRun, JobsPage)
 from .upload_types import Upload
-from .errors import (ConflictError, IntegrityError, RangeNotSatisfiableError, RateLimitError, ServerError,
+from .errors import (APIError, ConflictError, IntegrityError, RangeNotSatisfiableError, RateLimitError, ServerError,
                      SynwevoError, TransportError, ValidationError, WaitTimeoutError, parse_retry_after)
 
 __version__ = "0.1.0"
@@ -121,9 +121,11 @@ class Client:
 
     # ================================================================== plumbing
     def _json(self, method: str, path: str, *, params=None, json=None, body=None, headers=None,
-              idempotency_key: str | None = None, retry_safe: bool | None = None, auth: bool = True) -> Any:
+              idempotency_key: str | None = None, retry_safe: bool | None = None, auth: bool = True,
+              single_attempt: bool = False) -> Any:
         resp = self._t.send(method, path, params=params, json=json, body=body, headers=headers,
-                            idempotency_key=idempotency_key, retry_safe=retry_safe, auth=auth)
+                            idempotency_key=idempotency_key, retry_safe=retry_safe, auth=auth,
+                            single_attempt=single_attempt)
         if not resp.content:
             return wrap({}, resp)
         try:
@@ -422,17 +424,37 @@ class Client:
     def delete_file(self, file_id: str) -> dict:
         return self._json("DELETE", f"{API}/files/{_q(file_id)}", retry_safe=True)
 
+    def retry_source_scan(self, file_id: str, version: int) -> SourceFile:
+        """Start a bounded scan cycle (202; write scope), without HTTP retries.
+
+        Refresh the source and explicitly pass its current positive ``version``. Only
+        ``scan_failed`` with scan status ``error`` and ``retry_exhausted=True`` is eligible.
+        The server atomically consumes/increments the version; stale, duplicate and ineligible
+        requests return 409. A cycle defaults to six attempts; lifetime ``attempts`` is retained.
+        After any failure, refresh before explicitly deciding to send another command.
+        """
+        if self.validate and (type(version) is not int or version < 1):
+            raise ValidationError("version 必须是正整数", "version")
+        return cast(SourceFile, self._json("POST", f"{API}/files/{_q(file_id)}/scan/retry",
+                                          json={"version": version}, retry_safe=False, single_attempt=True))
+
     def wait_for_file(self, file_id: str, *, timeout: float = 120.0, poll_interval: float = 0.5) -> dict:
         """Poll until the server has accepted and parsed the file: the status is no longer
-        ``scanning`` (the malware check), ``scan_failed`` (the check could not run yet — the server
-        keeps the file quarantined and retries it, so re-uploading would only queue the same bytes
-        again) or ``parsing``. ``rejected`` (a signature matched) and ``error`` are returned as
-        they are; ``error``/``scan`` say why. A ``WaitTimeoutError`` carries the last file record."""
+        ``scanning``, retryable ``scan_failed`` or ``parsing``. A ``scan_failed`` source whose
+        scan is ``too_large`` or has ``retry_exhausted=True`` raises ``APIError`` immediately
+        with code ``scan_too_large`` or ``scan_retry_exhausted`` and the full source in ``details``.
+        This never starts a new scan cycle. ``rejected`` and ``error`` are returned as they are;
+        ``error``/``scan`` say why. A ``WaitTimeoutError`` carries the last file record."""
         _check_wait(timeout, poll_interval)
         deadline = self._clock() + timeout
         interval = poll_interval
         while True:
             f = self.get_file(file_id)
+            scan = f.get("scan") or {}
+            if f.get("status") == "scan_failed" and (scan.get("retry_exhausted") is True or scan.get("status") == "too_large"):
+                code = "scan_too_large" if scan.get("status") == "too_large" else "scan_retry_exhausted"
+                reason = "文件超过安全检查大小上限" if code == "scan_too_large" else "安全检查已停止自动重试，请刷新来源后明确重试"
+                raise APIError(None, code, f"来源文件 {f.get('filename') or file_id}：{f.get('error') or reason}", details=f)
             if f.get("status") not in ("parsing", "scanning", "scan_failed"):
                 return f
             if self._clock() >= deadline:

@@ -8,12 +8,33 @@ import {
   ApiKey, Client, WorkspaceClient, ConflictError, credentialsFromEnv, isTerminal, SUCCESS_STATUSES, verifyWebhook,
   WaitTimeoutError, WebhookVerificationError,
   type Artifact, type Delivery, type Job, type JobStatus, type SourceFile, type WebhookEvent,
-  type JobOptions, type RawJobCounts, type JobRun, type JobItem, type JobEvent, type Page, type Upload,
+  type JobOptions, type RawJobCounts, type JobRun, type JobItem, type JobEvent, type Page, type Upload, type ScanVerdict,
 } from '@synwevo/docs-sdk';
 // The vendored-copy import from the README resolves to the same declarations.
 import * as vendored from '../synwevo-docs.mjs';
 
 const sameClient: typeof Client = vendored.Client;
+
+export async function sourceScan(client: Client, source: SourceFile): Promise<SourceFile> {
+  const retried = await client.retrySourceScan(source.id, { version: source.version });
+  const status: number = retried.$meta.status;
+  const legacy: ScanVerdict = { status: 'unscanned' };
+  const exhausted: ScanVerdict = { status: 'error', attempts: 12, cycle_attempts: 6, retry_exhausted: true };
+  const cycle: number | undefined = retried.scan.cycle_attempts;
+  const stopped: boolean | undefined = retried.scan.retry_exhausted;
+  // @ts-expect-error a version must be provided explicitly
+  await client.retrySourceScan(source.id);
+  // @ts-expect-error the version is a JSON integer, not a string
+  await client.retrySourceScan(source.id, { version: '1' });
+  // @ts-expect-error automatic retry cannot be enabled for this command
+  await client.retrySourceScan(source.id, { version: 1, retry: true });
+  // @ts-expect-error absent fields must not become required
+  const definiteCycle: number = legacy.cycle_attempts;
+  // @ts-expect-error exhaustion is a boolean
+  const invalid: ScanVerdict = { status: 'error', retry_exhausted: 'true' };
+  console.log(status, legacy, exhausted, cycle, stopped, definiteCycle, invalid);
+  return retried;
+}
 
 export async function redeliveryCompatibility(client: Client): Promise<Delivery> {
   await client.redeliver('subscription', 'delivery');

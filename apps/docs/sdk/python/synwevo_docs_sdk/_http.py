@@ -130,12 +130,13 @@ class Transport:
     def send(self, method: str, path: str, *, params: Mapping[str, Any] | None = None, json: Any = None,
              body: Callable[[], dict] | None = None, headers: Mapping[str, str] | None = None,
              idempotency_key: str | None = None, retry_safe: bool | None = None, stream: bool = False,
-             auth: bool = True, timeout: float | None = None) -> httpx.Response:
+             auth: bool = True, timeout: float | None = None, single_attempt: bool = False) -> httpx.Response:
         """Send one logical request (with retries) and return the successful response.
 
         ``body`` builds the request body afresh for each attempt (a file handle consumed by a
         failed attempt cannot be re-read). With ``stream=True`` the returned response is open
         and the caller must close it.
+        ``single_attempt`` also disables rate-limit and reactive authentication retries.
         """
         method = method.upper()
         safe = retry_safe if retry_safe is not None else (
@@ -156,7 +157,7 @@ class Transport:
             except _NOT_RETRYABLE as e:
                 raise TransportError(None, "transport_error", f"{method} {url} 无法发送：{e}", method=method, url=url) from None
             except httpx.TransportError as e:
-                if attempt < self.max_retries and safe:
+                if not single_attempt and attempt < self.max_retries and safe:
                     self.sleep(self.backoff(attempt))
                     attempt += 1
                     continue
@@ -173,11 +174,11 @@ class Transport:
                 if stream:
                     resp.close()
             err = error_from_response(resp.status_code, resp.headers, content, method=method, url=url)
-            if resp.status_code == 401 and auth and not refreshed and self.credentials.invalidate():
+            if not single_attempt and resp.status_code == 401 and auth and not refreshed and self.credentials.invalidate():
                 # An access token can be revoked or expire early; one fresh token, then give up.
                 refreshed = True
                 continue
-            if attempt < self.max_retries and self._retryable(err, safe):
+            if not single_attempt and attempt < self.max_retries and self._retryable(err, safe):
                 delay = err.retry_after if err.retry_after is not None else self.backoff(attempt)
                 if delay > self.max_retry_wait:
                     raise err

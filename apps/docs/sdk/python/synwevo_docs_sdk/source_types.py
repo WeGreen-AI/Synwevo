@@ -5,8 +5,26 @@ TypedDicts describe server responses; the server remains the validation authorit
 """
 from typing import Any, Literal, TypedDict
 
-SourceStatus = Literal["parsing", "ready", "needs_ocr", "error", "unsupported"]
+SourceStatus = Literal["scanning", "scan_failed", "parsing", "ready", "needs_ocr", "error", "unsupported", "rejected"]
+ScanStatus = Literal["pending", "clean", "infected", "encrypted", "error", "too_large", "not_configured", "unscanned"]
 SourceMode = Literal["per_row", "per_file", "per_group", "per_block"]
+
+
+class _ScanVerdict(TypedDict):
+    status: ScanStatus
+
+
+class ScanVerdict(_ScanVerdict, total=False):
+    signature: str | None
+    engine: str | None
+    reason: str | None
+    checked: bool | None
+    sha256: str | None
+    checked_at: float | None
+    attempts: int | None  # Cumulative across manual cycles; never reset by a retry.
+    retry_at: float | None
+    cycle_attempts: int
+    retry_exhausted: bool
 
 
 class CSVOptions(TypedDict, total=False):
@@ -43,6 +61,7 @@ class SourceFile(SourceStructure):
     ocr_pages: list[int]
     corrections: dict[str, CorrectionValue]
     sha256: str
+    scan: ScanVerdict
 
 
 class _SourceView(TypedDict):

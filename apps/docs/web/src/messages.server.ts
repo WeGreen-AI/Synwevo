@@ -2,6 +2,14 @@ import type { Messages } from "@synwevo/ui/i18n-core";
 
 /** Presentation catalog for server-owned interface descriptions, not document content. */
 export const serverMessages = {
+  "请求仅包含来源版本": {"en": "The request must contain only the source version.", "zh-Hant": "請求僅包含來源版本"},
+  "来源版本必须是正整数": {"en": "The source version must be a positive integer.", "zh-Hant": "來源版本必須是正整數"},
+  "安全检查多次未完成，已停止自动重试；文件仍不可使用，请在服务恢复后重试安全检查": {"en": "The security check could not finish after repeated attempts. Automatic retries have stopped; the file remains unavailable. Retry the check once the service recovers.", "zh-Hant": "安全檢查多次未完成，已停止自動重試；文件仍不可使用，請在服務恢復後重試安全檢查"},
+  "安全检查服务暂不可用，文件已隔离，稍后自动重试": {"en": "The security check service is temporarily unavailable. The file is held and will be retried automatically.", "zh-Hant": "安全檢查服務暫不可用，文件已隔離，稍後自動重試"},
+  "来源文件已变化，请刷新后重试": {"en": "The source file has changed. Refresh it before retrying.", "zh-Hant": "來源文件已變化，請重新整理後重試"},
+  "仅已停止自动重试的安全检查可以重新开始": {"en": "You can restart a security check only after automatic retries have stopped.", "zh-Hant": "僅已停止自動重試的安全檢查可以重新開始"},
+  "安全检查服务尚未配置，文件仍不可使用": {"en": "The security check service is not configured. The file remains unavailable.", "zh-Hant": "安全檢查服務尚未設定，文件仍不可使用"},
+  "安全检查正在结束，请稍后重试": {"en": "The security check is finishing. Please try again shortly.", "zh-Hant": "安全檢查正在結束，請稍後重試"},
   '内置公式引擎已计算公式并写入结果。': { en: 'The built-in formula engine calculated formulas and saved the results.', 'zh-Hant': '內建公式引擎已計算公式並寫入結果。' },
   "部分公式无法计算，无法导出 CSV。请改用 XLSX，或请管理员启用排版引擎。": {
     "en": "Some formulas could not be calculated, so CSV export is unavailable. Use XLSX, or ask an administrator to enable the layout engine.",

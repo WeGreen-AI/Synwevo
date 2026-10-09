@@ -18,7 +18,7 @@ export interface SourceFile {
    *  on a file a rescan found, its state is unchanged. */
   scan?: { status: "pending" | "clean" | "infected" | "encrypted" | "error" | "too_large" | "not_configured" | "unscanned";
            signature?: string; engine?: string; reason?: string; checked?: boolean; sha256?: string; checked_at?: number;
-           attempts?: number; retry_at?: number };
+           attempts?: number; retry_at?: number; cycle_attempts?: number; retry_exhausted?: boolean };
   version: number;
   representative: boolean;
   ocr_pages: number[];

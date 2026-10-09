@@ -62,9 +62,11 @@ upload
                      ├─ encrypted ─▶ error（scan.status=encrypted；终态，不解析、不提供；签名优先，见上一行）
                      └─ error / too_large ─▶ scan_failed ─┐   parsing ─▶ ready | needs_ocr | error | unsupported
                               ▲   自动重试 30s→60s→2m→5m→10m │
-                              └────────────────────────────┘（too_large 不重试：换更大的上限或拆分文件）
+                              └────────────────────────────┘（共最多6次尝试；too_large不重试，修正文件后重传）
 ```
 
+* 一轮最多6次尝试（首次及30/60/120/300/600秒后的5次重试）。`scan.attempts`为累计已开始次数，`cycle_attempts`为本轮次数；调用扫描器前持久化，进程中断不会重置预算。`retry_at`跨重启保留；`too_large`不因重启重试。耗尽时`retry_exhausted=true`且不再有`retry_at`，旧无限重试记录会保守停止。
+* 文件编辑者可在工作台点击“重试安全检查”，或经`POST /api/v1/files/{fid}/scan/retry`携带当前`version`启动新一轮。原子递增来源版本并记录操作者/空间/累计次数审计，过期或重复请求409；不是自动HTTP重试。只恢复扫描服务故障，不恢复恶意、加密、超限或已删除文件。关闭扫描器不放行之前隔离的文件；新上传在显式off部署仍标记not_configured。
 * `scanning`、`scan_failed`、`rejected` 的行不解析、不预览、不映射、不下载：`_parse_source` 对这三个状态直接返回；
   `require_accepted` 在两个下载路径上分别回 409 `not_yet_accepted`（隔离中）与 410 `rejected_malware`（已拒绝）。
 * 结论绑定内容：`scan.sha256` 与行的 `blob` 相同才发布结果；`_publish_scan` 在写回前重新读行，版本或 blob 变了就丢弃结论。
@@ -371,7 +373,7 @@ blob id、产物、附件下载、新上传、完成的断点上传、组织共�
 * **病毒库**：容器内 freshclam 每小时检查；`scan.engine` 记录判定时的库版本；`/readyz` 的 `malware_scanner`
   只说明守护进程可达，不说明库新旧——库日期看 `scan.engine` 或容器日志。
 * **资源**：`clamav` 服务 `mem_limit 2048m`（守护进程 + 一次重载）；隔离中的文件占用与普通 blob 相同，
-  `scan_failed` 的重试上限是最后一档 10 分钟的无限循环——引擎长期离线时磁盘按上传上限增长，与没有扫描时相同。
+  `scan_failed` 自动重试有6次上限，耗尽后须人工恢复；隔离文件不会因此自动删除，存储回收仍按既有引用/保留策略。Docs当前单进程扫描池防止同来源并发执行；不宣称跨进程扫描exactly-once。回退旧代码仍隔离文件，但旧代码不认识新的耗尽标志，可能恢复无限重试，运维须在回退时核对队列。
 * **部署**（2026-09-28 生产已按此完成，见 deployment.md CI-87；官方镜像的入口脚本需要 CHOWN、SETUID、SETGID、DAC_OVERRIDE 四项能力，参考 compose 已改）：`infra/production/compose.yaml` 是参考；接收端不同步 compose，运维需把 `clamav` 服务与 docs 的两个
   环境变量合并进 `/opt/synwevo/config/compose.yaml`，先确认 VPS 有 ≥2 GiB 余量，再 `docker compose up -d clamav`
   等其 healthy，最后重建 docs。回滚只需去掉两个环境变量。

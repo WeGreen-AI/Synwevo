@@ -36,7 +36,12 @@ export default function AnyView(p: ViewProps) {
   useI18n();
   const v = p.view;
   if (!v) return <div className="empty">{tr("加载中…")}</div>;
-  if (v.view === "pending") return <div className="empty"><div className="big">{tr("正在解析文件…")}</div><div>{tr("解析完成后自动显示")}</div></div>;
+  if (v.view === "pending") {
+    const scanning = v.status === "scanning";
+    const held = v.status === "scan_failed";
+    return <div className="empty" role="status"><div className="big">{tr(held ? "文件尚未通过安全检查" : scanning ? "正在安全检查…" : "正在解析文件…")}</div>
+      <div style={{ maxWidth: 480 }}>{held ? diagnosticText(v.error) : tr(scanning ? "检查通过后才会解析并显示内容" : "解析完成后自动显示")}</div></div>;
+  }
   if (v.view === "error") return (
     <div className="empty">
       <div className="big">{tr("无法读取此文件")}</div>

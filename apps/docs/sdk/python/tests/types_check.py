@@ -9,7 +9,23 @@ from typing_extensions import assert_type
 from synwevo_docs_sdk import (
     Artifact, ArtifactsPage, CancelledJob, Client, Job, JobCounts, JobEvent, JobEventsPage,
     JobItem, JobItemsPage, JobListItem, JobOptions, JobRun, JobsPage, RawJobCounts, Upload,
+    ScanVerdict, SourceFile, SourceStatus,
 )
+
+
+def source_scan(client: Client, source: SourceFile) -> None:
+    assert_type(client.retry_source_scan(source["id"], version=source["version"]), SourceFile)
+    statuses: list[SourceStatus] = ["scanning", "scan_failed", "rejected"]
+    legacy: ScanVerdict = {"status": "unscanned"}
+    exhausted: ScanVerdict = {"status": "error", "attempts": 12, "cycle_attempts": 6, "retry_exhausted": True}
+    source["scan"] = exhausted
+    assert_type(source["scan"]["cycle_attempts"], int)
+    assert_type(source["scan"]["retry_exhausted"], bool)
+    invalid: ScanVerdict = {"status": "error", "retry_exhausted": "true"}  # type: ignore[typeddict-item]
+    missing: ScanVerdict = {}  # type: ignore[typeddict-item]
+    client.retry_source_scan(source["id"], version="1")  # type: ignore[arg-type]
+    client.retry_source_scan(source["id"])  # type: ignore[call-arg]
+    print(statuses, legacy, invalid, missing)
 
 
 def lifecycle(client: Client, project_id: str) -> None:

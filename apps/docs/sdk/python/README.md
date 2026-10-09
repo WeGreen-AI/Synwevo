@@ -51,6 +51,21 @@ dicts with additional `request_id`, `status_code`, `headers`, and `replayed` att
 Errors derive from `SynwevoError`, with status, code, field, details, request_id,
 and retry_after. Status-specific subclasses and `to_dict()` support automation.
 
+`wait_for_file` immediately raises `APIError` with `code="scan_retry_exhausted"` for a
+`scan_failed` source with `scan.retry_exhausted is True`, or `code="scan_too_large"` when
+`scan.status == "too_large"`. `details` contains the complete source response. Other pending
+scan states continue polling; the wait helper never starts another scan cycle.
+
+To explicitly retry an exhausted scanner error, refresh with `get_file(file_id)`, then call
+`retry_source_scan(file_id, version=source["version"])` with that refreshed version. This
+write-scope command returns `SourceFile` (202) and performs no automatic HTTP retries, even
+after 429 or 401. Only `scan_failed` + `scan.status == "error"` + `retry_exhausted is True`
+is eligible; the server atomically checks and increments the version. Duplicate, stale or
+ineligible calls return 409. After a failed/uncertain response, refresh before explicitly
+deciding whether to retry. Each cycle defaults to six attempts; `scan.attempts` remains
+cumulative across manual cycles, while optional `cycle_attempts` counts the current cycle.
+`SourceStatus`, `SourceFile`, `ScanStatus` and `ScanVerdict` are exported static types.
+
 Docs resource-list cursors are opaque, signed, valid for 24 hours, and bound to the
 workspace, list and filters. Pass them unchanged. On `400 invalid_cursor`, explicitly
 restart from the first page and deduplicate by resource ID; the SDK does not silently

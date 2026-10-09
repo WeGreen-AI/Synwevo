@@ -21,6 +21,30 @@ def _policy(api, monkeypatch, limit=64, mode="required"):
     return app
 
 
+def test_desensitizing_an_expanding_copy_returns_partial_results_before_storing_oversize(api, monkeypatch):
+    app = api.c.app_state.app
+    pid = api.project("Synthetic expanded copies")
+    sources = []
+    for name, data in [("small.txt", b"hello\n"), ("expands.txt", b"a a a a a a\n")]:
+        source = api.ok(api.c.post(f"/api/projects/{pid}/sources", files={"files": (name, data)}))[0]
+        from .test_malware_scan import _wait
+        _wait(api.c, pid, source["id"], ("ready",))
+        sources.append(source["id"])
+    _policy(api, monkeypatch)
+    put_blob = app.store.put_blob
+    def bounded_store(data):
+        assert len(data) <= 64, "a rejected expanded copy must not reach blob storage"
+        return put_blob(data)
+    monkeypatch.setattr(app.store, "put_blob", bounded_store)
+    result = api.ok(api.c.post(f"/api/projects/{pid}/desensitize", json={
+        "file_ids": sources, "words": ["a"], "add_to_project": True}))
+    assert len(result["files"]) == 1 and result["files"][0]["source"] == "small.txt"
+    assert len(result["skipped"]) == 1 and result["skipped"][0]["file"] == "expands.txt"
+    assert result["skipped"][0]["code"] == "scan_limit"
+    assert app.store.one("SELECT COUNT(*) n FROM source_files WHERE project_id=?", (pid,))["n"] == 3
+    assert app.store.one("SELECT COUNT(*) n FROM blob_grants WHERE kind LIKE 'desensitized:%'")["n"] == 1
+
+
 @pytest.mark.parametrize("surface", ["service_source", "service_template", "ui_source", "ui_template", "api_source", "api_template", "resumable"])
 def test_known_oversize_is_refused_without_persisting_or_scanning(api, keys, monkeypatch, surface):
     app = _policy(api, monkeypatch)

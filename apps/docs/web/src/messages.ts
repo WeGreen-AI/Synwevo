@@ -2,6 +2,13 @@ import type { Messages } from "@synwevo/ui/i18n-core";
 
 /** Docs interface only. Template contents, values and persisted enum keys are never translated. */
 export const messages = {
+  "文件尚未通过安全检查": {"en": "File has not passed its security check", "zh-Hant": "文件尚未通過安全檢查"},
+  "正在安全检查…": {"en": "Checking file security…", "zh-Hant": "正在安全檢查…"},
+  "检查通过后才会解析并显示内容": {"en": "Content is processed and shown only after the check passes.", "zh-Hant": "檢查通過後才會解析並顯示內容"},
+  "重试安全检查": {"en": "Retry security check", "zh-Hant": "重試安全檢查"},
+  "正在重新排队…": {"en": "Requeuing…", "zh-Hant": "正在重新排隊…"},
+  "安全检查已重新排队，文件在检查通过前仍不可使用": {"en": "Security check queued again. The file stays unavailable until it passes.", "zh-Hant": "安全檢查已重新排隊，文件在檢查通過前仍不可使用"},
+  "重新开始了文件安全检查": {"en": "restarted the file security check", "zh-Hant": "重新開始了文件安全檢查"},
   "每个文件最多 {size}；按当前安全检查规则接纳。": {"en": "Up to {size} per file, subject to the current security checks.", "zh-Hant": "每個文件最多 {size}；按目前安全檢查規則接納。"},
   "暂时无法读取文件大小上限，上传时仍会按服务器规则检查。": {"en": "The file size limit is temporarily unavailable. The server will still check uploads.", "zh-Hant": "暫時無法讀取文件大小上限，上傳時仍會按伺服器規則檢查。"},
   "正在读取文件大小上限…": {"en": "Loading the file size limit…", "zh-Hant": "正在讀取文件大小上限…"},

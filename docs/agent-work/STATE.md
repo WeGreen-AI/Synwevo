@@ -1,65 +1,46 @@
 # Synwevo 当前交付断点
 
-## 当前状态：用户已恢复持续开发
+## 当前状态：持续执行，不暂停
 
-最后核验：2026-10-09T10:51:51Z（UTC，只读元数据补验）；2026-10-08发布健康证据保持原检查时间。保存时间见本文件最后一行。
+- 用户最新“不要暂停了”覆盖此前暂停安排；goal active。正常修复、提交、推送与原CI/CD部署已授权；个人付费验收及现有管理重认证门槛仍独立适用。
+- 实施树 `.claude/worktrees/agent-billing`，分支 `claude/agent-billing`，origin `git@github.com:WeGreen-AI/Synwevo.git`。当前HEAD **d7d9201d251b13e93aef9cbf2675cacae872e0c1**。主检出其他工作保留。
+- 协调锁在主树 `docs/agent-work/.coordinator.lock`，持有者 `01a0f104-e57f-7092-ab67-50359f43b547`；只更新自己的活动。没有创建重复loop或调度。
 
-- 用户最新明确要求“不要暂停了”，覆盖旧暂停边界。已取得单协调者锁，恢复持续开发；当前CR-071修复Agent历史分页与搜索竞态。付费验收另有具体0.50元授权问题待答，尚未发起新模型调用。
-- 实施树 `.claude/worktrees/agent-billing`，分支 `claude/agent-billing`，origin `git@github.com:WeGreen-AI/Synwevo.git`。产品提交 **a41ea08a50b9047c8cf5bdd23ab982751b50d38c** 已正常推送 main，未强推；后续只有证据文档提交，不触发部署。主检出的其他工作保持原样。
-- [Actions 37792532752](https://github.com/WeGreen-AI/Synwevo/actions/runs/37792532752) verify/deploy 均成功，15:21:52Z完成。完整运行镜像5453通过、5跳过、242项弃用警告；六守卫、全部前端/类型/构建、部署检查通过。跳过项及警告如实保留，没有为追绿改断言。
-- 四个应用OCI revision与current.json均a41ea08；accounts/portal/docs/messages/gateway/clamav六容器healthy；五正式域readyz/JS、匿名管理及钱包边界、OIDC起跳通过。三个计量模块生产源码哈希匹配本地已验证源码。发布前备份 `/opt/synwevo/backups/20261008T152122Z`；没有宣称恢复演练。
-- 上一5ffec9d的Actions37776600173也已成功，生产由25b084f→5ffec9d→a41ea08，均通过原CI/CD。一次按5ff核对时最终版本已切换a41，版本断言正确拒绝；改为实际最终SHA后复核通过。
+## 实际发布与CI
 
-## 已交付与保持的正式配置
+- **生产已验证583694816ac1e396c6be0be75aa32a993125d49f**（CR-072支付渠道只读诊断）。[Actions37927604495](https://github.com/WeGreen-AI/Synwevo/actions/runs/37927604495) verify/deploy成功，2026-10-09T13:27:11Z结束；完整运行镜像5475通过、5跳过、242警告。
+- 2026-10-09T16:04–16:05Z独立只读核验：current和四应用OCI revision同SHA，六容器healthy，四个支付模块源码哈希匹配；五域readyz/根页/JS200，匿名管理及充值选项401，OIDC303到账户源。Agent保持启用。备份 `/opt/synwevo/backups/20261009T132643Z`；没有本轮恢复演练。
+- CR-071 Agent历史分页已随b2309ef发布，准确CI37925001552成功；其独立上线回执保存在agent-history目录。583包含它。
+- **d7d9201未部署**：CR-073 [Actions37931260526](https://github.com/WeGreen-AI/Synwevo/actions/runs/37931260526)构建通过，runtime 1失败/964通过/3跳过/78警告，deploy跳过。原上传too_large错误detail被新增limit_bytes破坏；已恢复旧契约，保留原测试，54项最终关联回归通过。必须由下一SHA完整CI重新验证。
 
-- CR-068：充值原始请求持久幂等、未知结果保持核实、刷新恢复同订单、组织撤权复核。
-- CR-069：仅可信atomic-v1通知入队失败可治理恢复，保留累计次数并走原dispatcher；历史或结果不明只读。
-- CR-070：次数/金额上限拒绝的未预留调用保持不可重放意图，只在事务内证明无预留和上游观察后释放计量状态；终态恢复修正用量投影，不重放工具或修改资金。新预算建议6次且金额仍须本人填写确认，三语言说明次数/金额独立上限。
-- Agent已于12:35:19Z按operations§11.1在已验证25b084f启用，本次发布后仍保留。应用列表为forms,tables,dataprep,approvals,extract,agent。原配置备份 `/opt/synwevo/config/runtime.env.bak-agent-20261008T123519Z`。
-- 本人DeepSeek同意已核对；已有真实3步模型→Docs list/get→可信usage→两倍售价结算，见existing-live-read-call.json。没有以模型文字代替服务端记录；未完成新Forms产物/跨空间生产验收。
-- **个人支出状态有变化**：用户此前要求保持暂停，但2026-10-09只读实测最新预算为v4 enabled，不能继续写成v3暂停。本轮没有更改预算或发起模型调用，未查询变更操作者/时间；后续如需调整仍走本人产品操作门槛。平台受控放行名单等配置未在本次狭义补验中重查。
+## 当前工作包与下一条动作
 
-## 不要重复的治理与支付配置
+- CR-074代码完成、本地验证完成：扫描故障每轮最多6次，累计次数/截止时间持久化；重启不重扫超限或耗尽文件，关闭扫描器不释放旧隔离文件。编辑者UI/API/双SDK可携当前来源版本手动恢复，原子审计与版本防重复，SDK不自动重发。
+- CR-073后续审查修复：脱敏输出变大超限时先拒绝该项，保留已成功项的批次结果；不先落blob/下载授权再整批抛错。旧413契约兼容修复包含在当前diff。
+- 验证：72核心、97扫描/权限、91契约/生命周期、54最终回归（批次重叠不累加）；145 Docs前端，类型/构建/六守卫；Python SDK55测试/57子测试、TS48测试、双严格类型通过。
+- 真实隔离浏览器：合成CSV先六次故障耗尽，真实进程重启仍保留v1/6次，键盘明确恢复后同一文件ready/v2/累计7次，只有1笔审计，刷新无重放；简繁英、390×844、长文件名/焦点/无横向溢出与控制台无错误通过。扫描器为明确协议故障夹具，不替代真实恶意软件引擎验收；未新测减少动画，无新增动画。
+- 下一动作：完成diff/证据审查，正常提交推送CR-074与兼容修复；跟进新SHA完整CI/CD和上线核验。等待CI时继续审查统一范围内最高优先可执行差距。
+- 独立SDK子任务已完成并关闭。验收tab9关闭，临时服务36974终止。新可复现Python3.12环境 `/private/tmp/synwevo-recovery-venv312-20261010` 从锁文件安装且pip check通过；旧scratchpad venv丢失pyvenv.cfg，不再使用。
 
-- 日历v1/ao_d7da658ed75f；工作日UTC01–04/06–10及10月1–7日假期，不是全年假期表。
-- 成本price_85f4371761b6：CNY6，deepseek-flash，每百万峰值输入2/缓存0.04/输出8，低谷1/0.02/4。
-- 成本策略v1/ao_50e7aad24bc5：每日20/每周100/每月300元，单次0.2元，在途4、未知4/0.8元；完整受控值见cost-and-sale-published.json。
-- 两倍售价price_9fa1a7cbc022/ao_1bff5aa7340a，峰值4/0.08/16、低谷2/0.04/8；terms_ref synwevo-agent-cny-2x-2026-10-08。欢迎人民币1元已唯一发放，旧余额不是本轮充值或赠送。
-- 提供方v1/凭据v1/ao_0da99f60b32e，requested_model/confirmed_route deepseek-flash，来源DeepSeek-V4.1-Flash；输入65536/输出8192，none/low，**有效期2026-10-15T11:00Z**。未完成调用收费选项均false。
-- 支付设置v1曾密封保存并disabled；**2026-10-09最新实测为v3 enabled且credential_configured=true**。本轮只读，没有发布支付设置；旧v1的香港个人商户Hiko Sphere、卡渠道及套餐记录是历史证据，本次没有重查v3全部配置或密钥。
-- 唯一Stripe回调 `we_1UOB1ZEMgc4r7oEcqTYP9tLI` 已于12:12:52Z enabled；URL `https://accounts.synwevo.com/api/auth/payments/stripe/webhook`。不要重跑prepare脚本（会停用它），不要重复创建回调或订单。未完成真实卡付款/签名唯一入账验收。
-- 秘密仅密封存储及本机0600恢复文件；不输出或Git。原回调恢复文件 `/private/tmp/synwevo-stripe-live-callback-20261008.json` 含秘密，不可打印。
+## 已核实的正式Agent与支付配置（不重复创建或发布）
 
-## 当前验收限制与明确恢复步骤
-
-1. 充值开关：本次获用户明确授权的只读补验已核实v3 enabled；不要再按旧v1 disabled断点重复启用、发布设置或创建回调。此前浏览器读取任务外私人PDF被自动审批拒绝，本轮没有重试浏览器读取或绕过门禁。
-2. 真实付款：本次只核对开关/凭据已配置标记，没有查询或执行支付，不把enabled当成真实卡支付验收。恢复后先核对是否已有付款及入账证据，再由有权付款方完成必要操作，避免重复订单或充值。
-3. 生产历史用量恢复：三个指定旧失败任务均usage_state=known，各有一笔结算、一个usage.reconciled事件；step:1 settled，未预留/未尝试的step:2 released。任务仍为failed/billing_run_budget_exceeded，不能写成业务成功；本次没有手动运行恢复、重放工具或改账。详见evidence/2026-10-09-readonly-closeout/production-metadata.json。
-4. 公开扩量：遵守operations.md§11.3，至少连续数日每日对账ok、账本无差异、无异常扣费后再按授权扩大。当前受控正式启用不等于所有公众已放行。
-5. DeepSeek关于API训练/保留的专门书面答复未取得，草稿未发送；不宣称零训练/零保留。六应用/Admin/API完整矩阵仍有余项，详见BACKLOG；恢复后按实际优先级继续。
+- Agent按operations§11.1受控启用，应用列表forms/tables/dataprep/approvals/extract/agent。公开扩量仍需operations§11.3连续数日每日对账ok、无账本差异或异常扣费。
+- 本人DeepSeek同意及已有真实3步模型→Docs list/get→可信usage→成本×2结算已核对，见agent-budget/existing-live-read-call.json。新Forms产物/跨空间生产验收尚未完成。
+- 用户此前明确保持个人支出暂停；2026-10-09只读实际最新个人预算v4 enabled，本轮未修改其预算。单次合成产物验收上限人民币0.50元授权问题待答，不追加模型调用。
+- 日历v1/ao_d7da658ed75f；成本price_85f4371761b6，CNY6、deepseek-flash，每百万峰值输入2/缓存0.04/输出8，低谷1/0.02/4；日历的10月1–7日假期不是全年表。
+- 成本策略v1/ao_50e7aad24bc5：日20/周100/月300元，单次0.2元，在途4、未知4/0.8元。售价price_9fa1a7cbc022为成本×2，terms_ref synwevo-agent-cny-2x-2026-10-08；欢迎人民币1元已唯一发放。
+- 提供方v1/凭据v1/ao_0da99f60b32e，请求路由deepseek-flash、来源DeepSeek-V4.1-Flash；输入65536/输出8192，none/low，**有效期2026-10-15T11:00Z**。未完成调用收费选项均false；不自动续期治理配置。
+- 支付最新实测v3 enabled/credential_configured，商户香港个人Hiko Sphere。已选card/wechat_pay/alipay；Stripe默认配置card=true、另两项=false只说明默认配置，不证明显式Checkout资格。本人旧5笔provider_unavailable意图创建于10月8日13:11Z，0paid，不能归因于之后版本。
+- 已请用户按原Admin界面发布银行卡配置，待“已发布银行卡配置”答复；不绕过重认证。真实支付/签名唯一入账验收未完成，enabled不是付款成功。
+- 唯一Stripe回调 `we_1UOB1ZEMgc4r7oEcqTYP9tLI` 已enabled，URL `https://accounts.synwevo.com/api/auth/payments/stripe/webhook`。不要重复prepare/创建/订单。0600恢复文件 `/private/tmp/synwevo-stripe-live-callback-20261008.json` 含秘密，不可打印或提交。
+- 三个旧失败Agent任务usage known、各单次结算/usage.reconciled；未预留/未尝试的step:2 released。它们仍failed/billing_run_budget_exceeded，不能称业务成功，不重放工具或改账。
+- DeepSeek针对API训练/保留的书面答复尚未取得，询证草稿未发送。六应用/Admin/API仍有验收缺口，见BACKLOG及两份能力覆盖表，不标全范围完成。
 
 ## 证据与接续
 
-- 本轮最终证据：`docs/agent-work/evidence/2026-10-08-agent-budget/`，包含源码哈希、本地/浏览器/真实既有调用、准确CI作业和生产镜像/公共入口结果。
-- Tables10000行容量实测、50页完整性、上限与混合批次在`evidence/2026-10-08-tables-capacity`；不是生产并发容量。
-- 2026-10-09恢复：基线c63079f/生产a41ea08，CI37792532752成功；CR-071本地及浏览器已验证；下一步审查并正常提交推送、跟踪准确SHA CI/CD，随后继续支付真实证据核验。
-- 协调者session `01a0f104-e57f-7092-ab67-50359f43b547` 当前持有自身主树`docs/agent-work/.coordinator.lock`；其他任务锁不得删除。无本轮新建循环调度。
-- 恢复指令：在实施树读取MASTER_PROMPT.md、STATE.md、BACKLOG.md、EVIDENCE.md；先核对Git/CI/生产/协调者锁，继续以上未完成门槛，复用已发布配置与证据，不重建项目、不重放副作用。
+- 当前本地证据 `docs/agent-work/evidence/2026-10-09-scan-recovery/`，包括源码/日志指纹、真实浏览器、原CI失败、重启/恢复/刷新记录。
+- 准确发布回执 `evidence/2026-10-09-payment-readiness/{ci-release,production-release,public-release}.json`；CR-071同名回执在agent-history目录。
+- 历史调查及状态变更保留在EVIDENCE/BACKLOG，不将旧暂停或旧发布状态作为当前事实。
+- 接续在本实施树读取MASTER_PROMPT、STATE、BACKLOG、EVIDENCE，核对实际Git/CI/生产和锁，复用配置与副作用记录；不重建、不重放、不绕过门禁。
 
-保存时间：2026-10-09T10:52:58.426984+00:00
-
-## 持续执行接续（2026-10-09，覆盖上方旧接续文字）
-
-- CR-071 已提交并正常推送 **b2309ef2b931337d931838b42d1c1a0c8c28111c**；[Actions 37925001552](https://github.com/WeGreen-AI/Synwevo/actions/runs/37925001552) Verify and build成功，完整deployment runtime仍在进行。未部署此SHA；最后实测生产仍a41ea08。
-- CR-072进行中：增加财务管理员主动触发的已保存支付渠道只读检查，读取Stripe默认配置并重新校验权限/版本；不创建Checkout，不自动改变渠道或正式开关，不将默认配置available=false误写成商户无资格。
-- 本人5个failed/provider_unavailable充值意图均创建于2026-10-08T13:11:14–18Z，0paid；早于a41部署，不能归因于a41回归，旧记录无法确认具体上游错误。最新v3 enabled选择card/wechat_pay/alipay，Stripe默认配置card=true，其他=false；charges_enabled=true。这是配置冲突线索，不是付款验收。证据在evidence/2026-10-09-payment-readiness/。
-- 已向用户请求按原管理员界面仅保留银行卡并重认证发布，等待回复。正式付费Agent产物验收0.50元单次授权也待答。未改变个人预算、未触发模型、未付费。
-- 当前协调者持续持有自己的锁；不因等待上述外部输入停止其他实现。下一条动作：完成CR-072测试和真实隔离浏览器，再审查/提交；有界跟进CR-071准确SHA的CI和生产。
-
-接续保存时间：2026-10-09T11:50:59.161463+00:00
-
-- CR-072本地闭环已完成：60支付关联+29矩阵+163前端、类型/构建、六守卫、真实隔离三语言/手机/焦点/故障浏览器及真实Stripe只读均通过；秘密/差异审查后准备正常提交。临时服务78132已停、子任务已关闭。下一动作：提交CR-072，串行跟进CI；不改待用户确认的生产治理配置。
-
-- CR-072已正常提交推送 **583694816ac1e396c6be0be75aa32a993125d49f**；[Actions 37927604495](https://github.com/WeGreen-AI/Synwevo/actions/runs/37927604495)串行排队，CR-071仍在完整runtime核验。没有重复触发部署。下一工作包CR-073复核并修复Docs上传上限与扫描上限不一致（Admin D15）；不调整生产扫描策略、不绕过接纳。
-
-- CR-073本地已验证：126后端、145前端、类型/构建/六守卫，真实隔离浏览器三语言/手机/混合上传/扫描状态恢复/模板遮挡修复；证据`evidence/2026-10-09-upload-admission`。正在审查并提交；推送须等已pending的5836948开始执行，以免生产并发组替换它。CI仍应按准确SHA核对，不宣称已上线。
+保存时间：2026-10-09T16:12:32.887665+00:00

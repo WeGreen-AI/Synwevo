@@ -1,0 +1,19 @@
+{
+  "checked_at": "2026-10-09T16:09:23.158906+00:00",
+  "environment": "isolated synthetic browser acceptance",
+  "source": {
+    "id": "s_ad80d3fbe219",
+    "status": "ready",
+    "version": 2,
+    "scan": {
+      "status": "clean",
+      "engine": "ClamAV double/1.0/Fri Sep 25 00:00:00 2026",
+      "sha256": "53c3f0a77377c9c91678933fb38abc42ee354c4948a7ac9d364590ef2ab200ca",
+      "checked_at": 1791561193.3665862,
+      "attempts": 7,
+      "cycle_attempts": 1
+    }
+  },
+  "scan_retry_audit_count": 1,
+  "refresh_did_not_replay": true
+}

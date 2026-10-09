@@ -33,7 +33,8 @@ def scan_out(rec: dict | None) -> dict:
     Rows written before scanning existed are `unscanned` — honest, and distinct from clean."""
     if not rec:
         return {"status": "unscanned"}
-    keys = ("status", "signature", "engine", "reason", "checked", "sha256", "checked_at", "attempts", "retry_at")
+    keys = ("status", "signature", "engine", "reason", "checked", "sha256", "checked_at", "attempts", "retry_at",
+            "cycle_attempts", "retry_exhausted")
     return {k: rec[k] for k in keys if k in rec}
 
 def template_blobs(store: Store, t: dict) -> list[str]:
@@ -86,6 +87,7 @@ class App:
         self.scanner = M.scanner_for(self.scan_policy)
         self._scan_retry_lock = threading.Lock()
         self._scan_timers: dict[str, threading.Timer] = {}
+        self._scan_active: set[str] = set()
         self._closed = False
         workers.register(self)                          # register after the shutdown state exists
         self._src_cache: dict[tuple, SourceDoc] = {}
@@ -334,9 +336,11 @@ class App:
         # Refuse before hashing, storing, queueing or parsing. Access to already accepted
         # resources is independent of the admission limit for a new upload.
         if size > LIMITS.max_file_bytes:
+            # Keep the existing too_large error contract. Exact byte admission limits are
+            # advertised in capabilities; the new scan_limit error carries its own bytes.
             raise ServiceError(413, "too_large", f"文件「{filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限",
-                               {"filename": filename, "limit_mb": LIMITS.max_file_bytes / (1024 * 1024),
-                                "limit_bytes": LIMITS.max_file_bytes, **({"field": field} if field else {})})
+                               {"filename": filename, "limit_mb": LIMITS.max_file_bytes // (1024 * 1024),
+                                **({"field": field} if field else {})})
         if self.scan_policy.enabled and size > self.scan_policy.max_bytes:
             limit = self.scan_policy.max_bytes
             raise ServiceError(413, "scan_limit", "文件超过安全检查的大小上限，无法接纳；请拆分或压缩后重新上传。",
@@ -376,8 +380,59 @@ class App:
 
     # ------------------------------------------------------------------ malware scanning
     SCAN_RETRY_DELAYS = (30, 60, 120, 300, 600)
+    SCAN_EXHAUSTED = "安全检查多次未完成，已停止自动重试；文件仍不可使用，请在服务恢复后重试安全检查"
+
+    def retry_source_scan(self, sid: str, version: int, *, actor_kind: str, actor_id: str | None, request=None) -> dict:
+        """Start one new bounded cycle, only for an exhausted outage. The source revision is
+        the command's guard: a duplicate/late request cannot start another cycle. Never release
+        quarantine, retry a malicious verdict or turn an unconfigured scanner into acceptance."""
+        from synwevo_core.auth import audit_event
+        if type(version) is not int or version < 1:
+            raise ServiceError(400, "invalid", "来源版本必须是正整数", {"field": "version"})
+        with self.store.tx():
+            row = self.get_source(sid, raw=True)
+            rec = row.get("scan") or {}
+            if row["version"] != version:
+                raise ServiceError(409, "source_changed", "来源文件已变化，请刷新后重试")
+            if (row["status"] != "scan_failed" or rec.get("status") != "error"
+                    or not rec.get("retry_exhausted")):
+                raise ServiceError(409, "scan_not_retryable", "仅已停止自动重试的安全检查可以重新开始")
+            if self.scanner is None:
+                raise ServiceError(409, "scan_not_configured", "安全检查服务尚未配置，文件仍不可使用")
+            self.require_upload_size(row["size"])
+            # A scanner may still be returning after it published exhaustion. Refuse this
+            # tiny overlap; never queue a recovery which an active scan would discard.
+            with self._scan_retry_lock:
+                if self._closed or sid in self._scan_active:
+                    raise ServiceError(409, "scan_in_progress", "安全检查正在结束，请稍后重试")
+            pending = {"status": "pending", "attempts": rec.get("attempts", 0), "cycle_attempts": 0,
+                       "retry_exhausted": False}
+            self.store.update("source_files", {"id": sid}, {"status": "scanning", "scan": pending,
+                              "version": version + 1, "error": None, "updated_at": now()})
+            self.store.bump_project(row["project_id"])
+            audit_event(self.store, "docs.source.scan.retry", actor_kind=actor_kind, actor_id=actor_id,
+                        workspace_id=current_tenant(), object_kind="source", object_id=sid, request=request,
+                        meta={"project_id": row["project_id"], "previous_version": version,
+                              "version": version + 1, "previous_attempts": rec.get("attempts", 0)})
+            out = self.get_source(sid)
+            self.store.after_commit(lambda: self._schedule_scan_retry(sid, 0))
+        self._project_changed(row["project_id"], "source.scan.retry", {"source_id": sid, "version": version + 1})
+        return out
 
     def _scan_then_parse(self, sid: str) -> None:
+        # Duplicate timers/startup recovery within this Docs process must not race a verdict.
+        # Attempts and deadlines live in Store, not in this transient guard.
+        with self._scan_retry_lock:
+            if self._closed or sid in self._scan_active:
+                return
+            self._scan_active.add(sid)
+        try:
+            self._scan_once(sid)
+        finally:
+            with self._scan_retry_lock:
+                self._scan_active.discard(sid)
+
+    def _scan_once(self, sid: str) -> None:
         """The acceptance gate for a source file: nothing parses until the engine said OK.
 
         Outcomes are terminal states the API and the page can explain: `parsing` (clean, the
@@ -393,28 +448,53 @@ class App:
                                  "WHERE s.id=? AND s.removed=0 AND COALESCE(p.deleted,0)=0", (sid,))
         if not row or row["status"] not in ("scanning", "scan_failed"):
             return
+        previous = row.get("scan") or {}
+        cycle = int(previous.get("cycle_attempts", previous.get("attempts", 0)) or 0)
+        if row["status"] == "scan_failed" and previous.get("status") != "error":
+            return  # e.g. too_large: restarting is not a reason to scan these bytes again
+        if previous.get("retry_exhausted") or cycle > len(self.SCAN_RETRY_DELAYS):
+            exhausted = {k: v for k, v in previous.items() if k != "retry_at"}
+            exhausted.update(status="error", cycle_attempts=cycle, retry_exhausted=True)
+            self._publish_scan(row, exhausted, "scan_failed", error=self.SCAN_EXHAUSTED)
+            return
+        retry_at = previous.get("retry_at")
+        if row["status"] == "scan_failed" and isinstance(retry_at, (int, float)) and retry_at > now():
+            self._schedule_scan_retry(sid, retry_at - now())
+            return
         if self.scanner is None:
-            self._publish_scan(row, {"status": "not_configured"}, "parsing")
-            self._parse_source(sid)
+            # Uploads made with scanning explicitly off start in parsing. Any scanning row
+            # here was previously admitted under an enabled gate and must still satisfy it.
+            held = {k: v for k, v in previous.items() if k != "retry_at"}
+            held.update(status="error", reason="scanner not configured", retry_exhausted=True)
+            self._publish_scan(row, held, "scan_failed", error="安全检查服务尚未配置，文件仍不可使用")
             return
         try:
             data = self.store.get_blob(row["blob"])
         except OSError:
             self._publish_scan(row, {"status": "error", "reason": "content missing"}, "error", error="来源文件内容已不在存储中")
             return
-        attempt = int((row.get("scan") or {}).get("attempts") or 0) + 1
+        attempt = int(previous.get("attempts") or 0) + 1
+        cycle += 1
+        # Consume an attempt durably before calling the scanner. A process crash cannot
+        # reset its retry budget; scanning the same bytes has no business write side effect.
+        if not self._publish_scan(row, {"status": "pending", "attempts": attempt, "cycle_attempts": cycle}, "scanning"):
+            return
         try:
             res = self.scanner.scan(data, sha256=row["blob"])
         except M.ScanUnavailable as e:
-            rec = {"status": "error", "reason": str(e)[:200], "attempts": attempt, "checked_at": now()}
-            delay = self.SCAN_RETRY_DELAYS[min(attempt, len(self.SCAN_RETRY_DELAYS)) - 1]
-            rec["retry_at"] = now() + delay
-            self._publish_scan(row, rec, "scan_failed", error="安全检查服务暂不可用，文件已隔离，稍后自动重试")
+            rec = {"status": "error", "reason": str(e)[:200], "attempts": attempt, "cycle_attempts": cycle,
+                   "checked_at": now(), "retry_exhausted": cycle > len(self.SCAN_RETRY_DELAYS)}
+            delay = None if rec["retry_exhausted"] else self.SCAN_RETRY_DELAYS[cycle - 1]
+            if delay is not None:
+                rec["retry_at"] = now() + delay
+            published = self._publish_scan(row, rec, "scan_failed", error=self.SCAN_EXHAUSTED if rec["retry_exhausted"]
+                                           else "安全检查服务暂不可用，文件已隔离，稍后自动重试")
             acceptance_log.warning("scan.unavailable source=%s tenant=%s sha256=%s attempt=%s retry_in=%ss reason=%s",
                                    sid, row.get("tenant") or "-", row["blob"], attempt, delay, str(e)[:160])
-            self._schedule_scan_retry(sid, delay)
+            if published and delay is not None:
+                self._schedule_scan_retry(sid, delay)
             return
-        rec = res.as_record() | {"attempts": attempt}
+        rec = res.as_record() | {"attempts": attempt, "cycle_attempts": cycle}
         if res.status == "clean":
             self._publish_scan(row, rec, "parsing", error=None)
             acceptance_log.info("scan.clean source=%s tenant=%s sha256=%s engine=%s attempt=%s",
@@ -456,17 +536,18 @@ class App:
         except Exception:  # noqa: BLE001 - the refusal itself must stand even if the inbox write fails
             logging.getLogger("synwevo_docs.services").exception("docs.file_rejected notification failed for %s", row.get("id"))
 
-    def _publish_scan(self, row: dict, rec: dict, status: str, error: str | None = "") -> None:
+    def _publish_scan(self, row: dict, rec: dict, status: str, error: str | None = "") -> bool:
         values = {"scan": rec, "status": status, "updated_at": now()}
         if error != "":
             values["error"] = error
         with self.store.tx():
             current = self.store.one("SELECT version, blob, status FROM source_files WHERE id=? AND removed=0", (row["id"],))
             if not current or current["version"] != row["version"] or current["blob"] != row["blob"]:
-                return
+                return False
             if current.get("status") == "rejected" and status != "rejected":
-                return          # a rescan rejected these bytes while this scan ran (CI-90): it stands
+                return False    # a rescan rejected these bytes while this scan ran (CI-90): it stands
             self.store.update("source_files", {"id": row["id"]}, values)
+        return True
 
     def _schedule_scan_retry(self, sid: str, delay: float) -> None:
         def fire():
@@ -780,6 +861,17 @@ class App:
             except (D.DesensitizeError, ValueError) as e:
                 skipped.append({"file": r["filename"], "reason": str(e)})
                 continue
+            if body.get("add_to_project"):
+                try:
+                    self.require_upload_size(len(data))
+                except ServiceError as e:
+                    # The batch already has a per-file partial-result contract. Refuse this
+                    # expanded copy before storing/granting it, and keep earlier successes in
+                    # the response instead of raising a misleading whole-batch 413.
+                    if e.code not in ("too_large", "scan_limit"):
+                        raise
+                    skipped.append({"file": r["filename"], "reason": e.message, "code": e.code})
+                    continue
             stem = r["filename"].rsplit(".", 1)[0]
             name = f"脱敏_{stem}.{ext}"
             blob = self.store.put_blob(data)

@@ -191,6 +191,7 @@ ROUTE_POLICY: dict[tuple[str, str], str | None] = {
     ("DELETE", "/api/sources/{sid}"): "write",
     ("POST", "/api/sources/{sid}/representative"): "write",
     ("PUT", "/api/sources/{sid}/options"): "write",
+    ("POST", "/api/sources/{sid}/scan/retry"): "write",
     ("GET", "/api/sources/{sid}/view"): None,
     ("GET", "/api/sources/{sid}/blocks"): None,
     ("GET", "/api/sources/{sid}/search"): None,

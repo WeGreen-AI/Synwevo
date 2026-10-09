@@ -242,14 +242,16 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 | GET | `/files/{fid}` | read | 单个文件：`status`（`scanning`/`scan_failed`/`parsing`/`ready`/`needs_ocr`/`error`/`rejected`）、`scan`（安全检查结论，见下）、`structure`（工作表、页数、表头等）、`sha256` |
 | DELETE | `/files/{fid}` | write | 从项目移除 |
 
-上传后接纳与解析都是异步的：轮询 `/files/{fid}` 直到 `status` 不再是 `scanning`、`scan_failed` 或 `parsing`
-（两个 SDK 的 `wait_for_file` / `waitForFile` 就是这样等的）。部署配置了恶意软件扫描时，文件先进入 `scanning`：
+**扫描故障恢复**：`POST /files/{fid}/scan/retry`（write，JSON `{ "version": 1 }`）返回202及同一来源记录。仅`scan_failed`、`scan.status=error`且`retry_exhausted=true`可重新开始；来源版本原子递增，旧版本409 `source_changed`，其他状态409 `scan_not_retryable`。未配置扫描器409 `scan_not_configured`，现配置下超限413。累计`attempts`不清零，本轮`cycle_attempts`重新开始。操作和审计同事务提交，不接受强制放行参数。重复请求不启动新循环；失败后先读取来源状态，再由调用方明确决定是否重试。双SDK的`retry_source_scan`/`retrySourceScan`不自动重发；等待函数对`retry_exhausted`或`too_large`立即报出带来源详情的业务错误，其余等待状态仍轮询。
+
+上传后接纳与解析都是异步的：轮询 `/files/{fid}`，等待 `scanning`、可重试的 `scan_failed` 或 `parsing` 完成；
+耗尽或超限的 `scan_failed` 须停止等待并处理原因（两个 SDK 的 `wait_for_file` / `waitForFile` 按上述规则返回或报错）。部署配置了恶意软件扫描时，文件先进入 `scanning`：
 引擎判定干净才进入 `parsing`；命中签名则变为 `rejected`（字节已隔离删除，`/files/{fid}/content` 返回 410
 `rejected_malware`，同样的字节再上传直接 400 `malware_detected`）；引擎暂不可用则停在
-`scan_failed`（服务端按 30 s→10 min 的间隔自动重试，下载返回 409 `not_yet_accepted`）。已知超过部署扫描上限的新上传直接返回413 `scan_limit`，不写业务记录或blob；已有暂存或扫描器实际流上限更低的文件仍可能为`scan_failed/too_large`，这个状态没有自动重试，须先解决大小或配置。**不要因为 `scan_failed`
+`scan_failed`（服务端按30/60/120/300/600秒退避，一轮最多6次尝试；耗尽后`retry_exhausted=true`且没有`retry_at`，下载仍返回409 `not_yet_accepted`）。已知超过部署扫描上限的新上传直接返回413 `scan_limit`，不写业务记录或blob；已有暂存或扫描器实际流上限更低的文件仍可能为`scan_failed/too_large`，这个状态没有自动重试，须先解决大小或配置。**不要因为 `scan_failed`
 重新上传**：那只会把同样的字节再排一次队。`scan` 对象给出结论：`status`（`pending`/`clean`/`infected`/`encrypted`/`error`/
 `too_large`/`not_configured`/`unscanned`）、`signature`、`engine`（引擎与病毒库版本）、`reason`、`sha256`（结论绑定的内容摘要）、
-`checked_at`、`attempts`、`retry_at`。未配置扫描器的部署把每个文件标为 `not_configured`，扫描功能上线前的历史文件为
+`checked_at`、`attempts`、`retry_at`、`cycle_attempts`、`retry_exhausted`。未配置扫描器的部署把每个文件标为 `not_configured`，扫描功能上线前的历史文件为
 `unscanned`——两者都不是"干净"。模板上传是同步扫描：命中返回 400 `malware_detected`，引擎不可用返回 503
 `scan_unavailable`（`detail.retry_after` 秒后重试），超过扫描上限返回 413 `scan_limit`。`/capabilities` 的
 `environment.malware_scan` 说明本部署是否扫描；`/readyz` 的 `checks.malware_scanner` 报告引擎是否可达（`ok`/`off`/
@@ -507,7 +509,7 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 | `file.failed` | 已接纳但无法解析 | 同上 |
 
 负载只有 `data: {file_id, project_id, status, reason, version}`、`job: null`，不含文件名与内容；需要更多信息请用凭据读取
-`/files/{fid}`。扫描暂不可用（`scan_failed`，自动重试）期间不发事件。订阅可用 `file.*` 或具体类型过滤；
+`/files/{fid}`。扫描暂不可用（`scan_failed`，有限自动重试或等待人工恢复）期间不发事件；查询来源的scan字段区分。订阅可用 `file.*` 或具体类型过滤；
 `GET /events?types=file.ready,…` 同样可查，条目带 `file_id`、`project_id`，`job_id` 为 null。
 
 Webhook 默认关闭，按部署配置开启：

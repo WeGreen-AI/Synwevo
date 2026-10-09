@@ -49,7 +49,7 @@ export type ErrorPolicy = (typeof ERROR_POLICIES)[number];
 export type Layout = (typeof LAYOUTS)[number];
 export type ItemStatus = (typeof ITEM_STATUSES)[number];
 /**
- * `scanning` and `scan_failed` are quarantine (the server retries the check; do not re-upload),
+ * `scanning` and `scan_failed` are quarantine (automatic retries stop when exhausted or too large),
  * `parsing` is in progress, `ready` / `needs_ocr` are usable, `error` / `unsupported` are not
  * readable, `rejected` failed the malware check.
  */
@@ -376,6 +376,8 @@ export interface RequestOptions {
 }
 
 export interface SendOptions extends RequestOptions {
+  /** Send once, including on a rate-limit refusal or an expired token. */
+  singleAttempt?: boolean;
   query?: QueryParams;
   /** Sent as application/json when not undefined. */
   json?: unknown;
@@ -735,8 +737,12 @@ export interface ScanVerdict {
   checked?: boolean | null;
   sha256?: string | null;
   checked_at?: number | null;
+  /** Cumulative across manual scan cycles; never reset by a retry. */
   attempts?: number | null;
   retry_at?: number | null;
+  /** Attempts in this bounded cycle (default limit: six). */
+  cycle_attempts?: number;
+  retry_exhausted?: boolean;
 }
 
 /** A source file (GET /files/{fid}, list items, upload responses). */
@@ -2112,6 +2118,14 @@ export declare class Client {
   getFile(fid: string, options?: RequestOptions): Promise<WithMeta<SourceFile>>;
   deleteFile(fid: string): Promise<WithMeta<{ deleted: string }>>;
   /**
+   * Explicitly start a bounded scan cycle (202; write scope). Refresh first and pass the current
+   * positive version. Only scan_failed + scan.status=error + retry_exhausted=true is eligible.
+   * The server atomically consumes/increments the version; duplicate, stale and ineligible calls
+   * return 409. No automatic HTTP retries. Refresh again before explicitly issuing another call.
+   * @throws ValidationError (synchronously) unless version is a positive safe integer.
+   */
+  retrySourceScan(fid: string, input: { version: number }): Promise<WithMeta<SourceFile>>;
+  /**
    * Recognise text on a scanned PDF or image (at most 50 pages). Synchronous on the server and
    * not retried automatically; after a timeout, the page-words route reports `source: "ocr"` for
    * pages already recognised.
@@ -2125,8 +2139,9 @@ export declare class Client {
   resumableUpload(filePath: string, options?: ResumableUploadOptions): Promise<WithMeta<Upload>>;
   /**
    * Poll until the file is accepted and parsed. Rejects with APIError `file_parse_failed`
-   * (status error) or `file_rejected` (malware check), or WaitTimeoutError (the last record in
-   * `details` when it was still scanning / scan_failed / parsing).
+   * (status error), `file_rejected` (malware check), `scan_too_large` or `scan_retry_exhausted`
+   * (terminal scan_failed). The full source is in `details`. Other pending states keep polling
+   * until WaitTimeoutError. Never starts a new scan cycle automatically.
    */
   waitForFile(fid: string, options?: WaitForFileOptions): Promise<WithMeta<SourceFile & { status: SettledSourceFileStatus }>>;
   listTemplates(query?: ListQuery): AsyncGenerator<TemplateListItem, void, undefined>;

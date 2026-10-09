@@ -593,3 +593,22 @@ Agent/充值/通知修复a41ea08经Actions37792532752完整verify与deploy成功
 真实隔离服务正常登录，合成CSV混合上传：超限文件即时提示，合法两文件最终ready，数据库2行69字节、0模板、0分片；没有生产数据。第二文件无需刷新从扫描到可用；首次浏览器发现来源列表只轮询parsing的旧缺陷，已修复scanning及带retry_at的恢复。手机390px英文模板标签曾遮挡错误，已修复并保留前后截图。简/繁/英、键盘Enter上传/Escape关闭、深链接刷新、无水平文档溢出、控制台无warn/error已核对。扫描器为明确隔离协议夹具，不替代真实恶意软件引擎验收；未调用模型或付款，未修改生产配置。
 
 CR-071 b2309ef仍处Actions37925001552完整runtime；CR-0725836948在Actions37927604495串行pending。本批尚未推送，避免替换已有pending；线上版本要在CI完成后独立核对。
+
+## 2026-10-09 CR-071准确版本发布回执
+
+`b2309ef2b931337d931838b42d1c1a0c8c28111c`的[Actions37925001552](https://github.com/WeGreen-AI/Synwevo/actions/runs/37925001552)verify/deploy均成功。运行镜像5457passed、5skipped、242warnings，47m39s；发布于12:33Z。只读主机核验current及四应用OCI revision同SHA，六容器healthy，history/engine源码SHA256与本地一致；Agent保持启用。五域readyz/根页/JS200，匿名管理与充值选项401，OIDC303到账户源。备份`/opt/synwevo/backups/20261009T123308Z`，无恢复演练。脱敏回执在`evidence/2026-10-09-agent-history/{ci-release,production-release,public-release}.json`。未重放业务操作、未触发模型或付款。CR-0725836948随后已开始核验，CR-073d7d9201沿同一CI/CD排队。
+
+
+## 2026-10-10 CR-072上线与CR-073门禁失败
+
+5836948的Actions37927604495 verify/deploy成功，运行镜像5475passed/5skipped/242warnings，2736.61秒；13:26:43Z部署备份，13:27:11Z结束。16:04–16:05Z只读确认current/四应用revision同SHA、六容器healthy、四支付模块哈希匹配、五域健康/JS及匿名拒绝/OIDC起跳通过。Agent保持启用；未触发模型或付款。回执在payment-readiness目录。
+
+d7d9201的Actions37931260526构建通过，runtime1failed/964passed/3skipped/78warnings，345.16秒，deploy跳过。test_upload_limits_name_the_file_and_the_limit发现旧too_large detail多了limit_bytes。已恢复旧契约，原测试未动；精确上限仍在capabilities和新scan_limit错误。失败回执与日志指纹在scan-recovery/previous-ci-failure.json。未重跑同SHA制造通过，下一SHA需完整门禁。
+
+## 2026-10-10 CR-074扫描故障恢复本地闭环
+
+原有无限退避、重启立即重扫和缺少人工恢复已修复：持久6次周期、deadline、总次数，耗尽后明确等待；同来源版本原子恢复和审计，下载/解析隔离不变，SDK不自动重复命令。CR-073后续补齐脱敏扩大输出的逐项失败契约，拒绝项不落blob/下载授权。
+
+72核心、97扫描/权限、91API/生命周期、最终54旧拒绝/上传/恢复回归均通过（有重叠，不合计唯一项）；145 Docs前端、类型/构建/六守卫通过。PythonSDK55passed/57subtests、TS48passed及双严格类型通过。最初新夹具actor_kind无效和GET状态假设、两项遗漏翻译已修复；未删除旧断言。旧临时venv丢失pyvenv.cfg后由锁文件建立独立Python3.12环境，pip check通过，最终54项在新环境执行。
+
+真实隔离浏览器实际上传合成37字节CSV，协议故障夹具6次耗尽，真实进程重启仍v1/6次且不重启扫描；服务恢复后键盘明确重试，同文件ready/v2/累计7次，只有1笔审计，刷新不重放。简繁英、390×844、长文件名、焦点及控制台无warning/error通过。fixture加速延迟不作为生产性能，非真实病毒引擎验收；未新测reduced-motion，无新增动画。截图、源/日志哈希、restart/recovered/refreshed元数据见scan-recovery。自己的tab9和临时服务36974已关闭。当前未提交部署，无生产配置/模型/付款变更。

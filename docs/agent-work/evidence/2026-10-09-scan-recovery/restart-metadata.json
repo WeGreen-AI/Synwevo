@@ -1,0 +1,23 @@
+{
+  "synthetic_only": true,
+  "rows": [
+    {
+      "id": "s_ad80d3fbe219",
+      "status": "scan_failed",
+      "version": 1,
+      "scan": {
+        "status": "error",
+        "reason": "clamd stream: [Errno 32] Broken pipe",
+        "attempts": 6,
+        "cycle_attempts": 6,
+        "checked_at": 1791550495.400876,
+        "retry_exhausted": true
+      }
+    }
+  ],
+  "assertions": [
+    "same source id/version",
+    "six attempts retained after process restart",
+    "held until explicit retry"
+  ]
+}

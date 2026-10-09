@@ -4555,6 +4555,73 @@ paths:
             - read
         - platformToken:
             - docweave.read
+  "/api/v1/files/{fid}/scan/retry":
+    post:
+      tags:
+        - v1
+      summary: Retry Scan
+      description: Start a bounded scan cycle for an exhausted scanner outage. Requires the current source version; consumes that revision atomically. Never auto-retry this command. Refuses infected/encrypted/too_large files and a scanner that is not configured. Poll the file for its actual outcome.
+      operationId: retry_source_scan
+      parameters:
+        - name: fid
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            title: Fid
+        - $ref: "#/components/parameters/XRequestID"
+      responses:
+        "202":
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceFile"
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimit-Policy"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        5XX:
+          $ref: "#/components/responses/ServerError"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                version:
+                  minimum: 1
+                  title: Version
+                  type: integer
+              required:
+                - version
+              title: SourceScanRetry
+              type: object
+      security:
+        - apiKey:
+            - write
+        - platformToken:
+            - docweave.write
   "/api/v1/files/{fid}/options":
     put:
       tags:
@@ -7809,11 +7876,21 @@ components:
             - type: number
             - type: "null"
           title: Retry At
+        cycle_attempts:
+          anyOf:
+            - type: integer
+            - type: "null"
+          title: Cycle Attempts
+        retry_exhausted:
+          anyOf:
+            - type: boolean
+            - type: "null"
+          title: Retry Exhausted
       type: object
       required:
         - status
       title: ScanVerdict
-      description: "What the malware check concluded about these exact bytes (`sha256`). `unscanned` marks rows\nwritten before scanning existed and `not_configured` deployments without a scanner — neither is\nclean. `error`/`too_large` keep the file quarantined (`scan_failed`); the server retries `error`.\n`encrypted` (password-protected — or, with `checked: false`, a structure the check could not\nfinish; `reason` archive / office / pdf) is never clean: the file ends in `error` and is never\nserved (410 `encrypted_file` / `unchecked_file`); a template upload is refused with 400 and the\nsame codes; a file stored before scanning that a rescan finds encrypted keeps its state (the\nowner decides)."
+      description: "What the malware check concluded about these exact bytes (`sha256`). `unscanned` marks rows\nwritten before scanning existed and `not_configured` deployments without a scanner — neither is\nclean. `error`/`too_large` keep the file quarantined (`scan_failed`); the server retries `error`\nfor at most six attempts per cycle, then sets `retry_exhausted` and awaits an explicit version-guarded retry.\n`encrypted` (password-protected — or, with `checked: false`, a structure the check could not\nfinish; `reason` archive / office / pdf) is never clean: the file ends in `error` and is never\nserved (410 `encrypted_file` / `unchecked_file`); a template upload is refused with 400 and the\nsame codes; a file stored before scanning that a rescan finds encrypted keeps its state (the\nowner decides)."
     SourceBlock:
       properties:
         index:

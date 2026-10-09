@@ -11,6 +11,7 @@ from .webhooks import verify_legacy_signature, verify_webhook
 from .workspace import WorkspaceClient
 from .suite import SuiteClient
 from .upload_types import Upload, UploadPurpose, UploadStatus
+from .source_types import ScanStatus, ScanVerdict, SourceFile, SourceStatus
 from .job_types import (
     Artifact, ArtifactsPage, CancelledJob, ItemArtifact, ItemStatus, Job, JobCancel,
     JobCounts, JobEvent, JobEventsPage, JobEventType, JobItem, JobItemsPage, JobListItem,
@@ -29,5 +30,5 @@ __all__ = [
     "Artifact", "ArtifactsPage", "CancelledJob", "ItemArtifact", "ItemStatus", "Job", "JobCancel",
     "JobCounts", "JobEvent", "JobEventsPage", "JobEventType", "JobItem", "JobItemsPage", "JobListItem",
     "JobOptions", "JobPhase", "JobRun", "JobRunsPage", "JobsPage", "JobStatus", "JobTemplate", "JSONValue",
-    "RawJobCounts", "Upload", "UploadPurpose", "UploadStatus",
+    "RawJobCounts", "Upload", "UploadPurpose", "UploadStatus", "ScanStatus", "ScanVerdict", "SourceFile", "SourceStatus",
 ]

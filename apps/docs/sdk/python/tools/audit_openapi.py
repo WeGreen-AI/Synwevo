@@ -42,6 +42,7 @@ POST /api/v1/projects/{pid}/files | upload_source | files upload
 GET /api/v1/projects/{pid}/files | list_files,iter_files | files list
 GET /api/v1/files/{fid} | get_file,wait_for_file | files get
 DELETE /api/v1/files/{fid} | delete_file | files delete
+POST /api/v1/files/{fid}/scan/retry | retry_source_scan |
 POST /api/v1/templates | upload_template | templates upload
 POST /api/v1/templates/builtin | create_builtin_template | templates builtin create
 GET /api/v1/templates/{tid}/builtin | get_builtin_template | templates builtin export

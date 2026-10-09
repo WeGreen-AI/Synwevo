@@ -33,6 +33,7 @@ export default function FilePanel({ projectId, sources, active, onActive, onChan
   const [dragId, setDragId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [said, setSaid] = useState("");                    // polite announcement after a move
+  const [retryingScan, setRetryingScan] = useState<string | null>(null);
   const uploadSeq = useRef(0);
   const input = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -203,6 +204,21 @@ export default function FilePanel({ projectId, sources, active, onActive, onChan
                   )}
                   {!readOnly && !s.representative && s.status === "ready" && (
                     <button type="button" className="btn xs" onClick={() => act(tr("设为代表文件"), () => post(`/api/sources/${s.id}/representative`))}>{tr("设为代表")}</button>
+                  )}
+                  {!readOnly && s.status === "scan_failed" && s.scan?.retry_exhausted && (
+                    <button type="button" className="btn xs" aria-disabled={retryingScan === s.id}
+                      onClick={async () => {
+                        if (retryingScan) return;
+                        setRetryingScan(s.id);
+                        try {
+                          if (await act(tr("重试安全检查"), () => post(`/api/sources/${s.id}/scan/retry`, { version: s.version }))) {
+                            setSaid(tr("安全检查已重新排队，文件在检查通过前仍不可使用"));
+                            // The successful command removes its button. Return focus to this
+                            // file's name only if the user has not moved outside the list.
+                            restoreFocus({ id: s.id, which: "name", to: idx });
+                          }
+                        } finally { setRetryingScan(null); }
+                      }}>{retryingScan === s.id ? tr("正在重新排队…") : tr("重试安全检查")}</button>
                   )}
                   {canExport
                     ? <DownloadLink className="btn xs" href={`/api/sources/${s.id}/download`} title={tr("下载原文件（未修改）")}>{tr("原件")}</DownloadLink>

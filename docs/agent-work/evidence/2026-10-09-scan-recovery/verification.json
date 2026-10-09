@@ -1,0 +1,135 @@
+{
+  "base_commit": "d7d9201d251b13e93aef9cbf2675cacae872e0c1",
+  "verified_at": "2026-10-09T16:11:08.914411+00:00",
+  "source_sha256": {
+    "apps/docs/sdk/python/README.md": "5c2f2939430ccff3aaf67a8fc8a40eb727594eaff9303eb53d00fc0e5de60fc3",
+    "apps/docs/sdk/python/synwevo_docs_sdk/__init__.py": "e8678245d6fe30c5b061b2744082fbfcaba2c91f324f15e122ced5d64cf23639",
+    "apps/docs/sdk/python/synwevo_docs_sdk/_http.py": "fee045315778417af124be5d9a160d64e49093d316976e050262299fe8ebe86a",
+    "apps/docs/sdk/python/synwevo_docs_sdk/client.py": "120291fe92243637715968545556ded253ca3a7b8cb72bcf589e45865709cb45",
+    "apps/docs/sdk/python/synwevo_docs_sdk/source_types.py": "796d52698c2b1fa43d520ca709aa4e93057d1669d7a2d5fd4f919616bff84696",
+    "apps/docs/sdk/python/tests/types_check.py": "dc0df4b1c7d0db10882df0cd4cd6f37f3cc310ac8b08591af126e569248b047b",
+    "apps/docs/sdk/python/tools/audit_openapi.py": "f17680812ab6e7ba4e01565705704f9ba5667dfd500aff34b86ab798e038cb31",
+    "apps/docs/sdk/typescript/README.md": "f99625313aa29477fb2289d3bf3e87bec37f158786284e516ff85e4bb9e608ef",
+    "apps/docs/sdk/typescript/synwevo-docs.d.ts": "974cec8c8a014b5cd157b81011829ad123f601ec52eff27cf9ff0473f03fb639",
+    "apps/docs/sdk/typescript/synwevo-docs.mjs": "da4b920bcfeb16824d7e11ea1ef51e2e20926cafc5160c25c06f52ad7e475c1d",
+    "apps/docs/sdk/typescript/test/types-check.ts": "58ad38887d8181e4a763612fd538da93333c9ac6d54c54acd342810261c94301",
+    "apps/docs/synwevo_docs/api/app.py": "68b0158323fe7ba2d2c11bbc9c93eab09d6724a70ba75b3130422de55a30eebd",
+    "apps/docs/synwevo_docs/api/v1_sources.py": "78e2e45c22cbadf6df65e8668fa94beaa6a15e966f73f97e2094c3c615c3deaf",
+    "apps/docs/synwevo_docs/authz.py": "44567ef4e8515d600539c55a6bc26fb3d12b2033b9d3866c2454003f39971a95",
+    "apps/docs/synwevo_docs/services.py": "9cf55d3204fc42ed7ad2cdb976c84abd12cb97acc4e3aa6f1dbf03a831a245a0",
+    "apps/docs/tests/test_upload_admission.py": "67cd28b4d3fb6d59d43da5cb045b8c21aef8ae7aee28c497ba0aa8d8fc0e24b4",
+    "apps/docs/web/src/components/AnyView.tsx": "18feb865e296693483343e48bf740d3f48e39c69b012d9f27af95c6dfa0d83f7",
+    "apps/docs/web/src/components/FilePanel.tsx": "80180d2c92e384afd3681ce12f43a0fa8e09fb662338a4f4a39c49ebbaceeb5a",
+    "apps/docs/web/src/components/ProjectPresence.tsx": "156faa7062b8ca30ed4a1d456a216c3c0e2506e48a91413ace7213450a2aafdd",
+    "apps/docs/web/src/lib/presentation.ts": "3d3126c954b8d5f026ac7473aa80f915026a921b89df8a37280247a4d30b34e6",
+    "apps/docs/web/src/lib/types.ts": "14a7f46c088ebbaaf9ed93b0812cc410febaf298886e50477ce35fb7d800129c",
+    "apps/docs/web/src/messages.server.ts": "dcf99be0c04d5647b5c3f66294a45ac0c09f6927e41bd437bfe1b94c8f599511",
+    "apps/docs/web/src/messages.ts": "f9aebbd32761a48b44d0ef8e24e910551502e72f4be5b4a4326168dc096b9fa4",
+    "apps/docs/web/src/pages/Workspace.tsx": "70e3ab728e89b91ee460f456b2c0845f17c70a039c6508cd3af8b0c0ffbda302",
+    "docs/integration/api.md": "a50cff73b13bf66a06a20c56933e1f52e0c80dc97879d21027c427e49f4fa300",
+    "docs/integration/openapi.yaml": "a8d4499200dc8d1ea9525b2c5d1543ee89259a1b349127bd19154815087a7fec",
+    "docs/platform/admin-coverage.md": "ddecc11fa1bf91e9249709d939e01fb317df8303d5ece366e5285ef2369b3fdd",
+    "docs/security/file-acceptance.md": "dad3cc91fce98589b3b84496c3770a22347ec136c6fe10891735326a3ace76f4",
+    "tests/integration/test_gate_roles.py": "91cb16bc559f439fd2af7aea051601669210206f6575ef70e8479105ec0ac772",
+    "apps/docs/sdk/python/tests/test_source_scan.py": "98c55fd932a31a3f7254b5a35058eae90048394335de536c1013259375c95016",
+    "apps/docs/sdk/typescript/test/source-scan.test.mjs": "2f4f3b5661d74347c0c91b8fb20609e289cecec61af1f2f6808f94ebf737a235",
+    "apps/docs/tests/test_scan_recovery.py": "8b4d315a4a6cedf0a63c24a219dfed492cd226d551448b8975ed7750a276541b"
+  },
+  "test_batches": {
+    "core_scan_admission_desensitize_templates": 72,
+    "scanner_quarantine_roles_machine_identity": 97,
+    "api_contract_isolation_lifecycle_jobs": 91,
+    "final_legacy_refusals_admission_contract_recovery": 54,
+    "note": "Batches overlap; counts are not summed as unique tests.",
+    "docs_frontend": 145,
+    "python_sdk": {
+      "passed": 55,
+      "subtests_passed": 57
+    },
+    "typescript_sdk": 48,
+    "sdk_strict_types": "both passed",
+    "docs_typecheck_build": "passed",
+    "six_guards": "passed"
+  },
+  "browser": {
+    "instance": "isolated synthetic account, real app and Store; ClamdDouble protocol outage fixture",
+    "source_id": "s_ad80d3fbe219",
+    "desktop": "verified",
+    "narrow": [
+      390,
+      844
+    ],
+    "languages": [
+      "zh-Hans",
+      "zh-Hant",
+      "en"
+    ],
+    "long_filename": true,
+    "keyboard_retry_focus": true,
+    "restart_preserved_exhaustion": true,
+    "manual_retry_ready": true,
+    "refresh_did_not_replay": true,
+    "console_warnings_errors": [],
+    "reduced_motion": "not re-emulated; no new animation",
+    "retry_delays": "fixture accelerates five delays to 0.2s, production retains 30/60/120/300/600s",
+    "limitations": [
+      "Protocol fixture does not prove a real malware engine verdict.",
+      "One filechooser automation call took 174 seconds; not an app latency measurement."
+    ],
+    "cleanup": "tab9 closed and own process36974 terminated"
+  },
+  "environment": "New dedicated Python3.12 environment installed from repository locks after old shared temporary venv lost pyvenv.cfg; pip check passed. No dependency versions changed.",
+  "logs": [
+    {
+      "local_path": "/private/tmp/synwevo-scan-recovery-core-20261009.log",
+      "sha256": "b12a31fc5c335ec62fe169fa9b18cc03067bb2f33898d31f76c76e3f8202b703"
+    },
+    {
+      "local_path": "/private/tmp/synwevo-scan-recovery-scan-junit-20261009.xml",
+      "sha256": "d718ffe7f07f8f686edf0440857348b66c2ce7b04b2ce4f8399860a3d7c65806"
+    },
+    {
+      "local_path": "/private/tmp/synwevo-scan-recovery-contract-junit-20261009.xml",
+      "sha256": "f37052e3baf3091a92808ca38329f89063acf351e55f2181725fe3b01dd94cb4"
+    },
+    {
+      "local_path": "/private/tmp/synwevo-scan-recovery-final-junit-20261010.xml",
+      "sha256": "43fbb5caaa6ab2c3287307bc65bc301cd5a46ead5f4e6186b1e1726945bb535e"
+    },
+    {
+      "local_path": "/private/tmp/synwevo-scan-recovery-web-final-20261009.log",
+      "sha256": "f30f7a0cd1ab01f4096f2a5b2fdf32ffafb83c0650bb7fce97b51369b70cbde3"
+    },
+    {
+      "local_path": "/private/tmp/synwevo-scan-recovery-build-20261009.log",
+      "sha256": "e4855892f2f6e5dbcdd50ed8bb6a2de14a41a4100015d11782ebc04489f79a33"
+    },
+    {
+      "local_path": "/private/tmp/synwevo-scan-recovery-guards-20261009.log",
+      "sha256": "9871839c1ce3c8ddf534c4c2a6e90eff92db6414d46bec3b1cc21cbe5d8b9eed"
+    },
+    {
+      "local_path": "/private/tmp/synwevo-scan-sdk-check.YQCi0t/python-tests-independent-20261010.log",
+      "sha256": "613caf78d6c689cf073aa8c5114a243c40b9f89b90bd6e9d33e0e1aa52a9bf4d"
+    },
+    {
+      "local_path": "/private/tmp/synwevo-scan-sdk-check.YQCi0t/python-types-independent-20261010.log",
+      "sha256": "fb5b1085f1ab1f14cee5f888e24befd465f79fa8640790c55e37fdc562e254fd"
+    },
+    {
+      "local_path": "/private/tmp/synwevo-scan-sdk-check.YQCi0t/typescript-tests.log",
+      "sha256": "ff053e20cb35ce6b74b28a82404a698fcc4e6c94093ea30b40824adb36e8b971"
+    },
+    {
+      "local_path": "/private/tmp/synwevo-scan-sdk-check.YQCi0t/typescript-types.log",
+      "sha256": "f15651934d1a56cda6243284077031f4c2d1a0c3732383e597a46e2e6bea9109"
+    },
+    {
+      "local_path": "/private/tmp/synwevo-recovery-env-20261010.log",
+      "sha256": "ea5af04b7b1803d8d8262ef8beaf7463485cf7424799eae2265d61d1fa0113d7"
+    }
+  ],
+  "production_side_effects": "none; no model/payment/config mutation",
+  "release": "not yet committed or deployed",
+  "sdk_api_inventory_audit_sha256": "97823dbb48549d36cf73a546fbad454330aa2aea33f8f633067d2083946e8671"
+}

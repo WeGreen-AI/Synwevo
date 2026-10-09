@@ -80,6 +80,7 @@ const KIND_TEXT: Record<string, (d: any, slotName: (b: string) => string) => str
   "source.order": () => tr("调整了文件顺序"),
   "source.representative": () => tr("更换了代表文件"),
   "source.options": () => tr("修改了文件读取选项"),
+  "source.scan.retry": () => tr("重新开始了文件安全检查"),
   "project.update": (d) => {
     const label = (f: string) => ({ name: tr("名称"), record_rule: tr("样本规则"), template_id: tr("模板"), template_version: tr("模板版本"), output: tr("输出设置") } as Record<string, string>)[f] || f;
     const before = d.before || {}, after = d.after || {};

@@ -512,7 +512,7 @@ export class Client {
    *
    * opts: query, json, form (() => FormData), body (() => bytes), headers, idempotencyKey,
    *       retry (true/false overrides the method rule), timeoutMs, idle (timeout resets on each
-   *       chunk; for downloads), signal.
+   *       chunk; for downloads), signal, singleAttempt (also prevents 429/401 retries).
    */
   async send(method, path, opts = {}) {
     method = method.toUpperCase();
@@ -564,7 +564,7 @@ export class Client {
           try { text = await res.text(); } catch { text = ''; }
           dl.clear();
           failure = errorFromResponse(res.status, res.headers, text, { method, url });
-          if (res.status === 401 && this.credentials.refreshable && !authRefreshed) {
+          if (!opts.singleAttempt && res.status === 401 && this.credentials.refreshable && !authRefreshed) {
             // An access token can expire between our check and the server's: fetch a new one once.
             authRefreshed = true;
             this.credentials.invalidate();
@@ -574,7 +574,7 @@ export class Client {
         }
       }
       const gateRefusal = failure.status === 429 && failure.code === 'rate_limited';
-      if ((!retryable && !gateRefusal) || attempt >= this.maxRetries || !isRetryable(failure)) throw failure;
+      if (opts.singleAttempt || (!retryable && !gateRefusal) || attempt >= this.maxRetries || !isRetryable(failure)) throw failure;
       const wait = this.backoffMs(attempt, failure.retryAfter);
       if (wait == null) throw failure;      // the server asked for longer than we are willing to wait
       this.onRetry?.({ method, path, attempt: attempt + 1, delayMs: wait, status: failure.status, code: failure.code });
@@ -699,6 +699,15 @@ export class Client {
   listFiles(pid, query = {}) { return this.paginate(`/projects/${encodeURIComponent(pid)}/files`, query); }
   getFile(fid, opts = {}) { return this.get(`/files/${encodeURIComponent(fid)}`, undefined, opts); }
   deleteFile(fid) { return this.requestJson('DELETE', `/files/${encodeURIComponent(fid)}`); }
+  /** Explicitly start one bounded scan cycle (202; write scope). Refresh the source first;
+   *  the server consumes its version atomically. No HTTP retry, including after 429 or 401. */
+  retrySourceScan(fid, { version } = {}) {
+    if (!Number.isSafeInteger(version) || version < 1) {
+      throw new ValidationError('version 必须是正整数', { field: 'version' });
+    }
+    return this.requestJson('POST', `/files/${encodeURIComponent(fid)}/scan/retry`,
+      { json: { version }, retry: false, singleAttempt: true });
+  }
   /** Recognise text on a scanned PDF (default: every scanned/mixed page) or image, at most 50 pages.
    *  Synchronous on the server: waits 30 s + 6 s per page unless `timeoutMs` says otherwise, and is
    *  not retried automatically. After a timeout, the page-words route reports `source: "ocr"` for
@@ -789,10 +798,9 @@ export class Client {
     return this.requestJson('POST', `/uploads/${up.id}/complete`, { json: { sha256 }, retry: true });
   }
 
-  /** Poll a source file until the server has accepted and parsed it; throws if parsing failed or the
-   *  file was rejected by the malware check. `scanning` and `scan_failed` (check not run yet; the server
-   *  keeps the file quarantined and retries — re-uploading would only queue the same bytes again) are
-   *  waited through until `timeoutMs`; the WaitTimeoutError then carries the last record in `details`. */
+  /** Poll until accepted and parsed. Terminal scan failures throw immediately with the full source
+   *  in `details`: scan_too_large or scan_retry_exhausted. Other pending states wait until timeoutMs.
+   *  This never starts a new scan cycle; parsing errors and rejected files also throw. */
   async waitForFile(fid, { timeoutMs = 120_000, pollMs = 300, maxPollMs = 3_000, signal } = {}) {
     const t0 = Date.now();
     let wait = pollMs;
@@ -806,6 +814,11 @@ export class Client {
       }
       if (f.status === 'rejected') {
         throw new APIError(`来源文件 ${f.filename || fid} 未通过安全检查：${f.error || '已拒绝'}`, { code: 'file_rejected', details: f });
+      }
+      if (f.status === 'scan_failed' && (f.scan?.retry_exhausted === true || f.scan?.status === 'too_large')) {
+        const code = f.scan?.status === 'too_large' ? 'scan_too_large' : 'scan_retry_exhausted';
+        const reason = code === 'scan_too_large' ? '文件超过安全检查大小上限' : '安全检查已停止自动重试，请刷新来源后明确重试';
+        throw new APIError(`来源文件 ${f.filename || fid}：${f.error || reason}`, { code, details: f });
       }
       if (f.status !== 'parsing' && f.status !== 'scanning' && f.status !== 'scan_failed') return f;
       if (Date.now() - t0 + wait > timeoutMs) throw new WaitTimeoutError(`来源文件 ${fid} 超过 ${timeoutMs} ms 仍在解析`, { details: f });

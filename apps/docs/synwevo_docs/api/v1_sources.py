@@ -57,6 +57,10 @@ class SourceOptions(StrictInput):
     csv: CSVOptions
 
 
+class SourceScanRetry(StrictInput):
+    version: Annotated[int, Field(ge=1)]
+
+
 class SourceCorrection(StrictInput):
     value: Annotated[str, Field(max_length=20000)] | None
     confirmed: bool = True
@@ -203,7 +207,8 @@ class CorrectionValue(BaseModel):
 class ScanVerdict(BaseModel):
     """What the malware check concluded about these exact bytes (`sha256`). `unscanned` marks rows
     written before scanning existed and `not_configured` deployments without a scanner — neither is
-    clean. `error`/`too_large` keep the file quarantined (`scan_failed`); the server retries `error`.
+    clean. `error`/`too_large` keep the file quarantined (`scan_failed`); the server retries `error`
+    for at most six attempts per cycle, then sets `retry_exhausted` and awaits an explicit version-guarded retry.
     `encrypted` (password-protected — or, with `checked: false`, a structure the check could not
     finish; `reason` archive / office / pdf) is never clean: the file ends in `error` and is never
     served (410 `encrypted_file` / `unchecked_file`); a template upload is refused with 400 and the
@@ -218,6 +223,8 @@ class ScanVerdict(BaseModel):
     checked_at: float | None = None
     attempts: int | None = None
     retry_at: float | None = None
+    cycle_attempts: int | None = None
+    retry_exhausted: bool | None = None
 
     @model_serializer(mode="wrap")
     def _only_known(self, handler):
@@ -573,6 +580,16 @@ def register(r: APIRouter, app_, views, scope, attachment, auth) -> None:
             return build_locator(app_, fid, body.selection.model_dump(exclude_none=True), project, body.block)
 
         return await run_in_threadpool(propose)
+
+    @r.post("/files/{fid}/scan/retry", operation_id="retry_source_scan", response_model=SourceFile, status_code=202,
+            openapi_extra=_contract("write", SourceScanRetry, errors=(409, 413)),
+            description="Start a bounded scan cycle for an exhausted scanner outage. Requires the current source version; consumes that revision atomically. Never auto-retry this command. Refuses infected/encrypted/too_large files and a scanner that is not configured. Poll the file for its actual outcome.")
+    async def retry_scan(request: Request, fid: FileID):
+        principal = gate(request, "write")
+        body = await _body(request, SourceScanRetry)
+        return await run_in_threadpool(app_.retry_source_scan, fid, body.version,
+                                      actor_kind="user" if principal.get("user_id") else "machine",
+                                      actor_id=principal.get("user_id") or principal.get("key_id"), request=request)
 
     @r.put("/files/{fid}/options", operation_id="update_source_options", response_model=SourceFile,
            openapi_extra=_contract("write", SourceOptions, errors=(409, 410)),
