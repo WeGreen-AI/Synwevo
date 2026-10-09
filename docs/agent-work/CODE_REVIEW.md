@@ -174,6 +174,12 @@ bff35a8真实CI在test_dataprep_extract.py来源断言失败：SDK被Dockerfile.
 
 | ID | 问题及影响 | 处理及证据 | 状态 |
 |---|---|---|---|
-| CR-071 | 原有engine.list_conversations只按updated_at分页，时间相同的会话会漏页；旧load-more失败可覆盖新搜索，历史重复行未去重 | 复用core sealed_token，时间/ID复合位置绑定本人及筛选并限时；保留旧before。前端请求代次、取消、页内去重与失败保留；4项真实HTTP/Store回归，419 Agent检查（418初跑+1回环授权复验）、149前端及真实三语长列表/键盘/手机/刷新验证 | 本地已验证，尚未提交/CI/部署；evidence/2026-10-09-agent-history |
+| CR-071 | 原有engine.list_conversations只按updated_at分页，时间相同的会话会漏页；旧load-more失败可覆盖新搜索，历史重复行未去重 | 复用core sealed_token，时间/ID复合位置绑定本人及筛选并限时；保留旧before。前端请求代次、取消、页内去重与失败保留；4项真实HTTP/Store回归，419 Agent检查（418初跑+1回环授权复验）、149前端及真实三语长列表/键盘/手机/刷新验证 | 已提交推送b2309ef；Actions37925001552完整运行镜像检查中，未宣称上线；evidence/2026-10-09-agent-history |
 
 CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务usage known、未发第二步released；本人预算实际v4 enabled，生产任务本身仍failed。见readonly-closeout证据，不再沿用上一行的未核实/暂停状态。
+
+### 2026-10-09 支付渠道诊断
+
+| ID | 问题及影响 | 处理及证据 | 状态 |
+|---|---|---|---|
+| CR-072 | 管理员只看到已选渠道，无法从产品读取商户默认配置状态；原生禁用检查按钮导致键盘焦点丢失（本轮浏览器发现） | 财务权限只读检查已保存版本、固定Stripe源站、有界分页/响应/并发、网络后权限/版本复核、未知状态及脱敏；UI保留焦点、单请求/取消、草稿提示与三语言。60支付关联+29角色矩阵+163前端、类型/构建/六守卫与浏览器通过；真实Stripe只读适配通过。evidence/2026-10-09-payment-readiness | 本地已验证，待提交/准确SHA CI/CD；未改生产支付配置或发起付款 |

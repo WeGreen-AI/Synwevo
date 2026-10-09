@@ -2,6 +2,7 @@ import { useId, useRef, useState, type FormEvent } from "react";
 import { post } from "@synwevo/auth-client";
 import { fmtTime, useI18n } from "@synwevo/ui";
 import { ActionDialog } from "./ActionDialog";
+import { PaymentReadiness } from "./PaymentReadiness";
 import { useAdminData } from "./data";
 import { fenText, parseYuan, yuanInput } from "./billing-money";
 import { PAYMENT_METHODS, PAYMENT_METHOD_LABELS, configuredPaymentMethods, paymentMethods, paymentMethodsText, type PaymentMethod } from "../lib/paymentMethods";
@@ -150,6 +151,8 @@ export function PaymentsTab({ onDenied, canManage }: { onDenied: () => void; can
       {state.created_at && <div><dt>{t("当前版本")}</dt><dd>{t("第 {n} 版", { n: state.revision })}</dd></div>}
     </dl>
     {!canManage && <p className="notice" role="note">{t("你可以查看支付设置，不能修改。")}</p>}
+    <PaymentReadiness revision={state.revision} savedMethods={configuredPaymentMethods(state.spec)}
+      hasDraft={canManage && (form !== null || current.credential !== "keep")} />
     {canManage && state.environment && <form className="col gap12" onSubmit={review} noValidate aria-describedby={problem ? `${id}-err` : undefined}>
       <label className="row gap8"><input type="checkbox" checked={current.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
         {t("开放钱包充值")}</label>

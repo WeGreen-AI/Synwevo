@@ -1,0 +1,26 @@
+{
+  "checked_at_unix": 1791545993,
+  "read_only": true,
+  "scope": "owner personal topups only; no customer/card/checkout details or provider keys",
+  "status_counts": [
+    {
+      "status": "failed",
+      "failure_code": "provider_unavailable",
+      "settings_revision": 3,
+      "method": null,
+      "count": 5,
+      "first_created_at": 1791465074,
+      "last_created_at": 1791465078
+    }
+  ],
+  "latest_paid_limit": 5,
+  "payment_settings": {
+    "revision": 3,
+    "enabled": 1,
+    "payment_methods": "[\"card\",\"wechat_pay\",\"alipay\"]",
+    "credential_revision": 1,
+    "credential_configured": 1
+  },
+  "paid": [],
+  "production_image": "synwevo:a41ea08a50b9047c8cf5bdd23ab982751b50d38c"
+}

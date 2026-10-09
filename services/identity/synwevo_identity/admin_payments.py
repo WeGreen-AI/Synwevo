@@ -14,6 +14,7 @@ line contains them; the state says only whether they are configured.
 Routes (prefix ``/api/admin/billing``):
 
   GET  /payments                      payment settings state (no secrets) and the webhook address
+  GET  /payments/readiness            read-only Stripe default-channel diagnostic, saved keys only
   POST /payments/publish              publish a new settings version (and replace/revoke secrets)
   GET  /finance                       totals, recent top-ups, grants, chargebacks, unused balances
   POST /grants                        credit a person or an organization, with a reason
@@ -27,6 +28,7 @@ import json
 import time
 
 from fastapi import APIRouter, Body, Request
+from fastapi.responses import JSONResponse
 
 from synwevo_core.billing import BillingError, Ledger
 from synwevo_core.billing.payment_settings import PROVIDER, PaymentSettings
@@ -121,6 +123,23 @@ def build_router(store, audit) -> APIRouter:
     def read(request: Request):
         actor(request, VIEW)
         return state(PaymentSettings(store, environment=environment) if environment else None)
+
+    @router.get("/payments/readiness")
+    def readiness(request: Request):
+        actor(request, VIEW)
+        settings = configured()
+        saved = settings.inspection_credentials()
+        if saved is None:
+            raise ServiceError(409, "payment_readiness_no_keys", "请先通过发布流程保存支付密钥，再检查已保存的支付渠道")
+        # No network request inside a Store transaction. Keys never reach the response.
+        result = request.app.state.payment_readiness.inspect(saved.secret_key, environment=environment)
+        actor(request, VIEW)
+        current = settings.read()
+        if current["revision"] != saved.revision:
+            raise ServiceError(409, "payment_revision_conflict", "支付配置已变化，请保留输入并重新读取")
+        return JSONResponse({**result, "environment": environment, "revision": current["revision"],
+                             "credential_revision": current["credential_revision"]},
+                            headers={"Cache-Control": "no-store"})
 
     @router.post("/payments/publish")
     def publish(request: Request, body: dict = Body(...)):

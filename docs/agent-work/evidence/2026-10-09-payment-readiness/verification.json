@@ -1,0 +1,93 @@
+{
+  "base_commit": "b2309ef2b931337d931838b42d1c1a0c8c28111c",
+  "verified_at": "2026-10-09T12:02:37.330498+00:00",
+  "source_sha256": {
+    "packages/core/synwevo_core/billing/payment_settings.py": "811a53b6d19b2f350147aa2dcdd687c7e6bc0c59a964327134e444196898a431",
+    "services/identity/synwevo_identity/admin_payments.py": "db74725073fe5f09ef4abd151c6284dd2cb46637e426b1d756154b57f02878be",
+    "services/identity/synwevo_identity/app.py": "37eae02eb6c86cd27b59ff8dc5609f721dc81b62fb859c051f127c2dbf80be50",
+    "services/identity/tests/test_platform_access.py": "cb251ec29ec60563855d76988dd49c257a19e39427fac86c2c0d511432856b7a",
+    "services/identity/web/src/governance/PaymentsTab.tsx": "147f173bdd5302483ec2c120f1a6f3f56c7114caf705d9ddfb2b4b98c87d61b3",
+    "services/identity/web/src/governance/payments.messages.ts": "5782c43e01fa36d037659951261bd7d09012ed274a8595412f4280a99ce83cb4",
+    "services/identity/web/tests/refusals.test.mjs": "c8794c9665b515f9022dbb414d757abca4746f3c5b37e21fb64ab06a2eb0edee",
+    "services/identity/synwevo_identity/payment_readiness.py": "0e1a9759d73a9fcfb22f66e8d3aa28cf58367cc37386be406c6d469467c46bdf",
+    "services/identity/tests/test_payment_readiness.py": "c37b2f05cd7070e66ff450352a7993dfb3b701cae6c4c0c376c8b9cc271d18fc",
+    "services/identity/web/src/governance/PaymentReadiness.tsx": "3e3f889ff4f7138e164d16ce6d079e9295438a7d838d3c46a1addc5f9d95b02c",
+    "services/identity/web/tests/payment-readiness.test.mjs": "3a5fb8ddab0590432073c0dcd6e938a0b2f0ea06b5c85f126da951289d6ec387"
+  },
+  "tests": {
+    "payment_and_related": 60,
+    "permission_matrix": 29,
+    "account_frontend": 163,
+    "typecheck": "passed",
+    "build": "passed",
+    "guards": [
+      "boundaries",
+      "brand",
+      "design",
+      "component_names",
+      "brand_assets",
+      "app_icon_assets"
+    ]
+  },
+  "browser": {
+    "instance": "synthetic isolated Store; controlled Stripe HTTP test transport, no actual payment",
+    "desktop": [
+      1280,
+      720
+    ],
+    "phone": [
+      390,
+      844
+    ],
+    "locales": [
+      "zh-Hans",
+      "en",
+      "zh-Hant"
+    ],
+    "checks": [
+      "manual check",
+      "unchanged channel selection",
+      "saved revision shown",
+      "keyboard Enter focus retained",
+      "slow read cancelled with focus restored",
+      "provider timeout shown honestly",
+      "recovery after fault",
+      "draft not verified warning",
+      "refresh discards prior results",
+      "scrollWidth equals clientWidth"
+    ],
+    "console_errors_warnings": [],
+    "reduced_motion": "not enabled in this browser; no new animation introduced",
+    "closed_tab_ids": [
+      "6",
+      "7"
+    ],
+    "fixture_pid": 78132,
+    "fixture_stopped": true
+  },
+  "real_provider": "Only GET /v1/account and paginated GET /v1/payment_method_configurations; sanitized flags match observed default configuration. No Checkout, transfer or payment created.",
+  "limits": [
+    "Default configuration available is not final merchant eligibility or CNY Checkout/payment acceptance.",
+    "0 paid owner orders in production read; 5 earlier generic failures cannot prove exact upstream cause.",
+    "Production settings changes and paid model acceptance await explicit user/product gates.",
+    "No CI/deployment success claimed for these new sources."
+  ],
+  "diagnosed_validation_failures": [
+    "First test fixture used invalid user status disabled; replaced with real PlatformAccess.revoke_role to test current authorization.",
+    "Permission matrix initially expected generic 200 for new credential-dependent route. Added explicit no-keys refusal for authorized roles; all 29 matrix tests passed.",
+    "UI error-coverage registry lacked new module; registered real admin surface, all 163 tests passed.",
+    "System python lacked Pillow; both asset checks passed using existing locked Python runtime.",
+    "First browser fixture password contained its synthetic username; policy correctly refused. Kept that fixture root and created distinct root with a valid synthetic password.",
+    "Unauthenticated /admin is correctly 404; browser acceptance proceeded through the real login page.",
+    "Browser revealed native disabled button lost focus; replaced by aria-disabled plus single-flight guard, verified focus on completion/cancel."
+  ],
+  "logs": {
+    "/private/tmp/synwevo-payment-readiness-full-20261009.log": "c389bf86f8e06719198705fa4d52fdd79f48c8420785f1573fab0bb971caa3f5",
+    "/private/tmp/synwevo-payment-readiness-junit-20261009.xml": "85f7371a4f6a159ada1b747e46567e846c54cf25451a0d90d768c7f37593b45c",
+    "/private/tmp/synwevo-payment-readiness-permissions-20261009.log": "e19c192cbdc4a00f915470ba25d185df0f16fc01ea1af734de6c3ce8dde4b5d2",
+    "/private/tmp/synwevo-payment-readiness-permissions-20261009.xml": "6c2bfd7542557d70b8eb73dc63cf7bcbe2631842373add412810bb75a80920c1",
+    "/private/tmp/synwevo-payment-readiness-web-final-20261009.log": "ee198a5ea057ccfb83eab77b56407ba71dac368f1570ea7fc0f7ece5e903fe62",
+    "/private/tmp/synwevo-payment-readiness-typecheck-20261009.log": "90d43a19db7fc439af56403f73baff5bae9f0142873b1916bdb6023f4856621a",
+    "/private/tmp/synwevo-payment-readiness-build-final-20261009.log": "1ab5fecdca15135f5019cc3ba4e92aadc12f4a164d455ece70302e4369f7d5db"
+  }
+}

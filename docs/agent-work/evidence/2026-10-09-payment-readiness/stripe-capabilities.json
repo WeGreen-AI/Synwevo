@@ -1,0 +1,11 @@
+{
+  "checked_at_unix": 1791546391,
+  "read_only": true,
+  "charges_enabled": true,
+  "capabilities": {
+    "card_payments": "active",
+    "alipay_payments": null,
+    "wechat_pay_payments": null
+  },
+  "created_checkout": false
+}

@@ -1,0 +1,41 @@
+{
+  "checked_at_unix": 1791546071,
+  "read_only": true,
+  "country": "HK",
+  "charges_enabled": true,
+  "payouts_enabled": true,
+  "default_configs": [
+    {
+      "active": true,
+      "is_default": true,
+      "methods": {
+        "card": {
+          "available": true,
+          "display_preference": {
+            "overridable": null,
+            "preference": "on",
+            "value": "on"
+          }
+        },
+        "alipay": {
+          "available": false,
+          "display_preference": {
+            "overridable": null,
+            "preference": "off",
+            "value": "off"
+          }
+        },
+        "wechat_pay": {
+          "available": false,
+          "display_preference": {
+            "overridable": null,
+            "preference": "off",
+            "value": "off"
+          }
+        }
+      }
+    }
+  ],
+  "has_more": false,
+  "created_checkout": false
+}

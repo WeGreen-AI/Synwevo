@@ -284,6 +284,18 @@ class PaymentSettings:
             return None
         return ResolvedPayments(state["revision"], state["spec"], secrets[0])
 
+    def inspection_credentials(self) -> ResolvedPayments | None:
+        """Server-side, read-only provider inspection, including while new top-ups are off.
+
+        This does not authorize checkout creation. Callers must authorize the administrator
+        and recheck the settings revision after the external read. Never serialize the result.
+        """
+        state = self.read()
+        if not state["spec"] or not state["credential_configured"]:
+            return None
+        secrets = self._secrets(state)
+        return ResolvedPayments(state["revision"], state["spec"], secrets[0]) if secrets else None
+
     def webhook_secret(self) -> str | None:
         """For verifying deliveries: available while credentials are stored, even when new
         top-ups are switched off, so payments already started still reach the wallet."""

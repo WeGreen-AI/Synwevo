@@ -86,6 +86,7 @@ ROUTES = [
     ("POST", "/api/admin/billing/cost-policy/preview", "platform.config.manage", False),
     ("POST", "/api/admin/billing/cost-policy/publish", "platform.config.manage", True),
     ("GET", "/api/admin/billing/payments", "platform.billing.view", False),
+    ("GET", "/api/admin/billing/payments/readiness", "platform.billing.view", False),
     ("POST", "/api/admin/billing/payments/publish", "platform.billing.manage", True),
     ("GET", "/api/admin/billing/finance", "platform.billing.view", False),
     ("POST", "/api/admin/billing/grants", "platform.billing.manage", True),
@@ -257,7 +258,10 @@ def _path(template, w, *, legacy: str | None = None):
 
 #: Risk changes the matrix reaches with valid bodies but no matching state: past the permission
 #: check they answer a state refusal, which nothing else could produce.
-RISK_STATE_REFUSALS = {"/api/admin/billing/risk/allowlist/{entry_id}/remove": (404, "risk_allowlist_not_found"),
+RISK_STATE_REFUSALS = {
+                       # No stored payment key in the matrix; authorized readers reach this refusal.
+                       "/api/admin/billing/payments/readiness": (409, "payment_readiness_no_keys"),
+                       "/api/admin/billing/risk/allowlist/{entry_id}/remove": (404, "risk_allowlist_not_found"),
                        "/api/admin/billing/risk/topups": (409, "model_cost_policy_required")}
 
 

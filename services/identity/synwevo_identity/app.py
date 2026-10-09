@@ -210,6 +210,8 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     from .admin_model_provider import build_router as build_model_provider_router
     api.include_router(build_model_provider_router(store, audit))
     from .admin_payments import build_router as build_admin_payments_router
+    from .payment_readiness import StripeReadiness
+    api.state.payment_readiness = StripeReadiness()
     api.include_router(build_admin_payments_router(store, audit))
     from .admin_model_risk import build_router as build_model_risk_router
     api.include_router(build_model_risk_router(store, audit))

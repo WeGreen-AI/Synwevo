@@ -1,0 +1,15 @@
+{
+  "read_only": true,
+  "created_checkout": false,
+  "adapter_result": {
+    "provider": "stripe",
+    "checked_at": 1791546814,
+    "charges_enabled": true,
+    "configuration_status": "available",
+    "methods": {
+      "card": true,
+      "wechat_pay": false,
+      "alipay": false
+    }
+  }
+}

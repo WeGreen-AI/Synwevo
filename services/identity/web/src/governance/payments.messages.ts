@@ -75,6 +75,57 @@ registerMessages({
   "频率限制须为正整数：每小时 1–100 单，每天 1–1000 单，未完成 1–20 单；每日金额上限须为有效金额。": { en: "Limits must be whole numbers: 1–100 orders per hour, 1–1000 per day, 1–20 open at a time; the daily amount limit must be a valid amount.", "zh-Hant": "頻率限制須為正整數：每小時 1–100 單，每天 1–1000 單，未完成 1–20 單；每日金額上限須為有效金額。" },
   "请同时填写 Stripe 密钥与 Webhook 签名密钥。": { en: "Enter both the Stripe secret key and the webhook signing secret.", "zh-Hant": "請同時填寫 Stripe 金鑰與 Webhook 簽章金鑰。" },
 
+  // ---- saved payment readiness (advisory; never a publication gate)
+  "暂时无法检查 Stripe 支付渠道，请稍后重试；这不会更改支付设置": {
+    en: "Stripe payment channels cannot be checked right now. Please try again later; this does not change payment settings.",
+    "zh-Hant": "暫時無法檢查 Stripe 支付渠道，請稍後重試；這不會變更支付設定" },
+  "支付渠道检查正在进行，请稍后重试": { en: "A payment channel check is already in progress. Please try again later.", "zh-Hant": "支付渠道檢查正在進行，請稍後重試" },
+  "请先通过发布流程保存支付密钥，再检查已保存的支付渠道": {
+    en: "Save payment keys through the publishing flow before checking saved payment channels.",
+    "zh-Hant": "請先透過發布流程儲存支付金鑰，再檢查已儲存的支付渠道" },
+  "已保存的支付渠道检查": { en: "Saved payment channel check", "zh-Hant": "已儲存的支付渠道檢查" },
+  "检查已保存的支付渠道": { en: "Check saved payment channels", "zh-Hant": "檢查已儲存的支付渠道" },
+  "取消检查": { en: "Cancel check", "zh-Hant": "取消檢查" },
+  "正在检查已保存的支付渠道…": { en: "Checking saved payment channels…", "zh-Hant": "正在檢查已儲存的支付渠道…" },
+  "仅检查当前已保存版本的凭据与渠道；未发布的草稿和新密钥不在检查范围内。充值关闭时也可检查已保存凭据。": {
+    en: "This checks only the credentials and channels in the current saved version. Unpublished drafts and new keys are outside its scope. Saved credentials can also be checked while top-ups are closed.",
+    "zh-Hant": "僅檢查目前已儲存版本的憑證與渠道；未發布的草稿和新金鑰不在檢查範圍內。儲值關閉時也可檢查已儲存憑證。" },
+  "你正在编辑支付设置或密钥。检查结果仅针对当前保存版本，不代表草稿或新密钥已经验证；发布后请重新检查。": {
+    en: "You are editing payment settings or keys. The result applies only to the current saved version and does not verify your draft or new keys. Check again after publishing.",
+    "zh-Hant": "你正在編輯支付設定或金鑰。檢查結果僅針對目前儲存版本，不代表草稿或新金鑰已經驗證；發布後請重新檢查。" },
+  "已保存的支付设置已变化，本次结果已丢弃。请刷新支付设置后重新检查。": {
+    en: "The saved payment settings have changed, so this result was discarded. Refresh the payment settings, then check again.",
+    "zh-Hant": "已儲存的支付設定已變更，本次結果已捨棄。請重新整理支付設定後再次檢查。" },
+  "检查范围：已保存第 {n} 版 · {env}；检查时间：{time}。": {
+    en: "Checked saved version {n} · {env}; checked at {time}.",
+    "zh-Hant": "檢查範圍：已儲存第 {n} 版 · {env}；檢查時間：{time}。" },
+  "正式环境": { en: "Live environment", "zh-Hant": "正式環境" },
+  "测试环境": { en: "Test environment", "zh-Hant": "測試環境" },
+  "默认配置可用": { en: "Available in the default configuration", "zh-Hant": "預設設定可用" },
+  "默认配置不可用": { en: "Unavailable in the default configuration", "zh-Hant": "預設設定不可用" },
+  "未能核实": { en: "Could not verify", "zh-Hant": "未能核實" },
+  "未找到 Stripe 默认支付配置，渠道状态未能核实。": {
+    en: "No Stripe default payment configuration was found. Channel status could not be verified.",
+    "zh-Hant": "未找到 Stripe 預設支付設定，渠道狀態未能核實。" },
+  "无法确定唯一的 Stripe 默认支付配置，渠道状态未能核实。": {
+    en: "A unique Stripe default payment configuration could not be identified. Channel status could not be verified.",
+    "zh-Hant": "無法確定唯一的 Stripe 預設支付設定，渠道狀態未能核實。" },
+  "Stripe 默认支付配置返回的信息不完整，部分渠道状态未能核实。": {
+    en: "The Stripe default payment configuration returned incomplete information. Some channel statuses could not be verified.",
+    "zh-Hant": "Stripe 預設支付設定傳回的資訊不完整，部分渠道狀態未能核實。" },
+  "Stripe 默认支付配置未启用，请到 Stripe 检查。": {
+    en: "The Stripe default payment configuration is inactive. Check it in Stripe.",
+    "zh-Hant": "Stripe 預設支付設定未啟用，請到 Stripe 檢查。" },
+  "Stripe 账户尚未启用收款。即使默认配置显示渠道可用，也不能据此认定可以收款；请到 Stripe 检查账户状态。": {
+    en: "The Stripe account is not enabled to accept payments. A channel being available in the default configuration does not establish that payments can be accepted. Check the account status in Stripe.",
+    "zh-Hant": "Stripe 帳戶尚未啟用收款。即使預設設定顯示渠道可用，也不能據此認定可以收款；請到 Stripe 檢查帳戶狀態。" },
+  "已保存的选择中包含默认配置不可用的渠道：{methods}。请到 Stripe 检查；如需调整，请通过原有“检查并发布”流程修改。": {
+    en: "Your saved selection includes channels unavailable in the default configuration: {methods}. Check them in Stripe; if changes are needed, use the existing “Review and publish” flow.",
+    "zh-Hant": "已儲存的選擇中包含預設設定不可用的渠道：{methods}。請到 Stripe 檢查；如需調整，請透過原有「檢查並發布」流程修改。" },
+  "Stripe 默认配置的可用状态不代表最终渠道资格、币种支持或订单成功。收银台显式指定的支付方式可能与默认配置展示不同；此检查不会更改所选渠道，也不会阻止发布。": {
+    en: "Availability in Stripe’s default configuration does not establish final channel eligibility, currency support or order success. Payment methods explicitly selected for checkout may differ from the default configuration shown here. This check does not change selected channels or prevent publishing.",
+    "zh-Hant": "Stripe 預設設定的可用狀態不代表最終渠道資格、幣別支援或訂單成功。收銀台明確指定的支付方式可能與預設設定展示不同；此檢查不會變更所選渠道，也不會阻止發布。" },
+
   // ---- finance
   "此部署尚未配置计费环境或 CNY 钱包单位，没有资金记录可以显示。": { en: "This deployment has no billing environment or CNY wallet unit configured, so there are no money records to show.", "zh-Hant": "此部署尚未設定計費環境或 CNY 錢包單位，沒有資金紀錄可以顯示。" },
   "只显示金额与元数据（付款方、时间、方式、理由），不包含任何对话或文档内容。环境：{env}。": { en: "Amounts and metadata only (payer, time, method, reason); never any conversation or document content. Environment: {env}.", "zh-Hant": "只顯示金額與中繼資料（付款方、時間、方式、理由），不包含任何對話或文件內容。環境：{env}。" },
