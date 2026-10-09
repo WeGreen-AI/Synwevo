@@ -1,0 +1,112 @@
+{
+  "checked_at_unix": 1791543111,
+  "read_only": true,
+  "turns": [
+    {
+      "turn": {
+        "id": "turn_6960c780bc6d",
+        "status": "failed",
+        "error_code": "billing_run_budget_exceeded",
+        "usage_state": "known",
+        "input_tokens": 4002,
+        "output_tokens": 291
+      },
+      "calls": [
+        {
+          "logical_id": "step:1",
+          "metering_state": "settled",
+          "reserved": 1,
+          "attempted": 1
+        },
+        {
+          "logical_id": "step:2",
+          "metering_state": "released",
+          "reserved": 0,
+          "attempted": 0
+        }
+      ],
+      "settlements": {
+        "settlements": 1,
+        "amount": 2805
+      },
+      "reconciled_events": 1
+    },
+    {
+      "turn": {
+        "id": "turn_580720effad4",
+        "status": "failed",
+        "error_code": "billing_run_budget_exceeded",
+        "usage_state": "known",
+        "input_tokens": 4002,
+        "output_tokens": 205
+      },
+      "calls": [
+        {
+          "logical_id": "step:1",
+          "metering_state": "settled",
+          "reserved": 1,
+          "attempted": 1
+        },
+        {
+          "logical_id": "step:2",
+          "metering_state": "released",
+          "reserved": 0,
+          "attempted": 0
+        }
+      ],
+      "settlements": {
+        "settlements": 1,
+        "amount": 2118
+      },
+      "reconciled_events": 1
+    },
+    {
+      "turn": {
+        "id": "turn_bd6bea90d784",
+        "status": "failed",
+        "error_code": "billing_run_budget_exceeded",
+        "usage_state": "known",
+        "input_tokens": 5864,
+        "output_tokens": 493
+      },
+      "calls": [
+        {
+          "logical_id": "step:1",
+          "metering_state": "settled",
+          "reserved": 1,
+          "attempted": 1
+        },
+        {
+          "logical_id": "step:2",
+          "metering_state": "released",
+          "reserved": 0,
+          "attempted": 0
+        }
+      ],
+      "settlements": {
+        "settlements": 1,
+        "amount": 7644
+      },
+      "reconciled_events": 1
+    }
+  ],
+  "personal_budget": {
+    "revision": 4,
+    "enabled": 1
+  },
+  "owner_turn_count": 15,
+  "payment": {
+    "revision": 3,
+    "enabled": true,
+    "credential_configured": true
+  },
+  "production_image": "synwevo:a41ea08a50b9047c8cf5bdd23ab982751b50d38c",
+  "checked_at": "2026-10-09T10:51:51+00:00",
+  "audit_script_sha256": "62f0e1f278db7e158e8fa3f2d74caac28ad90536b918c81ab458ba92466daea9",
+  "scope": "User-authorized metadata only: three existing turns, personal budget, payment switch, deployed image; no model calls, payment requests, mutations, chat text or credentials.",
+  "limits": [
+    "Task failures remain failures; only usage accounting was reconciled.",
+    "Configuration actor and change time were not queried.",
+    "Enabled payment configuration is not proof of a completed real payment."
+  ]
+}

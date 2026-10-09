@@ -561,3 +561,11 @@ Agent/充值/通知修复a41ea08经Actions37792532752完整verify与deploy成功
 5个skip为镜像无Node的真实客户端/SDK、无CLAMD_TEST_ADDRESS、未选LICENSE、镜像无docker；Node客户端在前置真实Node阶段执行，其他限制未伪装通过。警告为依赖及旧Pillow/测试cookie弃用，无测试失败。
 
 收尾仍未完成：生产旧失败turn的元数据恢复审计因自动审批两次超时未执行；浏览器恢复支付管理页的读取被自动审批拒绝（当前实际为无关私人PDF）。充值最后核实v1 disabled，未改变，真人重认证及真实卡支付仍缺证据。没有新模型调用、Checkout、配置绕过或手动部署。用户明确本轮后暂停，保存恢复步骤并停止新增工作。
+
+## 2026-10-09 授权只读补验及暂停
+
+用户要求本轮收尾暂停，并明确允许重试三个指定历史任务、个人预算及支付开关的只读核验。10:51:51Z SSH成功；Store(migrate=False)、query_only事务，仅选择状态/用量/计量字段，无聊天正文、密钥、模型或付款调用。生产current.json仍a41ea08；这不是本日全量健康重验。
+
+三个旧任务均failed/billing_run_budget_exceeded，usage已known；各一笔既有结算和一次usage.reconciled事件，step:1 settled，step:2 released且没有预留或上游尝试。修复的是用量投影，不能宣称任务成功。新证据见evidence/2026-10-09-readonly-closeout/production-metadata.json，包含审计脚本SHA256。
+
+发现旧状态已变化：个人预算最新v4 enabled，支付配置最新v3 enabled/credential_configured=true；本轮未修改它们，也未查询其操作者/发布时间。支付开关开启不等于已验证真实付款/签名唯一入账；保留此未验收项。不追加付费调用，不重复启用或创建Checkout。仅更新文档断点并暂停，无新产品代码、测试或部署。
