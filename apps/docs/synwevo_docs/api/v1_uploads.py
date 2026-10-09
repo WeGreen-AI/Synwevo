@@ -67,8 +67,6 @@ from synwevo_core.context import tenant as current_tenant
 from synwevo_core.errors import ServiceError, not_found
 from synwevo_core.store import Store, new_id, now
 
-from ..engine.limits import LIMITS
-
 UPLOAD_TTL_S = 24 * 3600
 MAX_OPEN_UPLOADS = int(env.docs("MAX_OPEN_UPLOADS", "20"))
 PURPOSES = ("source", "template")
@@ -286,7 +284,7 @@ def _copy_completed_blob(store: Store, uid: str, fd: int, digest: str) -> None:
     os.replace(stage, dest)
 
 
-def use_upload(store: Store, upload_id, make, kind: str) -> dict:
+def use_upload(store: Store, upload_id, make, kind: str, check_size=None) -> dict:
     """Turn a completed upload into a source file or template, exactly once.
 
     `make(filename, data)` does the actual work and returns the created object. The upload is
@@ -311,6 +309,8 @@ def use_upload(store: Store, upload_id, make, kind: str) -> dict:
         # Completed before the verdict: the bytes are not read, and not used for anything (CI-90).
         from ..services import earlier_malicious
         raise earlier_malicious(row.get("filename") or "upload")
+    if check_size is not None:
+        check_size(int(row["size"]), row["filename"])
     claimed = store.execute("UPDATE uploads SET status='consumed', consumed_by=?, updated_at=? "
                             "WHERE id=? AND tenant=? AND status='complete'",
                             (f"{kind}:pending", now(), upload_id, current_tenant()))
@@ -363,7 +363,7 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
             openapi_extra={"x-scope": "write", "x-idempotent": True, "requestBody": {"content": {"application/json": {
                 "schema": {"type": "object", "required": ["filename", "size"], "properties": {
                     "filename": {"type": "string", "maxLength": 255},
-                    "size": {"type": "integer", "minimum": 1, "description": "文件字节数，不超过文件大小上限"},
+                    "size": {"type": "integer", "minimum": 1, "description": "文件字节数，不超过 capabilities.limits.max_file_bytes 的当前接纳上限"},
                     "sha256": {"type": "string", "description": "可选：整个文件的 SHA-256（十六进制），complete 时校验"},
                     "purpose": {"type": "string", "enum": list(PURPOSES)}}}}}}})
     def create_upload(request: Request, body: dict = Body(...)):
@@ -374,8 +374,6 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
         size = body.get("size")
         if not isinstance(size, int) or isinstance(size, bool) or size < 1:
             raise ServiceError(400, "invalid", "size 必须是正整数（字节数）", {"field": "size"})
-        if size > LIMITS.max_file_bytes:
-            raise ServiceError(413, "too_large", f"文件超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限", {"field": "size"})
         sha = _sha_or_none(body.get("sha256"))
         purpose = body.get("purpose")
         if purpose is not None and purpose not in PURPOSES:
@@ -385,6 +383,7 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
             raise ServiceError(400, "invalid", f"不认识的字段：{', '.join(sorted(unknown))}", {"field": sorted(unknown)[0]})
 
         def make():
+            app_.require_upload_size(size, name, field="size")
             t = now()
             live = store.one("SELECT COUNT(*) AS n FROM uploads WHERE tenant=? AND status IN ('open','complete') "
                              "AND expires_at >= ?", (current_tenant(), t))["n"]
@@ -424,7 +423,8 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
         return _view(visible_upload(uid), public_base(request))
 
     @r.put("/uploads/{uid}", response_model=UploadView, summary="写入一段字节（Content-Range: bytes 起-止/总长）",
-           responses={409: {"$ref": "#/components/responses/Conflict"},
+           responses={413: {"description": "Content Too Large", "$ref": "#/components/responses/PayloadTooLarge"},
+                      409: {"$ref": "#/components/responses/Conflict"},
                       410: {"$ref": "#/components/responses/Gone"},
                       416: {"description": "Range Not Satisfiable", "$ref": "#/components/responses/RangeNotSatisfiable"}},
            openapi_extra={"x-scope": "write", "requestBody": {"required": True, "content": {
@@ -440,6 +440,7 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
             raise err
         if row["status"] != "open":
             raise ServiceError(409, "upload_not_open", "该上传已完成校验，不能再写入", {"status": row["status"]})
+        app_.require_upload_size(int(row["size"]), row["filename"])
         size, received = int(row["size"]), int(row["received"])
         cr = request.headers.get("content-range")
         if cr:
@@ -512,7 +513,8 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
         return _view(row, public_base(request))
 
     @r.post("/uploads/{uid}/complete", response_model=UploadView,
-            responses={409: {"$ref": "#/components/responses/Conflict"},
+            responses={413: {"description": "Content Too Large", "$ref": "#/components/responses/PayloadTooLarge"},
+                      409: {"$ref": "#/components/responses/Conflict"},
                        410: {"$ref": "#/components/responses/Gone"}},
             summary="完成上传：校验大小与 SHA-256 后保存", openapi_extra={"x-scope": "write"})
     def complete_upload(request: Request, uid: str, body: dict = Body(default={})):
@@ -523,6 +525,7 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
             raise err
         if row["status"] in ("complete", "consumed"):
             return _view(row, public_base(request))           # completing twice is not an error
+        app_.require_upload_size(int(row["size"]), row["filename"])
         declared = _sha_or_none(row.get("sha256"))
         given = _sha_or_none((body or {}).get("sha256"))
         if declared and given and declared != given:

@@ -1,3 +1,4 @@
+import { fmtSize } from "@synwevo/ui";
 import { serverText, issueText } from "../lib/presentation";
 import { errorText } from "../lib/perm";
 import { t as tr, useI18n, LanguageMenu, BrandMark } from "@synwevo/ui";
@@ -28,6 +29,7 @@ export default function Capabilities() {
           {d && (
             <>
               <div className="notice info mb8">{tr("当前部署：排版引擎 ")}<b>{d.environment.libreoffice ? tr("已启用") : tr("未启用")}</b>{tr("；本地文字识别 ")}<b>{d.environment.tesseract ? tr("已启用") : tr("未启用")}</b>{tr("（语言：")}{d.environment.ocr_languages.join(", ") || tr("无")}{tr("）。未经验证的格式不标为支持。")}</div>
+              {d.limits?.max_file_bytes > 0 && <p className="small">{tr("每个文件最多 {size}；按当前安全检查规则接纳。", { size: fmtSize(d.limits.max_file_bytes) })}</p>}
               <div className="row wrap gap4 mb8">{Object.entries(d.legend).map(([k, v]) => <span key={k} className={`badge ${cls(k)}`}>{lab(k)}：{serverText(v as string)}</span>)}</div>
               <div className="card" style={{ overflow: "auto" }}>
                 <table className="tbl small" style={{ minWidth: 1700, tableLayout: "fixed" }}>

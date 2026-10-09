@@ -31,6 +31,8 @@
 
 ## 2. 入口覆盖：所有字节汇聚到一个函数
 
+2026-10-09 CR-073：Docs新上传先由`App.require_upload_size`检查文件上限与启用的扫描上限，再哈希、存储、排队或解析。已知超限返回413，不新增`scan_failed`行。工作台、机器capabilities/usage、分片创建/写入/完成和直接服务调用共享该规则；分片重放回执、历史已接纳文件保持原语义。扫描器实际限制比配置更低时，仍保留失败即拒绝的`too_large`结果，不能假定配置代表实际扫描成功。工作台跟踪scanning→parsing及有retry_at的恢复，永久拒绝不无限轮询。
+
 | 入口 | 路径 | 汇聚点 |
 |---|---|---|
 | 工作台多文件上传 | `POST /api/projects/{pid}/sources` | `App.add_source` |

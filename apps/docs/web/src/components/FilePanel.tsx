@@ -1,3 +1,4 @@
+import { useUploadLimit } from "../lib/uploadLimit";
 import { formatNumber } from "@synwevo/ui";
 import { DownloadLink } from "./ApiResource";
 import { serverText, issueText, diagnosticText } from "../lib/presentation";
@@ -36,6 +37,7 @@ export default function FilePanel({ projectId, sources, active, onActive, onChan
   const input = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
+  const uploadLimit = useUploadLimit();
   const { confirm } = useDialog();
 
   useEffect(() => {
@@ -54,6 +56,12 @@ export default function FilePanel({ projectId, sources, active, onActive, onChan
       const fd = new FormData();
       fd.append("files", f);
       try {
+        const refused = uploadLimit.refusal(f);
+        if (refused) {
+          setUploads((u) => u.map((x) => x.id === id ? { ...x, err: refused } : x));
+          toast(refused, "err");
+          return;
+        }
         await upload(`/api/projects/${projectId}/sources`, fd, (p) => setUploads((u) => u.map((x) => (x.id === id ? { ...x, p } : x))));
         setUploads((u) => u.map((x) => (x.id === id ? { ...x, p: 1 } : x)));
       } catch (e: any) {
@@ -143,7 +151,7 @@ export default function FilePanel({ projectId, sources, active, onActive, onChan
       ) : (
         // A real button: reachable with Tab and activated with Enter / Space. The drop target
         // for dragged files is the whole panel, so dragging stays an extra, not the only way.
-        <button type="button" className={`dropzone${hot ? " hot" : ""}`} onClick={() => input.current?.click()}>{tr("＋ 拖入或点击上传")}<div className="tiny">{tr("可多选：XLSX/CSV/DOCX/PDF/图片/PPTX 等")}</div>
+        <button type="button" className={`dropzone${hot ? " hot" : ""}`} onClick={() => input.current?.click()}>{tr("＋ 拖入或点击上传")}<div className="tiny">{tr("可多选：XLSX/CSV/DOCX/PDF/图片/PPTX 等")}</div><div className="tiny">{uploadLimit.note}</div>
         </button>
       )}
       <input ref={input} type="file" multiple hidden onChange={(e) => { if (e.target.files) doUpload(e.target.files); e.target.value = ""; }} />

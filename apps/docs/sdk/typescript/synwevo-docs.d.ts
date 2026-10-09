@@ -446,7 +446,7 @@ export interface Capabilities {
     malware_scan: Record<string, unknown>;
     [key: string]: unknown;
   };
-  limits: { max_file_mb: number; max_pages: number; max_cells: number; max_records_per_job: number };
+  limits: { max_file_bytes: number; configured_max_file_bytes: number; scan_max_file_bytes: number | null; max_file_mb: number; max_pages: number; max_cells: number; max_records_per_job: number };
   [key: string]: unknown;
 }
 
@@ -465,6 +465,9 @@ export interface Usage {
     requests_per_minute: number;
     workspace_requests_per_minute: number;
     policy_sources: Record<string, unknown>;
+    max_file_bytes: number;
+    configured_max_file_bytes: number;
+    scan_max_file_bytes: number | null;
     max_file_mb: number;
     max_pages: number;
     max_cells: number;

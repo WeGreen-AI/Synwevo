@@ -323,14 +323,31 @@ class App:
                     raise ServiceError(400, "bad_rule", f"标记的正则表达式无效：{e}",
                                        {"field": "block.anchor", "regex_error": str(e)}) from e
 
+    def upload_limits(self) -> dict:
+        """The same admission policy for UI, machine uploads and direct service callers."""
+        scan_max = self.scan_policy.max_bytes if self.scan_policy.enabled else None
+        effective = min(LIMITS.max_file_bytes, scan_max) if scan_max is not None else LIMITS.max_file_bytes
+        return {"max_file_bytes": effective, "max_file_mb": effective / (1024 * 1024),
+                "configured_max_file_bytes": LIMITS.max_file_bytes, "scan_max_file_bytes": scan_max}
+
+    def require_upload_size(self, size: int, filename: str = "file", *, field: str | None = None) -> None:
+        # Refuse before hashing, storing, queueing or parsing. Access to already accepted
+        # resources is independent of the admission limit for a new upload.
+        if size > LIMITS.max_file_bytes:
+            raise ServiceError(413, "too_large", f"文件「{filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限",
+                               {"filename": filename, "limit_mb": LIMITS.max_file_bytes / (1024 * 1024),
+                                "limit_bytes": LIMITS.max_file_bytes, **({"field": field} if field else {})})
+        if self.scan_policy.enabled and size > self.scan_policy.max_bytes:
+            limit = self.scan_policy.max_bytes
+            raise ServiceError(413, "scan_limit", "文件超过安全检查的大小上限，无法接纳；请拆分或压缩后重新上传。",
+                               {"limit_mb": limit / (1024 * 1024), "limit_bytes": limit, **({"field": field} if field else {})})
+
     # ================================================================ sources
     def add_source(self, pid: str, filename: str, data: bytes, actor: str | None = None) -> dict:
         """`actor` is the signed-in person who uploaded (None for machine principals): they are the
         one told if the file is later rejected by the security check."""
         self.get_project(pid)
-        if len(data) > LIMITS.max_file_bytes:
-            raise ServiceError(413, "too_large", f"文件「{filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限",
-                               {"filename": filename, "limit_mb": LIMITS.max_file_bytes // (1024 * 1024)})
+        self.require_upload_size(len(data), filename)
         filename = safe_display_name(filename)
         blob = hashlib.sha256(data).hexdigest()
         if Q.verdict(self.store, blob) or (
@@ -961,6 +978,7 @@ class App:
 
     def upload_template(self, filename: str, data: bytes, name: str | None = None) -> dict:
         from .engine.detect import detect
+        self.require_upload_size(len(data), filename)
         filename = safe_display_name(filename)
         if Q.verdict(self.store, hashlib.sha256(data).hexdigest()):
             raise earlier_malicious(filename)

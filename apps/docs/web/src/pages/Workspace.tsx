@@ -226,17 +226,22 @@ function Workspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pid]);
 
-  // poll while files are parsing
+  // Follow the entire acceptance lifecycle, including scanner recovery. A permanent
+  // too_large/rejected result has no retry deadline and must not poll forever.
   useEffect(() => {
-    if (!sources.some((s) => s.status === "parsing")) return;
+    const running = sources.some((s) => s.status === "parsing" || s.status === "scanning");
+    const retryAt = Math.min(...sources.filter((s) => s.status === "scan_failed" && Number.isFinite(s.scan?.retry_at))
+      .map((s) => s.scan!.retry_at!));
+    if (!running && !Number.isFinite(retryAt)) return;
+    const delay = running ? 900 : Math.max(900, Math.min(30000, retryAt * 1000 - Date.now()));
     let alive = true;
     let t: any = setTimeout(async function tick() {
       const p = await reload();
       // A refresh that failed for transport reasons says nothing about whether parsing has
       // finished, so keep asking. On success setSources re-runs this effect, and the `alive`
       // guard stops the old tick from scheduling a second timer alongside the new one.
-      if (alive && !p) t = setTimeout(tick, 900);
-    }, 900);
+      if (alive && !p) t = setTimeout(tick, delay);
+    }, delay);
     return () => { alive = false; clearTimeout(t); };
   }, [sources, reload]);
 

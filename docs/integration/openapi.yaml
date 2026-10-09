@@ -3383,7 +3383,7 @@ paths:
                 size:
                   type: integer
                   minimum: 1.0
-                  description: 文件字节数，不超过文件大小上限
+                  description: 文件字节数，不超过 capabilities.limits.max_file_bytes 的当前接纳上限
                 sha256:
                   type: string
                   description: 可选：整个文件的 SHA-256（十六进制），complete 时校验
@@ -3524,6 +3524,9 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "413":
+          description: Content Too Large
+          $ref: "#/components/responses/PayloadTooLarge"
         "409":
           $ref: "#/components/responses/Conflict"
           description: Conflict
@@ -3594,6 +3597,9 @@ paths:
               $ref: "#/components/headers/RateLimit"
             RateLimit-Policy:
               $ref: "#/components/headers/RateLimit-Policy"
+        "413":
+          description: Content Too Large
+          $ref: "#/components/responses/PayloadTooLarge"
         "409":
           $ref: "#/components/responses/Conflict"
           description: Conflict

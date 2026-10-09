@@ -2,6 +2,11 @@ import type { Messages } from "@synwevo/ui/i18n-core";
 
 /** Docs interface only. Template contents, values and persisted enum keys are never translated. */
 export const messages = {
+  "每个文件最多 {size}；按当前安全检查规则接纳。": {"en": "Up to {size} per file, subject to the current security checks.", "zh-Hant": "每個文件最多 {size}；按目前安全檢查規則接納。"},
+  "暂时无法读取文件大小上限，上传时仍会按服务器规则检查。": {"en": "The file size limit is temporarily unavailable. The server will still check uploads.", "zh-Hant": "暫時無法讀取文件大小上限，上傳時仍會按伺服器規則檢查。"},
+  "正在读取文件大小上限…": {"en": "Loading the file size limit…", "zh-Hant": "正在讀取文件大小上限…"},
+  "文件「{name}」超过当前 {size} 上限，请缩小后重新上传。": {"en": "The file “{name}” exceeds the current {size} limit. Reduce its size and upload again.", "zh-Hant": "文件「{name}」超過目前 {size} 上限，請縮小後重新上傳。"},
+
   "排队中": {
     "en": "Queued",
     "zh-Hant": "排隊中"

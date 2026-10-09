@@ -245,8 +245,8 @@ form-action 'self'; object-src 'none'`）、`X-Frame-Options: SAMEORIGIN`、`Ref
 上传后接纳与解析都是异步的：轮询 `/files/{fid}` 直到 `status` 不再是 `scanning`、`scan_failed` 或 `parsing`
 （两个 SDK 的 `wait_for_file` / `waitForFile` 就是这样等的）。部署配置了恶意软件扫描时，文件先进入 `scanning`：
 引擎判定干净才进入 `parsing`；命中签名则变为 `rejected`（字节已隔离删除，`/files/{fid}/content` 返回 410
-`rejected_malware`，同样的字节再上传直接 400 `malware_detected`）；引擎暂不可用或文件超过扫描上限则停在
-`scan_failed`（服务端按 30 s→10 min 的间隔自动重试，下载返回 409 `not_yet_accepted`）。**不要因为 `scan_failed`
+`rejected_malware`，同样的字节再上传直接 400 `malware_detected`）；引擎暂不可用则停在
+`scan_failed`（服务端按 30 s→10 min 的间隔自动重试，下载返回 409 `not_yet_accepted`）。已知超过部署扫描上限的新上传直接返回413 `scan_limit`，不写业务记录或blob；已有暂存或扫描器实际流上限更低的文件仍可能为`scan_failed/too_large`，这个状态没有自动重试，须先解决大小或配置。**不要因为 `scan_failed`
 重新上传**：那只会把同样的字节再排一次队。`scan` 对象给出结论：`status`（`pending`/`clean`/`infected`/`encrypted`/`error`/
 `too_large`/`not_configured`/`unscanned`）、`signature`、`engine`（引擎与病毒库版本）、`reason`、`sha256`（结论绑定的内容摘要）、
 `checked_at`、`attempts`、`retry_at`。未配置扫描器的部署把每个文件标为 `not_configured`，扫描功能上线前的历史文件为
@@ -561,7 +561,7 @@ SYNWEVO_DOCS_WEBHOOK_EVENTS=job.completed,job.completed_with_errors,job.failed,j
 请求同样记在其接口模板下（从不记录原始路径、令牌、查询或正文）。
 
 * Docs 项目、来源文件、模板、组织共享模板、任务/逐项结果/运行记录/产物列表支持 `offset` + `limit`，响应含 `total`、`next_offset`；也可原样跟随 `next_cursor` 或 `Link; rel="next"`。两种定位不能同时使用。
-* 文件大小上限 `SYNWEVO_DOCS_MAX_FILE_MB`（默认 100 MB）；单任务样本上限 `SYNWEVO_DOCS_MAX_RECORDS_PER_JOB`（默认 20 000）。
+* 文件接纳上限是 `SYNWEVO_DOCS_MAX_FILE_MB`（默认100 MiB）与已启用扫描策略 `SYNWEVO_CLAMD_MAX_BYTES`（默认25 MiB）的较小值。`/capabilities`与`/usage`返回精确`limits.max_file_bytes`，既有`max_file_mb`按该值换算；另有`configured_max_file_bytes`与`scan_max_file_bytes`（扫描关闭时null），不要硬编码100 MB。普通上传、模板、服务器导入及分片创建/写入/完成均执行同一规则。降低上限不抹去分片上传的旧回执或已接纳业务对象；旧暂存内容仍可查询/取消，使用前重新检查。重新发送multipart文件仍执行当前大小上限，读取已有业务对象不需重新上传。单任务样本上限 `SYNWEVO_DOCS_MAX_RECORDS_PER_JOB`（默认 20 000）。
 * 数据保留：产物与来源文件保存在 `SYNWEVO_DATA_DIR`，不自动过期；清理策略见 [../operations.md](../operations.md)。
 * 兼容性：`/api/v1` 路径与字段只增不删；新增字段可能随时出现，客户端应忽略未知字段。定义文档（`docweave.*`）带 `version`，不兼容版本会被拒绝并说明。界面内部接口（不含 `/v1`）不属于兼容承诺范围。
 

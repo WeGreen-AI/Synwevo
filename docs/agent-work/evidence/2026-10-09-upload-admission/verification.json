@@ -1,0 +1,76 @@
+{
+  "checked_at": "2026-10-09T12:33:09.656995+00:00",
+  "base_commit": "583694816ac1e396c6be0be75aa32a993125d49f",
+  "source_sha256": {
+    "apps/docs/sdk/typescript/synwevo-docs.d.ts": "ad4363f179e35ffefe46390362f667d079ccf8994a4c9cc1cc909a828953e897",
+    "apps/docs/synwevo_docs/api/app.py": "2ece4674ed832ccd5091251917136ab5738c004a3cb4d322f6eb45952389aba7",
+    "apps/docs/synwevo_docs/api/v1.py": "46533a22cd67e2d1bc1f408c3cafddaceb30b77aa1115e6fb6293e7f0b76fe26",
+    "apps/docs/synwevo_docs/api/v1_governance.py": "e490aed676eb76632472e7555d42e505859ac0249dffc24d732a0a6f37d4aabe",
+    "apps/docs/synwevo_docs/api/v1_uploads.py": "85edef35239fdfcfd746e4c07e640288c619e0c53bfcec888e6f64ee775224d3",
+    "apps/docs/synwevo_docs/services.py": "0df5a65fe62c63172fc66917abed064d3399b8f645fb381400fa7f162d954e0d",
+    "apps/docs/tests/test_upload_admission.py": "6c800c30a60b311209f53dca8e3925a5518247fa3032af404990d0891830013d",
+    "apps/docs/web/src/components/FilePanel.tsx": "fb9cc2d2c65cf1caf953dd70bc486e85775e4072a5d77c8015196ff4d5d48327",
+    "apps/docs/web/src/components/TemplateChooser.tsx": "79473ef63e2db73066f2e7f80bf76da92203246fc4ca57fca4fcf856440569f3",
+    "apps/docs/web/src/lib/uploadLimit.ts": "2b32c68f2cbae1fbe899e314e6ebe6d5e7835264f54ee5fff7f5d3d39b792fd6",
+    "apps/docs/web/src/messages.ts": "bdde07f97de34ebe4fb7f83926b9fef1ba1a18398550a1bd04218aeac0dbaaa2",
+    "apps/docs/web/src/pages/Capabilities.tsx": "70c8ba477e14017a5b30def854e80781cf7d993deef3ddbe6456ce7ff89d4f29",
+    "apps/docs/web/src/pages/Workspace.tsx": "2e21fc7daf9bbca5e79e5450dc939fb742a0b307d6cb512925b4357008c185e7",
+    "apps/docs/web/src/styles.css": "137c2a346877b0ea344b7d6d5fb896532a92beb2768d904d7268c26f1441b7f2"
+  },
+  "validation": {
+    "backend_unique_passed": 126,
+    "backend_detail": "65 existing upload/replay/durability/API/contract/governance + 15 final admission cases + 46 scan/retry/rescan",
+    "frontend_passed": 145,
+    "typecheck": "Docs passed",
+    "build": "Docs passed",
+    "guards": "six passed; design repeated after final local CSS fix",
+    "openapi": "export regenerated; drift/route tests passed"
+  },
+  "browser": {
+    "url": "http://127.0.0.1:33873",
+    "synthetic_only": true,
+    "authentication": "normal session login",
+    "scanner": "explicit isolated clamd protocol fixture, not proof of real malware detection",
+    "viewports": [
+      "desktop default",
+      "390x844"
+    ],
+    "locales": [
+      "zh-Hans",
+      "en",
+      "zh-Hant"
+    ],
+    "checks": [
+      "mixed valid/oversize source upload",
+      "server record counts 2 ready, 69 bytes, no template or resumable rows",
+      "second source becomes Ready without reload after polling fix",
+      "Enter chooser and Escape modal, focus preserved",
+      "template refusal remains in dialog",
+      "phone template tab overlap fixed",
+      "no document horizontal overflow at390px",
+      "deep-link refresh",
+      "console warnings/errors empty"
+    ],
+    "not_claimed": [
+      "production upload",
+      "real scanner acceptance",
+      "reduced-motion emulation",
+      "payment or model calls"
+    ]
+  },
+  "diagnosed_test_failures": [
+    "new fixture initially selected nonexistent projects.version; corrected to real row",
+    "helper wait_parsed only waits parsing, so test now waits entire scan+parse lifecycle",
+    "import root fixture initially wrong shape; corrected to actual list contract",
+    "new tests initially conflated UI detail with machine error.details; assert both real envelopes",
+    "existing resumable field=size contract caught omission; service retains that field and original test passed"
+  ],
+  "release": "local verified; commit and push pending behind current production CI queue",
+  "local_log_sha256": {
+    "/private/tmp/synwevo-upload-admission-final-junit-20261009.xml": "9aef6dc9909cdee1a56718440bf2106b85b68376a25ae018d860c99aa6525723",
+    "/private/tmp/synwevo-upload-admission-focused-junit-20261009.xml": "28f026a5050c14a7922514f5d7909b2d38d93e4bcc1d019fead33bdd35775979",
+    "/private/tmp/synwevo-upload-scan-junit-20261009.xml": "39ee14a233673ebbf9b60c4fffe9ca5a6db28d2beee19d7dcefe6acce737fefd",
+    "/private/tmp/synwevo-upload-admission-web-final-20261009.log": "4613be124bd594b07a9c1b1b6982580167b5f4bdf62c7f84671ed7c9b06cb24a",
+    "/private/tmp/synwevo-upload-admission-build-final-20261009.log": "9d4418abc159fad791a6b2899fd1d30c4dfedb2a14924f2bc287cc11b242a243"
+  }
+}

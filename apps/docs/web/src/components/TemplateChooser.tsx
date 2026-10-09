@@ -1,3 +1,4 @@
+import { useUploadLimit } from "../lib/uploadLimit";
 import { formatNumber } from "@synwevo/ui";
 import { serverText, issueText, diagnosticText } from "../lib/presentation";
 import { t as tr, useI18n } from "@synwevo/ui";
@@ -22,6 +23,7 @@ export default function TemplateChooser({ projectId, settingsRev, current, onDon
   const fileRef = useRef<HTMLInputElement>(null);
   const nav = useNavigate();
   const toast = useToast();
+  const uploadLimit = useUploadLimit();
 
   // A library that failed to load is not an empty library: say which it is.
   const loadLib = () => { setLibErr(null); get("/api/templates").then(setLib).catch((e) => setLibErr(errorText(e))); };
@@ -46,6 +48,9 @@ export default function TemplateChooser({ projectId, settingsRev, current, onDon
   };
 
   const doUpload = async (f: File) => {
+    if (busy) return;
+    const refused = uploadLimit.refusal(f);
+    if (refused) { setErr(refused); return; }
     setBusy(true);
     setErr(null);
     const fd = new FormData();
@@ -81,7 +86,7 @@ export default function TemplateChooser({ projectId, settingsRev, current, onDon
 
   return (
     <Modal title={tr("设置目标模板")} size="wide" onClose={onClose}>
-      <div className="tabs" style={{ marginTop: -8 }}>
+      <div className="tabs template-choice-tabs" style={{ marginTop: -8 }}>
         <button type="button" aria-pressed={tab === "upload"} className={tab === "upload" ? "on" : ""} onClick={() => setTab("upload")}>{tr("上传已有文件作为模板")}</button>
         <button type="button" aria-pressed={tab === "new"} className={tab === "new" ? "on" : ""} onClick={() => setTab("new")}>{tr("在软件内新建模板")}</button>
         <button type="button" aria-pressed={tab === "library"} className={tab === "library" ? "on" : ""} onClick={() => setTab("library")}>{tr("从模板库选择")}{lib ? `（${lib.length}）` : ""}</button>
@@ -96,7 +101,8 @@ export default function TemplateChooser({ projectId, settingsRev, current, onDon
             onDrop={(e) => { e.preventDefault(); setHot(false); const f = e.dataTransfer.files[0]; if (f) doUpload(f); }}>
             {busy ? tr("上传中 {v1}%…", { v1: Math.round(prog * 100) }) : <>{tr("拖入模板文件，或 ")}<b>{tr("点击选择")}</b><div className="small mt8">{tr("支持 DOCX、XLSX、PDF、PPTX，以及 PNG / JPEG 图片（直接输出同尺寸图片）；DOC/XLS/PPT/ODT/ODS/ODP/RTF 会先经格式转换（会提示可能的版式变化），BMP/TIFF/WEBP 输出为 PNG")}</div></>}
           </button>
-          <input ref={fileRef} type="file" hidden accept=".docx,.docm,.xlsx,.xlsm,.pdf,.pptx,.pptm,.doc,.xls,.ppt,.odt,.ods,.odp,.rtf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp" onChange={(e) => e.target.files?.[0] && doUpload(e.target.files[0])} />
+          <div className="tiny muted">{uploadLimit.note}</div>
+          <input ref={fileRef} type="file" hidden accept=".docx,.docm,.xlsx,.xlsm,.pdf,.pptx,.pptm,.doc,.xls,.ppt,.odt,.ods,.odp,.rtf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp" onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void doUpload(file); }} />
           <div className="notice small">{tr("原始文件保持不变。上传后在右侧预览中选中内容，用「设为待填区域」创建字段。")}</div>
         </div>
       )}

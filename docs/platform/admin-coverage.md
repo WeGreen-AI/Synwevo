@@ -187,7 +187,7 @@
 | D12 | 中 | **组织自定义角色的理由被丢弃。**<br>• UI 要求填写理由，但路由既不接收也不存储（`ac/organization_routes.py:191,203,217,229,241`）。<br>• 移除角色时不要求操作者持有该角色的权限（`core/org_roles.py:287-289`）。<br>**修复状态（2026-10-04，49701fe）：** 五个角色写操作要求并记录理由（8–500 字）；分配时加上和收回的角色都须在操作者权限之内，保留不动的角色不要求；分配对话框禁用够不着的角色并说明原因。 |
 | D13 | 中 | **举报复核有并发问题。**<br>• 先查后改，更新语句没有 `WHERE status='open'`（`core/messaging.py:699-721`），两人同时复核时后者覆盖前者。<br>• 其他管理者的 `conversation.reported` 待办永远停在 pending。<br>**修复状态（2026-10-04，e730e0f）：** 举报在删除消息的同一事务里先以 `WHERE status='open'` 认领，并发的第二个决定得到 409，消息不变。 |
 | D14 | 中 | **转换器内存上限高于容器上限。** `CONVERTER_MEMORY_MB` 默认 8192 MB，而 docs 容器的 `mem_limit` 是 2304m（`prod/compose.yaml:69`）。 |
-| D15 | 中 | **扫描上限低于上传上限。** 扫描上限 25 MiB（`SYNWEVO_CLAMD_MAX_BYTES`），Docs 上传上限 100 MB，nginx `client_max_body_size` 是 100m。25–100 MiB 的文件会被接收，然后永远停在 `scan_failed/too_large`。 |
+| D15 | 中 | **扫描与上传接纳上限已统一（CR-073，本地已验证，尚未发布）。** 新文件按两者较小值提前413拒绝，UI/API/usage显示精确字节上限；分片创建/写入/完成/消费和直接服务均校验，旧回执/已接纳对象不受影响。实际扫描器限制更低仍失败即拒绝。 |
 | D16 | 中 | **服务账户重新启用不留痕。** 不写安全日志，也不像空间解冻那样返回恢复说明；从旧备份恢复时可能重新应用停用。 |
 | D17 | 中 | **`operator` 角色名不副实（已复核）。** 它没有任何能力，把管理员改成 operator 会静默移除全部管理权，而 UI 把它标为"平台运维"（`acweb/Admin.tsx:237`）。<br>**已修复（仅本地，B1-2）**：v27 迁移为无平台权限并写审计，选择器与筛选移除，兼容路由拒绝 `operator`（A3）。 |
 | D18 | 低–中 | **没有调用方的代码和虚设路径。**<br>• 无调用方：`Messaging.sweep_unused_attachments`（未发送的附件永不清理）、`messaging_search.rebuild`、`PushSubscriptions.revoke_all_for_user`、`capabilities.clear_probe_cache`。<br>• `ac/notify.py:9` 说"由管理员 outbox 重驱"，但这个路径不存在。<br>• 桥接 outbox 失败 10 次后静默退出处理，也看不到。 |

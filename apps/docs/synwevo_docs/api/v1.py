@@ -38,7 +38,7 @@ from .. import definitions as D
 from ..capabilities import capability_report
 from ..engine.limits import LIMITS
 from ..jobs import ProjectContext
-from ..services import scan_out
+from ..services import App, scan_out
 from . import idempotency as I
 from . import v1_cursor
 from .v1_job_models import (JobArtifact, JobCancelledView, JobEventsPage, JobItem, JobListItem,
@@ -249,7 +249,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         rep = capability_report()
         rep["environment"]["malware_scan"] = app_.scan_policy.describe()
         return {"api_version": API_VERSION, **rep, "limits": {
-            "max_file_mb": LIMITS.max_file_bytes // (1024 * 1024), "max_pages": LIMITS.max_pages,
+            **app_.upload_limits(), "max_pages": LIMITS.max_pages,
             "max_cells": LIMITS.max_cells, "max_records_per_job": LIMITS.max_records_per_job}}
 
     @r.get("/whoami", summary="当前凭据的租户与权限", openapi_extra=_ox("any"))
@@ -530,7 +530,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         app_.get_project(pid)
         route = "/api/v1/projects/{pid}/files"
         if file is not None:
-            data, name, digest = await _read_checked(file, sha256, request)
+            data, name, digest = await _read_checked(file, sha256, request, app_)
             return await run_in_threadpool(idem.run, request, route, {"pid": pid, "file": digest, "filename": name},
                                            lambda: app_.add_source(pid, name, data),
                                            replay_check=lambda out: app_.get_source(out["id"]), status=201)
@@ -538,12 +538,12 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
                                 "请以 multipart 上传文件，或提供 upload_id / path（path 需配置 SYNWEVO_DOCS_IMPORT_ROOTS）")
         if body.get("upload_id") is not None:
             return await run_in_threadpool(idem.run, request, route, {"pid": pid, "body": body},
-                                           lambda: use_upload(store, body["upload_id"], lambda n, d: app_.add_source(pid, n, d), "source"),
+                                           lambda: use_upload(store, body["upload_id"], lambda n, d: app_.add_source(pid, n, d), "source", app_.require_upload_size),
                                            replay_check=lambda out: app_.get_source(out["id"]), status=201)
         tenant = current_tenant()
 
         def from_path():
-            data, name = _read_from_roots(body["path"], tenant)
+            data, name = _read_from_roots(body["path"], tenant, app_)
             return app_.add_source(pid, name, data)
 
         return await run_in_threadpool(idem.run, request, route, {"pid": pid, "body": body}, from_path,
@@ -589,7 +589,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         scope(request, "write")
         route = "/api/v1/templates"
         if file is not None:
-            data, fname, digest = await _read_checked(file, sha256, request)
+            data, fname, digest = await _read_checked(file, sha256, request, app_)
             return await run_in_threadpool(idem.run, request, route, {"file": digest, "filename": fname, "name": name},
                                            lambda: app_.upload_template(fname, data, name),
                                            replay_check=lambda out: app_.get_template(out["id"]), status=201)
@@ -598,7 +598,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
         if tname is not None and not isinstance(tname, str):
             raise ServiceError(400, "invalid", "name 必须是字符串", {"field": "name"})
         return await run_in_threadpool(idem.run, request, route, {"body": body, "name": name},
-                                       lambda: use_upload(store, body["upload_id"], lambda n, d: app_.upload_template(n, d, tname), "template"),
+                                       lambda: use_upload(store, body["upload_id"], lambda n, d: app_.upload_template(n, d, tname), "template", app_.require_upload_size),
                                        replay_check=lambda out: app_.get_template(out["id"]), status=201)
 
     @r.get("/templates", summary="模板列表（按创建时间倒序；offset 或 cursor 分页）", openapi_extra=_ox("read"))
@@ -1255,10 +1255,10 @@ def _artifact_meta(store, aid: str) -> dict:
     return a
 
 
-async def _read_checked(file: UploadFile, form_sha: str | None, request: Request) -> tuple[bytes, str, str]:
+async def _read_checked(file: UploadFile, form_sha: str | None, request: Request, app_: App) -> tuple[bytes, str, str]:
     """Read a multipart file within the size limit and check any SHA-256 the caller declared."""
     from .app import _read_limited
-    data = await _read_limited(file)
+    data = await _read_limited(file, app_)
     digest = hashlib.sha256(data).hexdigest()
     declared = [s.strip().lower() for s in (form_sha, request.headers.get("X-Content-SHA256")) if s and s.strip()]
     if any(not re.fullmatch(r"[0-9a-f]{64}", s) for s in declared):
@@ -1320,7 +1320,7 @@ def _roots_for(tenant: str) -> list[Path]:
     return out
 
 
-def _read_from_roots(path, tenant: str) -> tuple[bytes, str]:
+def _read_from_roots(path, tenant: str, app_: App) -> tuple[bytes, str]:
     """Read a file the caller names by path – only inside a root configured for its workspace.
 
     Containment is decided on the *lexical* path before the filesystem is touched, and every
@@ -1351,9 +1351,12 @@ def _read_from_roots(path, tenant: str) -> tuple[bytes, str]:
         raise denied
     if not real.is_file():
         raise ServiceError(400, "invalid", "path 指向的不是文件", {"field": "path"})
-    if real.stat().st_size > LIMITS.max_file_bytes:
-        raise ServiceError(413, "too_large", "文件超过大小上限")
-    return real.read_bytes(), real.name
+    app_.require_upload_size(real.stat().st_size, real.name)
+    # Bound the read as well: a file in an allowed import directory can grow after stat.
+    with real.open("rb") as stream:
+        data = stream.read(app_.upload_limits()["max_file_bytes"] + 1)
+    app_.require_upload_size(len(data), real.name)
+    return data, real.name
 
 
 # --------------------------------------------------------------------- OpenAPI

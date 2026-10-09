@@ -85,7 +85,7 @@ def build_router(app_, views, jobs, auth) -> APIRouter:
             "policy_sources": {"requests_per_minute": eff["credential_rpm"]["source"],
                                "workspace_requests_per_minute": eff["workspace_rpm"]["source"],
                                "max_active_jobs": eff["active_jobs"]["source"]},
-            "max_file_mb": LIMITS.max_file_bytes // (1024 * 1024),
+            **app_.upload_limits(),
             "max_records_per_job": LIMITS.max_records_per_job,
             "max_pages": LIMITS.max_pages,
             "max_cells": LIMITS.max_cells,

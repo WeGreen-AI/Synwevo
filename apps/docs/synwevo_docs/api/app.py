@@ -341,7 +341,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     @api.get("/api/capabilities")
     def capabilities():
         from ..capabilities import capability_report
-        return capability_report()
+        return {**capability_report(), "limits": app_.upload_limits()}
 
     # ------------------------------------------------------------ projects
     PAGE_PARAMS = ("q", "sort", "order", "offset", "limit", "archived")
@@ -418,7 +418,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
         from starlette.concurrency import run_in_threadpool
         out = []
         for f in files:
-            data = await _read_limited(f)
+            data = await _read_limited(f, app_)
             # hashing and storing up to the upload limit is not event-loop work
             out.append(await run_in_threadpool(app_.add_source, pid, f.filename or "file", data, actor=actor))
         return out
@@ -522,7 +522,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     @api.post("/api/templates/upload")
     async def upload_template(file: UploadFile = File(...), name: str | None = Form(None), project_id: str | None = Form(None)):
         from starlette.concurrency import run_in_threadpool
-        data = await _read_limited(file)
+        data = await _read_limited(file, app_)
         # the security check (clamd round trip, container check) and the template analysis run
         # off the event loop: one upload must not stall every other request
         t = await run_in_threadpool(app_.upload_template, file.filename or "template", data, name)
@@ -990,7 +990,9 @@ def _opt_int(body: dict, key: str) -> int | None:
         raise ServiceError(400, "bad_value", f"{key} 必须是整数", {"field": key}) from e
 
 
-async def _read_limited(f: UploadFile) -> bytes:
+async def _read_limited(f: UploadFile, app_: App) -> bytes:
+    if f.size is not None:
+        app_.require_upload_size(f.size, f.filename or "file")
     chunks = []
     total = 0
     while True:
@@ -998,8 +1000,6 @@ async def _read_limited(f: UploadFile) -> bytes:
         if not chunk:
             break
         total += len(chunk)
-        if total > LIMITS.max_file_bytes:
-            raise ServiceError(413, "too_large", f"文件「{f.filename}」超过 {LIMITS.max_file_bytes // (1024 * 1024)} MB 上限",
-                               {"filename": f.filename, "limit_mb": LIMITS.max_file_bytes // (1024 * 1024)})
+        app_.require_upload_size(total, f.filename or "file")
         chunks.append(chunk)
     return b"".join(chunks)
