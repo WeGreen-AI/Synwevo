@@ -7,8 +7,9 @@ import { Empty, Loading } from "../../shared/states";
 import { AgentFailure as Failure } from "./errors";
 import { newKey, op, read } from "../../shared/ops";
 import Chat from "./Chat";
-import { activeTurn, branchMessages, type Conversation, type Workspace } from "./types";
+import { activeTurn, branchMessages, type Workspace } from "./types";
 import { useConversation } from "./useConversation";
+import { useHistory } from "./useHistory";
 import { ConsentPanel, ConsentRecovery, useConversationConsents } from "./ConsentControls";
 import { ConsentStateError, PendingConsentOperation, createConsentWriter, effectiveConsentStatus, validateConsent,
   validateCreatedConsent, type Consent, type ConsentWriter } from "./consent";
@@ -35,12 +36,11 @@ function AgentApp() {
   const settings = useLocation().pathname === "/agent/settings";
   const navigate = useNavigate();
   const { value: conversation, error, refresh, connection } = useConversation(id);
-  const [list, setList] = useState<Conversation[]>();
-  const [listError, setListError] = useState<unknown>();
   const [q, setQ] = useState("");
   const [archived, setArchived] = useState(false);
-  const [before, setBefore] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
+  const history = useHistory(q, archived, tick);
+  const list = history.rows;
   const [sidebar, setSidebar] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>();
@@ -55,7 +55,6 @@ function AgentApp() {
   const [spaces, setSpaces] = useState<Workspace[]>([]);
   const intents = useRef(new Map<string, string>());
   const retryCreate = useRef<string | undefined>(undefined);
-  const generation = useRef(0);
   const { me, state: auth } = useSession();
   const payerName = me?.display_name || me?.email || "";
   const userId = me?.id ?? "";
@@ -127,17 +126,7 @@ function AgentApp() {
     return result.output;
   }, []);
 
-  useEffect(() => {
-    const abort = new AbortController();
-    const run = ++generation.current;
-    setList(undefined); setListError(undefined);
-    const timer = setTimeout(() => {
-      read<{ conversations: Conversation[]; next_before: number | null }>("agent.conversation.list", { status: archived ? "archived" : "active", q }, null, abort.signal)
-        .then((out) => { if (generation.current === run) { setList(out.conversations); setBefore(out.next_before); } })
-        .catch((e) => { if (!abort.signal.aborted) setListError(e); });
-    }, q ? 200 : 0);
-    return () => { clearTimeout(timer); abort.abort(); };
-  }, [q, archived, tick]);
+
 
   useEffect(() => {
     const abort = new AbortController();
@@ -243,14 +232,6 @@ function AgentApp() {
       if (kind === "delete") navigate("/agent");
     } catch (e) { setActionError(e); } finally { setBusy(false); }
   }
-  async function more() {
-    const run = generation.current;
-    setBusy(true);
-    try {
-      const out = await read<{ conversations: Conversation[]; next_before: number | null }>("agent.conversation.list", { status: archived ? "archived" : "active", q, before }, null);
-      if (run === generation.current) { setList((old) => [...old ?? [], ...out.conversations]); setBefore(out.next_before); }
-    } catch (e) { setListError(e); } finally { setBusy(false); }
-  }
   if (catalogError) return <Failure error={catalogError} onRetry={reload} />;
   if (app === undefined) return <Loading />;
   if (!app) return <Empty title={t("个人 Agent 尚未开放")} />;
@@ -285,8 +266,9 @@ function AgentApp() {
           <option value="active">{t("当前会话")}</option><option value="archived">{t("已归档会话")}</option>
         </select>
         <nav className="ag-history" aria-label={t("会话历史")}>
-          {listError != null ? <Failure error={listError} onRetry={() => setTick((n) => n + 1)} /> : !list ? <Loading /> : !list.length ? <p className="muted">{t("尚无会话")}</p> : list.map((c) => <NavLink key={c.id} to={`/agent/c/${c.id}`} className={({ isActive }) => `ag-history-link${isActive ? " selected" : ""}`} onClick={() => setSidebar(false)}>{c.title === "新会话" ? t("新会话") : c.title}</NavLink>)}
-          {before != null && <button className="btn ghost sm" disabled={busy} onClick={() => void more()}>{t("加载更多会话")}</button>}
+          {!list ? (history.error == null ? <Loading /> : null) : !list.length ? <p className="muted">{t("尚无会话")}</p> : list.map((c) => <NavLink key={c.id} to={`/agent/c/${c.id}`} className={({ isActive }) => `ag-history-link${isActive ? " selected" : ""}`} onClick={() => setSidebar(false)}>{c.title === "新会话" ? t("新会话") : c.title}</NavLink>)}
+          {history.error != null && <Failure error={history.error} onRetry={() => setTick((n) => n + 1)} />}
+          {history.cursor != null && <button className="btn ghost sm" disabled={history.loadingMore || busy} onClick={() => void history.more()}>{t("加载更多会话")}</button>}
         </nav>
         <NavLink className="btn ghost" to="/agent/automations" onClick={() => setSidebar(false)}>{t(automationCopy.title[0])}</NavLink>
         <NavLink className="btn ghost" to="/agent/settings" onClick={() => setSidebar(false)}>{t("Agent 设置")}</NavLink>

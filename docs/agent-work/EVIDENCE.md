@@ -569,3 +569,9 @@ Agent/充值/通知修复a41ea08经Actions37792532752完整verify与deploy成功
 三个旧任务均failed/billing_run_budget_exceeded，usage已known；各一笔既有结算和一次usage.reconciled事件，step:1 settled，step:2 released且没有预留或上游尝试。修复的是用量投影，不能宣称任务成功。新证据见evidence/2026-10-09-readonly-closeout/production-metadata.json，包含审计脚本SHA256。
 
 发现旧状态已变化：个人预算最新v4 enabled，支付配置最新v3 enabled/credential_configured=true；本轮未修改它们，也未查询其操作者/发布时间。支付开关开启不等于已验证真实付款/签名唯一入账；保留此未验收项。不追加付费调用，不重复启用或创建Checkout。仅更新文档断点并暂停，无新产品代码、测试或部署。
+
+## 2026-10-09 恢复后 CR-071
+
+用户明确“不要暂停了”，重新取得本会话协调锁。基线c63079f、生产a41ea08、Actions37792532752成功；没有重复部署或启用支付开关。个人付费验收0.50元具体授权仍待回答，未发起模型调用。
+
+会话历史同时间分页遗漏回归先4失败（最初测试导入路径错误已修正，不算产品失败），修复后4通过；Agent整体418通过/1 setup端口沙箱拒绝，同一测试获loopback权限后通过。149前端、Suite类型/构建及六守卫通过。真实隔离服务58条同时间会话50+8完整分页、9条搜索、3条归档；三语言、390px、长标题、键盘打开与刷新保持同ID通过，控制台无warning/error。浏览器reduced-motion=false，本项没有新增动效，不宣称该模式新验收。截图与源/日志哈希见evidence/2026-10-09-agent-history。代码尚未CI或部署。

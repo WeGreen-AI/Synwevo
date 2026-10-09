@@ -31,6 +31,7 @@ from synwevo_core.agent_safety import AgentAccess, ProviderConsents, SafetyEvent
 
 from .provider import Cancelled, Credential, Provider, ProviderError, replayable, resolve_credential
 from .safety import OutputGuard, allowed_memories, check_input, refused
+from .history import open_cursor, seal_cursor
 from .tools import TOOLS, ToolContext, policy_allows, resource_reads, snapshot_read, tool_result_text, validate_tool
 
 log = logging.getLogger("synwevo.agent")
@@ -178,7 +179,8 @@ class Agent:
             raise ServiceError(403, "not_a_member", "范围里有你不是成员的工作空间", {"workspaces": bad[:10]})
         return list(dict.fromkeys(scope))
 
-    def list_conversations(self, user_id: str, *, status: str, q: str | None, limit: int, before: float | None) -> dict:
+    def list_conversations(self, user_id: str, *, status: str, q: str | None, limit: int,
+                           before: float | None, cursor: str | None = None) -> dict:
         sql = "SELECT * FROM agent_conversations WHERE user_id=? AND status=?"
         args: list = [user_id, status]
         if q:
@@ -188,14 +190,22 @@ class Agent:
             sql += (" AND (title LIKE ? ESCAPE '\\' OR id IN (SELECT conversation_id FROM agent_messages "
                     "WHERE user_id=? AND role='user' AND body LIKE ? ESCAPE '\\'))")
             args += [like, user_id, like]
-        if before is not None:
+        if cursor is not None:
+            if before is not None:
+                raise ServiceError(400, "invalid_cursor", "会话列表位置无效，请重新加载列表。")
+            timestamp, cid = open_cursor(self.store, user_id, status, q, cursor)
+            sql += " AND (updated_at,id)<(?,?)"
+            args.extend((timestamp, cid))
+        elif before is not None:
+            # Compatibility for clients predating the composite cursor.
             sql += " AND updated_at<?"
             args.append(before)
-        rows = self.store.all(sql + " ORDER BY updated_at DESC LIMIT ?", (*args, limit + 1))
+        rows = self.store.all(sql + " ORDER BY updated_at DESC,id DESC LIMIT ?", (*args, limit + 1))
         more = len(rows) > limit
         rows = rows[:limit]
         return {"conversations": [self.conversation_json(user_id, r, full=False) for r in rows],
-                "next_before": rows[-1]["updated_at"] if more and rows else None}
+                "next_before": rows[-1]["updated_at"] if more and rows else None,
+                "next_cursor": seal_cursor(self.store, user_id, status, q, rows[-1]) if more and rows else None}
 
     def conversation_json(self, user_id: str, row: dict, *, full: bool) -> dict:
         lost = self._lost_workspaces(user_id, row["id"])

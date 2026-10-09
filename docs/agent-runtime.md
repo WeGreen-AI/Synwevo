@@ -61,6 +61,24 @@ welcome allowance when configured (docs/personal-wallet.md) and reports its stat
 grants and limits on the accounts origin (`/api/auth/organizations/{oid}/billing`, permission
 `org.billing.manage`; docs/platform/wallet-payments.md).
 
+## Conversation history pagination
+
+`agent.conversation.list` reads only the caller's conversations. `status` and optional `q`
+filter the result; search includes titles and personal user messages, never inaccessible generated
+content. `limit` defaults to 50 and is bounded at 200. Results are ordered by `updated_at DESC,
+id DESC`. Pass `next_cursor` as `cursor` for the next page; null ends the list. Cursors expire after
+one hour and are sealed for the user, status and exact search text. Invalid or mismatched cursors
+return 400 `invalid_cursor`; expired cursors return 410 `cursor_expired`. Reload without a cursor
+in either case. A cursor carries no permission; every read still requires the current session.
+
+This is a moving view, not a snapshot: new or edited conversations that move ahead of the boundary
+appear on refresh. Deleting the boundary conversation does not lose the next page. The browser
+keeps already loaded rows when a page fails, suppresses duplicate IDs, and discards late responses
+from previous searches. The older `before`/`next_before` timestamp contract remains supported for
+existing clients, with its historical exclusive-timestamp semantics; it cannot be combined with
+`cursor`. New clients use the composite cursor so tied timestamps are not skipped. No migration,
+conversation rewrite, model call or billing change is involved.
+
 ## Execution and recovery
 
 The server persists messages, turns, tool calls and SSE events. Text is rendered from authorized

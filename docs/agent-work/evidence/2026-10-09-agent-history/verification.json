@@ -1,0 +1,100 @@
+{
+  "checked_at": "2026-10-09T11:37:57.883977+00:00",
+  "base_commit": "c63079f15d6f766ed69cc7bab1979019b762975f",
+  "status": "locally_verified_not_deployed",
+  "regression": {
+    "baseline": "four failures after fixing the test-only import path; first test proves tied rows missing",
+    "fixed_passed": 4
+  },
+  "agent_suite": {
+    "passed_initial": 418,
+    "setup_errors_initial": 1,
+    "setup_error_reason": "sandbox denied loopback bind",
+    "same_test_authorized_retry_passed": 1,
+    "warnings": "existing Starlette BlockingPortal deprecation"
+  },
+  "frontend": {
+    "passed": 149,
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "guards": [
+    "boundaries",
+    "brand",
+    "design",
+    "component_names",
+    "brand_assets",
+    "app_icon_assets"
+  ],
+  "source_sha256": {
+    "apps/suite/synwevo_suite/agent/engine.py": "a6c23454a7cb383c82cbc327d08910b68546568342cba92a176eac5ca0287f41",
+    "apps/suite/synwevo_suite/agent/ops.py": "d4389e34910feb9483133d8b9553d032979d2ca9c134b2b4651f57bee4ddb367",
+    "apps/suite/synwevo_suite/agent/history.py": "1565f85fdc420705fae6ec28cc6e2d66328a17eec90f1b56b9bf0aa07f65f15c",
+    "apps/suite/web/src/apps/agent/history.ts": "4e6beced016fa709f684292b96195137d2819f1ef71b1ca3ac37fa7e1730feb0",
+    "apps/suite/web/src/apps/agent/useHistory.ts": "d69c75d0daf14c547df555d076404e381a5dc50f7632159a592e10a066548d9e",
+    "apps/suite/web/src/apps/agent/index.tsx": "b92de026687424ebef290b0a75df2c2f584fc234b8d4bf5311de3118fa318b06",
+    "apps/suite/web/src/apps/agent/errors.tsx": "2aeb7bc050e112d9e264154092895b69fbdea0f78e4bd72723f2d05d02c0a861",
+    "apps/suite/web/src/apps/agent/messages.ts": "caa43749b3cf00473798d7d030fbe46e3affa2e337beb848f1fe782ad17bf714",
+    "apps/suite/tests/test_agent_history.py": "0541c89a7e4847d0176717ed7cbc4a855e949c7372f1f03cbbdc749d9e0167db",
+    "apps/suite/web/tests/agent-history.test.ts": "078b15228b5052959390aad3eec2be1c280bdfed64bc0e51e55dc16154e176c9"
+  },
+  "logs": {
+    "regression_baseline": {
+      "path": "/private/tmp/synwevo-history-red-20261009.log",
+      "sha256": "10ce410e637f47866f42919c21952aa8982adb100b9d0e26a514f09d9245c037"
+    },
+    "regression_fixed": {
+      "path": "/private/tmp/synwevo-history-green-20261009.log",
+      "sha256": "6432aa82e3fce0536673b4c79786d644444c29948738c4ae274e5edf154748bd"
+    },
+    "agent_suite": {
+      "path": "/private/tmp/synwevo-history-agent-all-20261009.log",
+      "sha256": "62301e2e27e1abe59b3e9075c1ab2076ad78f3d14f4727053c19bb86fe3f31b8"
+    },
+    "loopback_retry": {
+      "path": "/private/tmp/synwevo-history-loopback-20261009.log",
+      "sha256": "48e2a37696f48c0556e6c5b3c6a1b44a5f7933a1eaafc72043d1a7f57fa1cb28"
+    },
+    "frontend": {
+      "path": "/private/tmp/synwevo-history-ui-20261009.log",
+      "sha256": "037de0107e6bac7be9b26d13a8e9614bd03f104f8d92497b28b736472201e03d"
+    },
+    "build": {
+      "path": "/private/tmp/synwevo-history-build-20261009.log",
+      "sha256": "1073f3dfa678f2b556fc814879cab0e68cd4cecb3946e57e4ee4db7bf29cab1e"
+    }
+  },
+  "browser": {
+    "url": "http://127.0.0.1:33871/agent",
+    "data": "isolated synthetic user, 58 active and 3 archived conversations with identical timestamps; model and payment dispatch forbidden",
+    "first_page": 50,
+    "after_load_more": 58,
+    "after_load_more_button": 0,
+    "search_00": 9,
+    "archived": 3,
+    "locales": [
+      "zh-Hans",
+      "en",
+      "zh-Hant"
+    ],
+    "phone": {
+      "width": 390,
+      "height": 844,
+      "document_scroll_width": 390
+    },
+    "desktop": {
+      "width": 1280,
+      "height": 720
+    },
+    "keyboard": "search Tab -> select Tab -> history link Enter opens exact deep link",
+    "refresh": "same deep link restored",
+    "console_errors_warnings": [],
+    "reduced_motion": "browser reported false; no motion added or changed, reduced-motion mode not newly exercised",
+    "screenshots": [
+      "phone-history.jpg",
+      "phone-history-en.jpg",
+      "phone-history-hant.jpg",
+      "desktop-history.jpg"
+    ]
+  }
+}

@@ -1,5 +1,7 @@
 import { registerMessages } from "@synwevo/ui/i18n-core";
 export const agentMessages = {
+  "会话列表位置无效，请重新加载列表。": { en: "This history position is invalid. Reload the list.", "zh-Hant": "會話列表位置無效，請重新載入列表。" },
+  "会话列表已过期，请重新加载列表。": { en: "This history list has expired. Reload the list.", "zh-Hant": "會話列表已過期，請重新載入列表。" },
   "今日赠送名额已满，请稍后再试。": { en: "Today's welcome grants are fully allocated. Please try again later.", "zh-Hant": "今日贈送名額已滿，請稍後再試。" },
   "付款授权设置": { en: "Payment authorization settings", "zh-Hant": "付款授權設定" },
   "查看可用工作空间": { en: "Find available workspaces", "zh-Hant": "查看可用工作空間" },

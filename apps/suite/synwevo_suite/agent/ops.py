@@ -56,7 +56,8 @@ class ListConversations(_In):
     status: Literal["active", "archived"] = "active"
     q: str | None = F(default=None, max_length=100)
     limit: int = F(default=50, ge=1, le=200)
-    before: float | None = None
+    before: float | None = F(default=None, allow_inf_nan=False)
+    cursor: str | None = F(default=None, min_length=1, max_length=256)
 
 
 class CreateConversation(_In):
@@ -515,7 +516,8 @@ def register(registry, agent: Agent, store, identity) -> None:
 
     op(id="agent.conversation.list", title=T("列出会话", "列出會話", "List conversations"),
        summary="The person's own Agent conversations.", input=ListConversations, agent="never",
-       handler=lambda c, i: agent.list_conversations(c.user_id, status=i.status, q=i.q, limit=i.limit, before=i.before))
+       handler=lambda c, i: agent.list_conversations(c.user_id, status=i.status, q=i.q, limit=i.limit,
+                                                     before=i.before, cursor=i.cursor))
     op(id="agent.conversation.create", title=T("新建会话", "新建會話", "New conversation"),
        summary="Start a conversation.", input=CreateConversation, side_effect="write", agent="never",
        handler=lambda c, i: agent.create_conversation(c.user_id, i.title, i.scope))

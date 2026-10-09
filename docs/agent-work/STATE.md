@@ -1,10 +1,10 @@
 # Synwevo 当前交付断点
 
-## 当前状态：本轮发布完成，按用户要求暂停
+## 当前状态：用户已恢复持续开发
 
 最后核验：2026-10-09T10:51:51Z（UTC，只读元数据补验）；2026-10-08发布健康证据保持原检查时间。保存时间见本文件最后一行。
 
-- 用户最新明确要求“做完这一轮先暂停”。本轮代码发布及基础上线核验已完成；不开始新工作包，不再自动循环。完整专项未完成，不能标为完成。
+- 用户最新明确要求“不要暂停了”，覆盖旧暂停边界。已取得单协调者锁，恢复持续开发；当前CR-071修复Agent历史分页与搜索竞态。付费验收另有具体0.50元授权问题待答，尚未发起新模型调用。
 - 实施树 `.claude/worktrees/agent-billing`，分支 `claude/agent-billing`，origin `git@github.com:WeGreen-AI/Synwevo.git`。产品提交 **a41ea08a50b9047c8cf5bdd23ab982751b50d38c** 已正常推送 main，未强推；后续只有证据文档提交，不触发部署。主检出的其他工作保持原样。
 - [Actions 37792532752](https://github.com/WeGreen-AI/Synwevo/actions/runs/37792532752) verify/deploy 均成功，15:21:52Z完成。完整运行镜像5453通过、5跳过、242项弃用警告；六守卫、全部前端/类型/构建、部署检查通过。跳过项及警告如实保留，没有为追绿改断言。
 - 四个应用OCI revision与current.json均a41ea08；accounts/portal/docs/messages/gateway/clamav六容器healthy；五正式域readyz/JS、匿名管理及钱包边界、OIDC起跳通过。三个计量模块生产源码哈希匹配本地已验证源码。发布前备份 `/opt/synwevo/backups/20261008T152122Z`；没有宣称恢复演练。
@@ -36,14 +36,14 @@
 2. 真实付款：本次只核对开关/凭据已配置标记，没有查询或执行支付，不把enabled当成真实卡支付验收。恢复后先核对是否已有付款及入账证据，再由有权付款方完成必要操作，避免重复订单或充值。
 3. 生产历史用量恢复：三个指定旧失败任务均usage_state=known，各有一笔结算、一个usage.reconciled事件；step:1 settled，未预留/未尝试的step:2 released。任务仍为failed/billing_run_budget_exceeded，不能写成业务成功；本次没有手动运行恢复、重放工具或改账。详见evidence/2026-10-09-readonly-closeout/production-metadata.json。
 4. 公开扩量：遵守operations.md§11.3，至少连续数日每日对账ok、账本无差异、无异常扣费后再按授权扩大。当前受控正式启用不等于所有公众已放行。
-5. DeepSeek关于API训练/保留的专门书面答复未取得，草稿未发送；不宣称零训练/零保留。六应用/Admin/API完整矩阵仍有余项，详见BACKLOG；本次暂停不启动它们。
+5. DeepSeek关于API训练/保留的专门书面答复未取得，草稿未发送；不宣称零训练/零保留。六应用/Admin/API完整矩阵仍有余项，详见BACKLOG；恢复后按实际优先级继续。
 
 ## 证据与接续
 
 - 本轮最终证据：`docs/agent-work/evidence/2026-10-08-agent-budget/`，包含源码哈希、本地/浏览器/真实既有调用、准确CI作业和生产镜像/公共入口结果。
 - Tables10000行容量实测、50页完整性、上限与混合批次在`evidence/2026-10-08-tables-capacity`；不是生产并发容量。
-- 本次仅补完用户授权的只读核验并保存证据，未启动下一代码工作包或部署；开发继续按最新“做完这一轮先暂停”指令暂停。
-- 协调者session `01a0f104-e57f-7092-ab67-50359f43b547` 在收尾时释放自身主树`docs/agent-work/.coordinator.lock`；其他任务锁不得删除。无本轮新建循环调度。
+- 2026-10-09恢复：基线c63079f/生产a41ea08，CI37792532752成功；CR-071本地及浏览器已验证；下一步审查并正常提交推送、跟踪准确SHA CI/CD，随后继续支付真实证据核验。
+- 协调者session `01a0f104-e57f-7092-ab67-50359f43b547` 当前持有自身主树`docs/agent-work/.coordinator.lock`；其他任务锁不得删除。无本轮新建循环调度。
 - 恢复指令：在实施树读取MASTER_PROMPT.md、STATE.md、BACKLOG.md、EVIDENCE.md；先核对Git/CI/生产/协调者锁，继续以上未完成门槛，复用已发布配置与证据，不重建项目、不重放副作用。
 
 保存时间：2026-10-09T10:52:58.426984+00:00
