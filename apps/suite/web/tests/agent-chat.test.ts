@@ -5,10 +5,13 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
+import { transformSync } from 'rolldown/utils';
 import { createServer } from 'vite';
 import React from 'react';
+import * as jsxRuntime from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { MemoryRouter } from 'react-router-dom';
+import { Link, MemoryRouter } from 'react-router-dom';
 
 globalThis.window ??= { location: new URL('http://127.0.0.1/agent/c/conv_fixture'), history: { state: null, replaceState() {} },
   addEventListener() {}, removeEventListener() {}, setInterval: () => 0, clearInterval() {} } as any;
@@ -47,6 +50,153 @@ function fixtureCost(overrides: Record<string, unknown> = {}) {
   return { charged_minor: '1234', currency: 'CNY', scale: 2, held_minor: '0', state: 'settled', model: 'fixture-model',
     band: 'off_peak', tokens: { input_cached: 1200, input_uncached: 34, output: 560, reasoning: 120 }, ...overrides };
 }
+
+// ---------------------------------------------------------------- actual composer interactions
+
+/** Execute Chat itself with the locked compiler, as in agent-conversation.test.ts. Hooks and
+ * callbacks are explicit fixtures; inspect its React elements and invoke their real handlers.
+ * Child components are not mounted here: DOM/browser integration remains a separate check. */
+const compiledChat = transformSync('Chat.tsx', readFileSync(new URL('../src/apps/agent/Chat.tsx', import.meta.url), 'utf8'),
+  { target: 'es2022', jsx: { runtime: 'automatic' } });
+assert.equal(compiledChat.errors.length, 0);
+const settleChat = () => new Promise<void>((resolve) => setImmediate(resolve));
+const fixtureConversation = () => ({ id: 'conv_fixture', title: 'Fixture conversation', status: 'active', head_id: null,
+  scope: null, sealed: null, messages: [], event_seq: 1, updated_at: 1 });
+
+async function chatFixture(overrides: Record<string, unknown> = {}) {
+  let index = 0, tree: any;
+  const values: any[] = [], effects: any[] = [], pendingEffects: (() => void)[] = [];
+  const sent: string[] = [];
+  let props = { conversation: fixtureConversation(), loading: false, error: undefined, connection: 'connected', configured: true,
+    spaces: [], refresh: async () => {}, send: async (text: string) => { sent.push(text); },
+    act: async () => {}, ...overrides };
+  const hooks = {
+    useId: () => 'chat-fixture',
+    useState: (initial: any) => { const i = index++; if (!(i in values)) values[i] = typeof initial === 'function' ? initial() : initial;
+      return [values[i], (value: any) => { values[i] = typeof value === 'function' ? value(values[i]) : value; }]; },
+    useRef: (initial: any) => { const i = index++; return values[i] ||= { current: initial }; },
+    useEffect: (fn: any, deps: any[]) => { const i = index++;
+      if (!effects[i] || deps.some((d, j) => d !== effects[i].deps[j])) pendingEffects.push(() => {
+        effects[i]?.cleanup?.(); effects[i] = { deps, cleanup: fn() };
+      }); },
+  };
+  const context = vm.createContext({ setTimeout, clearTimeout });
+  const modules: Record<string, any> = {
+    react: { ...React, ...hooks }, 'react/jsx-runtime': jsxRuntime, 'react-router-dom': { Link },
+    '@synwevo/ui': { ...ui, useI18n: () => ({ t: (source: string) => source, locale: 'en' }) },
+    './ChatParts': { ...parts, useChatText: () => ({ c: (key: string) => key }) },
+    './ReportDialog': { ...await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx'), useReportText: () => (key: string) => key },
+  };
+  const module = new vm.SourceTextModule(compiledChat.code, { context });
+  await module.link(async (name) => {
+    const members = modules[name] ?? await server.ssrLoadModule(name.startsWith('.') ? `/src/apps/agent/${name}` : name);
+    return new vm.SyntheticModule(Object.keys(members), function () {
+      for (const [key, value] of Object.entries(members)) this.setExport(key, value);
+    }, { context, identifier: name });
+  });
+  await module.evaluate();
+  const renderChat = (next: Record<string, unknown> = {}) => {
+    props = { ...props, ...next }; index = 0; tree = (module.namespace as any).default(props);
+    while (pendingEffects.length) pendingEffects.shift()!();
+  };
+  const elements = (node: any): any[] => Array.isArray(node) ? node.flatMap(elements)
+    : React.isValidElement<{ children?: React.ReactNode }>(node) ? [node, ...elements(node.props.children)] : [];
+  const find = (type: string, attributes: Record<string, unknown> = {}) => {
+    const matches = elements(tree).filter((el) => el.type === type && Object.entries(attributes).every(([key, value]) => el.props[key] === value));
+    assert.equal(matches.length, 1, `one ${type} ${JSON.stringify(attributes)}`); return matches[0].props;
+  };
+  const edit = (value: string) => { find('textarea').onChange({ target: { value } }); renderChat(); };
+  const submit = async (via: 'form' | 'enter') => {
+    let prevented = false;
+    const event = { preventDefault: () => { prevented = true; }, key: 'Enter', shiftKey: false, nativeEvent: { isComposing: false } };
+    if (via === 'form') find('form').onSubmit(event); else find('textarea').onKeyDown(event);
+    assert.equal(prevented, true); await settleChat(); renderChat();
+  };
+  renderChat();
+  return { render: renderChat, find, edit, submit, sent };
+}
+
+test('Chat blocks button, form and Enter during conversation reads and read failures without losing an editable draft', async () => {
+  const h = await chatFixture({ conversation: undefined, loading: true });
+  h.edit('Fixture draft');
+  for (const state of [
+    { loading: true, error: undefined },
+    { loading: false, error: new Error('Fixture read failure') },
+    { loading: true, error: undefined }, // retry still has no authorized snapshot
+  ]) {
+    h.render(state);
+    assert.equal(h.find('button', { type: 'submit' }).disabled, true);
+    assert.equal(h.find('textarea').disabled, false);
+    h.edit(h.find('textarea').value + '!');
+    await h.submit('form'); await h.submit('enter');
+    assert.deepEqual(h.sent, []);
+  }
+  assert.equal(h.find('textarea').value, 'Fixture draft!!!');
+  h.render({ conversation: fixtureConversation(), loading: false, error: undefined });
+  assert.equal(h.find('button', { type: 'submit' }).disabled, false);
+  await h.submit('enter');
+  assert.deepEqual(h.sent, ['Fixture draft!!!']);
+  assert.equal(h.find('textarea').value, '');
+});
+
+for (const existing of [false, true]) test(`Chat waits for confirmed model setup in ${existing ? 'an existing' : 'a new'} chat`, async () => {
+  const h = await chatFixture({ conversation: existing ? fixtureConversation() : undefined, configured: undefined });
+  h.edit('Fixture model draft');
+  for (const configured of [undefined, false]) {
+    h.render({ configured });
+    assert.equal(h.find('button', { type: 'submit' }).disabled, true);
+    assert.equal(h.find('textarea').disabled, false);
+    await h.submit('form'); await h.submit('enter');
+    assert.deepEqual(h.sent, []);
+    assert.equal(h.find('textarea').value, 'Fixture model draft');
+  }
+  h.render({ configured: true });
+  assert.equal(h.find('button', { type: 'submit' }).disabled, false);
+  await h.submit('form');
+  assert.deepEqual(h.sent, ['Fixture model draft']);
+  assert.equal(h.find('textarea').value, '');
+});
+
+test('Chat honors loading and read errors even with a snapshot, but an SSE outage alone does not block sending', async () => {
+  const h = await chatFixture(); h.edit('Fixture offline draft');
+  for (const state of [{ loading: true, error: undefined }, { loading: false, error: new Error('Fixture reauthorization failure') }]) {
+    h.render(state);
+    assert.equal(h.find('button', { type: 'submit' }).disabled, true);
+    await h.submit('form'); await h.submit('enter');
+    assert.deepEqual(h.sent, []);
+  }
+  for (const connection of ['offline', 'connecting']) {
+    h.render({ loading: false, error: null, connection }); h.edit(`Fixture ${connection} draft`);
+    assert.equal(h.find('button', { type: 'submit' }).disabled, false);
+    await h.submit('form');
+  }
+  assert.deepEqual(h.sent, ['Fixture offline draft', 'Fixture connecting draft']);
+});
+
+test('Chat keeps cancellation available while sending is blocked, and preserves the draft through cancellation', async () => {
+  const running = { id: 'msg_fixture', parent_id: null, role: 'assistant', status: 'running', body: '', hidden: false,
+    error: null, tool_calls: [], created_at: 1, turn: { id: 'turn_fixture', status: 'running', model: 'fixture-model', credential: 'platform' } };
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => { finish = resolve; });
+  const actions: { operation: string; input: Record<string, unknown> }[] = [];
+  const h = await chatFixture({ conversation: { ...fixtureConversation(), head_id: running.id, messages: [running] },
+    loading: true, error: new Error('Fixture read failure'), configured: undefined,
+    act: (operation: string, input: Record<string, unknown>) => { actions.push({ operation, input }); return pending; } });
+  h.edit('Fixture next question');
+  assert.equal(h.find('textarea').disabled, false);
+  await h.submit('form'); await h.submit('enter');
+  assert.deepEqual(h.sent, []);
+  const cancel = () => h.find('button', { type: 'button', className: 'btn' });
+  assert.equal(cancel().disabled, false);
+  cancel().onClick(); h.render();
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].operation, 'agent.turn.cancel');
+  assert.equal(actions[0].input.turn_id, 'turn_fixture');
+  assert.equal(cancel().disabled, true);
+  finish(); await settleChat(); h.render();
+  assert.equal(cancel().disabled, false);
+  assert.equal(h.find('textarea').value, 'Fixture next question');
+});
 
 // ---------------------------------------------------------------- formatting
 

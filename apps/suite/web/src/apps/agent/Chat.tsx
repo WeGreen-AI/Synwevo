@@ -132,7 +132,8 @@ export default function Chat({ conversation, loading, error, connection, configu
   const input = useRef<HTMLTextAreaElement>(null);
   const branch = branchMessages(conversation?.messages ?? [], conversation?.head_id ?? null);
   const running = (conversation?.messages ?? []).find(activeTurn);
-  const blocked = busy || !!running || !!conversation?.sealed || conversation?.status === "archived" || configured === false;
+  const blocked = loading || error != null || configured !== true
+    || busy || !!running || !!conversation?.sealed || conversation?.status === "archived";
   useEffect(() => { if (sentDraft) { setText(""); stick.current = true; input.current?.focus(); } }, [sentDraft]);
   useEffect(() => { setFailure(undefined); stick.current = true; setNewContent(false); setReporting(null); }, [conversation?.id]);
   useEffect(() => () => clearTimeout(copyTimer.current), []);

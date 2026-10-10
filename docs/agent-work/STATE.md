@@ -3,7 +3,7 @@
 ## 当前状态：持续执行，不暂停
 
 - 用户最新“不要暂停了”覆盖此前暂停安排；goal active。正常修复、提交、推送与原CI/CD部署已授权；个人付费验收及现有管理重认证门槛仍独立适用。
-- 实施树 `.claude/worktrees/agent-billing`，分支 `claude/agent-billing`，origin `git@github.com:WeGreen-AI/Synwevo.git`。当前HEAD **6e0287b3fb83abf248c3afcfd1fafbb7c87b58e3**（下一修复提交待推送）。主检出其他工作保留。
+- 实施树 `.claude/worktrees/agent-billing`，分支 `claude/agent-billing`，origin `git@github.com:WeGreen-AI/Synwevo.git`。当前HEAD **94b2591206bb4d6a79a00345d4ada03f29a389de**，已正常推送main。主检出其他工作保留。
 - 协调锁在主树 `docs/agent-work/.coordinator.lock`，持有者 `01a0f104-e57f-7092-ab67-50359f43b547`；只更新自己的活动。没有创建重复loop或调度。
 
 ## 实际发布与CI
@@ -20,12 +20,12 @@
 - 最终当前词库已修复分隔符与严格JSON末尾规则；在最后源码变更之后完成6项契约、163账户前端、根类型检查及账户构建。没有改旧断言。源码和日志指纹见scan-recovery/i18n-final-verification.json。
 - CR-075 Agent会话恢复本地完成：路由绑定快照，刷新等待下一次实际读取，旧SSE回调不能关闭新连接。旧实现3项失败/2通过，修复后5项通过；154 Suite前端、类型/构建、六守卫通过。
 - 真实隔离浏览器确认慢速会话切换、读取失败隐藏旧内容、SSE自动恢复、同ID刷新、简繁英/390px/长内容/键盘及无横向溢出；跨两次读保持阅读位置927px。合成3会话/3消息/0turn，不调用模型或付款。未新测减少动画，也未冒称已验证手动重试点击。
-- 下一动作：审查最终diff与证据，正常提交推送词库修复及CR-075；跟踪新SHA完整CI/CD，准确版本发布后只读核验。等待时继续处理统一范围内可执行工作。
+- 词库最终修复及CR-075已推送94b2591，Actions38015933144核验中；跟踪准确SHA完整CI/CD和上线核验。CR-076修复已完成：159 Suite前端/类型/构建与三语浏览器通过，故障Enter不发送、草稿保留、恢复可用，0turn/0quote。子任务已关闭，下一动作提交推送后跟踪准确SHA；94b正在完整runtime。
 - 本任务tab10已关闭、viewport已重置、临时PID24909已终止。Python3.12验证环境为/private/tmp/synwevo-recovery-venv312-20261010，从锁文件安装。
 
 ## 已核实的正式Agent与支付配置（不重复创建或发布）
 
-- Agent按operations§11.1受控启用，应用列表forms/tables/dataprep/approvals/extract/agent。公开扩量仍需operations§11.3连续数日每日对账ok、无账本差异或异常扣费。
+- Agent按operations§11.1受控启用，应用列表forms/tables/dataprep/approvals/extract/agent。公开扩量仍需operations§11.3连续数日每日对账ok、无账本差异或异常扣费。2026-10-10T02:11Z只读核实10月9日首次daily ok、10月7/8日缺边界读数incomplete、3次ledger_audit ok/0差异；451条近三日余额记录均ok，最新3秒前，监控租约有效。尚不满足连续数日要求。
 - 本人DeepSeek同意及已有真实3步模型→Docs list/get→可信usage→成本×2结算已核对，见agent-budget/existing-live-read-call.json。新Forms产物/跨空间生产验收尚未完成。
 - 用户此前明确保持个人支出暂停；2026-10-09只读实际最新个人预算v4 enabled，本轮未修改其预算。单次合成产物验收上限人民币0.50元授权问题待答，不追加模型调用。
 - 日历v1/ao_d7da658ed75f；成本price_85f4371761b6，CNY6、deepseek-flash，每百万峰值输入2/缓存0.04/输出8，低谷1/0.02/4；日历的10月1–7日假期不是全年表。
@@ -45,3 +45,9 @@
 - 接续在本实施树读取MASTER_PROMPT、STATE、BACKLOG、EVIDENCE，核对实际Git/CI/生产和锁，复用配置与副作用记录；不重建、不重放、不绕过门禁。
 
 保存时间：2026-10-10T02:08:52.667407+00:00
+
+保存更新：2026-10-10T02:12:48.277540+00:00
+
+下一业务能力：AG-ATTACH。94b2591实读确认Agent尚无附件/资源上下文入口（不是仅缺浏览器验收）；详见BACKLOG最新切片，CR-076推送后持续实施。已有Forms/Extract文件链与Docs解析可复用，模型产物真实验收仍待单次付费授权。
+
+CR-076验收tab11/PID41460已清理，截图及源码日志哈希在evidence/2026-10-10-agent-send-state。更新 2026-10-10T02:21:28.416059+00:00。

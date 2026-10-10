@@ -1,0 +1,79 @@
+{
+  "base_commit": "94b2591206bb4d6a79a00345d4ada03f29a389de",
+  "recorded_at": "2026-10-10T02:21:28.416059+00:00",
+  "source_sha256": {
+    "apps/suite/web/src/apps/agent/Chat.tsx": "0ad5ed520b6820f38f39ca6a1bd262ad08ca2ac2ad651da8758312312a7e038a",
+    "apps/suite/web/tests/agent-chat.test.ts": "bb8e75f38c4863de3bbc6fb2c5a5b36f6a0a4da47432a67da536bf68c648d262"
+  },
+  "suite_frontend": 159,
+  "typecheck": "passed",
+  "build": "passed",
+  "logs_sha256": {
+    "tests": "0b371aa7b70d524d61ac3b9ce1c6405e99d407b9b67a55497a247f8647ef2a74",
+    "types": "f17ca06e6ce867ba3fe60b837ed2fecd58c2629177fc1382c48846ba5a24c1ed",
+    "build": "78740a88de26a3964654bef6ced38ca54fb7714fb289e6e214658854ed93c784"
+  },
+  "subagent_regression": {
+    "agent": "01a12394-d2a3-7aa1-a729-8e6a357a75d8",
+    "before": {
+      "failed": 4,
+      "passed": 1,
+      "transcript_chunk": "53227a"
+    },
+    "after": {
+      "passed": 40,
+      "failed": 0,
+      "transcript_chunk": "eeaedb"
+    },
+    "scope": "Subagent retained transcript output only. No invented log file/hash; independent coordinator 159-case suite is hashed above."
+  },
+  "browser": {
+    "origin": "http://127.0.0.1:33876",
+    "viewport_desktop": [
+      1280,
+      720
+    ],
+    "viewport_mobile": [
+      390,
+      844
+    ],
+    "locales": [
+      "zh-Hans",
+      "en",
+      "zh-Hant"
+    ],
+    "new_chat_ready_send_enabled": true,
+    "failed_read_enter_did_not_send": true,
+    "draft_editable_during_failure": true,
+    "same_draft_after_recovery": true,
+    "send_enabled_after_recovery": true,
+    "mobile_width": 390,
+    "mobile_scroll_width": 390,
+    "console_warn_error": 0,
+    "stored_counts": {
+      "conversations": 3,
+      "messages": 3,
+      "turns": 0,
+      "quotes": 0
+    },
+    "limitations": [
+      "Synthetic fixture with real auth/HTTP/SSE; injected read failure and accelerated SSE rotation.",
+      "No actual paid model or payment call. Cancellation coverage is component regression, not a live model cancellation.",
+      "No new reduced-motion verification; no animation changed.",
+      "Draft remains during same-conversation read failure; this does not add cross-conversation or reload draft persistence."
+    ]
+  },
+  "fixture_script_sha256": "9800ae3e8c9495f97bcdcb26b90faedd70166596fa6738e7f381222010ebce3d",
+  "screenshots_sha256": {
+    "recovered-draft-mobile-hant.jpg": "b2f91acd9da9e4b8376427b92763409086c2992d79725e991f55299cd7500bb8",
+    "failed-draft-preserved.jpg": "63293f3a877c89a3f88c398d318387a708c77ee74c2b9c3efa76ccf90ea44e82",
+    "recovered-draft-mobile-en.jpg": "a1a20640041737bcf40daf9abbd9fda4741ad245a4948712e906614a452a9d6a"
+  },
+  "cleanup": {
+    "tab": 11,
+    "closed": true,
+    "viewport_reset": true,
+    "server_pid": 41460,
+    "server_stopped": true
+  }
+}

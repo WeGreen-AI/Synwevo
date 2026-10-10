@@ -1,0 +1,113 @@
+{
+  "checked_at": "2026-10-10T02:11:29.942350+00:00",
+  "read_only": true,
+  "current": {
+    "image": "synwevo:583694816ac1e396c6be0be75aa32a993125d49f",
+    "previous_image": "synwevo:b2309ef2b931337d931838b42d1c1a0c8c28111c",
+    "backup": "/opt/synwevo/backups/20261009T132643Z",
+    "at": "20261009T132643Z"
+  },
+  "facts": {
+    "read_at": 1791598289,
+    "cost_policy": {
+      "revision": 1,
+      "created_at": 1791459071,
+      "enabled": 1,
+      "allowlist_only": 1,
+      "balance_poll_s": 300
+    },
+    "balance_latest": {
+      "observed_at": 1791598286,
+      "status": "ok",
+      "code": "ok",
+      "is_available": 1
+    },
+    "balance_status_last_3_days": [
+      {
+        "status": "ok",
+        "code": "ok",
+        "count": 451
+      }
+    ],
+    "reconciliations": [
+      {
+        "kind": "daily",
+        "window_start": 1791504000,
+        "window_end": 1791590400,
+        "status": "ok",
+        "code": "within_tolerance",
+        "differences": null,
+        "trigger": "schedule",
+        "created_at": 1791591021
+      },
+      {
+        "kind": "ledger_audit",
+        "window_start": 1791590420,
+        "window_end": 1791590420,
+        "status": "ok",
+        "code": "consistent",
+        "differences": 0,
+        "trigger": "schedule",
+        "created_at": 1791590420
+      },
+      {
+        "kind": "daily",
+        "window_start": 1791417600,
+        "window_end": 1791504000,
+        "status": "incomplete",
+        "code": "balance_reading_missing",
+        "differences": null,
+        "trigger": "schedule",
+        "created_at": 1791504656
+      },
+      {
+        "kind": "ledger_audit",
+        "window_start": 1791504056,
+        "window_end": 1791504056,
+        "status": "ok",
+        "code": "consistent",
+        "differences": 0,
+        "trigger": "schedule",
+        "created_at": 1791504056
+      },
+      {
+        "kind": "daily",
+        "window_start": 1791331200,
+        "window_end": 1791417600,
+        "status": "incomplete",
+        "code": "balance_reading_missing",
+        "differences": null,
+        "trigger": "schedule",
+        "created_at": 1791462925
+      },
+      {
+        "kind": "ledger_audit",
+        "window_start": 1791462925,
+        "window_end": 1791462925,
+        "status": "ok",
+        "code": "consistent",
+        "differences": 0,
+        "trigger": "schedule",
+        "created_at": 1791462925
+      }
+    ],
+    "monitor_lease": {
+      "name": "risk-monitor:live",
+      "lease_until": 1791598405.9901595
+    },
+    "active_suspensions": [],
+    "breaker": null,
+    "payments": {
+      "revision": 3,
+      "credential_configured": 1,
+      "enabled": 1,
+      "payment_methods": "[\"card\",\"wechat_pay\",\"alipay\"]"
+    }
+  },
+  "script_sha256": "63e3d973d7a8124aaa52263eb0df5d439f035009e6c5092149b351a505df7060",
+  "interpretation": {
+    "public_expansion_gate": "not_met",
+    "reason": "One completed UTC day is ok; two earlier days incomplete because boundary readings are missing. Three recorded ledger audits have zero differences. This does not prove absence of disputed/abnormal charges or successful real payment.",
+    "no_mutations": "No monitor/reconciliation method invoked; only persisted metadata selected in a query_only read transaction."
+  }
+}

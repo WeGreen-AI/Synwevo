@@ -625,3 +625,17 @@ d7d9201的Actions37931260526构建通过，runtime1failed/964passed/3skipped/78w
 CR-075原hook三个竞态由实际编译调度测试复现（3失败/2通过），最终5专项/154前端、类型/构建及六守卫通过。浏览器真实身份/数据库/HTTP/SSE，只有读取故障、延迟和轮转周期为隔离注入：慢速切换不显示旧会话，失败隐藏内容，自动恢复重新读取，刷新同ID；简繁英、桌面1280×720、手机390×844、长内容/键盘/0横向溢出，阅读位置两次读取均927px，控制台无warn/error。数据库仍3会话/3消息/0turn，无模型/付款。手动重试按钮未点击（自动恢复先完成），未新测reduced-motion；不把这些写成通过。证据在2026-10-10-agent-conversation。隔离脚本早期import/seed状态错误与系统Python缺Pillow均已记录，最终用锁定环境；不混为产品缺陷。临时服务及tab10清理完毕，viewport恢复。
 
 下一SHA仍须完整CI/CD，生产最后实测5836948；不重复部署或业务调用。
+
+## 2026-10-10 生产每日风险检查（只读）
+
+02:11:29Z，生产current仍5836948，Store(migrate=False)+query_only+只读BEGIN快照选择风险元数据，未读取正文/密钥。10月9日daily ok/within_tolerance；10月7/8日incomplete/balance_reading_missing。3条ledger_audit均ok/consistent、differences=0。近三日451条余额读取均ok，最新3秒前、monitor lease有效，无活动suspension/无breaker event。成本策略v1仍allowlist_only，支付v3 enabled且仍选三渠道。没有触发poll/reconcile/账本写入、模型、付款或配置变更。元数据与脚本哈希在2026-10-10-risk-readonly/production-metadata.json。只能确认首次完整日及已有审计结果，不能据此宣称连续数日通过、绝无异常扣费或真实付款成功。
+
+94b2591已正常推送main，Actions38015933144进行中。CR-076既有发送按钮未检查loading/error或未知configured，独立子任务限定Chat.tsx/专项测试实施；协调者不并写这些文件。
+
+## 2026-10-10 CR-076会话读取门槛
+
+Chat的发送条件加入loading、当前读取error和configured未知；草稿继续可编辑，实际running取消不被此门槛阻断，仅SSE离线而已有有效快照仍可用。Turing限定两个文件实现，无提交/部署；原代码4项新回归失败，修复后40专项通过（子任务只保留对话输出，未伪造日志哈希）。协调者独立159 Suite前端、类型/构建通过，最终源码与日志指纹见agent-send-state/verification.json。
+
+真实隔离浏览器新会话配置就绪后可发送；键盘进入已有会话、输入草稿，注入读取失败后发送按钮禁用且Enter未发送，草稿仍可编辑；SSE恢复后原草稿保留、同会话可发送。数据库3会话/3消息/0turn/0quote，简繁英、390×844和1280×720、宽度390无溢出、控制台无warn/error。未点击就绪后的发送，不产生模型或付款；取消只做组件回归，未声称真实模型取消。没有新动效或reduced-motion验收。tab11关闭、viewport重置、核对身份后终止PID41460。
+
+94b2591/Actions38015933144前置构建门槛已通过，正在完整runtime，尚未宣称发布。CR-076下一SHA单独经过原CI/CD。
