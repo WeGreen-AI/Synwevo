@@ -1,0 +1,96 @@
+{
+  "base_commit": "6e0287b3fb83abf248c3afcfd1fafbb7c87b58e3",
+  "recorded_at": "2026-10-10T02:08:12.672765+00:00",
+  "source_sha256": {
+    "apps/suite/web/src/apps/agent/useConversation.ts": "92eb6590ed4677fb01652c9f0fc83942e4b852a45863dac9d6c92e5ef5fbf6a6",
+    "apps/suite/web/tests/agent-conversation.test.ts": "ac36f69dfb180528919465435ed556bcd74181b6c12344eca5402a5b690dad68"
+  },
+  "regression_before": {
+    "failed": 3,
+    "passed": 2
+  },
+  "regression_after": {
+    "failed": 0,
+    "passed": 5
+  },
+  "suite_frontend": 154,
+  "suite_types_and_build": "passed",
+  "root_types": "passed",
+  "guards": [
+    {
+      "script": "check_boundaries.py",
+      "exit_code": 0,
+      "sha256": "db9db3609db4a0986bc48419db32821cd948a390085491bf24f5469d0a2e37c3"
+    },
+    {
+      "script": "check_brand.py",
+      "exit_code": 0,
+      "sha256": "740f5bd3e5322f3978e9fa2e85844310b3ce25e5d205c62f66e04ea631dc42c9"
+    },
+    {
+      "script": "check_design.py",
+      "exit_code": 0,
+      "sha256": "779f55ae54940fcb55eb47d5dd6d64e4908a155eeb0856b36f4c5cb98bfe5541"
+    },
+    {
+      "script": "check_component_names.py",
+      "exit_code": 0,
+      "sha256": "bdd0bb7510ae8a200c99416ed797935db8dbe35d41e2d75c88a4997dd3344037"
+    },
+    {
+      "script": "brand_assets.py",
+      "exit_code": 0,
+      "sha256": "4d74ae54797b4143464ef26d2031efb7b3c6d3d90fb07229e08dd78e93230e2f"
+    },
+    {
+      "script": "app_icon_assets.py",
+      "exit_code": 0,
+      "sha256": "668985a7c175ac04164a0271a9a362040f984309fb61983dce1dd76197902e5d"
+    }
+  ],
+  "log_sha256": {
+    "before": "77475945f65980e498ed4ed2a1c14775f700d75c316242dfd83c4875b6cf244b",
+    "after": "8765ac695df05105e14fd0bcb1cfd164ff75bbfbe91922f307a33c1a4c7247ce",
+    "web": "0598ffe608849baf8ad03b76962a4f00ee52596b48bc5f8c5bdf0e8202dda4a3",
+    "types": "f17ca06e6ce867ba3fe60b837ed2fecd58c2629177fc1382c48846ba5a24c1ed",
+    "build": "febe2e15026bcb12099444bc479476467e5aabdc7e9db9469d46d943c90d76f5"
+  },
+  "fixture_script_sha256": "1516141d2225a16b55f8c0dccf7f0b7b5c337d8ceee5546b2244d2b981338ac4",
+  "browser": {
+    "origin": "http://127.0.0.1:33875",
+    "desktop": [
+      1280,
+      720
+    ],
+    "mobile": [
+      390,
+      844
+    ],
+    "mobile_document_width": 390,
+    "mobile_scroll_width": 390,
+    "scroll_position_before_and_after_read": 927,
+    "refresh_conversation_id": "conv_e2b0beb04439",
+    "console_warn_error": 0,
+    "database_counts": {
+      "conversations": 3,
+      "messages": 3,
+      "turns": 0
+    },
+    "limitations": [
+      "Synthetic data and injected read failure/latency; no real model or payment acceptance.",
+      "SSE rotation shortened only in isolated test service.",
+      "Manual retry click not tested: real SSE/read recovered first.",
+      "No new reduced-motion check; no animation added."
+    ]
+  },
+  "screenshots_sha256": {
+    "mobile-recovered-hant.jpg": "418ff6c89890d8bafd66729e4ddedb16b3d3d9ab01b8d392419ec5caf0b3a48a",
+    "desktop-recovered-en.jpg": "b2efcc6905120d382e0843d839f95cc9bef8e89a49bc5a92e91f89f6a4ae531a",
+    "desktop-read-failed.jpg": "55f931b38d8f2c6248d9f8899f857223b41c4179b03f3f1473487a1a97a04813"
+  },
+  "setup_notes": [
+    "Initial harness import needed PYTHONPATH=. for repository fixture; no product import hack.",
+    "Initial seed used invalid message status; corrected to existing done enum in a fresh isolated directory.",
+    "System python lacked Pillow; six guards passed using the locked Python3.12 environment."
+  ]
+}

@@ -764,10 +764,10 @@ export const contractEntries: [string, string, string][] = [
     "预览复制清单与摘要（不创建申请）",
     "Preview the copy manifest and digest (creates no request)",
     "預覽複製清單與摘要（不建立申請）"
-  ]
+  ],
   ["重试安全检查", "Retry Scan", "重試安全檢查"],
   ["在扫描服务故障耗尽重试后启动一轮有限检查。须传入来源当前版本，服务端会原子递增该版本。不要自动重发此命令。恶意、加密、超限文件及未配置扫描器时不能重试。请查询文件以确认实际结果。", "Start a bounded scan cycle for an exhausted scanner outage. Requires the current source version; consumes that revision atomically. Never auto-retry this command. Refuses infected/encrypted/too_large files and a scanner that is not configured. Poll the file for its actual outcome.", "在掃描服務故障耗盡重試後啓動一輪有限檢查。須傳入來源目前版本，伺服器會原子遞增該版本。不要自動重發此命令。惡意、加密、超限文件及未配置掃描器時不能重試。請查詢文件以確認實際結果。"],
-  ["文件字节数，不超过 capabilities.limits.max_file_bytes 的当前接纳上限", "File size in bytes, no larger than the current admission limit in capabilities.limits.max_file_bytes", "文件位元組數，不超過 capabilities.limits.max_file_bytes 的目前接納上限"],
+  ["文件字节数，不超过 capabilities.limits.max_file_bytes 的当前接纳上限", "File size in bytes, no larger than the current admission limit in capabilities.limits.max_file_bytes", "文件位元組數，不超過 capabilities.limits.max_file_bytes 的目前接納上限"]
 ];
 registerMessages(Object.fromEntries(contractEntries.map(([source, en, hant]) => [source, { en, 'zh-Hant': hant }])));
 const canonical = new Map(contractEntries.map(([source, en]) => [en, source]));

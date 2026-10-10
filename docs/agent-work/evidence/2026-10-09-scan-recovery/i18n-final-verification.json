@@ -1,0 +1,29 @@
+{
+  "base_commit": "6e0287b3fb83abf248c3afcfd1fafbb7c87b58e3",
+  "recorded_at": "2026-10-10T02:08:12.672765+00:00",
+  "source_sha256": {
+    "services/identity/web/src/pages/apiplatform/api-platform-contract.messages.ts": "eb34526a3628a263a9433b44d0ddf184bf73172a585e4e91e57c7b5c02812f6a"
+  },
+  "backend": [
+    {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "6",
+      "time": "1.801",
+      "timestamp": "2026-10-10T10:03:29.419726+08:00",
+      "hostname": "192.168.1.84"
+    }
+  ],
+  "account_frontend": 163,
+  "root_typecheck": "passed",
+  "account_build": "passed",
+  "log_sha256": {
+    "/private/tmp/synwevo-final-types-20261010.log": "9cf2349cf02b26b2eaed5d07f97a59a4eba0bca2641c151b24d49bd5b273f2bc",
+    "/private/tmp/synwevo-scan-i18n-final-web-20261010.log": "1b6f41c862626d4feee5bac84731fb70871ccec0129217fc0e44e6885b5efec9",
+    "/private/tmp/synwevo-scan-i18n-final-20261010.log": "02f3d197a1e11762be9f1471dc5a51e0b6d155897942fcb9f376adabd1f39ce3",
+    "/private/tmp/synwevo-scan-i18n-final-build-20261010.log": "60d47ee6f30515518c602878c06c5a3741d16c3ea0f9549649c5bd73acc81407"
+  },
+  "scope": "Final current catalog checked after both array separator and strict JSON trailing-comma corrections. No API behavior or existing assertion changed. Full next-SHA CI still required."
+}
