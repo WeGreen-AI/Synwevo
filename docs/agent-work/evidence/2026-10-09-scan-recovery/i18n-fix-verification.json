@@ -1,0 +1,28 @@
+{
+  "base_commit": "0812f3d72cac01944d6f5203b8a235433aa8027a",
+  "verified_at": "2026-10-10T01:56:59.600808+00:00",
+  "backend": [
+    {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "6",
+      "time": "2.064",
+      "timestamp": "2026-10-10T09:56:24.703481+08:00",
+      "hostname": "192.168.1.84"
+    }
+  ],
+  "account_frontend": 163,
+  "typecheck_build": "passed",
+  "source_sha256": {
+    "services/identity/web/src/pages/apiplatform/api-platform-contract.messages.ts": "afdab1f84cfbcbf82a5b76404fe5589ff567615bf54c4dd4ae05803fa5fd1240"
+  },
+  "log_sha256": {
+    "/private/tmp/synwevo-scan-i18n-20261010.log": "02f3d197a1e11762be9f1471dc5a51e0b6d155897942fcb9f376adabd1f39ce3",
+    "/private/tmp/synwevo-scan-i18n-web-20261010.log": "5b7742c657ea467c1c66d9a4f4a98bef8ee36f97fbb799775f5758fca60d6d5b",
+    "/private/tmp/synwevo-scan-i18n-types-20261010.log": "90d43a19db7fc439af56403f73baff5bae9f0142873b1916bdb6023f4856621a",
+    "/private/tmp/synwevo-scan-i18n-build-20261010.log": "86656d3dc5d552f38e951619589f48d6947ae74ca15f727cbae3be292a2eeb4b"
+  },
+  "scope": "Three contract translations; no changed API behavior or tests. Full next-SHA CI required."
+}

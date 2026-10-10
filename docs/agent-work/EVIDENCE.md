@@ -612,3 +612,8 @@ d7d9201的Actions37931260526构建通过，runtime1failed/964passed/3skipped/78w
 72核心、97扫描/权限、91API/生命周期、最终54旧拒绝/上传/恢复回归均通过（有重叠，不合计唯一项）；145 Docs前端、类型/构建/六守卫通过。PythonSDK55passed/57subtests、TS48passed及双严格类型通过。最初新夹具actor_kind无效和GET状态假设、两项遗漏翻译已修复；未删除旧断言。旧临时venv丢失pyvenv.cfg后由锁文件建立独立Python3.12环境，pip check通过，最终54项在新环境执行。
 
 真实隔离浏览器实际上传合成37字节CSV，协议故障夹具6次耗尽，真实进程重启仍v1/6次且不重启扫描；服务恢复后键盘明确重试，同文件ready/v2/累计7次，只有1笔审计，刷新不重放。简繁英、390×844、长文件名、焦点及控制台无warning/error通过。fixture加速延迟不作为生产性能，非真实病毒引擎验收；未新测reduced-motion，无新增动画。截图、源/日志哈希、restart/recovered/refreshed元数据见scan-recovery。自己的tab9和临时服务36974已关闭。当前未提交部署，无生产配置/模型/付款变更。
+
+
+### 2026-10-10 CR-074 CI国际化门禁
+
+0812f3d/Actions37957593751构建与前置检查通过；完整runtime在4229passed后遇到1项API控制台三语言缺漏而停止，3skipped/78warnings，1520.54秒，deploy跳过。缺Retry Scan、恢复说明及文件大小新说明，已补原词库，原断言保留。准确回执ci-081-i18n-failure.json。生产仍最后实测5836948，不能把已推送当已部署。
