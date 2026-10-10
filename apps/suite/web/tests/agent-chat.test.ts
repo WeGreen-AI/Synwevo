@@ -86,6 +86,7 @@ async function chatFixture(overrides: Record<string, unknown> = {}) {
     '@synwevo/ui': { ...ui, useI18n: () => ({ t: (source: string) => source, locale: 'en' }) },
     './ChatParts': { ...parts, useChatText: () => ({ c: (key: string) => key }) },
     './ReportDialog': { ...await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx'), useReportText: () => (key: string) => key },
+    './ContextPicker': { ...await server.ssrLoadModule('/src/apps/agent/ContextPicker.tsx'), useContextText: () => (key: string) => key },
   };
   const module = new vm.SourceTextModule(compiledChat.code, { context });
   await module.link(async (name) => {

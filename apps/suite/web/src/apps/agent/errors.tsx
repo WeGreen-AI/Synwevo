@@ -2,6 +2,8 @@ import { ApiError } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { Failure } from "../../shared/states";
 import { consentCopy } from "./consent.messages";
+import { contextErrorKey } from "./context";
+import { contextCopy } from "./context.messages";
 
 const errors: Record<string, string> = {
   invalid_cursor: "会话列表位置无效，请重新加载列表。",
@@ -121,6 +123,8 @@ const errors: Record<string, string> = {
 };
 
 export function agentErrorText(error: unknown, t: (key: string) => string): string {
+  const contextKey = contextErrorKey(error);
+  if (contextKey) return t(contextCopy[contextKey][0]);
   let code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
   if (error instanceof ApiError && code === "idempotent_failure") code = error.detail?.code ?? code;
   if (errors[code]) return t(errors[code]);

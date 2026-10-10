@@ -1,0 +1,106 @@
+{
+  "recorded_at": "2026-10-10T02:55:28.538783+00:00",
+  "base_commit": "36104a021efbd1ec622bcfa7d3625eb6e68126f8",
+  "source_sha256": {
+    "apps/suite/synwevo_suite/agent/consents.py": "c6c838aa461829bb38628ad10ab162d34e5f05981e1e2a6192688be89ae42fbd",
+    "apps/suite/synwevo_suite/agent/context.py": "430b97bd9a71274b5f63142a6d72cd325c97f96e83a016d1b9a5b13dc78ad3e5",
+    "apps/suite/synwevo_suite/agent/engine.py": "ef6b760b2554ab3280ac9e5fce677e9b2b3400716f70bc10a96986e75535a52f",
+    "apps/suite/synwevo_suite/agent/ops.py": "c29bee5cc756df34845c459d6458713980ca0ac1586fd965cb711a6deb480238",
+    "apps/suite/synwevo_suite/agent/quotes.py": "2c0ad845ea18f70dd96bcc6dc0bb944fc4b4405c3c00fefebde759a2b03eca7c",
+    "apps/suite/tests/test_agent_context.py": "7428e7ff6c86677f7eefd195e8be12bea949f01a4739d283762482f2c22b865a",
+    "apps/suite/tests/test_agent_context_billing.py": "377b1499bdbcb17c6f99a81b8afe6c2c7d56cc4909cc32e7e38f69f14df0f713",
+    "apps/suite/web/src/apps/agent/Chat.tsx": "6d4292c8f33d3247682582b2437ae9f09bd3597e5d8a8d0709266d44d15aa775",
+    "apps/suite/web/src/apps/agent/ContextPicker.tsx": "cda2a697ca0f46586a6aa260f9246eaa2eb2157a9d4b1c6a162a3518c0c9f0c5",
+    "apps/suite/web/src/apps/agent/agent.css": "1e7c9dc9743098be53546eccf10d066bf853122fe87960807f93df0fc26a13b8",
+    "apps/suite/web/src/apps/agent/budget.ts": "b88884b1fbc3ee5da942e25b0fd3e038aa923323ea16457bf4b479114c14e2d7",
+    "apps/suite/web/src/apps/agent/context.messages.ts": "3513ace48a00e971225bf015bacd5aa1037b511e594db433d66dfc654a876924",
+    "apps/suite/web/src/apps/agent/context.ts": "fd0f88f0b422085c890a1ae0d8da7419f7fc59e7628fc19d8542c2f7d5ac9edd",
+    "apps/suite/web/src/apps/agent/errors.tsx": "554411f091b0181305fe15a450d66aa46f3c54e286c4b13b4ac723423d01b054",
+    "apps/suite/web/src/apps/agent/index.tsx": "313b1bae6a04422ea2dc36c22e4acf9d5ab4e7ef80cce0498958ab4fd90d54ed",
+    "apps/suite/web/src/apps/agent/types.ts": "5607ad3d4f7ca2d4a346be42dac6848bb809f31e3ac9c57f2b2f8c209bde7d1e",
+    "apps/suite/web/tests/agent-chat.test.ts": "dab2e2c2a74b4a2debe8324087d25cc1224e711f3fc456cfa0be058d7d59a3b9",
+    "apps/suite/web/tests/agent-context.test.ts": "fc007f192c79d9513d8a276ac2d615b700e798217300329192a01f5f7a9264ff"
+  },
+  "local_checks": {
+    "backend": {
+      "passed": 171,
+      "failed": 0,
+      "warnings": 6
+    },
+    "suite_frontend": {
+      "passed": 174,
+      "failed": 0
+    },
+    "root_typecheck": "passed",
+    "suite_build": "passed",
+    "guards": "all six passed",
+    "diff_check": "passed"
+  },
+  "logs_sha256": {
+    "/private/tmp/synwevo-agent-context-app_icon_assets-final-20261010.log": "668985a7c175ac04164a0271a9a362040f984309fb61983dce1dd76197902e5d",
+    "/private/tmp/synwevo-agent-context-brand_assets-final-20261010.log": "4d74ae54797b4143464ef26d2031efb7b3c6d3d90fb07229e08dd78e93230e2f",
+    "/private/tmp/synwevo-agent-context-build-20261010.log": "556cd0a07ba4a2ab037334cc69c8848f11898cbc14b2b6359ca5ef2f7f7bf9be",
+    "/private/tmp/synwevo-agent-context-carried-before-20261010.log": "d7e060086745630335d59538055929105f2b4829a1dad5cf0f3eea674d18805b",
+    "/private/tmp/synwevo-agent-context-check_boundaries-final-20261010.log": "5ddee998a943c43610c632531ce9ff004f2da71fabe7973c65adae57eeb50591",
+    "/private/tmp/synwevo-agent-context-check_brand-final-20261010.log": "740f5bd3e5322f3978e9fa2e85844310b3ce25e5d205c62f66e04ea631dc42c9",
+    "/private/tmp/synwevo-agent-context-check_component_names-final-20261010.log": "bdd0bb7510ae8a200c99416ed797935db8dbe35d41e2d75c88a4997dd3344037",
+    "/private/tmp/synwevo-agent-context-check_design-final-20261010.log": "7a2309a03951068a39cbe2dee9a4c8c76d6f3b1cfa72af75cc826136cd71826f",
+    "/private/tmp/synwevo-agent-context-final-20261010.log": "bee20d1092de4b3b2c7aec6a0802d2c33dd3f1ab84ef9e6a75c60065bd0ce176",
+    "/private/tmp/synwevo-agent-context-frontend-final-20261010.log": "d9032000a1f22d9ed283c1d047c015f84f548fc4b26a4973109c107e45ec4b8f",
+    "/private/tmp/synwevo-agent-context-typecheck-20261010.log": "9cf2349cf02b26b2eaed5d07f97a59a4eba0bca2641c151b24d49bd5b273f2bc"
+  },
+  "review": {
+    "agent": "01a123ac-e69f-7ec1-a9e3-0d1d3a4983e0",
+    "finding": "carried origin missing from explicit user context",
+    "before": {
+      "failed": 3,
+      "passed": 1
+    },
+    "after": {
+      "passed": 4
+    },
+    "resolved": "carry origin constraints across withheld copy receipts and sibling branches, without making legally transferred copies depend on former source access"
+  },
+  "browser": {
+    "origin": "http://127.0.0.1:33877",
+    "fixture": "real auth, Store, services, registry, quotes, ledger; explicit synthetic model/payment transport; external dispatch denied",
+    "verified": [
+      "50+3 actual catalogue pagination",
+      "search, select Forms definition and Tables schema",
+      "three contexts from two workspaces",
+      "quote cancellation preserves selected resources and text",
+      "confirmed test run: one turn/quote/attempt/settlement",
+      "refresh keeps source cards without replay",
+      "source link opens actual table page",
+      "source content change hides all dependent blocks/cards and disables send",
+      "zh-Hans/en/zh-Hant",
+      "1280x720 and390x844, no horizontal overflow",
+      "keyboard Enter search, Escape close restores trigger focus",
+      "no nested forms, no captured console errors/warnings"
+    ],
+    "not_verified": [
+      "new manual reduced-motion emulation",
+      "real DeepSeek artifact call",
+      "real Stripe payment",
+      "production deployment of this slice"
+    ],
+    "narrow_modal_bounds": {
+      "left": 16,
+      "right": 374,
+      "top": 42.1875,
+      "bottom": 725.1875
+    },
+    "screenshots": {
+      "desktop-zh.png": "0ee9c3c520248f60da4ca6bf873ffef8b08639a9ebe6d242cf8402c25e147642",
+      "mobile-hant-picker.png": "38fa138a52844d662150fd62303961d5019a7c98461e907ab1242dd9ea1a7865",
+      "source-changed-hidden-hant.png": "be82bcc85efd5fdf03320c7b2906ebd3d0dfd28454f630aa74c2dc262aece220",
+      "mobile-en-picker.png": "287193e37898351acc5d2b6ae99cc1dea9df7e8282f73141abb8db766f4ec35e"
+    }
+  },
+  "setup_notes": [
+    "Initial isolated launch import path failure corrected with runpy from repository root, no sys.path injection.",
+    "Sandbox listener denial required authorized localhost listener; no production state touched.",
+    "v3 fresh synthetic store loaded the carried-source fix. Source-change inspection initially missed synthetic root env, then used a wrong read-only column; both failed before business write. Corrected query and original fixture env; one real registry source update succeeded."
+  ],
+  "remaining": "personal file uploads and other resource kinds remain AG-ATTACH backlog; no completion claim for full attachment requirements"
+}

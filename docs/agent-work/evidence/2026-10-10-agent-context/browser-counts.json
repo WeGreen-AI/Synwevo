@@ -1,0 +1,29 @@
+{
+  "fixture_only": true,
+  "database": "/private/tmp/synwevo-agent-context-20261010-data-v3/metered-fixture",
+  "before_source_change": {
+    "turns": [
+      {
+        "id": "turn_b24ef06a0a5c",
+        "status": "succeeded",
+        "usage_state": "known"
+      }
+    ],
+    "quotes": [
+      {
+        "id": "quote_368d1759a34a",
+        "accepted_turn_id": "turn_b24ef06a0a5c"
+      }
+    ],
+    "attempts": [
+      {
+        "id": "59ec56b7addc404d973f104dc9913ee3",
+        "status": "settled"
+      }
+    ],
+    "settlements": 1
+  },
+  "source_update_run": "run_edaeaae6967a",
+  "production_model_calls": 0,
+  "production_payments": 0
+}

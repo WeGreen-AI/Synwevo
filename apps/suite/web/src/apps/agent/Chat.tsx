@@ -5,12 +5,14 @@ import { Loading, RunBadge } from "../../shared/states";
 import { withAiLabel } from "./aiLabel";
 import { AiLabel, RefusalNotice, ThinkingStatus, TurnCostLine, useChatText } from "./ChatParts";
 import { shouldSubmit } from "./composer";
+import ContextPicker, { ContextChips, ContextSources, useContextText } from "./ContextPicker";
+import { addContext, contextKey, contextReferences, contextSpaces } from "./context";
 import { AgentFailure as Failure, agentErrorText } from "./errors";
 import { Markdown } from "./Markdown";
 import { validTurnCost } from "./cost";
 import { refusalOf } from "./refusals";
 import ReportDialog, { useReportText } from "./ReportDialog";
-import { activeTurn, branchMessages, type Conversation, type Message, type ToolCall, type Workspace } from "./types";
+import { activeTurn, branchMessages, type ContextReference, type SelectedContext, type Conversation, type Message, type ToolCall, type Workspace } from "./types";
 
 export type Act = (operation: string, input: Record<string, unknown>) => Promise<unknown>;
 
@@ -94,7 +96,7 @@ type CopyState = { id: string; ok: boolean } | null;
 export default function Chat({ conversation, loading, error, connection, configured, spaces, act, send, refresh, sentDraft = 0, aside,
   status, maximum, hint, walletUrl, organizationPayer = false, onPersonal, payerName }: {
   conversation?: Conversation; loading: boolean; error: unknown; connection: string; configured: boolean | undefined;
-  spaces: Workspace[]; act: Act; send: (text: string) => Promise<unknown>; refresh: () => Promise<void>; sentDraft?: number;
+  spaces: Workspace[]; act: Act; send: (text: string, context_refs?: ContextReference[]) => Promise<unknown>; refresh: () => Promise<void>; sentDraft?: number;
   /** Payment state for this conversation, shown above the composer. */
   aside?: ReactNode;
   /** Payer, balance, limit and model, shown just above the message box. */
@@ -114,8 +116,10 @@ export default function Chat({ conversation, loading, error, connection, configu
 }) {
   const { t } = useI18n();
   const { c } = useChatText();
+  const contextText = useContextText();
   const id = useId();
   const [text, setText] = useState("");
+  const [selectedContexts, setSelectedContexts] = useState<SelectedContext[]>([]);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<unknown>();
   const [scopeOpen, setScopeOpen] = useState(false);
@@ -134,7 +138,10 @@ export default function Chat({ conversation, loading, error, connection, configu
   const running = (conversation?.messages ?? []).find(activeTurn);
   const blocked = loading || error != null || configured !== true
     || busy || !!running || !!conversation?.sealed || conversation?.status === "archived";
-  useEffect(() => { if (sentDraft) { setText(""); stick.current = true; input.current?.focus(); } }, [sentDraft]);
+  const pickerSpaces = contextSpaces(spaces, conversation?.scope ?? null);
+  const pickerScope = JSON.stringify([conversation?.id, conversation?.scope, pickerSpaces.map((ws) => ws.workspace_id)]);
+  const outsideScope = conversation?.scope != null && selectedContexts.some((item) => !conversation.scope!.includes(item.reference.workspace_id));
+  useEffect(() => { if (sentDraft) { setText(""); setSelectedContexts([]); stick.current = true; input.current?.focus(); } }, [sentDraft]);
   useEffect(() => { setFailure(undefined); stick.current = true; setNewContent(false); setReporting(null); }, [conversation?.id]);
   useEffect(() => () => clearTimeout(copyTimer.current), []);
   useEffect(() => {
@@ -152,7 +159,7 @@ export default function Chat({ conversation, loading, error, connection, configu
     e?.preventDefault();
     if (blocked || !text.trim()) return;
     setBusy(true); setFailure(undefined);
-    try { if (await send(text) !== false) { setText(""); stick.current = true; input.current?.focus(); } }
+    try { if (await send(text, contextReferences(selectedContexts)) !== false) { setText(""); setSelectedContexts([]); stick.current = true; input.current?.focus(); } }
     catch (e) { setFailure(e); } finally { setBusy(false); }
   }
   function flash(state: CopyState) {
@@ -188,6 +195,7 @@ export default function Chat({ conversation, loading, error, connection, configu
       {m.hidden ? <p className="notice">{t("内容因权限变化已隐藏")}</p> : !thinking && (m.body || !assistant) &&
         <div className={`ag-markdown${assistant && active && m.body ? " streaming" : ""}`}><Markdown text={m.body} /></div>}
       {thinking && <ThinkingStatus />}
+      <ContextSources contexts={m.contexts} hidden={m.hidden} />
       {assistant && active && !!m.body && m.turn!.status === "running" && <span className="sr-only" role="status">{c("writing")}</span>}
       {m.tool_calls.map((call) => <ActionCard key={call.id} call={call} act={action} busy={busy} />)}
       {m.turn && active && m.turn.status !== "running" && <p role="status"><Status status={m.turn.status} /></p>}
@@ -251,6 +259,11 @@ export default function Chat({ conversation, loading, error, connection, configu
       {failure != null && (failureRefusal ? <RefusalNotice refusal={failureRefusal} walletUrl={walletUrl} live busy={blocked} onPersonal={onPersonal}
         onRequote={failureRefusal.next === "requote" || failureRefusal.next === "reconfirm" ? () => void submit() : undefined} /> : <Failure error={failure} />)}
       {status}
+      <ContextPicker key={pickerScope} spaces={pickerSpaces} selected={selectedContexts} disabled={blocked}
+        onChoose={(item) => setSelectedContexts((old) => addContext(old, item))}
+        onRemove={(key) => setSelectedContexts((old) => old.filter((item) => contextKey(item.reference) !== key))} />
+      <ContextChips selected={selectedContexts} disabled={blocked} onRemove={(key) => setSelectedContexts((old) => old.filter((item) => contextKey(item.reference) !== key))} />
+      {outsideScope && <p className="notice err" role="alert">{contextText("outsideScope")}</p>}
       <form className="ag-composer" onSubmit={(e) => void submit(e)}>
         <label className="sr-only" htmlFor="agent-message">{t("输入消息")}</label>
         <textarea id="agent-message" ref={input} rows={3} maxLength={20000} value={text} placeholder={t("输入消息")} disabled={!!conversation?.sealed}

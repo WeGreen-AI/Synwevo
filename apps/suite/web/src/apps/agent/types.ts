@@ -1,3 +1,11 @@
+export type ContextKind = "form" | "table";
+export interface ContextItem { kind: ContextKind; workspace_id: string; resource_id: string; title: string }
+/** The exact reference returned by agent.context.resolve; no business content is sent by the browser. */
+export interface ContextReference { kind: ContextKind; workspace_id: string; resource_id: string; snapshot: string }
+export interface MessageContext { title: string; workspace_name: string; open_path: string | null }
+export interface SelectedContext extends MessageContext { reference: ContextReference }
+export interface ContextPage { items: ContextItem[]; next_offset: number | null; limited: boolean }
+
 export interface ToolCall {
   id: string; tool: string; operation: string | null; operation_title: Record<string, string> | null;
   app_name: string | null; workspace_id: string | null; workspace_name: string | null;
@@ -15,6 +23,8 @@ export interface Message {
    *  when the turn has no ledger run; validate it with `validTurnCost` before showing it. */
   turn: { id: string; status: string; model: string; credential: string; cost?: unknown } | null;
   tool_calls: ToolCall[]; created_at: number;
+  /** Current, authorized source labels only. Hidden messages have no contexts. Never replay these. */
+  contexts?: MessageContext[];
 }
 export interface Conversation {
   id: string; title: string; status: string; head_id: string | null; scope: string[] | null;

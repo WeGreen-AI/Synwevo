@@ -7,7 +7,8 @@ import { Empty, Loading } from "../../shared/states";
 import { AgentFailure as Failure } from "./errors";
 import { newKey, op, read } from "../../shared/ops";
 import Chat from "./Chat";
-import { activeTurn, branchMessages, type Workspace } from "./types";
+import { activeTurn, branchMessages, type ContextReference, type Workspace } from "./types";
+import { contextErrorKey } from "./context";
 import { useConversation } from "./useConversation";
 import { useHistory } from "./useHistory";
 import { ConsentPanel, ConsentRecovery, useConversationConsents } from "./ConsentControls";
@@ -46,7 +47,7 @@ function AgentApp() {
   const [actionError, setActionError] = useState<unknown>();
   const [configured, setConfigured] = useState<boolean>();
   const [billingRequired, setBillingRequired] = useState(false);
-  const [budgetIntent, setBudgetIntent] = useState<{ conversation_id: string; text?: string; regenerate_of?: string; parent_message_id?: string }>();
+  const [budgetIntent, setBudgetIntent] = useState<BudgetIntent>();
   const [sentDraft, setSentDraft] = useState(0);
   const currentConversation = useRef(id);
   currentConversation.current = id;
@@ -55,6 +56,15 @@ function AgentApp() {
   const [spaces, setSpaces] = useState<Workspace[]>([]);
   const intents = useRef(new Map<string, string>());
   const retryCreate = useRef<string | undefined>(undefined);
+  function contextRefused(error: unknown, input: Record<string, unknown>) {
+    if (!contextErrorKey(error)) return;
+    const cid = input.conversation_id;
+    if (cid !== currentConversation.current && !(currentConversation.current === undefined && cid === retryCreate.current)) return;
+    // A refused source must be removed/reselected in the preserved draft, not silently re-resolved
+    // under a previously accepted quote. Bring that draft and its actionable error back into view.
+    setActionError(error);
+    if (currentBudgetIntent.current?.conversation_id === cid) setBudgetIntent(undefined);
+  }
   const { me, state: auth } = useSession();
   const payerName = me?.display_name || me?.email || "";
   const userId = me?.id ?? "";
@@ -78,7 +88,10 @@ function AgentApp() {
   const writerFor = useCallback((cid: string) => {
     let writer = writers.current.get(cid);
     if (!writer) {
-      writer = createConsentWriter((operation, input, key) => op(operation, input, { key }), newKey);
+      writer = createConsentWriter(async (operation, input, key) => {
+        try { return await op(operation, input, { key }); }
+        catch (error) { contextRefused(error, input); throw error; }
+      }, newKey);
       writers.current.set(cid, writer);
     }
     return writer;
@@ -121,7 +134,9 @@ function AgentApp() {
     const signature = JSON.stringify([operation, input]);
     const key = intents.current.get(signature) ?? newKey();
     intents.current.set(signature, key);
-    const result = await op(operation, input, { key });
+    let result;
+    try { result = await op(operation, input, { key }); }
+    catch (error) { contextRefused(error, input); throw error; }
     intents.current.delete(signature);
     return result.output;
   }, []);
@@ -180,11 +195,13 @@ function AgentApp() {
 
   async function act(operation: string, input: Record<string, unknown>) {
     if (operation === "agent.turn.start" && billingRequired) {
-      const intent = { conversation_id: String(input.conversation_id),
+      const intent: BudgetIntent = { conversation_id: String(input.conversation_id),
         ...(typeof input.regenerate_of === "string" ? { regenerate_of: input.regenerate_of } : {}),
-        ...(typeof input.text === "string" ? { text: input.text } : {}) };
+        ...(typeof input.text === "string" ? { text: input.text } : {}),
+        ...(typeof input.parent_message_id === "string" ? { parent_message_id: input.parent_message_id } : {}),
+        ...(input.context_refs !== undefined ? { context_refs: input.context_refs as ContextReference[] } : {}) };
       const consent = consentFor(intent.conversation_id);
-      if (consent) await consentSend(consent, intent);
+      if (consent) await consentSend(consent, { ...intent });
       else setBudgetIntent(intent);
       return;
     }
@@ -192,15 +209,17 @@ function AgentApp() {
     await refresh(); setTick((n) => n + 1);
     return result;
   }
-  async function send(text: string) {
+  async function send(text: string, context_refs?: ContextReference[]) {
+    setActionError(undefined);
     let cid = id ?? retryCreate.current;
     if (!cid) { cid = (await write("agent.conversation.create", {})).id; retryCreate.current = cid; }
+    const intent: BudgetIntent = { conversation_id: cid!, text, ...(context_refs?.length ? { context_refs } : {}) };
     if (billingRequired) {
       const consent = consentFor(cid!);
-      if (consent) return consentSend(consent, { conversation_id: cid, text });
-      setBudgetIntent({ conversation_id: cid!, text }); return false;
+      if (consent) return consentSend(consent, { ...intent });
+      setBudgetIntent(intent); return false;
     }
-    await write("agent.turn.start", { conversation_id: cid, text });
+    await write("agent.turn.start", { ...intent });
     retryCreate.current = undefined;
     navigate(`/agent/c/${cid}`); setTick((n) => n + 1); await refresh();
     return true;

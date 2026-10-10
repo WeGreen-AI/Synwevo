@@ -14,6 +14,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id, now
 
 from .engine import Agent, _j
+from .context import ContextList, ContextResolve, ContextRef, Contexts, ContextPage, ResolvedContext
 from .provider import EFFORTS, KEY_PURPOSE, configured_model, resolve_credential
 from .safety import check_memory
 from .tools import workspace_policy
@@ -79,6 +80,7 @@ class UpdateConversation(_In):
 
 
 class StartTurn(_In):
+    context_refs: list[ContextRef] = F(default_factory=list, max_length=5)
     conversation_id: str = F(pattern=CONV)
     text: str | None = F(default=None, max_length=20_000)
     parent_message_id: str | None = F(default=None, pattern=MSG)
@@ -88,6 +90,7 @@ class StartTurn(_In):
 
 
 class QuoteTurn(_In):
+    context_refs: list[ContextRef] = F(default_factory=list, max_length=5)
     conversation_id: str = F(pattern=CONV)
     text: str | None = F(default=None, max_length=20_000)
     parent_message_id: str | None = F(default=None, pattern=MSG)
@@ -514,6 +517,14 @@ def register(registry, agent: Agent, store, identity) -> None:
             kw.setdefault("result_guard", result_guard)
         registry.register(Operation(app="agent", **kw))
 
+    contexts = Contexts(agent)
+    op(id="agent.context.list", title=T("选择业务资源", "選擇業務資源", "Choose business resources"),
+       summary="Browse authorized form definitions or table schemas for explicit conversation context; no model call.",
+       input=ContextList, output=ContextPage, agent="never", handler=lambda c, i: contexts.list(c.user_id, i))
+    op(id="agent.context.resolve", title=T("核对所选资源", "核對所選資源", "Verify a selected resource"),
+       summary="Bind an authorized form definition or table schema to its exact snapshot; no model call.",
+       input=ContextResolve, output=ResolvedContext, agent="never", handler=lambda c, i: contexts.resolve(c.user_id, i))
+
     op(id="agent.conversation.list", title=T("列出会话", "列出會話", "List conversations"),
        summary="The person's own Agent conversations.", input=ListConversations, agent="never",
        handler=lambda c, i: agent.list_conversations(c.user_id, status=i.status, q=i.q, limit=i.limit,
@@ -604,7 +615,7 @@ def register(registry, agent: Agent, store, identity) -> None:
        input=QuoteTurn, output=QuoteResult, side_effect="write", agent="never", unattended=False,
        handler=lambda c, i: agent.quote_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
            regenerate_of=i.regenerate_of, budget=int(i.budget), max_calls=i.max_calls, run_seconds=i.run_seconds,
-           payer={"kind": i.payer_kind, "id": i.payer_id}))
+           payer={"kind": i.payer_kind, "id": i.payer_id}, context_refs=[r.model_dump() for r in i.context_refs]))
     op(id="agent.quote.get", title=T("查看报价", "查看報價", "Read a quote"), input=QuoteRef,
        summary="Read the person's own fixed price and budget.", agent="never", output=QuoteResult, handler=quote_read)
     op(id="agent.quote.revoke", title=T("撤销运行预算", "撤銷執行預算", "Revoke a run budget"), input=QuoteRef,
@@ -669,7 +680,8 @@ def register(registry, agent: Agent, store, identity) -> None:
         if i.consent_id:
             person_only(c)
         return agent.start_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
-            regenerate_of=i.regenerate_of, quote_id=i.quote_id, consent_id=i.consent_id)
+            regenerate_of=i.regenerate_of, quote_id=i.quote_id, consent_id=i.consent_id,
+            context_refs=[r.model_dump() for r in i.context_refs])
 
     consents = ProviderConsents(store)
 

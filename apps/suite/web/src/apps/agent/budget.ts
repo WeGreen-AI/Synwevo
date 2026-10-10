@@ -1,3 +1,4 @@
+import type { ContextReference } from './types';
 /** Personal run consent contracts. Amounts and rational prices never pass through Number. */
 export interface Unit { code: string; scale: number }
 export interface Rate { numerator: string; denominator: string }
@@ -34,6 +35,7 @@ export interface BudgetIntent {
   text?: string;
   regenerate_of?: string;
   parent_message_id?: string;
+  context_refs?: ContextReference[];
 }
 export interface QuoteParams { budget: string; max_calls: number; run_seconds: number }
 
@@ -133,7 +135,13 @@ export function validateQuote(value: Quote, intent: BudgetIntent, params: QuoteP
 }
 export function sameIntent(a: BudgetIntent, b: BudgetIntent): boolean {
   return a.conversation_id === b.conversation_id && a.text === b.text
-    && a.regenerate_of === b.regenerate_of && a.parent_message_id === b.parent_message_id;
+    && a.regenerate_of === b.regenerate_of && a.parent_message_id === b.parent_message_id
+    && (a.context_refs?.length ?? 0) === (b.context_refs?.length ?? 0)
+    && (a.context_refs ?? []).every((ref, i) => {
+      const other = b.context_refs?.[i];
+      return other && ref.kind === other.kind && ref.workspace_id === other.workspace_id
+        && ref.resource_id === other.resource_id && ref.snapshot === other.snapshot;
+    });
 }
 export function quoteExpired(quote: Quote, now = Date.now()): boolean {
   return quote.status === 'expired' || Math.min(quote.expires_at, quote.deadline) * 1000 <= now;

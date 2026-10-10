@@ -147,7 +147,7 @@ class ModelConsents:
                                 (self.ledger._now(), consent_id))
         return self.get(user_id, consent_id)
 
-    def issue(self, user_id, consent_id, conversation, *, text, parent_id, regenerate_of):
+    def issue(self, user_id, consent_id, conversation, *, text, parent_id, regenerate_of, context_refs=None):
         """Same transaction as the new quote, its binding and the Agent turn insert."""
         self._transaction()
         row = self._row(user_id, consent_id)
@@ -168,7 +168,7 @@ class ModelConsents:
         payer = self.quotes.payer_of(terms)
         quote = self.quotes.issue(user_id, conversation, text=text, parent_id=parent_id,
             regenerate_of=regenerate_of, budget=terms['budget'], max_calls=terms['max_calls'], run_seconds=seconds,
-            payer=payer if payer['kind'] == 'organization' else None)
+            payer=payer if payer['kind'] == 'organization' else None, context_refs=context_refs)
         issued = json.loads(self.quotes._row(user_id, quote['id'])['terms_json'])
         if any(issued[key] != terms[key] for key in ('route', 'sale', 'budget', 'max_calls', 'per_call_hold')):
             raise BillingError('consent_model_changed')

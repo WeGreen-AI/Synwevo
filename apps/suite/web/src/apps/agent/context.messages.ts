@@ -1,0 +1,39 @@
+import { registerMessages, type Messages } from '@synwevo/ui/i18n-core';
+
+export const contextCopy = {
+  open: ['选择业务资料', 'Choose business context', '選擇業務資料'],
+  intro: ['选择本次提问要参考的表单或数据表，最多五项。浏览和选择不会调用模型。', 'Choose up to five forms or tables for this question. Browsing and choosing do not call the model.', '選擇本次提問要參考的表單或資料表，最多五項。瀏覽和選擇不會呼叫模型。'],
+  formHint: ['表单包含字段设置和已发布版本信息，不包含各版本的完整定义或填写结果。', 'Forms include field settings and published version details, without each version’s full definition or submitted responses.', '表單包含欄位設定和已發布版本資訊，不包含各版本的完整定義或填寫結果。'],
+  tableHint: ['数据表仅包含列设置和已保存的视图，不包含全部记录。', 'Tables include column settings and saved views, without all records.', '資料表僅包含欄設定和已儲存的檢視，不包含全部記錄。'],
+  workspace: ['资料所在工作空间', 'Context workspace', '資料所在工作空間'],
+  kind: ['资料类型', 'Context type', '資料類型'],
+  form: ['表单', 'Form', '表單'],
+  table: ['数据表', 'Table', '資料表'],
+  search: ['搜索业务资料', 'Search business context', '搜尋業務資料'],
+  query: ['按资料名称搜索', 'Search by context name', '依資料名稱搜尋'],
+  more: ['加载更多资料', 'Load more context', '載入更多資料'],
+  loading: ['正在读取可选资料…', 'Loading available context…', '正在讀取可選資料…'],
+  resolving: ['正在核实所选资料…', 'Checking the selected context…', '正在核實所選資料…'],
+  empty: ['没有找到可选资料，请换一个名称或工作空间。', 'No context found. Try another name or workspace.', '沒有找到可選資料，請換一個名稱或工作空間。'],
+  noSpaces: ['当前会话范围内没有允许模型使用业务内容的工作空间。', 'No workspace in this conversation’s scope allows business content to be used by the model.', '目前會話範圍內沒有允許模型使用業務內容的工作空間。'],
+  limited: ['当前仅搜索前 500 个表单。请缩小搜索范围以找到需要的表单。', 'Only the first 500 forms are searched. Narrow your search to find the form you need.', '目前僅搜尋前 500 個表單。請縮小搜尋範圍以找到需要的表單。'],
+  selected: ['已选业务资料（{count}/5）', 'Selected context ({count}/5)', '已選業務資料（{count}/5）'],
+  chosen: ['已选择', 'Selected', '已選擇'],
+  choose: ['选择“{title}”', 'Choose “{title}”', '選擇「{title}」'],
+  remove: ['移除“{title}”', 'Remove “{title}”', '移除「{title}」'],
+  max: ['已选满五项。移除一项后可以继续选择。', 'Five items selected. Remove one to choose another.', '已選滿五項。移除一項後可以繼續選擇。'],
+  done: ['完成选择', 'Done choosing', '完成選擇'],
+  retry: ['重试读取资料', 'Retry loading context', '重試讀取資料'],
+  failed: ['未能读取资料。请检查连接后重试。', 'Could not load context. Check your connection and retry.', '未能讀取資料。請檢查連線後重試。'],
+  changed: ['所选资料的内容或权限已变化。请移除后重新选择，再发送消息。', 'The selected content or access has changed. Remove it and choose it again before sending.', '所選資料的內容或權限已變化。請移除後重新選擇，再傳送訊息。'],
+  unavailable: ['已无法使用这项资料，可能是访问权限或空间规则发生了变化。请移除该项或选择其他资料。', 'This context is no longer available. Access or workspace rules may have changed. Remove it or choose other context.', '已無法使用這項資料，可能是存取權限或空間規則發生了變化。請移除該項或選擇其他資料。'],
+  tooLarge: ['所选资料过大。请减少所选项目，或在原应用中缩小内容范围后重新选择。', 'The selected context is too large. Select fewer items, or reduce its contents in the source app and choose it again.', '所選資料過大。請減少所選項目，或在原應用中縮小內容範圍後重新選擇。'],
+  invalid: ['所选资料无法用于这次提问。请移除后重新选择，最多五项。', 'The selected context cannot be used for this question. Remove it and choose up to five items again.', '所選資料無法用於這次提問。請移除後重新選擇，最多五項。'],
+  outsideScope: ['所选资料不在当前会话的工作空间范围内。请移除该项或调整会话范围。', 'The selected context is outside this conversation’s workspace scope. Remove it or change the conversation scope.', '所選資料不在目前會話的工作空間範圍內。請移除該項或調整會話範圍。'],
+  invalidResponse: ['未能核实资料，未添加到本次提问。请重试。', 'The context could not be verified and was not added to this question. Please retry.', '未能核實資料，未加入本次提問。請重試。'],
+  sources: ['本条消息的参考资料', 'Context for this message', '本則訊息的參考資料'],
+  noReplay: ['发送后，资料会保留在此对话分支的上下文中；后续回答仍会检查来源权限。', 'Once sent, these resources remain in this conversation branch. Later answers still check source access.', '傳送後，資料會保留在此對話分支的上下文中；後續回答仍會檢查來源權限。'],
+} as const;
+export type ContextText = keyof typeof contextCopy;
+export const contextMessages: Messages = Object.fromEntries(Object.values(contextCopy).map(([source, en, hant]) => [source, { en, 'zh-Hant': hant }]));
+registerMessages(contextMessages);

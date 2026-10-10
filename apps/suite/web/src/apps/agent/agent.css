@@ -56,6 +56,34 @@ dl.ag-values { padding: 0; }
 .ag-check { display: flex; gap: var(--sp-3); align-items: start; margin: var(--sp-3) 0; }
 .ag-check input { margin-top: 4px; flex: none; }
 .ag-check small { display: block; }
+/* Manual business context uses the shared dialog's focus trap, Escape and return focus. */
+.ag-context-open { margin-bottom: var(--sp-2); }
+.ag-context-picker { display: grid; gap: var(--sp-3); min-width: 0; overflow-wrap: anywhere; }
+.ag-context-picker p, .ag-context-selection p, .ag-context-sources p { margin: 0; }
+.ag-context-filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--sp-3); }
+.ag-context-picker label { display: grid; gap: var(--sp-1); min-width: 0; }
+.ag-context-picker .input { width: 100%; min-width: 0; }
+.ag-context-search { display: flex; align-items: end; flex-wrap: wrap; gap: var(--sp-2); }
+.ag-context-search label { flex: 1 1 180px; }
+.ag-context-picker .btn, .ag-context-open.btn { min-height: 44px; height: auto; white-space: normal; }
+.ag-context-results, .ag-context-list { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--sp-2); min-width: 0; }
+.ag-context-result { width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); font: inherit; text-align: start; cursor: pointer; overflow-wrap: anywhere; }
+.ag-context-result small { flex: none; }
+.ag-context-result:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--accent-line); }
+.ag-context-result:focus-visible { outline: none; box-shadow: var(--focus); }
+.ag-context-result:disabled { cursor: default; color: var(--muted); }
+.ag-context-selection { display: grid; gap: var(--sp-2); margin-bottom: var(--sp-2); min-width: 0; }
+.ag-context-list { grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); }
+.ag-context-chip, .ag-context-source { min-width: 0; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); overflow-wrap: anywhere; }
+.ag-context-chip { display: flex; align-items: center; gap: var(--sp-2); }
+.ag-context-chip > span { flex: 1; min-width: 0; }
+.ag-context-chip small, .ag-context-source small { display: block; color: var(--muted); }
+.ag-context-chip .btn { flex: none; min-width: 44px; min-height: 44px; }
+.ag-context-sources { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
+@media (max-width: 480px) {
+  .ag-context-filters { grid-template-columns: minmax(0, 1fr); }
+  .ag-context-search .btn { width: 100%; }
+}
 .ag-settings { overflow: auto; padding: var(--sp-5); width: 100%; max-width: 900px; margin: 0 auto; }
 .btn.ag-mobile-menu { display: none; }
 /* ---- Conversation polish: streaming, thinking, answers, code and tables ---------------------
