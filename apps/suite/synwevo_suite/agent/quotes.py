@@ -31,12 +31,14 @@ class RunQuotes:
         self.welcome = None  # billing.welcome.WelcomeAllowance, installed by composition when configured
 
     @staticmethod
-    def binding(conversation, *, text, parent_id, regenerate_of, context_refs=None):
+    def binding(conversation, *, text, parent_id, regenerate_of, context_refs=None, file_refs=None):
         value = {"conversation": conversation["id"], "head": conversation["head_id"],
                  "scope": conversation["scope_json"], "updated_at": conversation["updated_at"],
                  "text": text, "parent_id": parent_id, "regenerate_of": regenerate_of}
         if context_refs:
             value["context_refs"] = context_refs
+        if file_refs:
+            value["file_refs"] = file_refs
         return hashlib.sha256(_json(value).encode()).hexdigest()
 
     def _conversation(self, user_id, cid):
@@ -89,7 +91,7 @@ class RunQuotes:
         return {"kind": "organization", "id": oid}
 
     def issue(self, user_id, conversation, *, text, parent_id, regenerate_of,
-              budget: int, max_calls: int, run_seconds: int, payer=None, context_refs=None) -> dict:
+              budget: int, max_calls: int, run_seconds: int, payer=None, context_refs=None, file_refs=None) -> dict:
         integer(budget, positive=True)
         integer(max_calls, positive=True, maximum=12)
         integer(run_seconds, positive=True, maximum=3600)
@@ -113,8 +115,8 @@ class RunQuotes:
         payer = self._payer(user_id, payer)
         with self.store.tx():
             current = self._conversation(user_id, conversation["id"])
-            digest = self.binding(conversation, text=text, parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs)
-            if digest != self.binding(current, text=text, parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs):
+            digest = self.binding(conversation, text=text, parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs, file_refs=file_refs)
+            if digest != self.binding(current, text=text, parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs, file_refs=file_refs):
                 raise BillingError("quote_context_changed")
             outstanding = self.store.one("SELECT COUNT(*) AS n FROM agent_model_quotes WHERE user_id=? "
                 "AND accepted_turn_id IS NULL AND revoked_at IS NULL AND expires_at>?", (user_id, now))["n"]
@@ -157,7 +159,7 @@ class RunQuotes:
                 "status": "revoked" if row["revoked_at"] is not None else "accepted" if row["accepted_turn_id"]
                     else "expired" if row["expires_at"] <= self.ledger._now() else "quoted"}
 
-    def bind(self, user_id, quote_id, conversation, *, turn_id, text, parent_id, regenerate_of, context_refs=None):
+    def bind(self, user_id, quote_id, conversation, *, turn_id, text, parent_id, regenerate_of, context_refs=None, file_refs=None):
         """Atomically bind with the Agent's turn insert. No network or ledger call here."""
         with self.store.conn() as connection:
             if not connection.in_transaction or not getattr(self.store._local, "depth", 0):
@@ -167,7 +169,7 @@ class RunQuotes:
             raise BillingError("quote_already_used")
         if row["revoked_at"] is not None or row["expires_at"] <= self.ledger._now():
             raise BillingError("quote_expired_or_revoked")
-        if row["binding_digest"] != self.binding(conversation, text=text, parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs):
+        if row["binding_digest"] != self.binding(conversation, text=text, parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs, file_refs=file_refs):
             raise BillingError("quote_context_changed")
         terms = json.loads(row["terms_json"])
         if self.current_route() != Route(**terms["route"]):

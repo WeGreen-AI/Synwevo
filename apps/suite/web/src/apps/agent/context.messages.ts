@@ -1,8 +1,9 @@
 import { registerMessages, type Messages } from '@synwevo/ui/i18n-core';
 
 export const contextCopy = {
+  personalFile: ['个人文件', 'Personal files', '個人檔案'],
   open: ['选择业务资料', 'Choose business context', '選擇業務資料'],
-  intro: ['选择本次提问要参考的表单或数据表，最多五项。浏览和选择不会调用模型。', 'Choose up to five forms or tables for this question. Browsing and choosing do not call the model.', '選擇本次提問要參考的表單或資料表，最多五項。瀏覽和選擇不會呼叫模型。'],
+  intro: ['选择本次提问要参考的表单或数据表，与个人文件合计最多五项。浏览和选择不会调用模型。', 'Choose forms or tables for this question, up to five items including personal files. Browsing and choosing do not call the model.', '選擇本次提問要參考的表單或資料表，與個人檔案合計最多五項。瀏覽和選擇不會呼叫模型。'],
   formHint: ['表单包含字段设置和已发布版本信息，不包含各版本的完整定义或填写结果。', 'Forms include field settings and published version details, without each version’s full definition or submitted responses.', '表單包含欄位設定和已發布版本資訊，不包含各版本的完整定義或填寫結果。'],
   tableHint: ['数据表仅包含列设置和已保存的视图，不包含全部记录。', 'Tables include column settings and saved views, without all records.', '資料表僅包含欄設定和已儲存的檢視，不包含全部記錄。'],
   workspace: ['资料所在工作空间', 'Context workspace', '資料所在工作空間'],

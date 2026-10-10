@@ -1,0 +1,39 @@
+{
+  "recorded_at": "2026-10-10T12:57:30.143227+00:00",
+  "fixture_only": true,
+  "model_and_payment": "explicit local test transport, outbound forbidden",
+  "files": [
+    {
+      "id": "af_e52e8a59fb10",
+      "size": 1305,
+      "status": "deleted",
+      "attempts": 1,
+      "bytes_erased": 1,
+      "parsed_erased": 1
+    }
+  ],
+  "turns": [
+    {
+      "id": "turn_9bef6375fdd7",
+      "status": "succeeded",
+      "usage_state": "known"
+    }
+  ],
+  "quotes": [
+    {
+      "id": "quote_df7fb3df8398",
+      "accepted_turn_id": "turn_9bef6375fdd7"
+    }
+  ],
+  "attempts": [
+    {
+      "id": "bdf906158d214723ade645d914053cc5",
+      "status": "settled"
+    }
+  ],
+  "settlements": 1,
+  "user_context_erased": true,
+  "original_download_matches": true,
+  "production_model_calls": 0,
+  "production_payments": 0
+}

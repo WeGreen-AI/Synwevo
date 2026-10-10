@@ -33,6 +33,7 @@ from .provider import Cancelled, Credential, Provider, ProviderError, replayable
 from .safety import OutputGuard, allowed_memories, check_input, refused
 from .history import open_cursor, seal_cursor
 from .context import Contexts, visible_contexts
+from .files import Files
 from .tools import TOOLS, ToolContext, policy_allows, resource_reads, snapshot_read, tool_result_text, validate_tool
 
 log = logging.getLogger("synwevo.agent")
@@ -101,28 +102,30 @@ class Agent:
         self._signal: dict[str, int] = {}
         self._signal_lock = threading.Lock()
         self._closed = False
+        self.files = Files(self)
 
     def _credential(self, user_id):
         resolver = getattr(self.provider, "resolve_credential", resolve_credential)
         return resolver(self.store, user_id)
 
-    def quote_turn(self, user, cid, text, *, parent_id, regenerate_of, budget, max_calls, run_seconds, payer=None, context_refs=None):
+    def quote_turn(self, user, cid, text, *, parent_id, regenerate_of, budget, max_calls, run_seconds, payer=None, context_refs=None, file_refs=None):
         quotes = getattr(self.provider, "quotes", None)
         if quotes is None:
             raise ServiceError(503, "billing_not_configured", "付费模型服务尚未配置")
         conv = self.conversation(user["id"], cid)
         if self._sealed(user["id"], conv):
             raise ServiceError(409, "conversation_sealed", "来源权限已变化，请新建会话")
-        _, _, context_refs = Contexts(self).prepare(user["id"], conv, context_refs, regenerate_of=regenerate_of)
+        _, _, context_refs, file_refs = Contexts(self).prepare(user["id"], conv, context_refs, file_refs=file_refs, regenerate_of=regenerate_of)
         try:
             return quotes.issue(user["id"], conv, text=text, parent_id=parent_id,
                 regenerate_of=regenerate_of, budget=budget, max_calls=max_calls, run_seconds=run_seconds,
-                payer=payer, context_refs=context_refs)
+                payer=payer, context_refs=context_refs, file_refs=file_refs)
         except BillingError as exc:
             raise ServiceError(409, "billing_" + exc.code, "无法生成本次运行的报价，请检查预算与模型配置") from None
 
     def close(self) -> None:
         self._closed = True
+        self.files.stop()
         self.pool.shutdown(wait=False, cancel_futures=True)
 
     # ================================================================ events
@@ -141,14 +144,14 @@ class Agent:
         rows = self.store.all("SELECT seq, turn_id, type, body, created_at FROM agent_events WHERE conversation_id=? "
                               "AND user_id=? AND seq>? ORDER BY seq LIMIT ?",
                               (conversation_id, user_id, max(0, seq), max(1, min(limit, 500))))
-        lost = self._lost_workspaces(user_id, conversation_id) if rows else set()
+        lost = self._lost_dependencies(user_id, conversation_id) if rows else set()
         out = []
         for r in rows:
             data = _j(r["body"], {})
             if r["type"] == "text":
                 m = self.store.one("SELECT sources_json FROM agent_messages WHERE id=? AND conversation_id=?",
                                    (data.get("message_id"), conversation_id))
-                if not m or self._source_workspaces(m) & lost:
+                if not m or self._source_dependencies(m) & lost:
                     data = {"message_id": data.get("message_id"), "delta": "", "hidden": True}
             out.append({"seq": r["seq"], "turn_id": r["turn_id"], "type": r["type"], "data": data,
                         "at": r["created_at"]})
@@ -210,7 +213,7 @@ class Agent:
                 "next_cursor": seal_cursor(self.store, user_id, status, q, rows[-1]) if more and rows else None}
 
     def conversation_json(self, user_id: str, row: dict, *, full: bool) -> dict:
-        lost = self._lost_workspaces(user_id, row["id"])
+        lost = self._lost_dependencies(user_id, row["id"])
         out = {"id": row["id"], "title": row["title"], "status": row["status"], "head_id": row["head_id"],
                "scope": _j(row["scope_json"], None), "sealed": "access_changed" if lost else row["sealed_reason"],
                "created_at": row["created_at"], "updated_at": row["updated_at"]}
@@ -223,12 +226,12 @@ class Agent:
         messages_by_id = {m["id"]: m for m in msgs}
         for c in calls:
             turn = next((t for t in turns if t["id"] == c["turn_id"]), None)
-            hidden = bool(turn and self._source_workspaces(messages_by_id[turn["assistant_message_id"]]) & lost)
+            hidden = bool(turn and self._source_dependencies(messages_by_id[turn["assistant_message_id"]]) & lost)
             by_turn.setdefault(c["turn_id"], []).append(self.call_json(c, lost, hidden=hidden))
         turn_of = {t["assistant_message_id"]: t for t in turns}
         out["messages"] = []
         for m in msgs:
-            sources = self._source_workspaces(m)
+            sources = self._source_dependencies(m)
             hidden = bool(sources & lost)
             t = turn_of.get(m["id"])
             out["messages"].append({
@@ -317,6 +320,8 @@ class Agent:
                     # Legacy workspace-only provenance cannot prove resource access.
                     lost.add(source)
                     continue
+                if "file_id" in source:
+                    continue
                 wid = source["workspace_id"]
                 key = canonical(source)
                 if wid in lost or key in checked:
@@ -358,23 +363,34 @@ class Agent:
                     lost.add(wid)
         return lost
 
+    def _lost_dependencies(self, user_id: str, cid: str) -> set[str]:
+        sources = [source for row in self.store.all("SELECT sources_json FROM agent_messages WHERE conversation_id=?", (cid,))
+                   for source in _j(row["sources_json"], []) or []]
+        return self._lost_workspaces(user_id, cid) | self.files.dependencies_lost(user_id, sources)
+
+    @classmethod
+    def _source_dependencies(cls, message: dict) -> set[str]:
+        return cls._source_workspaces(message) | {
+            "file:" + s["file_id"] for s in _j(message["sources_json"], []) or []
+            if isinstance(s, dict) and "file_id" in s}
+
     def message_hidden(self, user_id: str, cid: str, message: dict) -> bool:
         """Whether the person now sees this message hidden after an access change — the rule of
         conversation_json, for paths that copy a message elsewhere (a report's quote)."""
-        return bool(self._source_workspaces(message) & self._lost_workspaces(user_id, cid))
+        return bool(self._source_dependencies(message) & self._lost_dependencies(user_id, cid))
 
     @staticmethod
     def _source_workspaces(message: dict) -> set[str]:
         """Workspaces an answer depends on (losing one hides it). Not where a copy came from:
         that copy is its target's content, kept only for the transfer question."""
         return {s if isinstance(s, str) else s["workspace_id"]
-                for s in _j(message["sources_json"], []) or [] if isinstance(s, str) or "carried_into" not in s}
+                for s in _j(message["sources_json"], []) or [] if isinstance(s, str) or ("file_id" not in s and "carried_into" not in s)}
 
     @staticmethod
     def _content_workspaces(message: dict) -> set[str]:
         """Workspaces whose content (not merely their name in the catalogue) this answer read."""
         return {s if isinstance(s, str) else s["workspace_id"]
-                for s in _j(message["sources_json"], []) or [] if isinstance(s, str) or "catalogue_name" not in s}
+                for s in _j(message["sources_json"], []) or [] if isinstance(s, str) or ("file_id" not in s and "catalogue_name" not in s)}
 
     def _transfer(self, t: dict, op, wid: str | None, clean: dict) -> list[dict]:
         """The other workspaces whose content this write may carry into the workspace that will own
@@ -402,7 +418,7 @@ class Agent:
                 for s in sorted(sources - {target})]
 
     def _sealed(self, user_id: str, row: dict) -> str | None:
-        return "access_changed" if self._lost_workspaces(user_id, row["id"]) else row["sealed_reason"]
+        return "access_changed" if self._lost_dependencies(user_id, row["id"]) else row["sealed_reason"]
 
     def update_conversation(self, user_id: str, cid: str, *, title: str | None, scope: Any, status: str | None,
                             head_id: str | None) -> dict:
@@ -441,7 +457,7 @@ class Agent:
 
     # ================================================================ turns
     def start_turn(self, user: dict, cid: str, text: str | None, *, parent_id: str | None,
-                   regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None, context_refs: list[dict] | None = None) -> dict:
+                   regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None, context_refs: list[dict] | None = None, file_refs: list[dict] | None = None) -> dict:
         # Who may use the Agent at all, the separate consent for the provider this message would
         # go to, and the content rules come first: a refused message is never stored or sent.
         # The input refusal is recorded outside the admission transaction (that rolls back).
@@ -451,10 +467,10 @@ class Agent:
             check_input(self.store, user["id"], (text or "").strip(), conversation_id=cid)
         # The active-turn check, quota and every message insert form one admission decision.
         with self.store.tx():
-            return self._start_turn(user, cid, text, parent_id=parent_id, regenerate_of=regenerate_of, quote_id=quote_id, consent_id=consent_id, context_refs=context_refs)
+            return self._start_turn(user, cid, text, parent_id=parent_id, regenerate_of=regenerate_of, quote_id=quote_id, consent_id=consent_id, context_refs=context_refs, file_refs=file_refs)
 
     def _start_turn(self, user: dict, cid: str, text: str | None, *, parent_id: str | None,
-                    regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None, context_refs: list[dict] | None = None) -> dict:
+                    regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None, context_refs: list[dict] | None = None, file_refs: list[dict] | None = None) -> dict:
         """A new user message (or a regeneration of an answer) and the turn that answers it."""
         row = self.conversation(user["id"], cid)
         if row["status"] != "active":
@@ -490,7 +506,7 @@ class Agent:
                           "WHERE t.conversation_id=? AND t.provider<>? AND m.api_json IS NOT NULL",
                           (cid, self.provider.name)):
             raise ServiceError(409, "provider_history_incompatible", "模型提供方已变化，请新建会话继续")
-        context, context_sources, context_refs = Contexts(self).prepare(user["id"], row, context_refs,
+        context, context_sources, context_refs, file_refs = Contexts(self).prepare(user["id"], row, context_refs, file_refs=file_refs,
             regenerate_of=regenerate_of, credential=credential)
         ts = now()
         if regenerate_of:
@@ -528,9 +544,9 @@ class Agent:
             try:
                 if consent_id:
                     quote_id = quotes.consents.issue(user["id"], consent_id, row, text=text,
-                        parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs)
+                        parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs, file_refs=file_refs)
                 quotes.bind(user["id"], quote_id, row, turn_id=turn_id, text=text,
-                            parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs)
+                            parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs, file_refs=file_refs)
             except BillingError as exc:
                 raise ServiceError(409, "billing_" + exc.code, "本次预算授权已变化，请重新获取报价") from None
             # A confirmed paid run is the person's first paid use of the published terms, AI use
@@ -950,7 +966,7 @@ class Agent:
             self.conversation(t["user_id"], t["conversation_id"])
         except ServiceError:
             raise ProviderError("account_unavailable", "账户或会话不可用") from None
-        if self._lost_workspaces(t["user_id"], t["conversation_id"]):
+        if self._lost_dependencies(t["user_id"], t["conversation_id"]):
             raise ProviderError("source_access_changed", "来源内容或权限已变化，请新建会话重新读取")
         # Historical API messages were captured for this credential class. Recheck the policy
         # before *every* provider request, including a resumed confirmation and later turns.
@@ -1108,7 +1124,7 @@ class Agent:
             state = self.store.one("SELECT status,cancel_requested FROM agent_turns WHERE id=?", (t["id"],))
             if self._closed or not state or state["cancel_requested"] or state["status"] in ("cancelled", "failed", "succeeded"):
                 raise ServiceError(409, "turn_cancelled", "回答已停止，操作未执行")
-            if self._lost_workspaces(t["user_id"], t["conversation_id"]):
+            if self._lost_dependencies(t["user_id"], t["conversation_id"]):
                 raise ServiceError(409, "source_access_changed", "来源内容或权限已变化，操作未执行")
             if op.side_effect != "none":
                 # Provenance for the target's run record: workspace IDs only, never their content.
@@ -1361,9 +1377,9 @@ class Agent:
             self._event(t["conversation_id"], t["user_id"], t["id"], "tool", {"tool_call_id": call_id, "status": "declined"})
         self._resume(t)
         row = self.store.one("SELECT * FROM agent_tool_calls WHERE id=?", (call_id,))
-        lost = self._lost_workspaces(user["id"], t["conversation_id"])
+        lost = self._lost_dependencies(user["id"], t["conversation_id"])
         m = self.store.one("SELECT sources_json FROM agent_messages WHERE id=?", (t["assistant_message_id"],))
-        return self.call_json(row, lost, hidden=bool(self._source_workspaces(m) & lost))
+        return self.call_json(row, lost, hidden=bool(self._source_dependencies(m) & lost))
 
     def _resume(self, t: dict) -> None:
         """Every call of the waiting step is decided: hand the results to the model and continue."""

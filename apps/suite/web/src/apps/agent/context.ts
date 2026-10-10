@@ -7,8 +7,8 @@ export function contextKey(ref: Pick<ContextReference, 'kind' | 'workspace_id' |
 export function contextSpaces(spaces: Workspace[], scope: string[] | null): Workspace[] {
   return spaces.filter((ws) => (scope === null || scope.includes(ws.workspace_id)) && ws.processing !== 'none');
 }
-export function addContext(selected: SelectedContext[], next: SelectedContext): SelectedContext[] {
-  if (selected.length >= MAX_CONTEXTS || selected.some((item) => contextKey(item.reference) === contextKey(next.reference))) return selected;
+export function addContext(selected: SelectedContext[], next: SelectedContext, otherCount = 0): SelectedContext[] {
+  if (selected.length + otherCount >= MAX_CONTEXTS || selected.some((item) => contextKey(item.reference) === contextKey(next.reference))) return selected;
   return [...selected, next];
 }
 /** Copy only the server-issued reference fields, preserving their exact values and order. */

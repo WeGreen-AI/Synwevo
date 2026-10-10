@@ -15,6 +15,7 @@ from synwevo_core.capabilities import canonical, fingerprint
 from synwevo_core.errors import ServiceError
 
 from .tools import UNTRUSTED_NOTE, policy_allows, snapshot_read
+from .files import FileReference
 
 MAX_CONTEXTS = 5
 MAX_CONTEXT_CHARS = 60_000
@@ -118,11 +119,12 @@ class Contexts:
     def resolve(self, user_id, ref: ContextResolve):
         return self._read(user_id, ref)[1]
 
-    def prepare(self, user_id, conversation, refs, *, regenerate_of=None, credential=None):
+    def prepare(self, user_id, conversation, refs, *, file_refs=None, regenerate_of=None, credential=None):
         """Inside admission's transaction: current projection, policy, scope and exact version."""
-        if not refs:
-            return None, [], []
-        if regenerate_of or not isinstance(refs, list) or len(refs) > MAX_CONTEXTS:
+        if not refs and not file_refs:
+            return None, [], [], []
+        refs, file_refs = refs or [], file_refs or []
+        if regenerate_of or not isinstance(refs, list) or not isinstance(file_refs, list) or len(refs)+len(file_refs) > MAX_CONTEXTS:
             raise ServiceError(422, "invalid_context", "最多选择五项资源；重新生成不能替换原有来源")
         scope = json.loads(conversation["scope_json"]) if conversation["scope_json"] else None
         items, sources, clean, seen = [], [], [], set()
@@ -148,13 +150,33 @@ class Contexts:
                                                {ref.workspace_id})
             sources.extend({"workspace_id": source, "carried_into": ref.workspace_id} for source in sorted(carried))
             clean.append(ref.model_dump())
+        clean_files = []
+        if file_refs:
+            self.agent._check_person(user_id, credential or self.agent._credential(user_id))
+        for raw in file_refs:
+            try:
+                ref = FileReference.model_validate(raw)
+            except ValidationError:
+                raise ServiceError(422, "invalid_context", "文件引用无效，请重新选择") from None
+            if ref.file_id in seen:
+                raise ServiceError(422, "invalid_context", "不能重复选择同一文件")
+            seen.add(ref.file_id)
+            row = self.agent.files.resolve(user_id, ref)
+            clean_files.append(ref.model_dump())
+            items.append({"kind": "file", "file_id": row["id"], "title": row["filename"],
+                          "workspace_name": None, "open_path": "/api/suite/agent/files/"+row["id"]+"/download",
+                          "data": json.loads(row["parsed_json"])})
+            # Null is genuinely no workspace. Pre-file engines conservatively hide an
+            # unrecognized source with no read proof; they must never replay this as plain text.
+            sources.append({"file_id": row["id"], "workspace_id": None, "snapshot_hash": row["snapshot_hash"]})
         payload = {"type": "business_context_v1", "notice": UNTRUSTED_NOTE, "items": items}
         if len(canonical(payload)) > MAX_CONTEXT_CHARS:
             raise ServiceError(413, "context_too_large", "所选资源总内容过大，请减少所选资源")
-        return payload, sources, clean
+        return payload, sources, clean, clean_files
 
 
 def visible_contexts(api):
     if not isinstance(api, dict) or api.get("type") != "business_context_v1":
         return []
-    return [{k: item[k] for k in ("title", "workspace_name", "open_path")} for item in api["items"]]
+    return [{**{k: item[k] for k in ("title", "workspace_name", "open_path")},
+             **({"kind": "file"} if item.get("kind") == "file" else {})} for item in api["items"]]

@@ -15,6 +15,7 @@ from synwevo_core.store import new_id, now
 
 from .engine import Agent, _j
 from .context import ContextList, ContextResolve, ContextRef, Contexts, ContextPage, ResolvedContext
+from .files import FileInput, FileList, FileReference, FilePage, FileDetail, FileView, FileDeleted
 from .provider import EFFORTS, KEY_PURPOSE, configured_model, resolve_credential
 from .safety import check_memory
 from .tools import workspace_policy
@@ -81,6 +82,7 @@ class UpdateConversation(_In):
 
 class StartTurn(_In):
     context_refs: list[ContextRef] = F(default_factory=list, max_length=5)
+    file_refs: list[FileReference] = F(default_factory=list, max_length=5)
     conversation_id: str = F(pattern=CONV)
     text: str | None = F(default=None, max_length=20_000)
     parent_message_id: str | None = F(default=None, pattern=MSG)
@@ -91,6 +93,7 @@ class StartTurn(_In):
 
 class QuoteTurn(_In):
     context_refs: list[ContextRef] = F(default_factory=list, max_length=5)
+    file_refs: list[FileReference] = F(default_factory=list, max_length=5)
     conversation_id: str = F(pattern=CONV)
     text: str | None = F(default=None, max_length=20_000)
     parent_message_id: str | None = F(default=None, pattern=MSG)
@@ -517,6 +520,27 @@ def register(registry, agent: Agent, store, identity) -> None:
             kw.setdefault("result_guard", result_guard)
         registry.register(Operation(app="agent", **kw))
 
+    def file_guard(c, row):
+        fid = _j(row.get("input"), {}).get("file_id")
+        if c.op.id != "agent.file.delete":
+            current = agent.files.get(c.user_id, fid)
+            old = _j(row.get("output"), {})
+            if current["status"] != old.get("status") or current.get("reference") != old.get("reference"):
+                raise ServiceError(409, "result_access_changed", "文件状态已变化，请重新读取")
+    op(id="agent.file.list", title=T("个人文件", "個人檔案", "Personal files"),
+       summary="List the signed-in person's uploaded context files.", input=FileList, output=FilePage, agent="never",
+       handler=lambda c,i: agent.files.list(c.user_id,i.offset))
+    op(id="agent.file.get", title=T("查看个人文件", "查看個人檔案", "View a personal file"),
+       summary="Read the current file status and complete extracted content with source locations.", input=FileInput, output=FileDetail, agent="never",
+       handler=lambda c,i: agent.files.get(c.user_id,i.file_id))
+    for action, title in (("delete",T("删除个人文件","刪除個人檔案","Delete a personal file")),
+                          ("cancel",T("停止文件读取","停止檔案讀取","Stop reading a file")),
+                          ("retry",T("重试文件读取","重試檔案讀取","Retry reading a file"))):
+        method = getattr(agent.files,action)
+        op(id="agent.file."+action,title=title,summary="Manage an owned context file without model or payment calls.",
+           input=FileInput,output=FileDeleted if action=="delete" else FileView,side_effect="write",agent="never",result_guard=file_guard,
+           handler=lambda c,i,method=method: method(c.user_id,i.file_id))
+
     contexts = Contexts(agent)
     op(id="agent.context.list", title=T("选择业务资源", "選擇業務資源", "Choose business resources"),
        summary="Browse authorized form definitions or table schemas for explicit conversation context; no model call.",
@@ -615,7 +639,7 @@ def register(registry, agent: Agent, store, identity) -> None:
        input=QuoteTurn, output=QuoteResult, side_effect="write", agent="never", unattended=False,
        handler=lambda c, i: agent.quote_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
            regenerate_of=i.regenerate_of, budget=int(i.budget), max_calls=i.max_calls, run_seconds=i.run_seconds,
-           payer={"kind": i.payer_kind, "id": i.payer_id}, context_refs=[r.model_dump() for r in i.context_refs]))
+           payer={"kind": i.payer_kind, "id": i.payer_id}, context_refs=[r.model_dump() for r in i.context_refs], file_refs=[r.model_dump() for r in i.file_refs]))
     op(id="agent.quote.get", title=T("查看报价", "查看報價", "Read a quote"), input=QuoteRef,
        summary="Read the person's own fixed price and budget.", agent="never", output=QuoteResult, handler=quote_read)
     op(id="agent.quote.revoke", title=T("撤销运行预算", "撤銷執行預算", "Revoke a run budget"), input=QuoteRef,
@@ -681,7 +705,7 @@ def register(registry, agent: Agent, store, identity) -> None:
             person_only(c)
         return agent.start_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
             regenerate_of=i.regenerate_of, quote_id=i.quote_id, consent_id=i.consent_id,
-            context_refs=[r.model_dump() for r in i.context_refs])
+            context_refs=[r.model_dump() for r in i.context_refs], file_refs=[r.model_dump() for r in i.file_refs])
 
     consents = ProviderConsents(store)
 

@@ -2,7 +2,7 @@ export type ContextKind = "form" | "table";
 export interface ContextItem { kind: ContextKind; workspace_id: string; resource_id: string; title: string }
 /** The exact reference returned by agent.context.resolve; no business content is sent by the browser. */
 export interface ContextReference { kind: ContextKind; workspace_id: string; resource_id: string; snapshot: string }
-export interface MessageContext { title: string; workspace_name: string; open_path: string | null }
+export interface MessageContext { title: string; workspace_name: string | null; open_path: string | null; kind?: "file" }
 export interface SelectedContext extends MessageContext { reference: ContextReference }
 export interface ContextPage { items: ContextItem[]; next_offset: number | null; limited: boolean }
 
@@ -48,3 +48,18 @@ export function branchMessages(messages: Message[], head: string | null): Messag
   return branch.reverse();
 }
 export const activeTurn = (m: Message) => !!m.turn && ["queued", "running", "waiting_confirmation"].includes(m.turn.status);
+
+export interface FileReference { file_id: string; snapshot: string }
+export interface SelectedFile { title: string; reference: FileReference }
+export interface FileCapabilities {
+  configured: boolean; formats: string[]; max_bytes: number; max_files: number; max_storage_bytes: number;
+  max_context_chars: number; unattached_retention_seconds: number; scanner: Record<string, unknown> | null; ocr: false;
+}
+export interface AgentFile {
+  id: string; filename: string; size: number; created_at: number; updated_at: number; attempts: number;
+  status: 'receiving' | 'queued' | 'parsing' | 'ready' | 'failed' | 'cancelled' | 'deleted';
+  error_code: string | null; scan_status: string; reference: FileReference | null; download_path: string | null;
+  extraction?: { lines: { text: string; source: Record<string, unknown> }[];
+    tables: { name: string; source: Record<string, unknown>; rows: unknown[][]; row_numbers?: number[] }[] } | null;
+}
+export interface FilePage { files: AgentFile[]; next_offset: number | null }

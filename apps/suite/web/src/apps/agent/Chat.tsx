@@ -5,6 +5,8 @@ import { Loading, RunBadge } from "../../shared/states";
 import { withAiLabel } from "./aiLabel";
 import { AiLabel, RefusalNotice, ThinkingStatus, TurnCostLine, useChatText } from "./ChatParts";
 import { shouldSubmit } from "./composer";
+import FilePicker, { FileChips } from './FilePicker';
+import { addFile, createFileClient, fileReferences, type FileClient } from './files';
 import ContextPicker, { ContextChips, ContextSources, useContextText } from "./ContextPicker";
 import { addContext, contextKey, contextReferences, contextSpaces } from "./context";
 import { AgentFailure as Failure, agentErrorText } from "./errors";
@@ -12,7 +14,7 @@ import { Markdown } from "./Markdown";
 import { validTurnCost } from "./cost";
 import { refusalOf } from "./refusals";
 import ReportDialog, { useReportText } from "./ReportDialog";
-import { activeTurn, branchMessages, type ContextReference, type SelectedContext, type Conversation, type Message, type ToolCall, type Workspace } from "./types";
+import { activeTurn, branchMessages, type ContextReference, type SelectedContext, type FileReference, type SelectedFile, type Conversation, type Message, type ToolCall, type Workspace } from "./types";
 
 export type Act = (operation: string, input: Record<string, unknown>) => Promise<unknown>;
 
@@ -94,9 +96,10 @@ function Scope({ scope, spaces, change, close }: { scope: string[] | null; space
 type CopyState = { id: string; ok: boolean } | null;
 
 export default function Chat({ conversation, loading, error, connection, configured, spaces, act, send, refresh, sentDraft = 0, aside,
-  status, maximum, hint, walletUrl, organizationPayer = false, onPersonal, payerName }: {
+  status, maximum, hint, walletUrl, organizationPayer = false, onPersonal, payerName, fileClient }: {
   conversation?: Conversation; loading: boolean; error: unknown; connection: string; configured: boolean | undefined;
-  spaces: Workspace[]; act: Act; send: (text: string, context_refs?: ContextReference[]) => Promise<unknown>; refresh: () => Promise<void>; sentDraft?: number;
+  spaces: Workspace[]; act: Act; send: (text: string, context_refs?: ContextReference[], file_refs?: FileReference[]) => Promise<unknown>; refresh: () => Promise<void>; sentDraft?: number;
+  fileClient?: FileClient;
   /** Payment state for this conversation, shown above the composer. */
   aside?: ReactNode;
   /** Payer, balance, limit and model, shown just above the message box. */
@@ -120,6 +123,8 @@ export default function Chat({ conversation, loading, error, connection, configu
   const id = useId();
   const [text, setText] = useState("");
   const [selectedContexts, setSelectedContexts] = useState<SelectedContext[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
+  const [localFileClient] = useState(createFileClient);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<unknown>();
   const [scopeOpen, setScopeOpen] = useState(false);
@@ -141,7 +146,7 @@ export default function Chat({ conversation, loading, error, connection, configu
   const pickerSpaces = contextSpaces(spaces, conversation?.scope ?? null);
   const pickerScope = JSON.stringify([conversation?.id, conversation?.scope, pickerSpaces.map((ws) => ws.workspace_id)]);
   const outsideScope = conversation?.scope != null && selectedContexts.some((item) => !conversation.scope!.includes(item.reference.workspace_id));
-  useEffect(() => { if (sentDraft) { setText(""); setSelectedContexts([]); stick.current = true; input.current?.focus(); } }, [sentDraft]);
+  useEffect(() => { if (sentDraft) { setText(""); setSelectedContexts([]); setSelectedFiles([]); stick.current = true; input.current?.focus(); } }, [sentDraft]);
   useEffect(() => { setFailure(undefined); stick.current = true; setNewContent(false); setReporting(null); }, [conversation?.id]);
   useEffect(() => () => clearTimeout(copyTimer.current), []);
   useEffect(() => {
@@ -159,7 +164,10 @@ export default function Chat({ conversation, loading, error, connection, configu
     e?.preventDefault();
     if (blocked || !text.trim()) return;
     setBusy(true); setFailure(undefined);
-    try { if (await send(text, contextReferences(selectedContexts)) !== false) { setText(""); setSelectedContexts([]); stick.current = true; input.current?.focus(); } }
+    try {
+      const refs = fileReferences(selectedFiles, selectedContexts.length);
+      const result = refs ? await send(text, contextReferences(selectedContexts), refs) : await send(text, contextReferences(selectedContexts));
+      if (result !== false) { setText(""); setSelectedContexts([]); setSelectedFiles([]); stick.current = true; input.current?.focus(); } }
     catch (e) { setFailure(e); } finally { setBusy(false); }
   }
   function flash(state: CopyState) {
@@ -259,9 +267,16 @@ export default function Chat({ conversation, loading, error, connection, configu
       {failure != null && (failureRefusal ? <RefusalNotice refusal={failureRefusal} walletUrl={walletUrl} live busy={blocked} onPersonal={onPersonal}
         onRequote={failureRefusal.next === "requote" || failureRefusal.next === "reconfirm" ? () => void submit() : undefined} /> : <Failure error={failure} />)}
       {status}
-      <ContextPicker key={pickerScope} spaces={pickerSpaces} selected={selectedContexts} disabled={blocked}
-        onChoose={(item) => setSelectedContexts((old) => addContext(old, item))}
+      <ContextPicker key={pickerScope} spaces={pickerSpaces} selected={selectedContexts} otherCount={selectedFiles.length} disabled={blocked}
+        onChoose={(item) => setSelectedContexts((old) => addContext(old, item, selectedFiles.length))}
         onRemove={(key) => setSelectedContexts((old) => old.filter((item) => contextKey(item.reference) !== key))} />
+      <FilePicker client={fileClient ?? localFileClient} selected={selectedFiles} businessCount={selectedContexts.length}
+        disabled={loading || error != null || busy} onChoose={(file) => setSelectedFiles((old) => addFile(old, file, selectedContexts.length))}
+        onRemove={(fid) => setSelectedFiles((old) => old.filter((file) => file.reference.file_id !== fid))}
+        onRecord={(file) => setSelectedFiles((old) => old.filter((selected) => selected.reference.file_id !== file.id
+          || (file.status === 'ready' && selected.reference.snapshot === file.reference?.snapshot)))}
+        onDeleted={refresh} />
+      <FileChips selected={selectedFiles} disabled={blocked} onRemove={(fid) => setSelectedFiles((old) => old.filter((file) => file.reference.file_id !== fid))} />
       <ContextChips selected={selectedContexts} disabled={blocked} onRemove={(key) => setSelectedContexts((old) => old.filter((item) => contextKey(item.reference) !== key))} />
       {outsideScope && <p className="notice err" role="alert">{contextText("outsideScope")}</p>}
       <form className="ag-composer" onSubmit={(e) => void submit(e)}>

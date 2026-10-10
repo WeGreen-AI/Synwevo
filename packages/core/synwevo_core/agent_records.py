@@ -34,7 +34,7 @@ from .store import Store
 
 #: Tables erased with an account, each keyed by ``user_id`` (order: dependants first).
 ERASED = ("agent_events", "agent_tool_calls", "agent_turns", "agent_messages", "agent_conversations",
-          "agent_memories", "agent_settings")
+          "agent_memories", "agent_settings", "agent_files")
 
 #: The input an erased account's Agent operation runs keep in place of what was asked, in the
 #: capability layer's canonical form, and its fingerprint (``capabilities.canonical`` /

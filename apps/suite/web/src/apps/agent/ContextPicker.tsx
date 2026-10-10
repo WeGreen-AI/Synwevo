@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Modal, useI18n, type Params } from '@synwevo/ui';
+import { safeFileDownload } from './files';
 import { read } from '../../shared/ops';
 import { AgentFailure } from './errors';
 import { MAX_CONTEXTS, contextErrorKey, contextKey, contextPage, resolvedContext, safeContextPath } from './context';
@@ -26,10 +27,10 @@ export function ContextSources({ contexts, hidden = false }: { contexts?: Messag
   return <section className="ag-context-sources" aria-label={c('sources')}>
     <p className="muted small">{c('sources')}</p><ul className="ag-context-list">
       {contexts.map((source, i) => {
-        const path = safeContextPath(source.open_path);
+        const path = source.kind === 'file' ? safeFileDownload(source.open_path) : safeContextPath(source.open_path);
         return <li key={i} className="ag-context-source">
-          {path ? <Link to={path}>{source.title}</Link> : <span>{source.title}</span>}
-          <small className="muted">{source.workspace_name}</small>
+          {path ? source.kind === 'file' ? <a href={path} download>{source.title}</a> : <Link to={path}>{source.title}</Link> : <span>{source.title}</span>}
+          <small className="muted">{source.kind === 'file' ? c('personalFile') : source.workspace_name}</small>
         </li>;
       })}
     </ul>
@@ -54,7 +55,7 @@ export function ContextChips({ selected, onRemove, disabled = false }: {
 
 interface PickerProps {
   spaces: Workspace[]; selected: SelectedContext[]; onChoose: (item: SelectedContext) => void;
-  onRemove: (key: string) => void; disabled: boolean;
+  onRemove: (key: string) => void; disabled: boolean; otherCount?: number;
 }
 export default function ContextPicker({ disabled, ...props }: PickerProps) {
   const c = useContextText();
@@ -68,7 +69,7 @@ export default function ContextPicker({ disabled, ...props }: PickerProps) {
 }
 
 /** This dialog mounts only while open. Closing, navigation and scope changes abort both reads. */
-export function ContextDialog({ spaces, selected, onChoose, onRemove, onClose }: Omit<PickerProps, 'disabled'> & { onClose: () => void }) {
+export function ContextDialog({ spaces, selected, otherCount = 0, onChoose, onRemove, onClose }: Omit<PickerProps, 'disabled'> & { onClose: () => void }) {
   const c = useContextText();
   const id = useId();
   const [workspace, setWorkspace] = useState(spaces[0]?.workspace_id ?? '');
@@ -112,7 +113,7 @@ export function ContextDialog({ spaces, selected, onChoose, onRemove, onClose }:
     return cancel;
   }, [workspace, kind, search, spacesKey]);
   async function choose(item: ContextItem) {
-    if (resolveRequest.current || selected.length >= MAX_CONTEXTS || selected.some((prior) => contextKey(prior.reference) === contextKey(item))) return;
+    if (resolveRequest.current || selected.length + otherCount >= MAX_CONTEXTS || selected.some((prior) => contextKey(prior.reference) === contextKey(item))) return;
     const request = new AbortController(); resolveRequest.current = request;
     setResolving(contextKey(item)); setResolveFailure(null);
     try {
@@ -127,7 +128,7 @@ export function ContextDialog({ spaces, selected, onChoose, onRemove, onClose }:
       <p id={`${id}-intro`}>{c('intro')}</p>
       <p className="muted small">{c('formHint')}</p><p className="muted small">{c('tableHint')}</p>
       <ContextChips selected={selected} onRemove={onRemove} />
-      {selected.length >= MAX_CONTEXTS && <p className="notice" role="status">{c('max')}</p>}
+      {selected.length + otherCount >= MAX_CONTEXTS && <p className="notice" role="status">{c('max')}</p>}
       {!spaces.length ? <p className="notice">{c('noSpaces')}</p> : <>
         <div className="ag-context-filters">
           <label htmlFor={`${id}-workspace`}>{c('workspace')}<select id={`${id}-workspace`} className="input" value={workspace}
@@ -156,7 +157,7 @@ export function ContextDialog({ spaces, selected, onChoose, onRemove, onClose }:
           {page?.items.map((item) => {
             const chosen = selected.some((prior) => contextKey(prior.reference) === contextKey(item));
             return <li key={contextKey(item)}><button type="button" className="ag-context-result"
-              disabled={chosen || !!resolving || selected.length >= MAX_CONTEXTS} aria-label={c('choose', { title: item.title })}
+              disabled={chosen || !!resolving || selected.length + otherCount >= MAX_CONTEXTS} aria-label={c('choose', { title: item.title })}
               onClick={() => void choose(item)}><span>{item.title}</span><small className="muted">{chosen ? c('chosen') : c(item.kind)}</small></button></li>;
           })}
         </ul>

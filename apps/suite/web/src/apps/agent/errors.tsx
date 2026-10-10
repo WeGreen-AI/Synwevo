@@ -5,6 +5,9 @@ import { consentCopy } from "./consent.messages";
 import { contextErrorKey } from "./context";
 import { contextCopy } from "./context.messages";
 
+import { fileErrorKey } from './files';
+import { fileCopy } from './files.messages';
+
 const errors: Record<string, string> = {
   invalid_cursor: "会话列表位置无效，请重新加载列表。",
   cursor_expired: "会话列表已过期，请重新加载列表。",
@@ -123,6 +126,8 @@ const errors: Record<string, string> = {
 };
 
 export function agentErrorText(error: unknown, t: (key: string) => string): string {
+  const fileKey = fileErrorKey(error);
+  if (fileKey) return t(fileCopy[fileKey][0]);
   const contextKey = contextErrorKey(error);
   if (contextKey) return t(contextCopy[contextKey][0]);
   let code = error && typeof error === "object" && "code" in error ? String(error.code) : "";

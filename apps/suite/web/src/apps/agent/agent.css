@@ -221,3 +221,18 @@ a.ag-chip-link { color: var(--accent); }
 .ag-consent-facts dt { font-weight: 600; }
 .ag-consent-facts dd { margin: 0; overflow-wrap: anywhere; }
 @media (min-width: 720px) { .ag-consent-facts > div { grid-template-columns: 12rem 1fr; } }
+
+/* Personal files reuse context/dialog surfaces and wrap controls at narrow widths. */
+.ag-file-picker { max-width: 100%; }
+.ag-file-row, .ag-file-upload { display: grid; gap: var(--sp-2); padding: var(--sp-3); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
+.ag-file-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.ag-file-actions .btn { overflow-wrap: anywhere; max-width: 100%; }
+.ag-file-preview { display: grid; gap: var(--sp-3); min-width: 0; }
+.ag-file-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font: inherit; }
+.ag-file-table { max-width: 100%; overflow: auto; }
+.ag-file-table:focus-visible { outline: none; box-shadow: var(--focus); }
+.ag-file-table td, .ag-file-table th { padding: var(--sp-2); border: 1px solid var(--line); white-space: pre-wrap; min-width: 5em; }
+@media (max-width: 480px) {
+  .ag-file-actions .btn { flex: 1 1 100%; }
+  .ag-file-picker input[type=file] { max-width: 100%; }
+}

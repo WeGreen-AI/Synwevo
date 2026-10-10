@@ -7,7 +7,8 @@ import { Empty, Loading } from "../../shared/states";
 import { AgentFailure as Failure } from "./errors";
 import { newKey, op, read } from "../../shared/ops";
 import Chat from "./Chat";
-import { activeTurn, branchMessages, type ContextReference, type Workspace } from "./types";
+import { activeTurn, branchMessages, type ContextReference, type FileReference, type Workspace } from "./types";
+import { createFileClient, fileErrorKey } from './files';
 import { contextErrorKey } from "./context";
 import { useConversation } from "./useConversation";
 import { useHistory } from "./useHistory";
@@ -49,6 +50,7 @@ function AgentApp() {
   const [billingRequired, setBillingRequired] = useState(false);
   const [budgetIntent, setBudgetIntent] = useState<BudgetIntent>();
   const [sentDraft, setSentDraft] = useState(0);
+  const [fileClient] = useState(createFileClient);
   const currentConversation = useRef(id);
   currentConversation.current = id;
   const currentBudgetIntent = useRef(budgetIntent);
@@ -57,7 +59,7 @@ function AgentApp() {
   const intents = useRef(new Map<string, string>());
   const retryCreate = useRef<string | undefined>(undefined);
   function contextRefused(error: unknown, input: Record<string, unknown>) {
-    if (!contextErrorKey(error)) return;
+    if (!contextErrorKey(error) && !fileErrorKey(error)) return;
     const cid = input.conversation_id;
     if (cid !== currentConversation.current && !(currentConversation.current === undefined && cid === retryCreate.current)) return;
     // A refused source must be removed/reselected in the preserved draft, not silently re-resolved
@@ -68,6 +70,7 @@ function AgentApp() {
   const { me, state: auth } = useSession();
   const payerName = me?.display_name || me?.email || "";
   const userId = me?.id ?? "";
+  useEffect(() => { fileClient.reset(); return () => fileClient.reset(); }, [fileClient, userId]);
   // Money facts beside the composer; read-only, refreshed when an answer finishes.
   const [status, setStatus] = useState<BillingStatus | null>();
   const [offer, setOffer] = useState<ModelOffer | null>();
@@ -199,7 +202,8 @@ function AgentApp() {
         ...(typeof input.regenerate_of === "string" ? { regenerate_of: input.regenerate_of } : {}),
         ...(typeof input.text === "string" ? { text: input.text } : {}),
         ...(typeof input.parent_message_id === "string" ? { parent_message_id: input.parent_message_id } : {}),
-        ...(input.context_refs !== undefined ? { context_refs: input.context_refs as ContextReference[] } : {}) };
+        ...(input.context_refs !== undefined ? { context_refs: input.context_refs as ContextReference[] } : {}),
+        ...(input.file_refs !== undefined ? { file_refs: input.file_refs as FileReference[] } : {}) };
       const consent = consentFor(intent.conversation_id);
       if (consent) await consentSend(consent, { ...intent });
       else setBudgetIntent(intent);
@@ -209,17 +213,17 @@ function AgentApp() {
     await refresh(); setTick((n) => n + 1);
     return result;
   }
-  async function send(text: string, context_refs?: ContextReference[]) {
+  async function send(text: string, context_refs?: ContextReference[], file_refs?: FileReference[]) {
     setActionError(undefined);
     let cid = id ?? retryCreate.current;
     if (!cid) { cid = (await write("agent.conversation.create", {})).id; retryCreate.current = cid; }
-    const intent: BudgetIntent = { conversation_id: cid!, text, ...(context_refs?.length ? { context_refs } : {}) };
+    const intent: BudgetIntent = { conversation_id: cid!, text, ...(context_refs?.length ? { context_refs } : {}), ...(file_refs?.length ? { file_refs } : {}) };
     if (billingRequired) {
       const consent = consentFor(cid!);
       if (consent) return consentSend(consent, { ...intent });
       setBudgetIntent(intent); return false;
     }
-    await write("agent.turn.start", { ...intent });
+    checkTurn(await write("agent.turn.start", { ...intent }));
     retryCreate.current = undefined;
     navigate(`/agent/c/${cid}`); setTick((n) => n + 1); await refresh();
     return true;
@@ -306,7 +310,7 @@ function AgentApp() {
           </div>
           {actionError != null && <Failure error={actionError} />}
           <Chat key={id ?? "new"} conversation={conversation} loading={!!id && !conversation && !error} error={error} connection={connection}
-            spaces={spaces} configured={configured} act={act} send={send} refresh={refresh} sentDraft={sentDraft}
+            spaces={spaces} fileClient={fileClient} configured={configured} act={act} send={send} refresh={refresh} sentDraft={sentDraft}
             walletUrl={walletUrl} organizationPayer={organizationPayer} payerName={organizationName}
             onPersonal={organizationPayer && payers[0] ? () => choose(payers[0]) : undefined}
             status={money && <ComposerStatus money={money} disabled={running} />}
@@ -340,7 +344,7 @@ function AgentApp() {
         onConfirm={async (quote) => {
           const acceptedIntent = budgetIntent;
           if (writers.current.get(acceptedIntent.conversation_id)?.pending()) throw new PendingConsentOperation();
-          await write("agent.turn.start", { ...acceptedIntent, quote_id: quote.id });
+          checkTurn(await write("agent.turn.start", { ...acceptedIntent, quote_id: quote.id }));
           finishDialogSend(acceptedIntent);
           await refresh();
         }}

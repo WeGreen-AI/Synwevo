@@ -1,0 +1,94 @@
+{
+  "checked_at": "2026-10-10T11:25:36.539136+00:00",
+  "expected_sha": "b1c8a0b02f725cc4f8ddbe527db18c56bf954b66",
+  "read_only": true,
+  "current": {
+    "image": "synwevo:b1c8a0b02f725cc4f8ddbe527db18c56bf954b66",
+    "previous_image": "synwevo:36104a021efbd1ec622bcfa7d3625eb6e68126f8",
+    "backup": "/opt/synwevo/backups/20261010T045143Z",
+    "at": "20261010T045143Z"
+  },
+  "containers": [
+    {
+      "role": "accounts",
+      "state": "running",
+      "health": "healthy",
+      "image_id": "sha256:a59382dc8838aa60195efbfaa285a45fb8f4bdb9109612285e50644e03e67ae8",
+      "revision": "b1c8a0b02f725cc4f8ddbe527db18c56bf954b66"
+    },
+    {
+      "role": "portal",
+      "state": "running",
+      "health": "healthy",
+      "image_id": "sha256:a59382dc8838aa60195efbfaa285a45fb8f4bdb9109612285e50644e03e67ae8",
+      "revision": "b1c8a0b02f725cc4f8ddbe527db18c56bf954b66"
+    },
+    {
+      "role": "docs",
+      "state": "running",
+      "health": "healthy",
+      "image_id": "sha256:a59382dc8838aa60195efbfaa285a45fb8f4bdb9109612285e50644e03e67ae8",
+      "revision": "b1c8a0b02f725cc4f8ddbe527db18c56bf954b66"
+    },
+    {
+      "role": "messages",
+      "state": "running",
+      "health": "healthy",
+      "image_id": "sha256:a59382dc8838aa60195efbfaa285a45fb8f4bdb9109612285e50644e03e67ae8",
+      "revision": "b1c8a0b02f725cc4f8ddbe527db18c56bf954b66"
+    },
+    {
+      "role": "gateway",
+      "state": "running",
+      "health": "healthy",
+      "image_id": "sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236",
+      "revision": ""
+    },
+    {
+      "role": "clamav",
+      "state": "running",
+      "health": "healthy",
+      "image_id": "sha256:57deb108fc4c72778aa83eafbca7bb7153e28c3f57c005afd38d31f16da86f23",
+      "revision": ""
+    }
+  ],
+  "code": {
+    "payment_methods_in_schema": true,
+    "module_sha256": {
+      "synwevo_core.billing.payment_settings": "811a53b6d19b2f350147aa2dcdd687c7e6bc0c59a964327134e444196898a431",
+      "synwevo_identity.payments": "2ebeb390ffbd5ece9572ea85d55cd4da0e8daac77f03628dd50ae5d0c47d910f",
+      "synwevo_identity.payment_routes": "9aa54231226de860c45130e5cd153d08557e42c0bf290d3a42ffaa23f256ac59",
+      "synwevo_identity.payment_readiness": "0e1a9759d73a9fcfb22f66e8d3aa28cf58367cc37386be406c6d469467c46bdf"
+    }
+  },
+  "portal": {
+    "applications": [
+      "forms",
+      "tables",
+      "dataprep",
+      "approvals",
+      "extract",
+      "agent"
+    ],
+    "source_sha256": {
+      "synwevo_suite.agent.gateway": "67295da5c8b03db7bcd44a064a24be83815657f498ed252f1900d086f580c0a5",
+      "synwevo_suite.agent.recovery": "c97de6a14f4f6373307b4ae6a44dd543ba99dd8ad1e85c585f48efa47416d252",
+      "synwevo_core.billing.ledger": "cb84231bdbb878fd76c1d692fcacc28284b9f0da1561fd2b8512f066deb3fb41",
+      "synwevo_suite.agent.history": "1565f85fdc420705fae6ec28cc6e2d66328a17eec90f1b56b9bf0aa07f65f15c",
+      "synwevo_suite.agent.engine": "ef6b760b2554ab3280ac9e5fce677e9b2b3400716f70bc10a96986e75535a52f"
+    }
+  },
+  "checks": {
+    "agent_enabled": true,
+    "current_image_matches": true,
+    "app_revisions_match": true,
+    "all_healthy": true
+  },
+  "source_matches_commit": {
+    "synwevo_suite.agent.gateway": true,
+    "synwevo_suite.agent.recovery": true,
+    "synwevo_suite.agent.history": true,
+    "synwevo_suite.agent.engine": true,
+    "synwevo_core.billing.ledger": true
+  }
+}

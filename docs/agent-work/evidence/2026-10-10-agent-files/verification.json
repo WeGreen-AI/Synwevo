@@ -1,0 +1,125 @@
+{
+  "recorded_at": "2026-10-10T12:59:44.762449+00:00",
+  "base_commit": "b1c8a0b02f725cc4f8ddbe527db18c56bf954b66",
+  "source_sha256": {
+    "apps/docs/synwevo_docs/ingest.py": "2dbfb97843909f61f2fa4758838d4da072c5fb11319ec9f61c62874af1d5cc01",
+    "apps/docs/tests/test_ingest_context.py": "5d0ca73a7c7b7a35298352059b435825ffb015879fba1b83e1e276a109340630",
+    "apps/suite/synwevo_suite/agent/__init__.py": "71a12c193f2ff65a4dd013dee313f1171d07ea7a1c086876844454eb4a458a3d",
+    "apps/suite/synwevo_suite/agent/consents.py": "4a8697f05cc949161df1d52a37019ba058a96f9da69571b8302193e624e5b86f",
+    "apps/suite/synwevo_suite/agent/context.py": "c12db166fd57b584c022256bd65b813d8cfb941e6b196a28338b784b56d8c23a",
+    "apps/suite/synwevo_suite/agent/engine.py": "953fb291ab38b295469932c0f459c7a08d668d60a719b6ad0f658379d9aa1746",
+    "apps/suite/synwevo_suite/agent/file_routes.py": "5b2d73e979f5c2b1c79de639ea4086b56176f8c7365d4a8fbee66e0b5ad97e88",
+    "apps/suite/synwevo_suite/agent/files.py": "ad0e7e4f78867fd0726174f463245b0d3e2f0557787ea1fe924fd0b9abf1b154",
+    "apps/suite/synwevo_suite/agent/ops.py": "bfef3b6773a5bc428a0c32b3a1bb50983ccec20b9fd23df7e3b5544925121837",
+    "apps/suite/synwevo_suite/agent/quotes.py": "40c82c4beff0e1422d36efae5f8745566c3f4d78261b517ccb858accd84c14a9",
+    "apps/suite/synwevo_suite/common/process.py": "c17d228b81eaf97be9f8690b0185078a5b7e1e47c154212dc2a2262321e62d68",
+    "apps/suite/synwevo_suite/extract/worker.py": "762ccbe6fabb071ee411f028d658063a5def02848b67f5f1201b14caa752c69d",
+    "apps/suite/tests/test_agent_files.py": "9c7388cd5f35b23d3a439164e933c7f0be9cfeeaf782120b8bf798b95b57b159",
+    "apps/suite/web/src/apps/agent/Chat.tsx": "8eab5ff9bea526cd9671d04830a92a2d3d50130b77e2a7d539edbf9901d147b9",
+    "apps/suite/web/src/apps/agent/ContextPicker.tsx": "fcd6a39c8b8b286aa5444236fd8d8281519e4d872d1acfbe5712915f0734e697",
+    "apps/suite/web/src/apps/agent/FilePicker.tsx": "f5347d3b65b0a1bcb4c1499bd10d7360132cdcdbf198cccc0c2b20c65b56cca7",
+    "apps/suite/web/src/apps/agent/agent.css": "05e6335ed9cd3b8fe48241284446b638342c3e19ff05fbea5df8c3d9c6454838",
+    "apps/suite/web/src/apps/agent/budget.ts": "e5d49d35125e4cf330318588cc51e42bc0ffc530121107f6bc49a02980d5f5a4",
+    "apps/suite/web/src/apps/agent/context.messages.ts": "6f6a705014ea84bc46cd9419a53d5c732420ef4df61a0c85ee03f42ebad39722",
+    "apps/suite/web/src/apps/agent/context.ts": "d54c6efa7a1f745e589e7c8f733a7d7ef2698be6086e93ad50724cea1d086406",
+    "apps/suite/web/src/apps/agent/errors.tsx": "150999cbb4ca39d0006f41ed7b98d3258915a6b4846f7429299052387c517e16",
+    "apps/suite/web/src/apps/agent/files.messages.ts": "8e0bc77a10fa68325213e0f63ed9d662095e23210c850c132e4fa2cacccab1a2",
+    "apps/suite/web/src/apps/agent/files.ts": "f36df1c521b3dba2d8701e712e4cb9c5fd947b77fc35ef18219d843367fbe26d",
+    "apps/suite/web/src/apps/agent/index.tsx": "671847fd5ee0f6eb047cf92d55aa3c2187cd831d4c74acfc03b2213c1e94ca8b",
+    "apps/suite/web/src/apps/agent/types.ts": "173dc2525772e3737f543b5529e04008f657c2df9f8d9b29e82b784f3916bb2f",
+    "apps/suite/web/tests/agent-files.test.ts": "a7ac93ba605b13571329658e7ad3c39728ca72d13a2fe05737efe40a7a2bc293",
+    "packages/core/synwevo_core/agent_records.py": "1f0af41a07aa1fa479678949a490d9b2ae7690bf69d71fb7245993a9707d9dfd",
+    "packages/core/synwevo_core/blob_refs.py": "75ef62700ee4d6d2b836654c4a874000a0a840e43c230e1dc2d7b06036e6c56c",
+    "packages/core/synwevo_core/suite_schema/__init__.py": "e1b50f78e977aaffaf640a1c82d9fd70fce1034e2043203e86a2bb4ba407a296",
+    "packages/core/synwevo_core/suite_schema/agent_files.py": "570f4f927c29a58c97986cd552285c7ba8b64824f12be8858ff476542dd868ea",
+    "tests/integration/test_agent_personal_files.py": "802a3fdac9a71dab0a3a7609afe94aa1e00912fe622e35d384d0bbe407f0b473"
+  },
+  "checks": {
+    "backend": {
+      "log": "/private/tmp/synwevo-agent-files-final-backend-20261010.log",
+      "sha256": "3b17c579f8484c4db69b8ac570ace0986a355c56f0a9157e5b572615e118ea48",
+      "result": "248 passed, 6 warnings"
+    },
+    "contracts": {
+      "log": "/private/tmp/synwevo-agent-files-contracts-20261010.log",
+      "sha256": "c4695446a1c3e4ea1ddda360e7dff31114a42fb55731f939c3e3a442c18bab70",
+      "result": "21 passed, 6 warnings"
+    },
+    "frontend": {
+      "log": "/private/tmp/synwevo-agent-files-frontend-20261010.log",
+      "sha256": "ef95543a283dce8d9c6b244863944274e464620f1cfb4ec1a358ace30274605c",
+      "result": "197 passed; 0 failed"
+    },
+    "typecheck": {
+      "log": "/private/tmp/synwevo-agent-files-typecheck-20261010.log",
+      "sha256": "9cf2349cf02b26b2eaed5d07f97a59a4eba0bca2641c151b24d49bd5b273f2bc",
+      "result": "passed root workspaces"
+    },
+    "build": {
+      "log": "/private/tmp/synwevo-agent-files-build-20261010.log",
+      "sha256": "405a97c801326d106f7c4e519b16e08dc675759fc4e386a43c2f1e30abc5489f",
+      "result": "passed Suite"
+    },
+    "guards": {
+      "log": "/private/tmp/synwevo-agent-files-guards-20261010.log",
+      "sha256": "171ca25a61aca4a2d20c45672e1bd2af1ed24206599f8b12b33ecf75be483946",
+      "result": "all six passed"
+    }
+  },
+  "browser": {
+    "environment": "real local auth/Store/Docs reader/ledger; explicit synthetic provider/payment; no external dispatch",
+    "languages": [
+      "zh-Hans",
+      "zh-Hant",
+      "en"
+    ],
+    "viewports": [
+      [
+        390,
+        844
+      ],
+      [
+        1280,
+        720
+      ]
+    ],
+    "observed": [
+      "complete upload and immutable reference",
+      "full >1000-character line and last line, source locations",
+      "original download byte hash matches",
+      "cancelled quote preserves input and file",
+      "one accepted run, one attempt and one settlement after reload",
+      "delete removes content and hides dependent history",
+      "Escape returns focus",
+      "zero horizontal overflow",
+      "no console warn/error"
+    ],
+    "not_claimed": [
+      "new production DeepSeek tool artifact",
+      "real Stripe payment",
+      "new manual reduced-motion test",
+      "live parser performance",
+      "OCR/Office file support"
+    ]
+  },
+  "review": {
+    "reviewer": "Newton",
+    "fixed": [
+      "expired file reads/attachment before sweep",
+      "legacy account deletion with new file schema"
+    ],
+    "independent_targeted": "26 passed in 11.15s; no new finding after inline storage recheck",
+    "scripts": [
+      {
+        "path": "/tmp/synwevo_agent_inline_final_review.py",
+        "sha256": "76cb92aa7832418885aca896d869f7772e4bdc9fafc2d8439ebaec0ad2f74613"
+      },
+      {
+        "path": "/tmp/synwevo_agent_trigger_recheck.py",
+        "sha256": "62ab91c38fa9408239330b5c49b1d9e0427181d9f2bb591451fc5bca9db21ab1"
+      }
+    ]
+  },
+  "browser_fix": "actual fractional-second timestamps rejected by integer-only client validator; fixed finite nonnegative timestamps, integer sizes and attempts retained; realistic fixture + invalid values regression; no duplicate upload",
+  "cleanup": "own tab13 closed, viewport reset; own PID3794 SIGTERM; subagents closed"
+}

@@ -41,6 +41,8 @@ def install(ctx) -> None:
         provider.bind(agent)
     ctx.api.state.agent = agent
     register(ctx.registry, agent, ctx.store, ctx.identity)
+    from .file_routes import install as install_files
+    install_files(ctx, agent)
     # The payers this person may charge (shared contract with the chat; org-payments).
     from .payers import install as install_payers
     install_payers(ctx, agent)
