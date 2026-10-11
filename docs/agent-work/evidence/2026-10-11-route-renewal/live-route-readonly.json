@@ -1,0 +1,15 @@
+{
+  "checked_at": "2026-10-11T15:13:46Z",
+  "read_only": true,
+  "source": "production synwevo-accounts-1, sqlite mode=ro, table model_provider_versions (environment=live, latest revision); no secret column read",
+  "live": {
+    "revision": 1, "credential_revision": 1, "credential_configured": true, "created_at": "2026-10-08T12:05:26Z", "enabled": true,
+    "incomplete_charging": {"client_cancelled": false, "content_filter": false, "length": false, "provider_interrupted": false},
+    "route": {"requested_model": "deepseek-flash", "confirmed_route": "deepseek-flash",
+              "confirmation_ref": "DeepSeek-V4.1-Flash:official-models-pricing-2026-10-08", "cost_basis_ref": "official-cny-pricing-2026-10-08",
+              "sale_price_id": "price_9fa1a7cbc022", "cost_price_id": "price_85f4371761b6",
+              "input_token_ceiling": 65536, "output_token_ceiling": 8192, "reasoning_efforts": ["none", "low"]},
+    "valid_until": "2026-10-15T11:00:00Z", "seconds_left_at_check": 330374
+  },
+  "test": null
+}

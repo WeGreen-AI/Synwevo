@@ -26,7 +26,7 @@
 - 用户此前明确保持个人支出暂停；2026-10-09只读实际最新个人预算v4 enabled，本轮未修改其预算。单次合成产物验收上限人民币0.50元授权问题待答，不追加模型调用。
 - 日历v1/ao_d7da658ed75f；成本price_85f4371761b6，CNY6、deepseek-flash，每百万峰值输入2/缓存0.04/输出8，低谷1/0.02/4；日历的10月1–7日假期不是全年表。
 - 成本策略v1/ao_50e7aad24bc5：日20/周100/月300元，单次0.2元，在途4、未知4/0.8元。售价price_9fa1a7cbc022为成本×2，terms_ref synwevo-agent-cny-2x-2026-10-08；欢迎人民币1元已唯一发放。
-- 提供方v1/凭据v1/ao_0da99f60b32e，请求路由deepseek-flash、来源DeepSeek-V4.1-Flash；输入65536/输出8192，none/low，**有效期2026-10-15T11:00Z**。未完成调用收费选项均false；不自动续期治理配置。
+- 提供方v1/凭据v1/ao_0da99f60b32e，请求路由deepseek-flash、来源DeepSeek-V4.1-Flash；输入65536/输出8192，none/low，**有效期2026-10-15T11:00Z**（2026-10-11T15:13Z生产只读复核仍为revision 1，剩余约3.8天）。未完成调用收费选项均false；不自动续期治理配置。管理员续期材料：`evidence/2026-10-11-route-renewal/README.md`；到期后新付费调用按 `route_confirmation_expired` 停止，已发送调用的结算/对账不受影响。
 - 支付最新实测v3 enabled/credential_configured，商户香港个人Hiko Sphere。已选card/wechat_pay/alipay；Stripe默认配置card=true、另两项=false只说明默认配置，不证明显式Checkout资格。本人旧5笔provider_unavailable意图创建于10月8日13:11Z，0paid，不能归因于之后版本。
 - 已请用户按原Admin界面发布银行卡配置，待“已发布银行卡配置”答复；不绕过重认证。真实支付/签名唯一入账验收未完成，enabled不是付款成功。
 - 唯一Stripe回调 `we_1UOB1ZEMgc4r7oEcqTYP9tLI` 已enabled，URL `https://accounts.synwevo.com/api/auth/payments/stripe/webhook`。不要重复prepare/创建/订单。0600恢复文件 `/private/tmp/synwevo-stripe-live-callback-20261008.json` 含秘密，不可打印或提交。
@@ -40,4 +40,4 @@
 - 历史调查及状态变更保留在EVIDENCE/BACKLOG，不将旧暂停或旧发布状态作为当前事实。
 - 接续在本实施树读取MASTER_PROMPT、STATE、BACKLOG、EVIDENCE、CODE_REVIEW，核对实际Git/CI/生产和锁，复用配置与副作用记录；不重建、不重放、不绕过门禁。交接快照 `CLAUDE_CODE_HANDOFF_2026-10-11.txt` 只在主检出、不是第二份状态真相。
 
-保存时间：2026-10-11T15:11:10.023054+00:00
+保存时间：2026-10-11T15:14:44.553614+00:00
