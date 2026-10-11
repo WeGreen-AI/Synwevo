@@ -1,0 +1,113 @@
+{
+  "recorded_at": "2026-10-11T16:00:35.052329+00:00",
+  "base_commit": "9bc5600 (on 962b375)",
+  "work_package": "CR-086 business context for approvals, extraction and data preparation objects (AG-ATTACH 其他业务资源类型)",
+  "contract": {
+    "kinds": [
+      "form",
+      "table",
+      "approval_template",
+      "approval_request",
+      "extract_template",
+      "extract_task",
+      "dataprep_recipe",
+      "dataprep_run"
+    ],
+    "reads": "each kind = the application's own registered synchronous `.list`/`.get` through snapshot_read (application ACLs apply); id prefix bound to kind (invalid_context before any read)",
+    "paging": "forms (catalogue cap 500), tables/approvals (server q/offset/total), extract (cursor) and dataprep (offset, no search) walked up to MAX_WALK=10 pages with title filtering; limited=true when the walk stopped short",
+    "payload": "unchanged business_context_v1 items (title, workspace_name, open_path, data = the .get result ≤ 24,000 chars), provenance = read proof + catalogue name, carried sources as before"
+  },
+  "source_sha256": {
+    "apps/suite/synwevo_suite/agent/context.py": "0716f55c7b141ea10f2467baa4db34a4485fb1242e2eb36b4758a9bee7939f1b",
+    "apps/suite/synwevo_suite/agent/ops.py": "07d8ac6536f27203bc2cb099f7c56340747db882cdde9db3afcb11513ca303fc",
+    "apps/suite/tests/test_agent_context.py": "6ee05a4040d882725e648f81f678db77fb6367e613ef1e6af49ea58c32309857",
+    "apps/suite/web/src/apps/agent/types.ts": "d6277f14288dce02d9e1ee8a5e616c3de1f9ec785e8f264ee3afde0277f15c54",
+    "apps/suite/web/src/apps/agent/context.messages.ts": "a7319b5ea2436a9824398747f88658c6cae80fffbf04ba77afe33b5cc88c148c",
+    "apps/suite/web/src/apps/agent/ContextPicker.tsx": "ba8ee7461a11764676dcba534c8cd6ebe85166e8d2107c73a06f5cff8ff7a091",
+    "apps/suite/web/src/apps/agent/budgetSources.ts": "a375e5387e4d6657af6f2789684ee4db8d69ea2b61c761f224976712048f313e",
+    "apps/suite/web/tests/agent-context.test.ts": "efd2f31e43a01e6fdcb9463e712381dd0ef692d9d5d380451378f28f901ae708",
+    "docs/platform/agent-context.md": "8f5c0d3c90294892c8b3abed90e82c063982e24370c771b31b6710d59ac053a0"
+  },
+  "checks": {
+    "suite_pytest_full": {
+      "log_sha256": "150f8e0dc7f7e5730f4965ae860fb7116620c9dccba1099eadde0e6a00ffc484",
+      "result": "1130 passed by dot tally (pyproject -qq), 0 F/E/s/x, exit 0; includes 2 new cases (four application objects listed/searched/resolved/sent, bounded walk)"
+    },
+    "suite_web_full": {
+      "log_sha256": "aa325d61af2f83633753f578dc644708c124e60bd1500de0fbdc0dce936c10ae",
+      "result": "206 passed (1 new picker case; three-language picker test now asserts the kind labels)"
+    },
+    "root_typecheck": {
+      "log_sha256": "2a4b215b7659f992e7dc91dc83a388ee54517e5aedaee1c78f8f7fc1a3f5990b",
+      "result": "exit 0"
+    },
+    "root_build": {
+      "log_sha256": "507ae9f34499571ec4f95bef67bca6f748cd5c0b9da3c4e893376a0015818913",
+      "result": "exit 0"
+    },
+    "guards": "check_boundaries, check_brand, check_design, check_component_names: ok",
+    "not_run": [
+      "extract_task and dataprep_run end-to-end objects (need a parsed file / a dataset run; the list/get contracts are the same code path)",
+      "docker verify image",
+      "real model/payment"
+    ]
+  },
+  "browser": {
+    "server": "isolated single-process role=all on 127.0.0.1:33885 with approvals/extract/dataprep enabled, second member as approver, scratchpad data; Playwright Chrome 1280×900 zh-Hans",
+    "observed": {
+      "locale": "zh-Hans",
+      "kinds": {
+        "approval_template": {
+          "hint_present": true,
+          "listed": true
+        },
+        "approval_request": {
+          "hint_present": true,
+          "listed": true
+        },
+        "extract_template": {
+          "hint_present": true,
+          "listed": true
+        },
+        "dataprep_recipe": {
+          "hint_present": true,
+          "listed": true
+        }
+      },
+      "console_errors": [
+        "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+      ],
+      "options": [
+        "表单",
+        "数据表",
+        "审批模板",
+        "审批请求",
+        "提取模板",
+        "提取任务",
+        "数据处理方案",
+        "数据处理运行"
+      ],
+      "chips": [
+        "移除“Synthetic expense approval”",
+        "移除“Synthetic travel claim 合成报销”",
+        "移除“Synthetic invoice extraction”",
+        "移除“Synthetic validation recipe”"
+      ],
+      "quote_sources": [
+        "Synthetic expense approval · 审批模板 · Synthetic acceptance A",
+        "Synthetic travel claim 合成报销 · 审批请求 · Synthetic acceptance A",
+        "Synthetic invoice extraction · 提取模板 · Synthetic acceptance A",
+        "Synthetic validation recipe · 数据处理方案 · Synthetic acceptance A",
+        "服务条款 （在新标签页打开）",
+        "AI 使用规范 （在新标签页打开）",
+        "定价 （在新标签页打开）"
+      ]
+    },
+    "files": [
+      "browser-report.json",
+      "fixture.json",
+      "zh-hans-picker-approval-requests.png",
+      "zh-hans-quote-sources-applications.png"
+    ]
+  }
+}

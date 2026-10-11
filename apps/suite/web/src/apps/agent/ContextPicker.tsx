@@ -6,7 +6,11 @@ import { read } from '../../shared/ops';
 import { AgentFailure } from './errors';
 import { MAX_CONTEXTS, contextErrorKey, contextKey, contextPage, resolvedContext, safeContextPath } from './context';
 import { contextCopy, type ContextText } from './context.messages';
-import type { ContextItem, ContextKind, ContextPage, MessageContext, SelectedContext, Workspace } from './types';
+import { CONTEXT_KINDS, type ContextItem, type ContextKind, type ContextPage, type MessageContext, type SelectedContext, type Workspace } from './types';
+
+/** What each kind carries into the question (and what it does not). */
+const KIND_HINTS: Record<ContextKind, ContextText> = { form: 'formHint', table: 'tableHint', approval_template: 'approvalTemplateHint', approval_request: 'approvalRequestHint',
+  extract_template: 'extractTemplateHint', extract_task: 'extractTaskHint', dataprep_recipe: 'dataprepRecipeHint', dataprep_run: 'dataprepRunHint' };
 
 export function useContextText() {
   const { t } = useI18n();
@@ -126,7 +130,7 @@ export function ContextDialog({ spaces, selected, otherCount = 0, onChoose, onRe
     footer={<button type="button" className="btn primary" onClick={close}>{c('done')}</button>}>
     <div className="ag-context-picker">
       <p id={`${id}-intro`}>{c('intro')}</p>
-      <p className="muted small">{c('formHint')}</p><p className="muted small">{c('tableHint')}</p>
+      <p className="muted small">{c(KIND_HINTS[kind])}</p>
       <ContextChips selected={selected} onRemove={onRemove} />
       {selected.length + otherCount >= MAX_CONTEXTS && <p className="notice" role="status">{c('max')}</p>}
       {!spaces.length ? <p className="notice">{c('noSpaces')}</p> : <>
@@ -137,7 +141,7 @@ export function ContextDialog({ spaces, selected, otherCount = 0, onChoose, onRe
           </select></label>
           <label htmlFor={`${id}-kind`}>{c('kind')}<select id={`${id}-kind`} className="input" value={kind}
             onChange={(e) => { reset(); setKind(e.target.value as ContextKind); }}>
-            <option value="form">{c('form')}</option><option value="table">{c('table')}</option>
+            {CONTEXT_KINDS.map((k) => <option key={k} value={k}>{c(k)}</option>)}
           </select></label>
         </div>
         <form className="ag-context-search" onSubmit={(e) => {
@@ -147,7 +151,7 @@ export function ContextDialog({ spaces, selected, otherCount = 0, onChoose, onRe
             value={query} onChange={(e) => setQuery(e.target.value)} /></label>
           <button type="submit" className="btn">{c('search')}</button>
         </form>
-        {page?.limited && <p className="notice" role="status">{c('limited')}</p>}
+        {page?.limited && <p className="notice" role="status">{c(kind === 'form' || kind === 'table' ? 'limited' : 'walkLimited')}</p>}
         {loading && <p role="status">{c('loading')}</p>}
         {resolving && <p role="status">{c('resolving')}</p>}
         {failure && <ContextFailure error={failure.error} fallback retry={() => void load(failure.offset)} />}

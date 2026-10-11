@@ -279,3 +279,9 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 处置：`tests/_vite.mjs testServer(config)`：独占 mkdtemp cacheDir、关闭客户端依赖优化器、close 时删除自身目录，其余配置原样透传；12 个测试改用。`payment-methods.browser.mjs`（手动真实端口服务，不在测试 glob 内）未改。不删测、不串行、不改断言。
 - 验证：`npm run test -w @synwevo/account-web` 两次均 163 通过、0 ENOTEMPTY，tmpdir 无残留（log sha256 5ca7dfd2bb9a4ece…/1e7bbaaf088775be…）。
 
+## CR-086 · 业务资料类型扩展到审批/提取/数据处理（2026-10-11，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：apps/suite/synwevo_suite/agent/context.py（`Kind` 声明式读取契约、`_walk` 有界走查、前缀绑定）、ops.py 摘要；前端 types.ts/context.messages.ts/ContextPicker.tsx/budgetSources.ts；docs/platform/agent-context.md。
+- 审查要点：仍只走各应用注册的同步只读 `.list/.get`（`snapshot_read` 拒绝写操作、异步与 `agent=never`），应用 ACL 原样生效；审批请求用 `view=all` 只是应用自己的可见范围（任何读权限成员可列工作空间请求，与应用页一致），`.get` 结果含依据快照与决定，受 24,000 字符上限；数据集行、填写提交、表记录仍不可选；前缀与 kind 不符在任何读取前被拒；游标/无搜索列表的走查最多 10 页并以 `limited` 如实提示，不猜总数。
+- 验证：见 evidence/2026-10-11-agent-context-kinds/verification.json（1130 后端、206 前端、浏览器 8 类型/四对象选中/报价来源列表）。未端到端创建 extract_task 与 dataprep_run 对象（同一代码路径）。
+

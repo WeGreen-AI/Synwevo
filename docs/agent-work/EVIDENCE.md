@@ -714,3 +714,9 @@ Docs `extract_context` 新增 DOCX/XLSX 严格读取：DOCX 正文/页眉页脚/
 
 services/identity/web 的 12 个 Vite SSR 测试改用 `tests/_vite.mjs`（私有 cacheDir、优化器关闭、关闭即清理，与 Suite `_vite.ts` 同契约）；清理本树残留的 5 个 `deps_temp_*`。account-web 两次全量 163 通过、0 ENOTEMPTY。
 
+## 2026-10-11 CR-086 业务资料类型扩展（本地+隔离浏览器）
+
+`Contexts` 改为声明式 `Kind` 契约：form/table/approval_template/approval_request/extract_template/extract_task/dataprep_recipe/dataprep_run，各走应用自己的 `.list/.get`；前缀与 kind 绑定；Extract 游标分页与 DataPrep 无搜索列表按 MAX_WALK=10 页有界走查并以 `limited` 提示。前端选择器 8 类型各有三语标签与说明，报价对话框来源显示类型。
+
+测试：test_agent_context 新增 2 例（审批模板/请求、提取模板、数据处理方案列出/搜索/核对/一起发送，前缀错配 422；走查有界）；apps/suite/tests 全量 1130 通过（点计数，exit 0）；suite-web 206；根 typecheck/build、四守卫通过。隔离真实服务（33885，含第二成员作为审批人、真实模板/请求/提取模板/方案）Playwright：类型下拉 8 项、每类说明与对象列出、四枚来源片、报价对话框列出“名称 · 类型 · 空间”四项；控制台仅登录前 401。证据 `evidence/2026-10-11-agent-context-kinds/`。
+

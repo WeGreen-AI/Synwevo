@@ -142,6 +142,23 @@ for (const transition of ['workspace', 'kind', 'scope', 'close', 'route'] as con
   h.unmount();
 });
 
+test('every business kind is offered with its own label and hint, and the list read carries the chosen kind', async () => {
+  const h = await dialogFixture();
+  await h.answer(0, page([]));
+  const kinds = ['form', 'table', 'approval_template', 'approval_request', 'extract_template', 'extract_task', 'dataprep_recipe', 'dataprep_run'];
+  const options = h.elements().filter((el) => el.type === 'option' && kinds.includes(el.props.value));
+  assert.deepEqual(options.map((o) => o.props.value), kinds);
+  for (const option of options) assert.equal(option.props.children, core.translate('en', copy.contextCopy[option.props.value][0]));
+  assert.match(h.text(), /Forms include field settings/);
+  h.control('kind').onChange({ target: { value: 'approval_request' } }); h.render();
+  assert.deepEqual(plain(h.requests.at(-1).input), { workspace_id: 'ws_a', kind: 'approval_request', offset: 0 });
+  assert.match(h.text(), /basis snapshot, stages, decisions/);
+  await h.answer(h.requests.length - 1, page([item('apr_fixture', 'ws_a', 'approval_request')], null, true));
+  assert.match(h.text(), /only its first pages were scanned/);
+  assert.deepEqual(core.validateMessages(copy.contextMessages), []);
+  h.unmount();
+});
+
 test('late lists are ignored; resolution refusals can be retried and malformed references are never chosen', async () => {
   const h = await dialogFixture();
   h.control('workspace').onChange({ target: { value: 'ws_b' } }); h.render();
@@ -185,7 +202,8 @@ test('three-language dialog/chips/source cards disclose business boundaries and 
         .replaceAll('{count}', '1').replaceAll('{title}', 'Fixture'));
     }
     const html = render(locale, React.createElement(picker.ContextDialog, { spaces, selected: [resolved()], onChoose() {}, onRemove() {}, onClose() {} }));
-    for (const key of ['formHint', 'tableHint', 'intro']) assert.ok(html.includes(core.translate(locale, copy.contextCopy[key][0])), key);
+    // The hint follows the chosen kind (forms by default); every kind is offered by its translated name.
+    for (const key of ['formHint', 'intro', 'approval_template', 'approval_request', 'extract_template', 'extract_task', 'dataprep_recipe', 'dataprep_run']) assert.ok(html.includes(core.translate(locale, copy.contextCopy[key][0])), key);
     assert.match(html, /role="dialog"[^>]*aria-modal="true"/); assert.match(html, /<label for="/); assert.match(html, /type="search"/);
     const cards = render(locale, React.createElement(picker.ContextSources, { contexts: fixtures }));
     assert.equal((cards.match(/href=/g) ?? []).length, 1); assert.ok(cards.includes('href="/forms/w/ws_a/forms/a?view=current#top"'));

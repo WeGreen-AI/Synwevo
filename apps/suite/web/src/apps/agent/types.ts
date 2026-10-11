@@ -1,4 +1,5 @@
-export type ContextKind = "form" | "table";
+export type ContextKind = "form" | "table" | "approval_template" | "approval_request" | "extract_template" | "extract_task" | "dataprep_recipe" | "dataprep_run";
+export const CONTEXT_KINDS: ContextKind[] = ["form", "table", "approval_template", "approval_request", "extract_template", "extract_task", "dataprep_recipe", "dataprep_run"];
 export interface ContextItem { kind: ContextKind; workspace_id: string; resource_id: string; title: string }
 /** The exact reference returned by agent.context.resolve; no business content is sent by the browser. */
 export interface ContextReference { kind: ContextKind; workspace_id: string; resource_id: string; snapshot: string }

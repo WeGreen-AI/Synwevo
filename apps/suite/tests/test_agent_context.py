@@ -212,3 +212,66 @@ def test_selected_legal_copy_retains_export_origin_without_source_access_depende
     # Losing the original source doesn't revoke legal ownership of the independent copy.
     p.ident.remove_member(p.b, alice)
     assert not any(m["hidden"] for m in shown(g, cid)["messages"])
+
+
+def test_other_application_objects_are_offered_through_their_own_read_contracts(governed):
+    """Approvals, Extract and DataPrep objects reach the picker through the applications' own
+    `.get`/`.list` reads: listed, searched, resolved and sent together; a prefix never crosses kinds."""
+    from .test_approvals import request as approval_request, template as approval_template
+    from .test_dataprep_extract import DEFINITION
+    g = governed
+    wid = g.people.a
+    policy(g, wid, "platform")
+    published = approval_template(g.client)
+    claim = approval_request(g.client, published)
+    extraction = op(g.client, "extract.template.create", {"title": "Fixture extraction", "definition": DEFINITION}, ws=wid)["output"]["id"]
+    recipe = op(g.client, "dataprep.recipe.create", {"name": "Fixture recipe", "definition": {"steps": []}}, ws=wid)["output"]["id"]
+    expected = {"approval_template": (published["id"], "Fixture expense", "/approvals/w/"),
+                "approval_request": (claim["id"], "Fixture claim", "/approvals/w/"),
+                "extract_template": (extraction, "Fixture extraction", "/extract/w/"),
+                "dataprep_recipe": (recipe, "Fixture recipe", "/dataprep/w/")}
+    refs = []
+    for kind, (rid, title, path) in expected.items():
+        page = op(g.client, "agent.context.list", {"workspace_id": wid, "kind": kind})["output"]
+        assert [(i["resource_id"], i["title"]) for i in page["items"]] == [(rid, title)], kind
+        assert page["next_offset"] is None and page["limited"] is False
+        assert op(g.client, "agent.context.list", {"workspace_id": wid, "kind": kind, "q": "nothing-like-this"})["output"]["items"] == []
+        found = op(g.client, "agent.context.list", {"workspace_id": wid, "kind": kind, "q": title.split()[1].upper()})["output"]["items"]
+        assert [i["resource_id"] for i in found] == [rid], kind
+        resolved = op(g.client, "agent.context.resolve", {"workspace_id": wid, "kind": kind, "resource_id": rid})["output"]
+        assert resolved["title"] == title and resolved["open_path"].startswith(path + wid) and resolved["open_path"].endswith(rid)
+        refs.append(resolved["reference"])
+    # A request id is not a template: refused before any application read.
+    assert op(g.client, "agent.context.resolve", {"workspace_id": wid, "kind": "approval_template", "resource_id": claim["id"]},
+              expect=422)["error"] == "invalid_context"
+    assert op(g.client, "agent.context.list", {"workspace_id": wid, "kind": "extract_task"})["output"] == {"items": [], "next_offset": None, "limited": False}
+    g.model.steps = [say("Fixture reviewed")]
+    cid, turn = send(g, refs)
+    assert advance(g, turn)["status"] == "succeeded"
+    request = canonical(g.model.requests[0]["messages"])
+    assert all(rid in request for rid, _, _ in expected.values()) and "Invoice fixture" in request
+    assert [c["title"] for c in shown(g, cid)["messages"][0]["contexts"]] == [title for _, title, _ in expected.values()]
+
+
+def test_walked_application_lists_are_bounded_and_honest():
+    """Cursor-paged or search-less application lists are walked for the picker, never beyond MAX_WALK pages."""
+    from synwevo_suite.agent.context import MAX_WALK, PAGE, ContextList, Contexts, READS
+    rows = [{"id": f"extpl_{i:012x}", "title": f"Template {i:04d}"} for i in range(1500)]
+    calls = []
+
+    def read(args):
+        calls.append(args)
+        start = int(args["after"].split("_")[1], 16) + 1 if args["after"] else 0
+        page = rows[start:start + args["limit"]]
+        return {"items": page, "next": page[-1]["id"] if start + args["limit"] < len(rows) else None}
+    kind = READS["extract_template"]
+    items, next_offset, limited = Contexts._walk(read, kind, ContextList(workspace_id="ws_a", kind="extract_template"))
+    assert [r["id"] for r in items] == [r["id"] for r in rows[:PAGE]] and next_offset == PAGE and limited is False and len(calls) == 1
+    calls.clear()
+    items, next_offset, limited = Contexts._walk(read, kind, ContextList(workspace_id="ws_a", kind="extract_template", offset=PAGE))
+    assert items[0]["title"] == "Template 0050" and next_offset == 2 * PAGE and limited is False and len(calls) == 2
+    calls.clear()
+    items, next_offset, limited = Contexts._walk(read, kind, ContextList(workspace_id="ws_a", kind="extract_template", q="Template 014"))
+    assert [r["title"] for r in items] == [f"Template {i:04d}" for i in range(140, 150)]
+    assert next_offset is None and limited is True and len(calls) == MAX_WALK     # 1400-1499 lie past the tenth page
+

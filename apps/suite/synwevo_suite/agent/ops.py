@@ -543,10 +543,10 @@ def register(registry, agent: Agent, store, identity) -> None:
 
     contexts = Contexts(agent)
     op(id="agent.context.list", title=T("选择业务资源", "選擇業務資源", "Choose business resources"),
-       summary="Browse authorized form definitions or table schemas for explicit conversation context; no model call.",
+       summary="Browse authorized business objects (form definitions, table schemas, approval templates and requests, extraction templates and tasks, DataPrep recipes and runs) for explicit conversation context; no model call.",
        input=ContextList, output=ContextPage, agent="never", handler=lambda c, i: contexts.list(c.user_id, i))
     op(id="agent.context.resolve", title=T("核对所选资源", "核對所選資源", "Verify a selected resource"),
-       summary="Bind an authorized form definition or table schema to its exact snapshot; no model call.",
+       summary="Bind an authorized business object (the same kinds as agent.context.list) to its exact snapshot; no model call.",
        input=ContextResolve, output=ResolvedContext, agent="never", handler=lambda c, i: contexts.resolve(c.user_id, i))
 
     op(id="agent.conversation.list", title=T("列出会话", "列出會話", "List conversations"),

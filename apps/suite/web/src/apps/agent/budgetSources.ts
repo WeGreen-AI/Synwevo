@@ -1,8 +1,9 @@
 import { resolvedContext } from './context';
 import { fileRecord } from './files';
 import type { BudgetIntent } from './budget';
+import type { ContextKind } from './types';
 
-export interface BudgetSource { title: string; workspace: string | null; kind: 'file' | 'form' | 'table' }
+export interface BudgetSource { title: string; workspace: string | null; kind: 'file' | ContextKind }
 export type SourceReader = (operation: string, input: Record<string, unknown>, workspace: string | null, signal: AbortSignal) => Promise<unknown>;
 export class SourceReviewError extends Error {}
 

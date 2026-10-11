@@ -1,0 +1,20 @@
+{
+ "base": "http://127.0.0.1:33885",
+ "user_id": "u_de37f30eca95",
+ "email": "metering@example.test",
+ "workspace": "w_45b41edae7e9",
+ "workspace2": "w_8e7c54c4e5de",
+ "forms": [
+  "frm_d5c89168b435",
+  "frm_8432edb3ef3f"
+ ],
+ "other_form": "frm_4d637e5f2a35",
+ "table": "tbl_c85ae95c9523",
+ "approval_template": "apt_fc38bd3329ea",
+ "approval_request": "apr_046ccd42d4bb",
+ "extract_template": "extpl_15cc66dbc773",
+ "dataprep_recipe": "dpr_c9d64e734154",
+ "conversation": "conv_36ac5b7e917a",
+ "data_root": "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/13b6809f-79a1-4e4a-a165-a3ad0a392642/scratchpad/ctx/data",
+ "environment": "isolated synthetic data in the session scratchpad; model and payment are explicit test transports; all network dispatch refused"
+}

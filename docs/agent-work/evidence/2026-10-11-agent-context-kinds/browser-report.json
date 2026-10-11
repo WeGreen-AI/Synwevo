@@ -1,0 +1,49 @@
+{
+ "locale": "zh-Hans",
+ "kinds": {
+  "approval_template": {
+   "hint_present": true,
+   "listed": true
+  },
+  "approval_request": {
+   "hint_present": true,
+   "listed": true
+  },
+  "extract_template": {
+   "hint_present": true,
+   "listed": true
+  },
+  "dataprep_recipe": {
+   "hint_present": true,
+   "listed": true
+  }
+ },
+ "console_errors": [
+  "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+ ],
+ "options": [
+  "表单",
+  "数据表",
+  "审批模板",
+  "审批请求",
+  "提取模板",
+  "提取任务",
+  "数据处理方案",
+  "数据处理运行"
+ ],
+ "chips": [
+  "移除“Synthetic expense approval”",
+  "移除“Synthetic travel claim 合成报销”",
+  "移除“Synthetic invoice extraction”",
+  "移除“Synthetic validation recipe”"
+ ],
+ "quote_sources": [
+  "Synthetic expense approval · 审批模板 · Synthetic acceptance A",
+  "Synthetic travel claim 合成报销 · 审批请求 · Synthetic acceptance A",
+  "Synthetic invoice extraction · 提取模板 · Synthetic acceptance A",
+  "Synthetic validation recipe · 数据处理方案 · Synthetic acceptance A",
+  "服务条款 （在新标签页打开）",
+  "AI 使用规范 （在新标签页打开）",
+  "定价 （在新标签页打开）"
+ ]
+}

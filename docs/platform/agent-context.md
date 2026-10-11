@@ -1,8 +1,20 @@
 # Agent 中显式选择业务资源
 
-本切片为 AG-ATTACH 的资源上下文入口：表单定义（草稿和已发布版本信息），数据表字段与已保存视图。
-它不包含填写提交或数据表全部记录。个人文件是另一条有独立归属与生命周期的入口，见
-[Agent 个人文件](agent-files.md)，不得借文件入口绕过工作空间资源的权限。
+本切片为 AG-ATTACH 的资源上下文入口。可选资料类型（`kind`）与其读取契约（2026-10-11 扩展）：
+
+| kind | 应用读取 | 标识前缀 | 内容 |
+|---|---|---|---|
+| `form` | `forms.form.list/get` | `frm_` | 表单定义（字段设置、已发布版本信息），不含填写提交 |
+| `table` | `tables.table.list/get` | `tbl_` | 数据表字段与已保存视图，不含全部记录 |
+| `approval_template` | `approvals.template.list/get`（仅 active） | `apt_` | 审批流程定义与版本 |
+| `approval_request` | `approvals.request.list/get`（view=all，仍受应用 ACL） | `apr_` | 请求、依据快照、各阶段、决定与参与者 |
+| `extract_template` | `extract.template.list/get`（未归档） | `extpl_` | 字段定义与版本，不含任务结果 |
+| `extract_task` | `extract.task.list/get` | `extask_` | 当前字段值、来源与复核历史，不含原文全文 |
+| `dataprep_recipe` | `dataprep.recipe.list/get` | `dpr_` | 步骤定义与版本，不含数据行 |
+| `dataprep_run` | `dataprep.run.list/get` | `dpu_` | 状态、计数与结果引用，不含结果行 |
+
+数据集行、填写提交和表记录都不在此入口。标识前缀与 `kind` 必须一致，否则 `invalid_context`，不发生任何应用读取。
+个人文件是另一条有独立归属与生命周期的入口，见 [Agent 个人文件](agent-files.md)，不得借文件入口绕过工作空间资源的权限。
 
 页面先选择工作空间，再搜索资源。每次选择都会读取当前真实应用服务；发送时再次读取并比对内容指纹。
 已经变化或失去权限的资源必须移除后重新选择，不自动将新的正文套入旧报价。
@@ -10,10 +22,13 @@
 ## 接口与上限
 
 所有接口经现有 `/api/suite/ops/{operation}`、登录会话和 CSRF 门槛进入；个人 Agent 操作不向模型开放。
-资源读取调用注册表中的 `forms.form.list/get` 和 `tables.table.list/get`，执行原应用服务器鉴权。
+资源读取调用上表中各应用注册的 `.list/.get`，执行原应用服务器鉴权（`snapshot_read`：只允许声明为同步、无副作用、
+非 `agent="never"` 的读取）。
 
-- `agent.context.list`：输入 `workspace_id`、`kind`（`form` / `table`）、可选 `q`（100字符）与 `offset`。
-  输出 `items`、`next_offset`、`limited`。每页50项；Forms沿用原服务最多500项的限制，达到该范围明确提示缩小搜索。
+- `agent.context.list`：输入 `workspace_id`、`kind`、可选 `q`（100字符）与 `offset`。输出 `items`、`next_offset`、`limited`。
+  每页50项。Forms沿用原服务最多500项的限制；Tables、审批模板/请求由应用按 `q`/offset 服务端分页。Extract 按游标分页、
+  DataPrep 不支持服务端搜索：Agent 最多顺序走查该应用的 10 页（游标每页100、偏移每页200）并按标题过滤，
+  走查到上限仍未凑满一页时 `limited=true`（界面提示“只走查了前几页”），不猜测总数。
 - `agent.context.resolve`：输入 `workspace_id`、`kind`、`resource_id`；输出 `reference`、标题、空间名与原应用深链接。
   `reference` 包含相同三个标识与64位内容指纹 `snapshot`，没有正文。
 - `agent.turn.quote`、`agent.turn.start`：可选 `context_refs`，均为上述 `reference`，与 `file_refs` 合计最多5项。
