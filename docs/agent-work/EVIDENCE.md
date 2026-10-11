@@ -739,3 +739,11 @@ Actions 38155466408（verify 16:26–17:23Z，deploy 17:23–17:25Z，success）
 Docs `extract_context(..., ocr=True)`：PNG/JPG/JPEG 与整份扫描 PDF 按页经本地引擎识别，逐行 `{page, line, recognized, confidence}`、文件级 `ocr` 汇总；每份最多 5 页；混排页/含图 DOCX 仍拒绝；无引擎 `context_ocr_unsupported`、引擎错误 `context_ocr_failed`。Suite 能力 `ocr/ocr_languages/ocr_pages`，工作进程显式请求识别，上下文项与可见来源带 `recognized`；前端能力说明、预览标记、来源行置信度、来源条标记三语言。
 测试：Docs test_ingest_context 89 通过（新增 4 例，含 6 页预算在识别前拒绝、像素上限）、Docs 全量 1638 通过 2 跳过；Suite test_agent_files 20 通过（新增 1 例）、Suite 全量 1131 通过；Docs refusals 门禁 16 通过；suite-web 206 通过；suite-web typecheck/build、五守卫通过。
 浏览器（隔离合成实例 127.0.0.1:33895，系统 Chrome，本机 tesseract 5.5 + 内置 chi_sim/eng）：zh-Hans/en/zh-Hant 1280×900 与 zh-Hans 390 宽均显示识别能力说明、上传 PNG 就绪、预览「识别文字（未核对）：共 3 个词…」与「第 1 页 · 识别第 1 行（置信度 89%）」及正文 SYNTHETIC FIXTURE 4821；zh-Hans 另验 JPG 就绪、两页扫描 PDF 分别识别为第 1/2 页（88%/95%）、混排 PDF 以新文案拒绝、报价对话框列出该文件；以测试预算运行一问（fixture 传输，结算 0.000042 测试单位）后，消息来源条显示「个人文件 · 识别文字（未核对）」。证据 `evidence/2026-10-11-agent-recognized-files/`（browser-report.json、verification.json、6 张截图）。
+
+## 2026-10-11 WP8 跨空间数据流契约浏览器验收（C1/C2/C4 + 所有者改政策，隔离脚本化模型实例）
+
+隔离合成实例（127.0.0.1:33915，真实 Store/认证/Forms/Agent 引擎/data_flow/账本/报价，模型为按关键词脚本化的测试传输，测试钱包；Alice 拥有 A，Oscar 拥有 B，Alice 仅查看 B）系统 Chrome：
+C1「比较并保存」：读 A、读 B 成功；写入 A 失败 `transfer_export_denied`（卡片原句「你在来源工作空间没有导出权限…可请该空间的所有者授予导出权限」），写入 B 失败 `read_only_role`；回答如实说明，两空间表单未变。
+Oscar 在 Agent 设置里把 Workspace B 的数据流政策从「仅限已有阅读者」改为「转移人可写的任何空间」（确认对话框、已明确设置、更改已保存）；Alice 获导出权后 C2「复制 B 名册到 A」：卡片等待确认，目标 Workspace A，列出来源 Workspace B（zh-Hans/en/zh-Hant 三语截图）；确认后已完成，A 的表单多出「From B roster」。
+再次复制得到待确认卡片后，Oscar 改回「仅限已有阅读者」，Alice 确认 → 失败 `transfer_audience_denied`（原句「目标工作空间有不在来源工作空间的成员…」），A 未新增。C4 后效：移除 Alice 的 B 成员资格后刷新，会话 `sealed=access_changed`，依赖 B 的消息与卡片显示「内容因权限变化已隐藏」，横幅「访问权限已改变，相关内容已隐藏。请新建会话继续」，A 的记录保留。
+未做：C3 同名澄清、真实模型（支出暂停）、C8 个人自动化（沿用 2026-09-30 证据）。证据 `evidence/2026-10-11-agent-cross-workspace/`（browser-report.json、verification.json、9 张截图）。夹具发现：测试模块的 SSE 片段重复同一上游 id，账本按 (environment, provider, request_id) 结算去重，第二次调用会让回合崩溃——仅夹具问题，脚本化传输改为唯一 id 后正常。

@@ -1,0 +1,363 @@
+{
+ "base": "http://127.0.0.1:33915",
+ "engine": "chrome",
+ "steps": {
+  "c1": {
+   "cards": [
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace A",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace A\n\n执行详情"
+    },
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace B\n\n执行详情"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n失败",
+     "pending": false,
+     "error": "失败",
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace A",
+     "text": "新建表单\n失败\n\nSynwevo Forms · Workspace A\n\n执行详情\n\n你在来源工作空间没有导出权限，不能把其中的内容用到其他工作空间。可请该空间的所有者授予导出权限。"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n失败",
+     "pending": false,
+     "error": "失败",
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "新建表单\n失败\n\nSynwevo Forms · Workspace B\n\n执行详情\n\n未能完成此操作，请核对结果后重试。"
+    }
+   ],
+   "answer": {
+    "body": "A has A roster, B has B roster; I could not save the comparison in either workspace.",
+    "turn": "succeeded",
+    "hidden": false,
+    "tool_calls": [
+     [
+      "tc_61bca24d0bb4",
+      "succeeded",
+      null
+     ],
+     [
+      "tc_1587fd05d34d",
+      "succeeded",
+      null
+     ],
+     [
+      "tc_b3d1a9646516",
+      "failed",
+      "transfer_export_denied"
+     ],
+     [
+      "tc_e06cebac2dbb",
+      "failed",
+      "read_only_role"
+     ]
+    ]
+   },
+   "forms": {
+    "w_dd06e64df975": [
+     "A roster"
+    ],
+    "w_de5ffbc24741": [
+     "B roster"
+    ]
+   }
+  },
+  "policy_any": {
+   "dialog": "确认更改数据流政策\n✕\n\n目标工作空间：Workspace B\n\nw_de5ffbc24741\n\n从「仅限已有阅读者」更改为「转移人可写的任何空间」。\n\n可以带入转移人有写入权限的任何工作空间。\n\n新政策只约束之后的转移；已转移到其他空间的独立记录按目标空间的权限管理。\n\n取消\n确认更改政策",
+   "row_after": "Workspace B\nw_de5ffbc24741\n转移人可写的任何空间\n已明确设置\n\n可以带入转移人有写入权限的任何工作空间。\n\nWorkspace B 的数据流政策\n不外发\n仅限已有阅读者\n转移人可写的任何空间\n更改数据流政策\n\n更改已保存。"
+  },
+  "c2_card": {
+   "cards": [
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace A",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace A\n\n执行详情"
+    },
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace B\n\n执行详情"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n失败",
+     "pending": false,
+     "error": "失败",
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace A",
+     "text": "新建表单\n失败\n\nSynwevo Forms · Workspace A\n\n执行详情\n\n你在来源工作空间没有导出权限，不能把其中的内容用到其他工作空间。可请该空间的所有者授予导出权限。"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n失败",
+     "pending": false,
+     "error": "失败",
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "新建表单\n失败\n\nSynwevo Forms · Workspace B\n\n执行详情\n\n未能完成此操作，请核对结果后重试。"
+    },
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace B\n\n执行详情"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n等待确认",
+     "pending": true,
+     "error": null,
+     "transfer": "会把以下工作空间的内容带入Workspace A，其成员将能看到：\n\nWorkspace B",
+     "target": "Synwevo Forms · Workspace A",
+     "text": "新建表单\n等待确认\n\nSynwevo Forms · Workspace A\n\n会把以下工作空间的内容带入Workspace A，其成员将能看到：\n\nWorkspace B\n拟执行的变更\ndefinition\nconfirmation\nfields\nrules\nsteps\ndescription\ntitle\nFrom B roster\n确认执行\n拒绝执行"
+    }
+   ]
+  },
+  "c2_card_en": "Create a form\nAwaiting confirmation\n\nSynwevo Forms · Workspace A\n\nCarries content from these workspaces into Workspace A, where its members can see it:\n\nWorkspace B\nProposed changes\ndefinition\nconfirmation\nfields\nrules\nsteps\ndescription\ntitle\nFrom B roster\nConfirm action\nDecline action",
+  "c2_card_zh-Hant": "新建表單\n等待確認\n\nSynwevo Forms · Workspace A\n\n會把以下工作空間的內容帶入Workspace A，其成員將能看到：\n\nWorkspace B\n擬執行的變更\ndefinition\nconfirmation\nfields\nrules\nsteps\ndescription\ntitle\nFrom B roster\n確認執行\n拒絕執行",
+  "c2_confirmed": {
+   "cards": [
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace A",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace A\n\n执行详情"
+    },
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace B\n\n执行详情"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n失败",
+     "pending": false,
+     "error": "失败",
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace A",
+     "text": "新建表单\n失败\n\nSynwevo Forms · Workspace A\n\n执行详情\n\n你在来源工作空间没有导出权限，不能把其中的内容用到其他工作空间。可请该空间的所有者授予导出权限。"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n失败",
+     "pending": false,
+     "error": "失败",
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "新建表单\n失败\n\nSynwevo Forms · Workspace B\n\n执行详情\n\n未能完成此操作，请核对结果后重试。"
+    },
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace B\n\n执行详情"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": "会把以下工作空间的内容带入Workspace A，其成员将能看到：\n\nWorkspace B",
+     "target": "Synwevo Forms · Workspace A",
+     "text": "新建表单\n已完成\n\nSynwevo Forms · Workspace A\n\n会把以下工作空间的内容带入Workspace A，其成员将能看到：\n\nWorkspace B\n执行详情\n打开产物"
+    }
+   ],
+   "answer": {
+    "body": "Done with the copy request.",
+    "turn": "succeeded",
+    "hidden": false,
+    "tool_calls": [
+     [
+      "tc_18a1e8655cec",
+      "succeeded",
+      null
+     ],
+     [
+      "tc_5b9fdd24f098",
+      "succeeded",
+      null
+     ]
+    ]
+   },
+   "forms": {
+    "w_dd06e64df975": [
+     "A roster",
+     "From B roster"
+    ],
+    "w_de5ffbc24741": [
+     "B roster"
+    ]
+   }
+  },
+  "c2_second_card": {
+   "pending": true
+  },
+  "policy_audience": {
+   "dialog": "确认更改数据流政策\n✕\n\n目标工作空间：Workspace B\n\nw_de5ffbc24741\n\n从「转移人可写的任何空间」更改为「仅限已有阅读者」。\n\n只能带入其全部成员都已是本空间成员的工作空间：没有人因此看到原本看不到的内容。\n\n新政策只约束之后的转移；已转移到其他空间的独立记录按目标空间的权限管理。\n\n取消\n确认更改政策",
+   "row_after": "Workspace B\nw_de5ffbc24741\n仅限已有阅读者\n已明确设置\n\n只能带入其全部成员都已是本空间成员的工作空间：没有人因此看到原本看不到的内容。\n\nWorkspace B 的数据流政策\n不外发\n仅限已有阅读者\n转移人可写的任何空间\n更改数据流政策\n\n更改已保存。"
+  },
+  "c2_voided": {
+   "cards": [
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace A",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace A\n\n执行详情"
+    },
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace B\n\n执行详情"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n失败",
+     "pending": false,
+     "error": "失败",
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace A",
+     "text": "新建表单\n失败\n\nSynwevo Forms · Workspace A\n\n执行详情\n\n你在来源工作空间没有导出权限，不能把其中的内容用到其他工作空间。可请该空间的所有者授予导出权限。"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n失败",
+     "pending": false,
+     "error": "失败",
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "新建表单\n失败\n\nSynwevo Forms · Workspace B\n\n执行详情\n\n未能完成此操作，请核对结果后重试。"
+    },
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace B\n\n执行详情"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": "会把以下工作空间的内容带入Workspace A，其成员将能看到：\n\nWorkspace B",
+     "target": "Synwevo Forms · Workspace A",
+     "text": "新建表单\n已完成\n\nSynwevo Forms · Workspace A\n\n会把以下工作空间的内容带入Workspace A，其成员将能看到：\n\nWorkspace B\n执行详情\n打开产物"
+    },
+    {
+     "title": "列出表单",
+     "status": "列出表单\n已完成",
+     "pending": false,
+     "error": null,
+     "transfer": null,
+     "target": "Synwevo Forms · Workspace B",
+     "text": "列出表单\n已完成\n\nSynwevo Forms · Workspace B\n\n执行详情"
+    },
+    {
+     "title": "新建表单",
+     "status": "新建表单\n失败",
+     "pending": false,
+     "error": "失败",
+     "transfer": "会把以下工作空间的内容带入Workspace A，其成员将能看到：\n\nWorkspace B",
+     "target": "Synwevo Forms · Workspace A",
+     "text": "新建表单\n失败\n\nSynwevo Forms · Workspace A\n\n会把以下工作空间的内容带入Workspace A，其成员将能看到：\n\nWorkspace B\n执行详情\n\n目标工作空间有不在来源工作空间的成员，来源的数据流政策只允许转移给已能看到这些内容的成员。"
+    }
+   ],
+   "answer": {
+    "body": "Done with the copy request.",
+    "turn": "succeeded",
+    "hidden": false,
+    "tool_calls": [
+     [
+      "tc_cd49d11941f8",
+      "succeeded",
+      null
+     ],
+     [
+      "tc_73178521922b",
+      "failed",
+      "transfer_audience_denied"
+     ]
+    ]
+   },
+   "forms": {
+    "w_dd06e64df975": [
+     "A roster",
+     "From B roster"
+    ],
+    "w_de5ffbc24741": [
+     "B roster"
+    ]
+   }
+  },
+  "c4": {
+   "hidden_notes": [
+    "内容因权限变化已隐藏",
+    "内容因权限变化已隐藏",
+    "内容因权限变化已隐藏",
+    "内容因权限变化已隐藏",
+    "内容因权限变化已隐藏",
+    "内容因权限变化已隐藏"
+   ],
+   "actions": 8,
+   "text": "Please compare the rosters of workspace A and B and save a c\n重命名会话\n导出会话\n归档\n删除会话\n你\n\nPlease compare the rosters of workspace A and B and save a comparison. (fixture: compare)\n\nSynwevo Agent\n\n内容因权限变化已隐藏\n\n列出表单\n已完成\n\nSynwevo Forms · 个人 Agent\n\n内容因权限变化已隐藏\n\n列出表单\n已完成\n\nSynwevo Forms · 个人 Agent\n\n内容因权限变化已隐藏\n\n新建表单\n失败\n\nSynwevo Forms · 个人 Agent\n\n内容因权限变化已隐藏\n\n新建表单\n失败\n\nSynwevo Forms · 个人 Agent\n\n内容因权限变化已隐藏\n\n你\n\nCopy the B roster into workspace A. (fixture: copy)\n\nSynwevo Agent\n\n内容因权限变化已隐藏\n\n列出表单\n已完成\n\nSynwevo Forms · 个人 Agent\n\n内容因权限变化已隐藏\n\n新建表单\n已完成\n\nSynwevo Forms · 个人 Agent\n\n内容因权限变化已隐藏\n\n你\n\nCopy the B roster into workspace A once more. (fixture: copy)\n\nSynwevo Agent\n\n内容因权限变化已隐藏\n\n列出表单\n已完成\n\nSynwevo Forms · 个人 Agent\n\n内容因权限变化已隐藏\n\n新建表单\n失败\n\nSynwevo Forms · 个人 Agent\n\n内容因权限变化已隐藏\n\n付款授权设置\n\n访问权限已改变，相关内容已隐藏。请新建会话继续。\n\n付款方 · 个人钱包\n余额 0.100538 FIXTURE-GATEWAY\n测试钱包\n模型：fixture-requested-model\n选择业务资料个人文件\n输入消息\n全部获授权空间\n每次调用最多冻结 0.000297 FIXTURE-GATEWAY\n发送消息\n\nEnter 发送 · Shift+Enter 换行 · 发送后才冻结，按实际用量结算，未用部分释放。",
+   "forms": {
+    "w_dd06e64df975": [
+     "A roster",
+     "From B roster"
+    ],
+    "w_de5ffbc24741": [
+     "B roster"
+    ]
+   },
+   "sealed": "access_changed"
+  }
+ },
+ "console_errors": [
+  "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+ ]
+}

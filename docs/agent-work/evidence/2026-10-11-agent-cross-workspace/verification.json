@@ -1,0 +1,77 @@
+{
+ "package": "WP8 browser acceptance — cross-workspace data-flow contract in the personal Agent (C1, C2, C4; policy change by the owner)",
+ "date": "2026-10-11",
+ "tree": "worktree claude/agent-billing on 393b066 (no product code changed by this package)",
+ "server": "isolated synthetic instance http://127.0.0.1:33915 (scratchpad wp8/isolated_wp8.py): real Store/auth/Forms/Agent engine/data_flow/ledger/quotes; the model is a keyword-scripted test transport answering DeepSeek SSE shapes (no network, no credential); test wallet; cast Alice (owns A; Bob editor, Vera viewer) and Oscar (owns B; Alice viewer); fixture control on 33917 for the two out-of-band membership changes",
+ "engine": "chrome",
+ "report": "browser-report.json",
+ "screenshots": [
+  "c1-compare-zh-hans.png",
+  "c2-card-en.png",
+  "c2-card-zh-hans.png",
+  "c2-card-zh-hant.png",
+  "c2-confirmed-zh-hans.png",
+  "c2-voided-zh-hans.png",
+  "c4-after-revocation-zh-hans.png",
+  "policy-any-oscar-zh-hans.png",
+  "policy-audience-oscar-zh-hans.png"
+ ],
+ "observed": {
+  "C1 compare (Alice views B without export)": {
+   "reads": "A and B listed (two 已完成 cards)",
+   "write_into_A": "failed transfer_export_denied — card reads 「你在来源工作空间没有导出权限，不能把其中的内容用到其他工作空间。可请该空间的所有者授予导出权限。」",
+   "write_into_B": "failed read_only_role (generic wording on the card)",
+   "answer": "A has A roster, B has B roster; I could not save the comparison in either workspace.",
+   "forms_after": {
+    "w_dd06e64df975": [
+     "A roster"
+    ],
+    "w_de5ffbc24741": [
+     "B roster"
+    ]
+   }
+  },
+  "policy change by Oscar (Agent settings, Workspace B)": {
+   "to_any": "confirm dialog 「从「仅限已有阅读者」更改为「转移人可写的任何空间」」, row shows 已明确设置 / 更改已保存",
+   "to_audience_later": "same flow back to 仅限已有阅读者"
+  },
+  "C2 legal copy (export granted, policy any)": {
+   "card": "新建表单 等待确认 · target Workspace A · 「会把以下工作空间的内容带入Workspace A，其成员将能看到：Workspace B」",
+   "en": "Carries content from these workspaces into Workspace A, where its members can see it: Workspace B",
+   "zh_Hant": "會把以下工作空間的內容帶入Workspace A，其成員將能看到：Workspace B",
+   "after_confirm": "card 已完成, answer 'Done with the copy request.', Forms in A = ['A roster', 'From B roster']"
+  },
+  "changed policy voids a pending confirmation": {
+   "card_pending_before": true,
+   "after_oscar_sets_audience_and_alice_confirms": "failed transfer_audience_denied — card reads 「目标工作空间有不在来源工作空间的成员，来源的数据流政策只允许转移给已能看到这些内容的成员。」; Forms in A unchanged"
+  },
+  "C4 after-effect (Alice removed from B)": {
+   "sealed": "access_changed",
+   "hidden_notes": 6,
+   "banner": "访问权限已改变，相关内容已隐藏。请新建会话继续。",
+   "forms_after": {
+    "w_dd06e64df975": [
+     "A roster",
+     "From B roster"
+    ],
+    "w_de5ffbc24741": [
+     "B roster"
+    ]
+   },
+   "note": "the mid-run stop of later B work is covered by apps/suite/tests/test_agent_transfers.py::test_c4_… (not a browser step)"
+  }
+ },
+ "console_errors": [
+  "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+ ],
+ "notes": [
+  "each context logs one 401: /api/auth/me on /login before sign-in",
+  "fixture-only finding while building the server: the metering test helper repeats one upstream chunk id; the ledger keys settlements by (environment, provider, request_id), so a second model call of a turn crashed until the scripted transport issued unique ids — a property of the fixture, not of the product",
+  "wording for a refused write into B as a viewer is the generic 「未能完成此操作，请核对结果后重试。」 (read_only_role); the transfer refusals have their own sentences"
+ ],
+ "not_done": [
+  "C3 (same-name resources across workspaces, clarify only when a write could go wrong) — not exercised",
+  "real model (production) — personal spending stays paused by the user's instruction",
+  "C8 personal automation browser acceptance — earlier evidence 2026-09-30-automations; not repeated here"
+ ]
+}

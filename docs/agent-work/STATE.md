@@ -19,7 +19,7 @@
 - **CR-083 取消/恢复链路审查：代码完成、本地已验证、已提交**：重启时用户已停止的回答收为cancelled；取消立即收尾时返回cancelled；`turn.stopping`投影与Chat停止中反馈。apps/suite/tests全量与suite-web 205通过。
 - **CR-084 AG-ATTACH Office 文本文档：代码完成、本地与隔离浏览器已验证、已本地提交**：DOCX/XLSX 加入 Agent 完整上下文格式（全部文字或拒绝；图片→需 OCR，嵌入对象/图表/公式/宏/未缓存公式→不支持，加密→加密），前端来源标签与说明随之更新。证据 `evidence/2026-10-11-agent-office-files/`。
 - **CR-085 账户前端测试缓存隔离、CR-086 业务资料类型扩展（审批/提取/数据处理）：已本地提交并验证**（1130 后端、206 前端、隔离浏览器）。证据 `evidence/2026-10-11-agent-context-kinds/`。
-- 下一动作：推送配额测试修复 + CR-088 并跟踪其 Actions→部署后只读核验并写回执（CR-087/CR-088 随之上线）→继续 BACKLOG 余项（跨空间任务与个人自动化浏览器验收、真实支付、Admin A11/A17、API/SDK 缺口）。
+- 下一动作：跟踪 Actions 38164472254（393b066 = CR-088 + 配额测试修复）→部署后只读核验并写回执（CR-087/CR-088 随之上线）→继续 BACKLOG 余项（WP8 C3 同名澄清、Admin A11/A17、API/SDK 缺口；真实支付与真实模型仍受支出暂停约束）。WP8 C1/C2/C4 浏览器验收已完成（evidence/2026-10-11-agent-cross-workspace）。
 
 ## 已核实的正式Agent与支付配置（不重复创建或发布）
 
