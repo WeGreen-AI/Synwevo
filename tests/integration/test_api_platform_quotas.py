@@ -239,8 +239,15 @@ def test_a_limit_change_carries_requests_in_use_not_the_time_they_cost():
 def test_tightening_a_workspace_limit_counts_the_requests_already_made(plane):
     e = plane
     key, _ = api_key(e)
+    # The gate carries the requests still in use across a limit change, not the time they were
+    # charged at (api_quotas._rescaled). Under the deployment default of 1200/min a request is
+    # paid back 50 ms after it was made, so three made under the default are forgotten before a
+    # slow runner has re-authenticated and written the new policy (CI run 38159846815 saw 200).
+    # The precondition is therefore made under an explicit 6/min budget, whose memory of three
+    # requests lasts 30 s; tightening it exercises the same rescaling.
+    set_policy(e, f"workspace/{e['ws']}", {"workspace_rpm": 6})
     assert [whoami(e["api"], key).status_code for _ in range(3)] == [200, 200, 200]
-    set_policy(e, f"workspace/{e['ws']}", {"workspace_rpm": 3})
-    # Three were made under the default; a 3/min workspace has no room left, not a new burst.
+    set_policy(e, f"workspace/{e['ws']}", {"workspace_rpm": 3}, base_version=1)
+    # Three of six were in use; a 3/min workspace has no room left, not a new burst.
     r = whoami(e["api"], key)
     assert r.status_code == 429 and r.json()["error"]["details"]["limit_scope"] == "workspace"
