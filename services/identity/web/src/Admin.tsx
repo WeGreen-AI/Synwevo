@@ -31,6 +31,7 @@ import { AccountStatusDialog } from "./governance/AccountStatusDialog";
 import { ActionDialog } from "./governance/ActionDialog";
 import { AdminLayout } from "./admin/AdminLayout";
 import { RowMenu } from "./governance/RowMenu";
+import { AccountDetailDialog } from "./governance/AccountDetail";
 import { PageControls } from "./governance/ListControls";
 import { useDebounced } from "./lib/hooks";
 import { ACCOUNT_STATUS, WORKSPACE_KIND, WORKSPACE_STATUS, roleLabel } from "./governance/labels";
@@ -307,6 +308,8 @@ function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void
   const toast = useToast();
   const [resultNotice, setResultNotice] = useState("");
   const [action, setAction] = useState<{ user: User; kind: "status" | "revoke" | "recovery" } | null>(null);
+  // Read-only: the account's facts (A13). Every change stays in the items below, with its own reason.
+  const [detail, setDetail] = useState<User | null>(null);
   // A grant or revocation in the platform-access dialog changes this list's platform column.
   useEffect(() => { if (revision) reload(); }, [revision]); // eslint-disable-line react-hooks/exhaustive-deps
   const items = loading || err ? [] : data?.items || [];
@@ -335,6 +338,7 @@ function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void
         <th scope="row">{user.display_name || "—"}<div className="who2">{user.email}</div></th>
         <td data-label={tr("状态")}>{ACCOUNT_STATUS[user.status] || user.status}</td><td data-label={tr("平台权限")}>{platformRolesText(user.platform_roles)}</td><td data-label={tr("工作空间")}>{user.workspaces}</td><td data-label={tr("在线会话")}>{user.sessions}</td>
         <td className="act" data-label={tr("操作")}><RowMenu label={tr("{p0} 的账户操作", {p0: user.email})} items={[
+          { label: tr("查看详情"), disabled: loading || !!err, onSelect: () => setDetail(user) },
           { label: user.status !== "suspended" ? tr("停用账户") : tr("恢复账户"), danger: user.status !== "suspended",
             disabled: loading || !!err || o.status.disabled, hint: hint(o.status.hint), onSelect: () => setAction({ user, kind: "status" }) },
           { label: tr("发送找回邮件"), disabled: loading || !!err || o.recovery.disabled, hint: hint(o.recovery.hint), onSelect: () => setAction({ user, kind: "recovery" }) },
@@ -344,6 +348,7 @@ function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void
       {!loading && !err && !items.length && <tr className="empty-row"><td colSpan={6}>{tr("没有匹配的账户。")}</td></tr>}</tbody>
     </table></div>
     <PageControls offset={offset} total={data?.total || 0} busy={loading || !!err} onPage={setOffset} />
+    {detail && <AccountDetailDialog user={detail} onClose={() => setDetail(null)} />}
     {action?.kind === "status" && u && <AccountStatusDialog user={u} onClose={() => setAction(null)} onDone={(out) => {
       setAction(null); reload(); setResultNotice(tr("操作 {id} 已完成，账户状态为「{status}」。", {
         id: out.operation_id, status: ACCOUNT_STATUS[out.status] || out.status,

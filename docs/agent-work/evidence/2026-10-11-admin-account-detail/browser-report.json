@@ -1,0 +1,421 @@
+{
+ "base": "http://127.0.0.1:33891",
+ "engine": "chrome",
+ "locales": {
+  "zh-hans": {
+   "title_ok": true,
+   "sections": [
+    "资料",
+    "登录方式",
+    "工作空间（2 个）",
+    "组织（0 个）",
+    "在线会话（2 个）",
+    "登录退避",
+    "安全时间线"
+   ],
+   "has_workspace_name": true,
+   "has_external_identity": true,
+   "has_live_session": true,
+   "mentions_failed_logins": true,
+   "has_han_in_english": null,
+   "han_fragments_in_english": null,
+   "no_secret_words": true,
+   "after_escape": {
+    "dialogs": 0,
+    "activeTag": "BUTTON",
+    "activeText": "操作 ▾"
+   },
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+   ],
+   "failed_responses": [
+    {
+     "status": 401,
+     "url": "/api/auth/me",
+     "signed_in": false
+    }
+   ],
+   "text_excerpt": "账户详情：alice-fixture@example.test\n✕\n资料\n邮箱\nalice-fixture@example.test\n姓名\nSynthetic member\n状态\n正常\n邮箱验证\n已验证（2026/10/12 00:25）\n创建时间\n2026/10/12 00:25\n最近更新\n2026/10/12 00:25\n平台角色\n审计查看（到期：2026/10/19 00:25）\n登录方式\n口令\n已设置\n两步验证\n未开启\n安全密钥\n无\n外部身份\ngoogle · alice-fixture@example.test · 最近使用：2026/10/11 23:25 · 提供商已停用\n工作空间（2 个）\n名称\t类型\t状态\t角色\t加入时间\nSynthetic member 的空间\t个人\t正常\t所有者 · 可导出\t2026/10/12 00:25\nSynthetic acceptance workspace\t组织\t正常\t编辑者 · 可导出\t2026/10/12 00:25\n组织（0 个）\n\n不是任何组织的成员。\n\n在线会话（2 个）\n设备\t登录方式\t最近活动\t到期\t地址\nmacOS 上的 Chrome\t口令\t2026/10/12 00:37\t2026/10/12 01:37\t127.0.0.1\nmacOS 上的 Chrome\t口令\t2026/10/12 00:35\t2026/10/12 01:35\t127.0.0.1\n\n地址是登录时记录的来源地址，不推断位置；撤销会话在账户行的菜单里。\n\n登录退避\n\n连续失败 2 次，最近一次 2026/10/12 00:37；现在可以重试，成功登录后计数清零。\n\n安全时间线\n\n最近 50 条与该账户有关的登录、安全与管理事件；完整记录在审计页。\n\n时间\t操作\t操作者\t对象\t结果\t理由\n2026/10/12 00:37\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:37\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:37\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t成功\t—\n2026/10/12 00:35\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:35\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:35\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t成功\t—\n2026/10/12 00:34\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:31\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:30\tauth.login\talice-fixture@example.test\tu"
+  },
+  "en": {
+   "title_ok": true,
+   "sections": [
+    "Profile",
+    "Sign-in method",
+    "Workspaces (2)",
+    "Organizations (0)",
+    "Active sessions (2)",
+    "Sign-in backoff",
+    "Security timeline"
+   ],
+   "has_workspace_name": true,
+   "has_external_identity": true,
+   "has_live_session": true,
+   "mentions_failed_logins": true,
+   "has_han_in_english": false,
+   "han_fragments_in_english": [
+    "的空间"
+   ],
+   "no_secret_words": true,
+   "after_escape": {
+    "dialogs": 0,
+    "activeTag": "BUTTON",
+    "activeText": "Actions ▾"
+   },
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+   ],
+   "failed_responses": [
+    {
+     "status": 401,
+     "url": "/api/auth/me",
+     "signed_in": false
+    }
+   ],
+   "text_excerpt": "Account details: alice-fixture@example.test\n✕\nProfile\nEmail\nalice-fixture@example.test\nName\nSynthetic member\nStatus\nActive\nEmail verification\nVerified (10/12/2026, 12:25 AM)\nCreated\n10/12/2026, 12:25 AM\nLast updated\n10/12/2026, 12:25 AM\nPlatform role\nAudit viewer (expires 10/19/2026, 12:25 AM)\nSign-in method\nPassword\nSet\nTwo-step verification\nOff\nPasskey\nNone\nExternal identities\ngoogle · alice-fixture@example.test · Last used: 10/11/2026, 11:25 PM · Provider disabled\nWorkspaces (2)\nName\tType\tStatus\tRole\tJoined\nSynthetic member 的空间\tPersonal\tActive\tOwner · Can export\t10/12/2026, 12:25 AM\nSynthetic acceptance workspace\tOrganizations\tActive\tEditor · Can export\t10/12/2026, 12:25 AM\nOrganizations (0)\n\nNot a member of any organization.\n\nActive sessions (2)\nDevice\tSign-in method\tLast active\tExpires\tAddress\nChrome on macOS\tPassword\t10/12/2026, 12:37 AM\t10/12/2026, 01:37 AM\t127.0.0.1\nChrome on macOS\tPassword\t10/12/2026, 12:35 AM\t10/12/2026, 01:35 AM\t127.0.0.1\n\nThe address is the source recorded at sign-in; no location is inferred. Revoking sessions is in the account row's menu.\n\nSign-in backoff\n\n2 consecutive failures, the last at 10/12/2026, 12:37 AM; a new attempt is allowed now, and a successful sign-in resets the count.\n\nSecurity timeline\n\nThe latest 50 sign-in, security and administration events about this account; the full log is on the audit page.\n\nTime\tActions\tActor\tObject\tResult\tReason\n10/12/2026, 12:37 AM\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\tDenied\tbad_passwor"
+  },
+  "zh-hant": {
+   "title_ok": true,
+   "sections": [
+    "資料",
+    "登入方式",
+    "工作空間（2 個）",
+    "組織（0 個）",
+    "線上工作階段（2 個）",
+    "登入退避",
+    "安全時間線"
+   ],
+   "has_workspace_name": true,
+   "has_external_identity": true,
+   "has_live_session": true,
+   "mentions_failed_logins": true,
+   "has_han_in_english": null,
+   "han_fragments_in_english": null,
+   "no_secret_words": true,
+   "after_escape": {
+    "dialogs": 0,
+    "activeTag": "BUTTON",
+    "activeText": "操作 ▾"
+   },
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+   ],
+   "failed_responses": [
+    {
+     "status": 401,
+     "url": "/api/auth/me",
+     "signed_in": false
+    }
+   ],
+   "text_excerpt": "帳戶詳情：alice-fixture@example.test\n✕\n資料\n電郵\nalice-fixture@example.test\n姓名\nSynthetic member\n狀態\n正常\n電子郵件地址驗證\n已驗證（2026/10/12 上午12:25）\n建立時間\n2026/10/12 上午12:25\n最近更新\n2026/10/12 上午12:25\n平台角色\n稽核檢視（到期：2026/10/19 上午12:25）\n登入方式\n密碼\n已設定\n兩步驗證\n未開啟\n安全金鑰\n無\n外部身分\ngoogle · alice-fixture@example.test · 最近使用：2026/10/11 下午11:25 · 提供者已停用\n工作空間（2 個）\n名稱\t類型\t狀態\t角色\t加入時間\nSynthetic member 的空间\t個人\t正常\t擁有者 · 可匯出\t2026/10/12 上午12:25\nSynthetic acceptance workspace\t組織\t正常\t編輯者 · 可匯出\t2026/10/12 上午12:25\n組織（0 個）\n\n不是任何組織的成員。\n\n線上工作階段（2 個）\n裝置\t登入方式\t最近活動\t到期\t位址\nmacOS 上的 Chrome\t密碼\t2026/10/12 上午12:37\t2026/10/12 上午01:37\t127.0.0.1\nmacOS 上的 Chrome\t密碼\t2026/10/12 上午12:35\t2026/10/12 上午01:35\t127.0.0.1\n\n位址是登入時記錄的來源位址，不推斷位置；撤銷工作階段在帳戶列的選單裡。\n\n登入退避\n\n連續失敗 2 次，最近一次 2026/10/12 上午12:37；現在可以重試，成功登入後計數清零。\n\n安全時間線\n\n最近 50 條與該帳戶有關的登入、安全與管理事件；完整記錄在稽核頁。\n\n時間\t操作\t操作者\t對象\t結果\t理由\n2026/10/12 上午12:37\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒絕\tbad_password\n2026/10/12 上午12:37\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒絕\tbad_password\n2026/10/12 上午12:37\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t成功\t—\n2026/10/12 上午12:35\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒絕\tbad_password\n2026/10/12 上午12:35\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒絕\tbad_password\n2026/10/12 上午12:35\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t成功\t—\n2026/10/12 上午12:34\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒絕\tbad_password\n2026/10/12 上午12:31\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒絕\tbad_password\n2026/10/"
+  },
+  "zh-hans-mobile-390": {
+   "title_ok": true,
+   "sections": [
+    "资料",
+    "登录方式",
+    "工作空间（2 个）",
+    "组织（0 个）",
+    "在线会话（2 个）",
+    "登录退避",
+    "安全时间线"
+   ],
+   "has_workspace_name": true,
+   "has_external_identity": true,
+   "has_live_session": true,
+   "mentions_failed_logins": true,
+   "has_han_in_english": null,
+   "han_fragments_in_english": null,
+   "no_secret_words": true,
+   "after_escape": {
+    "dialogs": 0,
+    "activeTag": "BUTTON",
+    "activeText": "操作 ▾"
+   },
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+   ],
+   "failed_responses": [
+    {
+     "status": 401,
+     "url": "/api/auth/me",
+     "signed_in": false
+    }
+   ],
+   "text_excerpt": "账户详情：alice-fixture@example.test\n✕\n资料\n邮箱\nalice-fixture@example.test\n姓名\nSynthetic member\n状态\n正常\n邮箱验证\n已验证（2026/10/12 00:25）\n创建时间\n2026/10/12 00:25\n最近更新\n2026/10/12 00:25\n平台角色\n审计查看（到期：2026/10/19 00:25）\n登录方式\n口令\n已设置\n两步验证\n未开启\n安全密钥\n无\n外部身份\ngoogle · alice-fixture@example.test · 最近使用：2026/10/11 23:25 · 提供商已停用\n工作空间（2 个）\n名称\t类型\t状态\t角色\t加入时间\nSynthetic member 的空间\t个人\t正常\t所有者 · 可导出\t2026/10/12 00:25\nSynthetic acceptance workspace\t组织\t正常\t编辑者 · 可导出\t2026/10/12 00:25\n组织（0 个）\n\n不是任何组织的成员。\n\n在线会话（2 个）\n设备\t登录方式\t最近活动\t到期\t地址\nmacOS 上的 Chrome\t口令\t2026/10/12 00:37\t2026/10/12 01:37\t127.0.0.1\nmacOS 上的 Chrome\t口令\t2026/10/12 00:35\t2026/10/12 01:35\t127.0.0.1\n\n地址是登录时记录的来源地址，不推断位置；撤销会话在账户行的菜单里。\n\n登录退避\n\n连续失败 2 次，最近一次 2026/10/12 00:37；现在可以重试，成功登录后计数清零。\n\n安全时间线\n\n最近 50 条与该账户有关的登录、安全与管理事件；完整记录在审计页。\n\n时间\t操作\t操作者\t对象\t结果\t理由\n2026/10/12 00:37\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:37\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:37\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t成功\t—\n2026/10/12 00:35\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:35\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:35\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t成功\t—\n2026/10/12 00:34\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:31\tauth.login\talice-fixture@example.test\tu_c9fe2db56407\t被拒绝\tbad_password\n2026/10/12 00:30\tauth.login\talice-fixture@example.test\tu"
+  }
+ },
+ "support": {
+  "timeline_withheld_note": true,
+  "outranks_note": true,
+  "no_timeline_table": true,
+  "workspace_names_visible": true,
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "text_excerpt": "账户详情：admin-fixture@example.test\n✕\n\n该账户的平台权限高于你的：可以查看，不能对它执行管理操作。\n\n资料\n邮箱\nadmin-fixture@example.test\n姓名\nSynthetic administrator\n状态\n正常\n邮箱验证\n已验证（2026/10/12 00:25）\n创建时间\n2026/10/12 00:25\n最近更新\n2026/10/12 00:38\n平台角色\n最高管理员\n登录方式\n口令\n已设置\n两步验证\n未开启\n安全密钥\n无\n外部身份\n无\n工作空间（2 个）\n名称\t类型\t状态\t角色\t加入时间\nSynthetic administrator 的空间\t个人\t正常\t所有者 · 可导出\t2026/10/12 00:25\nSynthetic acceptance workspace\t组织\t正常\t所有者 · 可导出\t2026/10/12 00:25\n组织（0 个）\n\n不是任何组织的成员。\n\n在线会话（23 个）\n设备\t登录方式\t最近活动\t到期\t地址\nmacOS 上的 Chrome\t口令\t2026/10/12 00:38\t2026/10/12 01:38\t127.0.0.1\nmacOS 上的 Chrome\t口令\t2026/10/12 00:38\t2026/10/12 01:38\t127.0.0.1\nmacOS 上的 Chrome\t口令\t2026/10/12 00:38\t2026/10/12 01:38\t127.0.0.1\nmacOS 上的 Chrome\t口令\t2026/10/12 00:37\t2026/10/12 01:37\t127.0.0.1\nmacOS 上的 Chrome\t口令\t2026/10/12 00:35\t2026/10/12 01:35\t127.0.0.1\nmacOS 上的 Chrome\t口令\t2026/10/12 00:"
+ },
+ "failed_logins": [
+  true,
+  true
+ ],
+ "api": {
+  "user": {
+   "id": "u_c9fe2db56407",
+   "email": "alice-fixture@example.test",
+   "display_name": "Synthetic member",
+   "status": "active",
+   "platform_role": "none",
+   "email_verified_at": 1791735916.904,
+   "created_at": 1791735916.8699222,
+   "updated_at": 1791735916.8699222
+  },
+  "application_identity": false,
+  "blocked_by": [],
+  "outranks_caller": false,
+  "sign_in": {
+   "password_set": true,
+   "totp": false,
+   "recovery_remaining": 0,
+   "passkeys": [],
+   "external_identities": [
+    {
+     "provider": "google",
+     "label": "google",
+     "available": false,
+     "email": "alice-fixture@example.test",
+     "email_verified": true,
+     "created_at": 1791649516.904393,
+     "last_used_at": 1791732316.904393
+    }
+   ]
+  },
+  "platform_roles": [
+   "auditor"
+  ],
+  "platform_grants": [
+   {
+    "role": "auditor",
+    "granted_at": 1791735916.904166,
+    "expires_at": 1792340716.9041631
+   }
+  ],
+  "workspaces": [
+   {
+    "id": "w_e962c915d191",
+    "role": "owner",
+    "can_export": true,
+    "joined_at": 1791735916.903897,
+    "name": "Synthetic member 的空间",
+    "kind": "personal",
+    "status": "active"
+   },
+   {
+    "id": "w_a3d3423b83e3",
+    "role": "editor",
+    "can_export": true,
+    "joined_at": 1791735916.904105,
+    "name": "Synthetic acceptance workspace",
+    "kind": "org",
+    "status": "active"
+   }
+  ],
+  "organizations": [],
+  "sessions": [
+   {
+    "created_at": 1791736675.035827,
+    "last_seen_at": 1791736675.035827,
+    "expires_at": 1791740275.035827,
+    "amr": "password",
+    "client": "macOS 上的 Chrome",
+    "client_parts": {
+     "browser": "Chrome",
+     "platform": "macOS"
+    },
+    "ip": "127.0.0.1",
+    "persistent": false,
+    "auth_provider": null
+   },
+   {
+    "created_at": 1791736525.4151769,
+    "last_seen_at": 1791736525.4151769,
+    "expires_at": 1791740125.4151769,
+    "amr": "password",
+    "client": "macOS 上的 Chrome",
+    "client_parts": {
+     "browser": "Chrome",
+     "platform": "macOS"
+    },
+    "ip": "127.0.0.1",
+    "persistent": false,
+    "auth_provider": null
+   }
+  ],
+  "backoff": {
+   "failures": 2,
+   "first_failure_at": 1791736675.323839,
+   "last_failure_at": 1791736676.5873358,
+   "retry_after": 0
+  },
+  "audit": {
+   "permitted": true,
+   "limit": 50,
+   "items": [
+    {
+     "id": "ae_265b2408a6b9",
+     "at": 1791736676.5873542,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "denied",
+     "reason": "bad_password"
+    },
+    {
+     "id": "ae_59a02fcb8da6",
+     "at": 1791736675.323864,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "denied",
+     "reason": "bad_password"
+    },
+    {
+     "id": "ae_62f8fb17f99b",
+     "at": 1791736675.035566,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "ok",
+     "reason": null
+    },
+    {
+     "id": "ae_c3ca57f8975b",
+     "at": 1791736526.9766898,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "denied",
+     "reason": "bad_password"
+    },
+    {
+     "id": "ae_8285d6fda03e",
+     "at": 1791736525.7115562,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "denied",
+     "reason": "bad_password"
+    },
+    {
+     "id": "ae_7ef3dfe032df",
+     "at": 1791736525.414994,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "ok",
+     "reason": null
+    },
+    {
+     "id": "ae_81618b315dca",
+     "at": 1791736442.769241,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "denied",
+     "reason": "bad_password"
+    },
+    {
+     "id": "ae_cbf2344c709b",
+     "at": 1791736318.130708,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "denied",
+     "reason": "bad_password"
+    },
+    {
+     "id": "ae_619c33f9b12c",
+     "at": 1791736213.3253,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "denied",
+     "reason": "bad_password"
+    },
+    {
+     "id": "ae_4922e71af6a1",
+     "at": 1791736125.780888,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "denied",
+     "reason": "bad_password"
+    },
+    {
+     "id": "ae_dc32f156d378",
+     "at": 1791736124.500386,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "denied",
+     "reason": "bad_password"
+    },
+    {
+     "id": "ae_43a1f399a3f7",
+     "at": 1791736065.133331,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "denied",
+     "reason": "bad_password"
+    },
+    {
+     "id": "ae_6107271d6ac3",
+     "at": 1791736063.858334,
+     "action": "auth.login",
+     "actor_kind": "user",
+     "actor_email": "alice-fixture@example.test",
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "denied",
+     "reason": "bad_password"
+    },
+    {
+     "id": "ae_37893315f98b",
+     "at": 1791735916.904324,
+     "action": "admin.platform.grant",
+     "actor_kind": "system",
+     "actor_email": null,
+     "object_kind": "user",
+     "object_id": "u_c9fe2db56407",
+     "result": "ok",
+     "reason": "A13 fixture: an expiring delegated role"
+    }
+   ]
+  }
+ }
+}

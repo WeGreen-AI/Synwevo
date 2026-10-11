@@ -1,0 +1,194 @@
+{
+ "package": "CR-087 / admin-coverage A13 — account detail and security timeline",
+ "date": "2026-10-11",
+ "tree": "worktree claude/agent-billing on e99212d, A13 changes uncommitted at verification time",
+ "backend": {
+  "route": "GET /api/admin/users/{uid} (platform.users.view; names follow platform.workspaces.view / platform.orgs.view; timeline follows platform.audit.view)",
+  "metadata_only": "no password hash, TOTP seed, recovery code, token or session id in the response; asserted by value (phc) and by field name in test_admin",
+  "tests": {
+   "services/identity/tests/test_admin.py": "2 new tests pass (account_detail_is_metadata_without_secrets, account_detail_names_only_what_the_caller_may_list_and_refuses_unknown_accounts)",
+   "services/identity/tests/test_platform_access.py": "29 passed with the new matrix row",
+   "services/identity/tests (whole suite)": "1549 passed, 16:17–16:20Z (scratchpad prepush-py.log)"
+  }
+ },
+ "frontend": {
+  "component": "services/identity/web/src/governance/AccountDetail.tsx (+ Admin.tsx row menu, governance/messages.ts)",
+  "tests": "npm test -w @synwevo/account-web: 166 passed (3 new in admin-account-detail.test.mjs: three-language rendering, withheld/empty states, catalogue coverage of every sentence incl. method/device/role maps)",
+  "typecheck": "exit 0 (root 16:22Z, account-web 16:37Z)",
+  "build": "exit 0 (root 16:22Z, account-web 16:37Z)"
+ },
+ "browser": {
+  "server": "isolated synthetic instance http://127.0.0.1:33891 (scratchpad a13/isolated_admin.py: synwevo_server role=all, scratchpad data dir, no mail/model/payment/outbound); accounts admin-fixture / support-fixture / alice-fixture @example.test",
+  "engine": "chrome",
+  "report": "browser-report.json",
+  "screenshots": [
+   "en-detail.png",
+   "zh-hans-detail.png",
+   "zh-hans-mobile-390-detail.png",
+   "zh-hans-support-view-of-admin.png",
+   "zh-hant-detail.png"
+  ],
+  "observed": {
+   "zh-hans": {
+    "title_ok": true,
+    "sections": [
+     "资料",
+     "登录方式",
+     "工作空间（2 个）",
+     "组织（0 个）",
+     "在线会话（2 个）",
+     "登录退避",
+     "安全时间线"
+    ],
+    "has_workspace_name": true,
+    "has_external_identity": true,
+    "has_live_session": true,
+    "mentions_failed_logins": true,
+    "has_han_in_english": null,
+    "han_fragments_in_english": null,
+    "no_secret_words": true,
+    "after_escape": {
+     "dialogs": 0,
+     "activeTag": "BUTTON",
+     "activeText": "操作 ▾"
+    },
+    "console_errors": [
+     "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    ],
+    "failed_responses": [
+     {
+      "status": 401,
+      "url": "/api/auth/me",
+      "signed_in": false
+     }
+    ]
+   },
+   "en": {
+    "title_ok": true,
+    "sections": [
+     "Profile",
+     "Sign-in method",
+     "Workspaces (2)",
+     "Organizations (0)",
+     "Active sessions (2)",
+     "Sign-in backoff",
+     "Security timeline"
+    ],
+    "has_workspace_name": true,
+    "has_external_identity": true,
+    "has_live_session": true,
+    "mentions_failed_logins": true,
+    "has_han_in_english": false,
+    "han_fragments_in_english": [
+     "的空间"
+    ],
+    "no_secret_words": true,
+    "after_escape": {
+     "dialogs": 0,
+     "activeTag": "BUTTON",
+     "activeText": "Actions ▾"
+    },
+    "console_errors": [
+     "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    ],
+    "failed_responses": [
+     {
+      "status": 401,
+      "url": "/api/auth/me",
+      "signed_in": false
+     }
+    ]
+   },
+   "zh-hant": {
+    "title_ok": true,
+    "sections": [
+     "資料",
+     "登入方式",
+     "工作空間（2 個）",
+     "組織（0 個）",
+     "線上工作階段（2 個）",
+     "登入退避",
+     "安全時間線"
+    ],
+    "has_workspace_name": true,
+    "has_external_identity": true,
+    "has_live_session": true,
+    "mentions_failed_logins": true,
+    "has_han_in_english": null,
+    "han_fragments_in_english": null,
+    "no_secret_words": true,
+    "after_escape": {
+     "dialogs": 0,
+     "activeTag": "BUTTON",
+     "activeText": "操作 ▾"
+    },
+    "console_errors": [
+     "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    ],
+    "failed_responses": [
+     {
+      "status": 401,
+      "url": "/api/auth/me",
+      "signed_in": false
+     }
+    ]
+   },
+   "zh-hans-mobile-390": {
+    "title_ok": true,
+    "sections": [
+     "资料",
+     "登录方式",
+     "工作空间（2 个）",
+     "组织（0 个）",
+     "在线会话（2 个）",
+     "登录退避",
+     "安全时间线"
+    ],
+    "has_workspace_name": true,
+    "has_external_identity": true,
+    "has_live_session": true,
+    "mentions_failed_logins": true,
+    "has_han_in_english": null,
+    "han_fragments_in_english": null,
+    "no_secret_words": true,
+    "after_escape": {
+     "dialogs": 0,
+     "activeTag": "BUTTON",
+     "activeText": "操作 ▾"
+    },
+    "console_errors": [
+     "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    ],
+    "failed_responses": [
+     {
+      "status": 401,
+      "url": "/api/auth/me",
+      "signed_in": false
+     }
+    ]
+   }
+  },
+  "support_view_of_admin": {
+   "timeline_withheld_note": true,
+   "outranks_note": true,
+   "no_timeline_table": true,
+   "workspace_names_visible": true,
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+   ]
+  },
+  "notes": [
+   "each context logs one 401: /api/auth/me on /login before sign-in (the session probe), see failed_responses",
+   "the only Chinese in the English view is the generated personal workspace name '… 的空间' (data written by Identity._personal_name at creation), not interface text",
+   "backoff observed in both states: waiting (7 failures, 25 s, run at 16:34Z) and cleared (2 failures, run at 16:37Z)",
+   "failed sign-ins appear in the timeline as auth.login / denied / bad_password; a live session shows device, method, times and address",
+   "Escape closes the dialog and focus returns to the row's actions button",
+   "the shell follows the account's stored locale over browser language and `?lang=`; the proof sets it through PATCH /api/auth/profile, as a person does"
+  ]
+ },
+ "not_done": [
+  "no passkey or configured external provider in the browser fixture (SSR test covers those rows)",
+  "Agent content-safety suspension state is not part of the detail",
+  "viewing is not audited (same as the lists)"
+ ]
+}

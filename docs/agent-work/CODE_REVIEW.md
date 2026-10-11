@@ -285,3 +285,9 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：仍只走各应用注册的同步只读 `.list/.get`（`snapshot_read` 拒绝写操作、异步与 `agent=never`），应用 ACL 原样生效；审批请求用 `view=all` 只是应用自己的可见范围（任何读权限成员可列工作空间请求，与应用页一致），`.get` 结果含依据快照与决定，受 24,000 字符上限；数据集行、填写提交、表记录仍不可选；前缀与 kind 不符在任何读取前被拒；游标/无搜索列表的走查最多 10 页并以 `limited` 如实提示，不猜总数。
 - 验证：见 evidence/2026-10-11-agent-context-kinds/verification.json（1130 后端、206 前端、浏览器 8 类型/四对象选中/报价来源列表）。未端到端创建 extract_task 与 dataprep_run 对象（同一代码路径）。
 
+## CR-087 · Admin A13 账户详情与安全时间线（2026-10-11，本轮新增，本地已验证）
+
+- 位置：services/identity/synwevo_identity/admin_routes.py（`account_detail`、`TIMELINE_LIMIT`）、packages/core/synwevo_core/identity.py（`Identity.login_backoff` 只读）、services/identity/web/src/governance/AccountDetail.tsx、Admin.tsx 账户行菜单「查看详情」、governance/messages.ts；services/identity/tests/test_admin.py 两例、test_platform_access.py 矩阵行、web/tests/admin-account-detail.test.mjs；docs/platform/admin-coverage.md A13。
+- 审查要点：权限走 `_admin(request, "platform.users.view")`（无平台权限 404、其他平台角色 403 并审计，与账户列表一致）；响应只有元数据——口令只给「是否已设置」，TOTP 只给开关与剩余恢复码数量，Passkey 只给名称/时间/同步标志，会话去掉 id（cookie 哈希）保留本人账户页同样的设备/方式/时间/地址；工作空间与组织名称随对应列表权限否则为 null，界面显式说明而不是隐藏整节；时间线只在持有 `platform.audit.view` 时返回（`actor_id=uid` 或 `object_kind='user' AND object_id=uid` 的最近 50 条，meta 只取 reason），否则 `permitted:false`——不成为审计日志的旁路；退避只读账户桶 `user:{email_key}`，不暴露地址桶；`outranks_caller` 与列表同一算法；查看不改状态、不审计（与模块内其他 GET 一致）。
+- 风险/未做：未在浏览器实测对话框（SSR 三语言渲染、空态与省略说明已测）；Agent 内容安全停用状态与 A17 单设备撤销未并入；「谁查看过谁」若需追溯要另加审计。
+- 验证：见 EVIDENCE「CR-087」与 evidence/2026-10-11-admin-account-detail/verification.json。

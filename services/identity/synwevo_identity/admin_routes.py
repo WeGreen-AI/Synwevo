@@ -42,6 +42,8 @@ UNFREEZE_RESTORE_NOTE = ("解冻不会写入安全日志（它只记录收回访
 #: the overview never gives one.
 LEGACY_CLAIMED_NAME = "历史数据"
 UNCLAIM_TOKEN_REASON = "workspace_unclaimed"
+#: The account detail's security timeline: the newest events about one account (A13).
+TIMELINE_LIMIT = 50
 
 
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, mailer=None) -> APIRouter:
@@ -814,6 +816,85 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                 "AND idle_expires_at > ? AND absolute_expires_at > ?",
                 (u["id"], now(), now()))["n"]
         return page
+
+    @r.get("/users/{uid}")
+    def account_detail(request: Request, uid: str):
+        """One account, as metadata (admin coverage A13): profile and verification state, the ways
+        it can sign in, its live platform roles, workspace and organization memberships, active
+        sessions, the sign-in backoff it is under and — for a caller who may read the platform
+        audit log — its recent security events.
+
+        Never a password hash, TOTP seed, recovery code, token, session cookie or document: the
+        facts the account's own settings page shows its owner, read with `platform.users.view`.
+        Workspace and organization names follow the caller's permission to view those lists, so
+        this page names nothing the lists would not. The timeline is the audit log's slice about
+        this account and needs `platform.audit.view`, as the log does. Reading changes nothing
+        and, like the lists, is not audited.
+        """
+        actor = _admin(request, "platform.users.view")
+        user = ident.get_user(uid)
+        if not user:
+            raise ServiceError(404, "no_user", "找不到该账户")
+        from .external import ExternalIdentities, load_providers
+        from .mfa import Mfa
+        held = actor["platform_permissions"]
+        ts = clock()
+        access = PlatformAccess(store)
+        blocked = access.blocked_by(user)
+        grants = access.live_grants(uid, at=ts)
+        factors = Mfa(store).factors(uid)
+        passkeys = store.all("SELECT name,created_at,last_used_at,backed_up,uv_capable FROM passkeys "
+                             "WHERE user_id=? AND deleted_at IS NULL ORDER BY created_at, id", (uid,))
+        external = ExternalIdentities(store, load_providers()).list_for_user(uid)
+        see_workspaces, see_orgs = "platform.workspaces.view" in held, "platform.orgs.view" in held
+        workspaces = store.all(
+            "SELECT m.workspace_id AS id, m.role, m.can_export, m.created_at AS joined_at, w.name, w.kind, w.status "
+            "FROM memberships m JOIN workspaces w ON w.id=m.workspace_id "
+            "WHERE m.user_id=? AND w.deleted_at IS NULL ORDER BY m.created_at, m.workspace_id", (uid,))
+        organizations = store.all(
+            "SELECT o.id, o.name, o.status, m.role, m.created_at AS joined_at FROM organization_memberships m "
+            "JOIN organizations o ON o.id=m.organization_id WHERE m.user_id=? AND o.deleted_at IS NULL "
+            "ORDER BY m.created_at, o.id", (uid,))
+        timeline = None
+        if "platform.audit.view" in held:
+            timeline = store.all(
+                "SELECT audit_events.id, audit_events.at, audit_events.action, audit_events.actor_kind, "
+                "u.email AS actor_email, audit_events.object_kind, audit_events.object_id, audit_events.result, "
+                "audit_events.meta FROM audit_events LEFT JOIN users u ON u.id=audit_events.actor_id "
+                "WHERE audit_events.actor_id=? OR (audit_events.object_kind='user' AND audit_events.object_id=?) "
+                "ORDER BY audit_events.at DESC, audit_events.seq DESC LIMIT ?", (uid, uid, TIMELINE_LIMIT))
+            for row in timeline:
+                try:
+                    meta = json.loads(row.pop("meta") or "{}")
+                except ValueError:
+                    meta = {}
+                reason = meta.get("reason")
+                row["reason"] = reason if isinstance(reason, str) else None
+        return {
+            "user": {k: user[k] for k in ("id", "email", "display_name", "status", "platform_role",
+                                          "email_verified_at", "created_at", "updated_at")},
+            "application_identity": "application_identity" in blocked,
+            "blocked_by": blocked,
+            "outranks_caller": user["id"] != actor["id"] and bool(access.outranking(held, uid)),
+            "sign_in": {
+                "password_set": bool(store.one("SELECT 1 AS n FROM user_passwords WHERE user_id=?", (uid,))),
+                "totp": bool(factors["totp"]), "recovery_remaining": factors["recovery_remaining"],
+                "passkeys": [{**k, "backed_up": bool(k["backed_up"]), "uv_capable": bool(k["uv_capable"])} for k in passkeys],
+                "external_identities": [{k: row[k] for k in ("provider", "label", "available", "email",
+                                                             "email_verified", "created_at", "last_used_at")}
+                                        for row in external]},
+            "platform_roles": sorted_roles({g["role"] for g in grants}),
+            "platform_grants": [{"role": g["role"], "granted_at": g["granted_at"], "expires_at": g["expires_at"]}
+                                for g in grants],
+            "workspaces": [{**w, "can_export": bool(w["can_export"]), "name": w["name"] if see_workspaces else None}
+                           for w in workspaces],
+            "organizations": [{**o, "name": o["name"] if see_orgs else None} for o in organizations],
+            "sessions": [{k: s[k] for k in ("created_at", "last_seen_at", "expires_at", "amr", "client",
+                                            "client_parts", "ip", "persistent", "auth_provider")}
+                         for s in sessions.list_for_user(uid)],
+            "backoff": ident.login_backoff(uid),
+            "audit": {"permitted": timeline is not None, "limit": TIMELINE_LIMIT, "items": timeline or []},
+        }
 
     @r.post("/users/{uid}/status-preview")
     def preview_status(request: Request, uid: str, body: dict = Body(...)):

@@ -42,6 +42,7 @@ ROUTES = [
     ("GET", "/api/admin/overview", "platform.overview.view", False),
     ("GET", "/api/admin/session", None, False),
     ("GET", "/api/admin/users", "platform.users.view", False),
+    ("GET", "/api/admin/users/{uid}", "platform.users.view", False),
     ("POST", "/api/admin/users/{uid}/status-preview", "platform.users.manage", False),
     ("POST", "/api/admin/users/{uid}/status", "platform.users.manage", True),
     ("POST", "/api/admin/users/{uid}/recovery", "platform.users.support", True),

@@ -516,3 +516,65 @@ def test_page_parameters_are_bounded_and_do_not_bypass_access(env, listing):
     assert env['c'].get(path, params={'limit': 50, 'offset': 9999}).json()['items'] == []
     assert env['plain'].get(path, params={'snapshot': 9999, 'offset': 50}).status_code == 404
     assert TestClient(env['api']).get(path, params={'snapshot': 9999, 'offset': 50}).status_code == 401
+
+
+def test_account_detail_is_metadata_without_secrets(env):
+    """A13: one account's facts — sign-in methods, memberships, sessions, backoff, its slice of
+    the audit log — and nothing that could sign in as it or read what it reads."""
+    c, store, ident, alice, api = env["c"], env["store"], env["ident"], env["alice"], env["api"]
+    ws = ident.create_workspace("Detail fixture", owner_id=env["admin"]["id"])
+    ident.add_member(ws["id"], alice["id"], "editor")
+    # Three wrong passwords: the account bucket counts them and the log records each refusal.
+    stranger = TestClient(api)
+    for _ in range(3):
+        assert post(stranger, "/api/auth/login", {"email": "alice@example.com", "password": "not-the-passphrase"}).status_code == 401
+    r = c.get(f"/api/admin/users/{alice['id']}")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["user"]["email"] == "alice@example.com" and d["user"]["status"] == "active"
+    assert d["application_identity"] is False and d["outranks_caller"] is False and d["platform_roles"] == []
+    assert d["sign_in"]["password_set"] is True and d["sign_in"]["totp"] is False
+    assert d["sign_in"]["passkeys"] == [] and d["sign_in"]["external_identities"] == []
+    assert [w["role"] for w in d["workspaces"]] == ["owner", "editor"] and d["workspaces"][1]["name"] == "Detail fixture"
+    assert d["sessions"] and all("id" not in s for s in d["sessions"]) and d["sessions"][0]["amr"] == "password"
+    assert d["backoff"]["failures"] == 3 and isinstance(d["backoff"]["retry_after"], int)
+    assert d["audit"]["permitted"] is True
+    denied = [e for e in d["audit"]["items"] if e["action"] == "auth.login" and e["result"] == "denied"]
+    assert len(denied) == 3 and denied[0]["reason"] and "meta" not in denied[0]
+    # No secret material, by value or by field name.
+    phc = store.one("SELECT phc FROM user_passwords WHERE user_id=?", (alice["id"],))["phc"]
+    assert phc not in r.text and "$argon2" not in r.text
+
+    def names(o):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                yield k
+                yield from names(v)
+        elif isinstance(o, list):
+            for v in o:
+                yield from names(v)
+    assert not {k for k in names(d) if any(w in k for w in ("phc", "secret", "seed", "token", "hash", "cookie"))}
+
+
+def test_account_detail_names_only_what_the_caller_may_list_and_refuses_unknown_accounts(env):
+    c, store, ident, alice, api = env["c"], env["store"], env["ident"], env["alice"], env["api"]
+    support = make_platform_admin(store, ident.create_user("support@example.com", PW, status="active"), role="support")
+    s = TestClient(api)
+    assert post(s, "/api/auth/login", {"email": "support@example.com", "password": PW}).status_code == 200
+    d = s.get(f"/api/admin/users/{env['admin']['id']}").json()
+    # support reads accounts and the workspace list, not the audit log: no timeline, names kept
+    assert d["audit"] == {"permitted": False, "limit": 50, "items": []}
+    assert d["outranks_caller"] is True and d["platform_roles"] == ["super_admin"]
+    assert d["workspaces"] and all(w["name"] for w in d["workspaces"])
+    assert d["backoff"] is None
+    finance = make_platform_admin(store, ident.create_user("finance@example.com", PW, status="active"), role="finance")
+    f = TestClient(api)
+    assert post(f, "/api/auth/login", {"email": "finance@example.com", "password": PW}).status_code == 200
+    assert f.get(f"/api/admin/users/{alice['id']}").status_code == 403, "another platform role: refused, audited"
+    assert env["plain"].get(f"/api/admin/users/{alice['id']}").status_code == 404, "no platform role: not a page"
+    r = c.get("/api/admin/users/u_fixture_missing")
+    assert r.status_code == 404 and r.json()["error"] == "no_user"
+    gone = ident.create_user("gone@example.com", PW, status="active")
+    store.execute("UPDATE users SET deleted_at=? WHERE id=?", (now(), gone["id"]))
+    assert c.get(f"/api/admin/users/{gone['id']}").status_code == 404
+    assert support["id"] != finance["id"]

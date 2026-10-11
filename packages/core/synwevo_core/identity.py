@@ -14,6 +14,7 @@ What this module is careful about, and why:
 """
 from __future__ import annotations
 
+import math
 import os
 import secrets
 import time
@@ -245,6 +246,20 @@ class Identity:
         if not b or now() - b["first_at"] > window_s:
             return 0
         return int(b["count"])
+
+    def login_backoff(self, uid: str) -> dict | None:
+        """Read-only: the account's own failed-sign-in bucket, for its administration page.
+
+        The account bucket only (never an address bucket: addresses are not the account's, and
+        listing them here would turn a support view into a map of who signs in from where).
+        None when nothing is recorded, which a successful sign-in restores (`_clear`)."""
+        user = self.get_user(uid)
+        b = self._bucket(f"user:{user['email_key']}") if user else None
+        if not b:
+            return None
+        name = f"user:{user['email_key']}"
+        return {"failures": int(b["count"]), "first_failure_at": b["first_at"], "last_failure_at": b["last_at"],
+                "retry_after": int(math.ceil(self._backoff_remaining(name)))}
 
     def _blocked_for(self, name: str) -> int:
         b = self._bucket(name) or {}
