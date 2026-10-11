@@ -50,6 +50,8 @@ ROUTES = [
     ("POST", "/api/admin/users/{uid}/sessions/{sid}/revoke", "platform.users.manage", True),
     ("POST", "/api/admin/users/{uid}/passkeys/{pid}/remove", "platform.users.manage", True),
     ("POST", "/api/admin/users/{uid}/external-identities/{iid}/unlink", "platform.users.manage", True),
+    ("POST", "/api/admin/users/{uid}/deletion/cancellation-mail", "platform.users.support", True),
+    ("POST", "/api/admin/account-deletions/finalize", "platform.users.manage", True),
     ("GET", "/api/admin/workspaces", "platform.workspaces.view", False),
     ("GET", "/api/admin/workspaces/{wid}/members", "platform.workspaces.view", False),
     ("POST", "/api/admin/workspaces/{wid}/claim", "platform.workspaces.claim", True),

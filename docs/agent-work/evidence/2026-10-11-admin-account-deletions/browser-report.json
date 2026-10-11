@@ -1,0 +1,82 @@
+{
+ "base": "http://127.0.0.1:33933",
+ "engine": "chrome",
+ "steps": {
+  "requests": {
+   "alice": 200,
+   "carol": 200,
+   "alice_due": 1792357573.872766
+  },
+  "overview_before": {
+   "text": "注销申请 | 待删除账户 | 2 | 已到期未处理 | 0 | 待写安全记录 | 0 |  | 本人申请注销后账户立即停用，7 天宽限期内可用邮件里的链接取消；到期后由每小时一次的后台任务终结并写入安全记录。已到期未处理或待写安全记录不为零时，可以立即运行一次到期处理；它不会提前任何申请的到期时间。",
+   "button": 0
+  },
+  "list_row": {
+   "status_cell": "待删除 | 到期：2026/10/19 05:06"
+  },
+  "resend_too_soon": {
+   "dialog_open": true,
+   "rate_limited": true,
+   "retry_hint": true,
+   "mails": 1
+  },
+  "resend": {
+   "toast": 1,
+   "mails_before": 1,
+   "mails_after": 2,
+   "old_link": 410,
+   "new_link": 200,
+   "new_link_due_equals_request": true
+  },
+  "detail_pending": {
+   "has_request_line": true,
+   "link_valid": true
+  },
+  "detail_blocker": {
+   "ownership_rule": true
+  },
+  "en_menu_item": 1,
+  "en_detail": {
+   "line": true,
+   "excerpt": [
+    "Deletion requests",
+    "Deletion requested by the person on 10/12/2026, 05:06 AM; due on 10/19/2026, 05:06 AM."
+   ]
+  },
+  "overview_overdue": {
+   "text": "注销申请 | 待删除账户 | 2 | 已到期未处理 | 1 | 待写安全记录 | 0 |  | 本人申请注销后账户立即停用，7 天宽限期内可用邮件里的链接取消；到期后由每小时一次的后台任务终结并写入安全记录。已到期未处理或待写安全记录不为零时，可以立即运行一次到期处理；它不会提前任何申请的到期时间。 |  | 立即处理到期删除",
+   "button": 1
+  },
+  "finalize_1": {
+   "notice": "已终结 1 个到期的注销申请。",
+   "card": "注销申请 | 待删除账户 | 1 | 已到期未处理 | 0 | 待写安全记录 | 0 |  | 本人申请注销后账户立即停用，7 天宽限期内可用邮件里的链接取消；到期后由每小时一次的后台任务终结并写入安全记录。已到期未处理或待写安全记录不为零时，可以立即运行一次到期处理；它不会提前任何申请的到期时间。",
+   "alice_deleted": "deleted",
+   "alice_listed": 0
+  },
+  "console_errors_admin": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+   "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+   "Failed to load resource: the server responded with a status of 429 (Too Many Requests)"
+  ],
+  "support_resend": {
+   "mails_before": 1,
+   "mails_after": 2
+  },
+  "support_overview": {
+   "text": "注销申请 | 待删除账户 | 1 | 已到期未处理 | 1 | 待写安全记录 | 0 |  | 本人申请注销后账户立即停用，7 天宽限期内可用邮件里的链接取消；到期后由每小时一次的后台任务终结并写入安全记录。已到期未处理或待写安全记录不为零时，可以立即运行一次到期处理；它不会提前任何申请的到期时间。 |  | 你的平台角色不包含这项操作",
+   "button": 0,
+   "hint": true
+  },
+  "finalize_2": {
+   "notice": "已终结 1 个到期的注销申请。",
+   "card": "注销申请 | 待删除账户 | 0 | 已到期未处理 | 0 | 待写安全记录 | 0 |  | 本人申请注销后账户立即停用，7 天宽限期内可用邮件里的链接取消；到期后由每小时一次的后台任务终结并写入安全记录。已到期未处理或待写安全记录不为零时，可以立即运行一次到期处理；它不会提前任何申请的到期时间。",
+   "carol_deleted": "deleted",
+   "audit": [
+    "admin.user.deletion_cancellation_mail",
+    "admin.accounts.finalize_deletions",
+    "admin.user.deletion_cancellation_mail",
+    "admin.accounts.finalize_deletions"
+   ]
+  }
+ }
+}

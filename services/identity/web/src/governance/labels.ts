@@ -57,6 +57,8 @@ const errors: Record<string, string> = {
   last_owner: "必须保留至少一位正常的所有者。", sole_owner: "请先移交所有权，再退出工作空间。",
   demote_first: "请先撤销该账户的全部平台权限", self_suspend: "不能停用自己的账户",
   policy_changed: "策略已更改，请刷新后重试。",
+  not_pending_delete: "该账户没有待处理的注销申请。",
+  finalize_failed: "到期删除未能完成，已记录失败；请查看服务日志后重试。",
   no_second_factor_admin: "至少需要一名可用的最高管理员已登记安全密钥或动态验证码，才能要求管理员使用第二因素。",
   bad_second_factor_mode: "请选择有效的第二因素策略。", mail_rate_limited: "发送过于频繁，请稍后重试。",
   mail_not_configured: "邮件服务尚未配置。", public_url_missing: "邮件链接地址尚未配置，请联系部署管理员。",

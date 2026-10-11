@@ -31,6 +31,8 @@ from synwevo_core.organizations import Organizations
 from synwevo_core.sessions import admin_capable, Sessions
 from synwevo_core.store import LEGACY_WORKSPACE_NAME, Store, now
 
+from .profile import deletion_counts, deletion_state
+
 REAUTH_SCOPE = "admin"
 #: `_admin` called without naming a permission. A route merged from a branch written before the
 #: permissions existed fails loudly (500, fail-closed) instead of guessing one. Historical-data
@@ -357,6 +359,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             "admins": _platform_holders(),
             "super_admins": len(ident.platform_admins()),
             "unclaimed": None,
+            # A20: deletion requests in their grace period, past due, or owing a withdrawal record.
+            "account_deletions": deletion_counts(store),
         }
         if legacy:
             out["unclaimed"] = _workspace_row(legacy)
@@ -843,7 +847,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         ts = clock()
         live = ("SELECT 1 FROM platform_role_grants g WHERE g.user_id=users.id AND g.revoked_at IS NULL "
                 "AND (g.expires_at IS NULL OR g.expires_at>?)")
-        page = _page("users", columns="id,email,display_name,status,platform_role,created_at",
+        page = _page("users", columns="id,email,display_name,status,platform_role,created_at,deletion_due_at",
                      where="deleted_at IS NULL AND (?='' OR email LIKE ? OR display_name LIKE ?) "
                            f"AND (?='' OR status=?) AND (?='' OR (?='none' AND NOT EXISTS ({live})) "
                            f"OR (?='any' AND EXISTS ({live})) OR (?='admin' AND platform_role='admin') "
@@ -942,8 +946,71 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                                             "client_parts", "ip", "persistent", "auth_provider")}
                          for s in sessions.list_for_user(uid)],
             "backoff": ident.login_backoff(uid),
+            "deletion": deletion_state(store, user),
             "audit": {"permitted": timeline is not None, "limit": TIMELINE_LIMIT, "items": timeline or []},
         }
+
+    @r.post("/users/{uid}/deletion/cancellation-mail")
+    def resend_cancellation_mail(request: Request, uid: str, body: dict = Body(...)):
+        """A20: the person asked to delete their account and lost the mail that cancels it. The
+        platform sends a new cancellation link to the account's own address, expiring when the
+        deletion falls due (never later), and the person decides on the page. Administration
+        cannot cancel a deletion on someone's behalf and never sees the link."""
+        actor = _admin(request, "platform.users.support", dangerous=True)
+        reason = _reason(body)
+        _not_outranked(request, actor, uid)
+        import secrets
+        from synwevo_core.store import new_id
+        from .mail import deletion_mail
+        from .profile import digest, public_link
+        with _write(request, "platform.users.support", object_kind="user", object_id=uid):
+            actor = _admin(request, "platform.users.support", dangerous=True)
+            user = ident.get_user(uid)
+            if not user:
+                raise ServiceError(404, "no_user", "找不到该账户")
+            _not_outranked(request, actor, uid)
+            ts = now()
+            due = user.get("deletion_due_at")
+            if user["status"] != "pending_delete" or not due or due <= ts:
+                raise ServiceError(409, "not_pending_delete", "该账户没有待处理的注销申请")
+            # The request's own mail and earlier re-sends count: three an hour, a minute apart.
+            recent = store.one("SELECT COUNT(*) AS n, MAX(created_at) AS last FROM account_recoveries "
+                               "WHERE user_id=? AND created_at>?", (uid, ts - 3600))
+            if recent["n"] >= 3 or (recent["last"] and recent["last"] > ts - 60):
+                retry_after = max(1, int((3600 if recent["n"] >= 3 else 60) - (ts - recent["last"])))
+                raise ServiceError(429, "mail_rate_limited", "发送过于频繁，请稍后重试", {"retry_after": retry_after})
+            raw = secrets.token_urlsafe(32)
+            url = public_link("/account/recovery", raw, user.get("locale"))
+            subject, text, html = deletion_mail(user.get("locale"), url, resend=True)
+            delivery = _mail(request).enqueue(user["email"], subject, text, kind="account_recovery", ref_id=uid, html=html)
+            store.execute("UPDATE account_recoveries SET used_at=? WHERE user_id=? AND used_at IS NULL", (ts, uid))
+            store.execute("INSERT INTO account_recoveries (id,user_id,token_hash,created_at,expires_at) VALUES (?,?,?,?,?)",
+                          (new_id("ar"), uid, digest(raw), ts, due))
+            audit(request, "admin.user.deletion_cancellation_mail", actor_id=actor["id"], object_kind="user",
+                  object_id=uid, result="ok", meta={"reason": reason, "mail_id": delivery["id"], "due_at": due})
+        return {"ok": True, "delivery": _mail_row(delivery), "due_at": due}
+
+    @r.post("/account-deletions/finalize")
+    def finalize_account_deletions(request: Request, body: dict = Body(...)):
+        """A20: run the deletion sweep now — accounts past their grace period are finalized and
+        the withdrawal records still owed are written — instead of waiting for the next hourly
+        pass. The sweeper's own idempotent routine; nothing falls due early, and its failure is
+        the fact reported (503) rather than a silent retry."""
+        actor = _admin(request, "platform.users.manage", dangerous=True)
+        reason = _reason(body)
+        from .profile import finalize_deletions
+        before = deletion_counts(store)
+        try:
+            finalized = finalize_deletions(store)
+        except Exception as e:  # noqa: BLE001 - the sweep's failure is what this route reports
+            audit(request, "admin.accounts.finalize_deletions", actor_id=actor["id"], object_kind="platform",
+                  object_id="account_deletions", result="error", meta={"reason": reason, "code": type(e).__name__})
+            raise ServiceError(503, "finalize_failed", "到期删除未能完成，已记录失败；请查看服务日志后重试") from e
+        after = deletion_counts(store)
+        audit(request, "admin.accounts.finalize_deletions", actor_id=actor["id"], object_kind="platform",
+              object_id="account_deletions", result="ok",
+              meta={"reason": reason, "finalized": finalized, "before": before, "after": after})
+        return {"ok": True, "finalized": finalized, "before": before, "after": after}
 
     @r.post("/users/{uid}/status-preview")
     def preview_status(request: Request, uid: str, body: dict = Body(...)):

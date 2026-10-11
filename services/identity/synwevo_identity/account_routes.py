@@ -9,12 +9,10 @@ active user (GET profile also permits pending), and only operate on the session'
 from __future__ import annotations
 
 import secrets
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Body, Request, Response
 from fastapi.responses import JSONResponse
 
-from synwevo_core import env
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import normalise_email, valid_email
 from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE
@@ -24,7 +22,7 @@ from .auth_routes import check_reauth_password
 from .mail import deletion_mail, email_change_mail, security_notice
 from .notify import inbox_security
 from .profile import (GRACE_SECONDS, canonical_avatar, check_deletion_constraints, digest,
-                      invalidate_access, public_profile, validate_preferences)
+                      invalidate_access, public_link, public_profile, validate_preferences)
 from .withdrawals import record as journal
 
 
@@ -64,12 +62,7 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
             raise ServiceError(429, "too_many_attempts", "操作过于频繁，请稍后再试", {"retry_after": retry})
 
     def link(path, token, locale):
-        base = (env.get("PUBLIC_URL") or "").rstrip("/")
-        parsed = urlsplit(base)
-        if parsed.scheme not in ("https", "http") or not parsed.netloc or parsed.username or parsed.query or parsed.fragment:
-            raise ServiceError(503, "public_url_missing", "账户邮件地址尚未配置，请联系管理员")
-        language = locale if locale in ("zh-Hans", "zh-Hant", "en") else "zh-Hans"
-        return f"{base}{path}?lang={language}#token={token}"
+        return public_link(path, token, locale)
 
     def taken(key, uid):
         # Include pending/suspended/deleted accounts, whose identities must never be stolen.

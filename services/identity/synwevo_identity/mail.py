@@ -536,12 +536,28 @@ def email_change_mail(*, token: str, expires_h: int = 24, locale: str = "zh-Hans
     return _render(m)
 
 
-def deletion_mail(locale: str | None, url: str) -> tuple[str, str, str]:
+def deletion_mail(locale: str | None, url: str, *, resend: bool = False) -> tuple[str, str, str]:
     """Account deletion requested: the account is disabled now and the person has seven days to
-    cancel through the link (which opens a page; it neither restores the account nor signs in)."""
+    cancel through the link (which opens a page; it neither restores the account nor signs in).
+    `resend`: a new cancellation link the platform sent at the person's request (admin coverage
+    A20) — the deletion date is the one already set, and the earlier link no longer works."""
     from .mail_layout import Mail
     lang = _lang(locale)
-    if lang == "en":
+    if resend and lang == "en":
+        m = Mail(lang, "Synwevo account deletion: a new cancellation link",
+                 ["Your Synwevo account is disabled and will be deleted on the date you were told. This is a new link to cancel the deletion; the earlier link no longer works."],
+                 action=("Cancel the deletion", url),
+                 after=["Opening the link does not restore the account or sign you in by itself; you confirm on the page.",
+                        "If you did not ask for this link, you can ignore it: the deletion date is unchanged."], security=True)
+    elif resend and lang == "zh-Hant":
+        m = Mail(lang, "Synwevo 帳戶註銷：新的取消連結", ["你的 Synwevo 帳戶已停用，將在原定日期刪除。這是新的取消註銷連結；先前的連結已失效。"],
+                 action=("取消註銷", url),
+                 after=["開啟連結本身不會復原帳戶或登入，請在頁面上確認。", "若你沒有要求這個連結，可以忽略：刪除日期不變。"], security=True)
+    elif resend:
+        m = Mail(lang, "Synwevo 账户注销：新的取消链接", ["你的 Synwevo 账户已停用，将在原定日期删除。这是新的取消注销链接；之前的链接已失效。"],
+                 action=("取消注销", url),
+                 after=["打开链接本身不会恢复账户或登录，需要你在页面上确认。", "如果你没有要求这个链接，可以忽略：删除日期不变。"], security=True)
+    elif lang == "en":
         m = Mail(lang, "Synwevo account deletion requested", ["Your Synwevo account is now disabled and will be deleted in seven days."],
                  action=("Cancel the deletion", url),
                  after=["Your contributions to organizations are retained.", "Opening the link does not restore the account or sign you in by itself; you confirm on the page.",

@@ -54,6 +54,8 @@ export function userOffers(held: Held, user: UserRow, meId: string | undefined) 
   return {
     status,
     recovery: support(["active", "pending"].includes(user.status) ? undefined : "该账户当前不能接收找回邮件"),
+    // A20: a new cancellation link for a pending deletion (the person decides; never cancelled for them)
+    cancellationMail: support(user.status === "pending_delete" ? undefined : "该账户没有待处理的注销申请"),
     revoke: support(),
     access: permitted(held, "platform.roles.view"),
   };

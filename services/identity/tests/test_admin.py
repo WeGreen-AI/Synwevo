@@ -627,3 +627,85 @@ def test_an_administrator_ends_one_device_removes_a_passkey_and_unlinks_an_ident
     r = post(a, f"/api/admin/users/{env['admin']['id']}/sessions/{admin_session}/revoke", {"reason": "较低管理员尝试结束最高管理员的设备"})
     assert r.status_code == 403 and r.json()["error"] == "target_outranks_actor"
     assert support["id"] != access_admin["id"]
+
+
+def test_pending_deletions_are_visible_and_a_lost_cancellation_link_can_be_re_sent_then_the_sweep_run(env, monkeypatch, tmp_path):
+    """A20: an account's deletion request as administration sees it — due time, overdue, whether
+    the cancellation link is still valid, the rules that would refuse a request — and the two
+    things administration may do about it: send the person a new cancellation link (to their own
+    address, expiring with the deletion, never cancelling for them) and run the due sweep now."""
+    import json
+    import re
+    monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "http://testserver")
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
+    monkeypatch.setenv("SYNWEVO_MAIL_DIR", str(tmp_path / "fixture-mail"))
+    c, store, ident, alice, api = env["c"], env["store"], env["ident"], env["alice"], env["api"]
+    # The rules a request would meet, read without deciding anything: the last usable super
+    # administrator, and a shared workspace's owner with no successor.
+    assert c.get(f"/api/admin/users/{env['admin']['id']}").json()["deletion"] == {
+        "pending": False, "requested_at": None, "due_at": None, "overdue": False,
+        "cancellation_link_valid": False, "blockers": ["last_super_admin"]}
+    bob = ident.create_user("bob@example.com", PW, status="active")
+    shared = ident.create_workspace("Deletion fixture", owner_id=bob["id"])
+    ident.add_member(shared["id"], alice["id"], "editor")
+    assert c.get(f"/api/admin/users/{bob['id']}").json()["deletion"]["blockers"] == ["ownership_required"]
+    assert c.get(f"/api/admin/users/{alice['id']}").json()["deletion"]["blockers"] == []
+    # Alice asks to delete her account: the real self-service request, with her password.
+    r = post(env["plain"], "/api/auth/deletion", {"password": PW})
+    assert r.status_code == 200, r.text
+    due = r.json()["deletion_due_at"]
+    token = lambda body: re.search(r"[#?]token=([A-Za-z0-9_-]+)", body)[1]  # noqa: E731
+    first = token(store.one("SELECT body FROM mail_outbox WHERE kind='account_recovery' ORDER BY created_at DESC LIMIT 1")["body"])
+    row = next(u for u in c.get("/api/admin/users?status=pending_delete").json()["items"] if u["id"] == alice["id"])
+    assert row["deletion_due_at"] == due
+    d = c.get(f"/api/admin/users/{alice['id']}").json()["deletion"]
+    assert d == {"pending": True, "requested_at": d["requested_at"], "due_at": due, "overdue": False,
+                 "cancellation_link_valid": True, "blockers": []} and d["requested_at"] <= due
+    assert c.get("/api/admin/overview").json()["account_deletions"] == {"pending": 1, "overdue": 0, "withdrawals_pending": 0}
+    # Re-sending: strict re-authentication, a reason, a pending request, a minute since the last mail.
+    path = f"/api/admin/users/{alice['id']}/deletion/cancellation-mail"
+    reason = "用户来电说没有收到取消注销的邮件"
+    assert post(c, path, {"reason": reason}).json()["error"] == "reauth_required"
+    _reauth(c)
+    assert post(c, path, {"reason": "短"}).status_code == 400
+    assert post(c, f"/api/admin/users/{env['admin']['id']}/deletion/cancellation-mail", {"reason": reason}).json()["error"] == "not_pending_delete"
+    r = post(c, path, {"reason": reason})
+    assert r.status_code == 429 and r.json()["error"] == "mail_rate_limited", r.text
+    store.execute("UPDATE account_recoveries SET created_at=created_at-120 WHERE user_id=?", (alice["id"],))
+    r = post(c, path, {"reason": reason})
+    assert r.status_code == 200, r.text
+    assert r.json()["due_at"] == due and r.json()["delivery"]["kind"] == "account_recovery"
+    assert "token" not in json.dumps(r.json()) and "body" not in r.json()["delivery"], "the link never reaches the administrator"
+    mails = store.all("SELECT body FROM mail_outbox WHERE kind='account_recovery' ORDER BY created_at")
+    assert len(mails) == 2 and "之前的链接已失效" in mails[1]["body"] and "删除日期不变" in mails[1]["body"]
+    anonymous = TestClient(api)
+    assert anonymous.post("/api/auth/deletion/recovery/preview", json={"token": first}).status_code == 410, "the earlier link no longer works"
+    preview = anonymous.post("/api/auth/deletion/recovery/preview", json={"token": token(mails[1]["body"])})
+    assert preview.status_code == 200 and preview.json()["deletion_due_at"] == due, "the new link ends with the deletion, not later"
+    audit_row = store.one("SELECT meta FROM audit_events WHERE action='admin.user.deletion_cancellation_mail'")
+    assert audit_row and "token" not in audit_row["meta"] and reason in audit_row["meta"]
+    # Support may send it; another platform role may not.
+    make_platform_admin(store, ident.create_user("support@example.com", PW, status="active"), role="support")
+    s = TestClient(api)
+    assert post(s, "/api/auth/login", {"email": "support@example.com", "password": PW}).status_code == 200
+    _reauth(s)
+    store.execute("UPDATE account_recoveries SET created_at=created_at-120 WHERE user_id=?", (alice["id"],))
+    assert post(s, path, {"reason": "支持人员按用户请求重发取消链接"}).status_code == 200
+    make_platform_admin(store, ident.create_user("finance@example.com", PW, status="active"), role="finance")
+    f = TestClient(api)
+    assert post(f, "/api/auth/login", {"email": "finance@example.com", "password": PW}).status_code == 200
+    _reauth(f)
+    assert post(f, path, {"reason": "财务角色不应能重发取消链接"}).json()["error"] == "platform_permission_denied"
+    # Past due: overdue in the overview and the detail, no more links; the sweep run from
+    # administration finalizes it (users.manage, not support) and the counts return to zero.
+    store.execute("UPDATE users SET deletion_due_at=? WHERE id=?", (now() - 1, alice["id"]))
+    assert c.get("/api/admin/overview").json()["account_deletions"] == {"pending": 1, "overdue": 1, "withdrawals_pending": 0}
+    assert c.get(f"/api/admin/users/{alice['id']}").json()["deletion"]["overdue"] is True
+    assert post(c, path, {"reason": "到期后不能再重发取消链接"}).json()["error"] == "not_pending_delete"
+    assert post(s, "/api/admin/account-deletions/finalize", {"reason": "支持角色不能运行到期删除"}).json()["error"] == "platform_permission_denied"
+    r = post(c, "/api/admin/account-deletions/finalize", {"reason": "手动运行到期删除以处理逾期申请"})
+    assert r.status_code == 200, r.text
+    assert r.json()["finalized"] == 1 and r.json()["after"] == {"pending": 0, "overdue": 0, "withdrawals_pending": 0}
+    assert ident.get_user(alice["id"]) is None and c.get(f"/api/admin/users/{alice['id']}").status_code == 404
+    assert store.one("SELECT 1 AS n FROM audit_events WHERE action='admin.accounts.finalize_deletions' AND result='ok'")
+    assert post(c, "/api/admin/account-deletions/finalize", {"reason": "再次运行应当没有可处理的申请"}).json()["finalized"] == 0

@@ -29,6 +29,7 @@ def catalogue(locale: str) -> dict[str, tuple[str, str, str]]:
         "security": mail.security_notice(what="口令已更改", when_text="刚刚", locale=locale),
         "email_change": mail.email_change_mail(token="tok-CHG", expires_h=1, locale=locale),
         "account_deletion": mail.deletion_mail(locale, "https://accounts.example.test/account/recovery?lang=zh-Hans#token=tok-DEL"),
+        "account_deletion_resend": mail.deletion_mail(locale, "https://accounts.example.test/account/recovery?lang=zh-Hans#token=tok-DEL2", resend=True),
     }
 
 

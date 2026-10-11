@@ -26,6 +26,19 @@ LOCALES = ("zh-Hans", "zh-Hant", "en")
 GRACE_SECONDS = 7 * 86400
 
 
+def public_link(path: str, token: str, locale: str | None) -> str:
+    """An account-mail link on the configured public origin (`SYNWEVO_PUBLIC_URL`), the token in
+    the fragment so it never reaches a server log; refused when no origin is configured."""
+    from urllib.parse import urlsplit
+    from synwevo_core import env
+    base = (env.get("PUBLIC_URL") or "").rstrip("/")
+    parsed = urlsplit(base)
+    if parsed.scheme not in ("https", "http") or not parsed.netloc or parsed.username or parsed.query or parsed.fragment:
+        raise ServiceError(503, "public_url_missing", "账户邮件地址尚未配置，请联系管理员")
+    language = locale if locale in LOCALES else "zh-Hans"
+    return f"{base}{path}?lang={language}#token={token}"
+
+
 def digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -82,6 +95,48 @@ def check_deletion_constraints(store, user: dict) -> None:
         raise ServiceError(409, "last_super_admin",
                            "你是最后一名可用的最高管理员。请先授予另一位最高管理员，并确认对方能登录并完成身份确认")
     check_ownership_continuity(store, uid)
+
+
+def deletion_blockers(store, user: dict) -> list[str]:
+    """Which of the deletion request's own rules would refuse this account today (admin coverage
+    A20): the codes only, read outside any transaction — a support answer, not a decision."""
+    uid = user["id"]
+    codes = []
+    access = PlatformAccess(store)
+    if access.is_usable_super_admin(user) and not access.usable_super_admins(excluding=uid):
+        codes.append("last_super_admin")
+    try:
+        check_ownership_continuity(store, uid)
+    except ServiceError as e:
+        codes.append(e.code)
+    return codes
+
+
+def deletion_state(store, user: dict) -> dict:
+    """The account's deletion request as administration may see it (A20): when it was asked for
+    and falls due, whether it is overdue (the hourly sweep has not finalized it yet), whether an
+    unused cancellation link is still valid — and, for an account not pending deletion, the rules
+    that would refuse its request. Times and codes only; never the link."""
+    ts = now()
+    if user["status"] == "pending_delete":
+        due = user.get("deletion_due_at")
+        link = store.one("SELECT COUNT(*) AS n FROM account_recoveries WHERE user_id=? AND used_at IS NULL AND expires_at>?",
+                         (user["id"], ts))["n"]
+        return {"pending": True, "requested_at": user.get("deletion_requested_at"), "due_at": due,
+                "overdue": bool(due is not None and due <= ts), "cancellation_link_valid": bool(link), "blockers": []}
+    return {"pending": False, "requested_at": None, "due_at": None, "overdue": False,
+            "cancellation_link_valid": False, "blockers": deletion_blockers(store, user)}
+
+
+def deletion_counts(store) -> dict:
+    """Platform-wide (A20): requests waiting out their grace period, those past due that the
+    hourly sweep has not finalized, and finalized deletions whose withdrawal record is still owed
+    (`account-deletion-journal:*`, retried by every sweep)."""
+    ts = now()
+    return {"pending": store.one("SELECT COUNT(*) AS n FROM users WHERE status='pending_delete' AND deleted_at IS NULL")["n"],
+            "overdue": store.one("SELECT COUNT(*) AS n FROM users WHERE status='pending_delete' AND deleted_at IS NULL "
+                                 "AND deletion_due_at<=?", (ts,))["n"],
+            "withdrawals_pending": store.one("SELECT COUNT(*) AS n FROM meta WHERE key GLOB 'account-deletion-journal:*'")["n"]}
 
 
 def depart_deleted_accounts(store) -> int:

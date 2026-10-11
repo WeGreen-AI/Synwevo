@@ -47,6 +47,7 @@ const FIXTURE = {
       client_parts: { browser: "Safari", platform: "iPhone" }, ip: null, persistent: false, auth_provider: "google" },
   ],
   backoff: { failures: 4, first_failure_at: T - 60, last_failure_at: T, retry_after: 2 },
+  deletion: { pending: true, requested_at: T - 3600, due_at: T + 6 * 86400, overdue: false, cancellation_link_valid: true, blockers: [] },
   audit: { permitted: true, limit: 50, items: [{ id: "ae_fixture_1", at: T, action: "auth.login", actor_kind: "anonymous", actor_email: null,
     object_kind: "user", object_id: "u_fixture_detail", result: "denied", reason: "bad_password" }] },
 };
@@ -66,7 +67,8 @@ test("the body states the account's facts in the reader's language and shows not
   const html = render("en", FIXTURE);
   for (const expected of ["Sign-in methods", "Password and authenticator code", "External identity (google) and authenticator code", "Chrome on macOS", "Safari on iPhone", "Provider disabled",
     "Fixture workspace", "Name hidden: your role cannot view the organization list", "Synced across devices",
-    "4 consecutive failures", "the next attempt must wait", "bad_password", "Security timeline", "(expires"]) {
+    "4 consecutive failures", "the next attempt must wait", "bad_password", "Security timeline", "(expires",
+    "Deletion requested by the person on", "The cancellation link is still valid"]) {
     assert.ok(html.includes(expected), `missing in English: ${expected}\n${html}`);
   }
   assert.ok(!HAN.test(html.replace(FIXTURE_TEXT, "")), `untranslated text in English:\n${html}`);
@@ -87,6 +89,17 @@ test("what the server withholds is explained, and the quiet states are sentences
   assert.ok(!quiet.includes("<table"), "no table for an empty or withheld section");
   const cleared = render("en", { ...FIXTURE, backoff: { ...FIXTURE.backoff, retry_after: 0 } });
   assert.ok(cleared.includes("a new attempt is allowed now"), cleared);
+  // A20: the deletion request's states, and the rules a request would meet, as sentences
+  const overdue = render("en", { ...FIXTURE, deletion: { ...FIXTURE.deletion, overdue: true, cancellation_link_valid: false } });
+  assert.ok(overdue.includes("Past due and waiting for the background sweep"), overdue);
+  const lost = render("en", { ...FIXTURE, deletion: { ...FIXTURE.deletion, cancellation_link_valid: false } });
+  assert.ok(lost.includes("no longer valid; it can be re-sent"), lost);
+  const refused = render("en", { ...FIXTURE, deletion: { pending: false, requested_at: null, due_at: null, overdue: false, cancellation_link_valid: false,
+    blockers: ["last_super_admin", "ownership_required"] } });
+  assert.ok(refused.includes("would be refused: the last usable super administrator、ownership or administration of a shared workspace not yet handed over."), refused);
+  const free = render("en", { ...FIXTURE, deletion: { pending: false, requested_at: null, due_at: null, overdue: false, cancellation_link_valid: false, blockers: [] } });
+  assert.ok(free.includes("the person could request one now"), free);
+  assert.ok(!render("en", { ...FIXTURE, deletion: undefined }).includes("Deletion request"), "an older server without the block: no section");
 });
 
 test("the per-object actions follow the caller's permission and never show on an account that outranks them", () => {
@@ -106,7 +119,7 @@ test("the per-object actions follow the caller's permission and never show on an
 test("every sentence of the dialog is catalogued in English and Traditional Chinese", () => {
   const src = readFileSync(new URL("../src/governance/AccountDetail.tsx", import.meta.url), "utf8");
   const sentences = new Set([...src.matchAll(/\btr\("([^"]+)"/g)].map((m) => m[1]));
-  for (const map of [detail.AMR_LABELS, detail.FACTOR_SUFFIX_LABELS, detail.ORG_ROLE_LABELS]) for (const text of Object.values(map)) sentences.add(text);
+  for (const map of [detail.AMR_LABELS, detail.FACTOR_SUFFIX_LABELS, detail.ORG_ROLE_LABELS, detail.DELETION_BLOCKER_LABELS]) for (const text of Object.values(map)) sentences.add(text);
   for (const text of detail.ACCOUNT_ACTION_SENTENCES) sentences.add(text);
   sentences.add("查看详情"); // the row-menu item in Admin.tsx that opens the dialog
   assert.ok(sentences.size > 40, `expected the dialog's sentences, found ${sentences.size}`);

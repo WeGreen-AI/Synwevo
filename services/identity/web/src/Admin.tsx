@@ -46,6 +46,8 @@ type Overview = {
   workspaces: number;
   admins: number;
   unclaimed: Workspace | null;
+  /** A20: deletion requests in their grace period, past due, or owing a withdrawal record. */
+  account_deletions?: { pending: number; overdue: number; withdrawals_pending: number };
 };
 type Workspace = {
   id: string; name: string; kind: string; status: string;
@@ -54,6 +56,8 @@ type Workspace = {
 type User = {
   id: string; email: string; display_name: string | null; status: string;
   platform_role: string; platform_roles?: string[]; outranks_caller?: boolean; created_at: number; workspaces: number; sessions: number;
+  /** set while status is pending_delete (A20) */
+  deletion_due_at?: number | null;
 };
 /** GET /api/admin/workspaces/{id}/unclaim-preview: what undoing the assignment would change.
  *  Counts, never contents — the people are named because they are the ones who lose access. */
@@ -150,6 +154,7 @@ function OverviewTab({ onDenied, held }: { onDenied: () => void; held: Held }) {
           <Stat label={tr("平台管理员")} value={data.admins} />
         </div>
       </section>
+      <AccountDeletionsCard counts={data.account_deletions} held={held} onDone={changed} />
 
       {legacy?.status === "pending_claim" && (
         <section className="card card-b col gap12" aria-labelledby="legacy-unclaimed">
@@ -175,6 +180,30 @@ function OverviewTab({ onDenied, held }: { onDenied: () => void; held: Held }) {
       )}
     </>
   );
+}
+
+/** A20: the deletion requests the platform is holding, and the due sweep an administrator may run
+ *  now. Counts only; the people are reachable from the account list (status 待删除). */
+function AccountDeletionsCard({ counts, held, onDone }: { counts?: Overview["account_deletions"]; held: Held; onDone: (message: string) => void }) {
+  const [open, setOpen] = useState(false);
+  if (!counts) return null;
+  const stuck = counts.overdue > 0 || counts.withdrawals_pending > 0;
+  const manage = permitted(held, "platform.users.manage");
+  return <section className="card card-b col gap12" aria-labelledby="account-deletions">
+    <h2 id="account-deletions">{tr("注销申请")}</h2>
+    <div className="row gap12 wrap">
+      <Stat label={tr("待删除账户")} value={counts.pending} />
+      <Stat label={tr("已到期未处理")} value={counts.overdue} />
+      <Stat label={tr("待写安全记录")} value={counts.withdrawals_pending} />
+    </div>
+    <p className="muted small">{tr("本人申请注销后账户立即停用，7 天宽限期内可用邮件里的链接取消；到期后由每小时一次的后台任务终结并写入安全记录。已到期未处理或待写安全记录不为零时，可以立即运行一次到期处理；它不会提前任何申请的到期时间。")}</p>
+    {stuck && (manage.disabled ? <p className="muted small">{tr(manage.hint!)}</p>
+      : <div><button type="button" className="btn" onClick={() => setOpen(true)}>{tr("立即处理到期删除")}</button></div>)}
+    {open && <ActionDialog title={tr("立即处理到期删除")} confirmLabel={tr("立即处理到期删除")} reason="required" danger
+      impact={tr("已过宽限期的 {count} 个注销申请将被终结：账户变为已删除，登录方式与会话全部移除，组织贡献保留；待写的安全记录会补写。宽限期内的申请不受影响。", { count: counts.overdue })}
+      run={(reason) => post<{ finalized: number }>("/api/admin/account-deletions/finalize", { reason })}
+      onClose={() => setOpen(false)} onDone={(r) => { setOpen(false); onDone(tr("已终结 {count} 个到期的注销申请。", { count: r.finalized })); }} />}
+  </section>;
 }
 
 function Stat({ label, value }: { label: string; value: number }) {
@@ -307,14 +336,14 @@ function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void
   const { me, refresh } = useSession();
   const toast = useToast();
   const [resultNotice, setResultNotice] = useState("");
-  const [action, setAction] = useState<{ user: User; kind: "status" | "revoke" | "recovery" } | null>(null);
+  const [action, setAction] = useState<{ user: User; kind: "status" | "revoke" | "recovery" | "cancellation" } | null>(null);
   // Read-only: the account's facts (A13). Every change stays in the items below, with its own reason.
   const [detail, setDetail] = useState<User | null>(null);
   // A grant or revocation in the platform-access dialog changes this list's platform column.
   useEffect(() => { if (revision) reload(); }, [revision]); // eslint-disable-line react-hooks/exhaustive-deps
   const items = loading || err ? [] : data?.items || [];
   const u = action?.user;
-  const title = action?.kind === "recovery" ? tr("发送找回邮件") : action?.kind === "revoke" ? tr("撤销全部会话") : u?.status !== "suspended" ? tr("停用账户") : tr("恢复账户");
+  const title = action?.kind === "cancellation" ? tr("重发取消注销链接") : action?.kind === "recovery" ? tr("发送找回邮件") : action?.kind === "revoke" ? tr("撤销全部会话") : u?.status !== "suspended" ? tr("停用账户") : tr("恢复账户");
   return <section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{tr("账户")}</h2>
       <input type="search" className="input" value={q} maxLength={100} onChange={(e) => setQ(e.target.value)} placeholder={tr("搜索邮箱或姓名")} aria-label={tr("搜索账户")} />
@@ -336,12 +365,13 @@ function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void
       <tbody>{items.map((user) => { const o = userOffers(held, user, me?.id); const hint = (h?: string) => h && tr(h);
         return <tr key={user.id}>
         <th scope="row">{user.display_name || "—"}<div className="who2">{user.email}</div></th>
-        <td data-label={tr("状态")}>{ACCOUNT_STATUS[user.status] || user.status}</td><td data-label={tr("平台权限")}>{platformRolesText(user.platform_roles)}</td><td data-label={tr("工作空间")}>{user.workspaces}</td><td data-label={tr("在线会话")}>{user.sessions}</td>
+        <td data-label={tr("状态")}>{ACCOUNT_STATUS[user.status] || user.status}{user.status === "pending_delete" && user.deletion_due_at ? <div className="who2">{tr("到期：{time}", { time: fmtTime(user.deletion_due_at) })}</div> : null}</td><td data-label={tr("平台权限")}>{platformRolesText(user.platform_roles)}</td><td data-label={tr("工作空间")}>{user.workspaces}</td><td data-label={tr("在线会话")}>{user.sessions}</td>
         <td className="act" data-label={tr("操作")}><RowMenu label={tr("{p0} 的账户操作", {p0: user.email})} items={[
           { label: tr("查看详情"), disabled: loading || !!err, onSelect: () => setDetail(user) },
           { label: user.status !== "suspended" ? tr("停用账户") : tr("恢复账户"), danger: user.status !== "suspended",
             disabled: loading || !!err || o.status.disabled, hint: hint(o.status.hint), onSelect: () => setAction({ user, kind: "status" }) },
           { label: tr("发送找回邮件"), disabled: loading || !!err || o.recovery.disabled, hint: hint(o.recovery.hint), onSelect: () => setAction({ user, kind: "recovery" }) },
+          ...(user.status === "pending_delete" ? [{ label: tr("重发取消注销链接"), disabled: loading || !!err || o.cancellationMail.disabled, hint: hint(o.cancellationMail.hint), onSelect: () => setAction({ user, kind: "cancellation" }) }] : []),
           { label: tr("撤销全部会话"), danger: true, disabled: loading || !!err || o.revoke.disabled, hint: hint(o.revoke.hint), onSelect: () => setAction({ user, kind: "revoke" }) },
           { label: tr("平台权限"), disabled: loading || !!err || o.access.disabled, hint: hint(o.access.hint), onSelect: () => onAccess(user) },
         ]} /></td></tr>; })}
@@ -355,13 +385,13 @@ function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void
       }));
     }} />}
     {action && action.kind !== "status" && u && <ActionDialog title={title} confirmLabel={title} reason="required" danger
-      impact={<><b>{u.email}</b>：{action.kind === "recovery" ? tr("找回链接将发送到该账户当前邮箱。旧找回链接失效；管理员不会看到链接或设置新口令。") : action.kind === "revoke" ? tr("全部设备将退出，已签发的应用登录凭据会失效。")
+      impact={<><b>{u.email}</b>：{action.kind === "cancellation" ? tr("新的取消注销链接将发送到该账户当前邮箱，到期时间不变；之前的链接失效。管理员不会看到链接，也不能代为取消注销。") : action.kind === "recovery" ? tr("找回链接将发送到该账户当前邮箱。旧找回链接失效；管理员不会看到链接或设置新口令。") : action.kind === "revoke" ? tr("全部设备将退出，已签发的应用登录凭据会失效。")
           : u.status === "active" ? tr("账户将被停用，全部设备退出，应用访问立即停止。") : tr("账户将恢复正常；已经结束的登录不会恢复。")}
         {u.id === me?.id && <p>{tr("这是你自己的账户，完成后可能需要重新登录或离开平台管理页。")}</p>}</>}
-      run={(reason) => post<{ sessions_revoked?: number }>(`/api/admin/users/${encodeURIComponent(u.id)}/${action.kind === "recovery" ? "recovery" : action.kind === "revoke" ? "revoke-sessions" : "status"}`,
+      run={(reason) => post<{ sessions_revoked?: number }>(`/api/admin/users/${encodeURIComponent(u.id)}/${action.kind === "cancellation" ? "deletion/cancellation-mail" : action.kind === "recovery" ? "recovery" : action.kind === "revoke" ? "revoke-sessions" : "status"}`,
         { reason })}
       onClose={() => setAction(null)} onDone={(r) => {
-        setAction(null); reload(); toast(action.kind === "recovery" ? tr("找回邮件已排队，请在邮件投递中查看状态。") : tr("{action}完成，撤销 {count} 个会话。", { action: title, count: r.sessions_revoked || 0 }), "ok");
+        setAction(null); reload(); toast(action.kind === "cancellation" ? tr("取消注销链接已排队，请在邮件投递中查看状态。") : action.kind === "recovery" ? tr("找回邮件已排队，请在邮件投递中查看状态。") : tr("{action}完成，撤销 {count} 个会话。", { action: title, count: r.sessions_revoked || 0 }), "ok");
         if (u.id === me?.id) void refresh();
       }} />}
   </section>;

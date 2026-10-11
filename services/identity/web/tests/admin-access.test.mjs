@@ -117,6 +117,11 @@ test("each account action is offered as the server would answer it", () => {
   assert.deepEqual(at("super_admin", higher).status, { disabled: true, hint: "请先撤销该账户的全部平台权限" });
   // one's own row is never "outranking"
   assert.equal(at("support", { ...higher, id: me }).revoke.disabled, false);
+  // A20: a new cancellation link only for a pending deletion, by support, never for a higher administrator
+  assert.deepEqual(at("support", plain).cancellationMail, { disabled: true, hint: "该账户没有待处理的注销申请" });
+  assert.equal(at("support", { id: "u_del_plain", status: "pending_delete", platform_roles: [] }).cancellationMail.disabled, false);
+  assert.deepEqual(at("support", deleting).cancellationMail, { disabled: true, hint: access.OUTRANKS_YOU });
+  assert.deepEqual(at("auditor", { id: "u_del_plain", status: "pending_delete", platform_roles: [] }).cancellationMail, { disabled: true, hint: access.NOT_IN_ROLE });
   // the other views' writes
   for (const [role, perms] of Object.entries(ROLES)) {
     for (const p of ["platform.workspaces.manage", "platform.config.manage", "platform.mail.manage", "platform.orgs.manage"]) {
@@ -124,7 +129,7 @@ test("each account action is offered as the server would answer it", () => {
     }
   }
   for (const hint of [access.NOT_IN_ROLE, access.OUTRANKS_YOU, "只有已停用的账户可以恢复", "不能停用自己的账户",
-    "请先撤销该账户的全部平台权限", "该账户当前不能接收找回邮件"]) translated(hint);
+    "请先撤销该账户的全部平台权限", "该账户当前不能接收找回邮件", "该账户没有待处理的注销申请"]) translated(hint);
 });
 
 test("the audit filter reaches the platform-access records", () => {

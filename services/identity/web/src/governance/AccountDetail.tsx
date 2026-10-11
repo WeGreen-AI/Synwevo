@@ -41,6 +41,9 @@ export type AccountDetail = {
   sessions: { id: string; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string;
     client_parts?: { browser: string | null; platform: string | null }; ip: string | null; persistent: boolean; auth_provider: string | null }[];
   backoff: { failures: number; first_failure_at: number; last_failure_at: number; retry_after: number } | null;
+  /** A20: the deletion request, or the rules that would refuse one today (profile.deletion_state). */
+  deletion?: { pending: boolean; requested_at: number | null; due_at: number | null; overdue: boolean;
+    cancellation_link_valid: boolean; blockers: string[] };
   audit: { permitted: boolean; limit: number; items: { id: string; at: number; action: string; actor_kind: string;
     actor_email: string | null; object_kind: string | null; object_id: string | null; result: string; reason: string | null }[] };
 };
@@ -55,6 +58,11 @@ export const AMR_LABELS: Record<string, string> = {
 /** `idp:<provider>+totp` / `+recovery`: the external identity, then the second factor. */
 export const FACTOR_SUFFIX_LABELS: Record<string, string> = { totp: "{method}与动态验证码", recovery: "{method}与恢复码" };
 export const ORG_ROLE_LABELS: Record<string, string> = { owner: "所有者", admin: "管理员", member: "成员" };
+/** The deletion request's own rules, as the detail names them (profile.deletion_blockers). */
+export const DELETION_BLOCKER_LABELS: Record<string, string> = {
+  last_super_admin: "最后一名可用的最高管理员", ownership_required: "共享工作空间的所有权或管理权未移交",
+  organization_ownership_required: "组织的所有权或管理权未移交",
+};
 
 export function amrText(amr: string): string {
   if (AMR_LABELS[amr]) return tr(AMR_LABELS[amr]);
@@ -103,6 +111,16 @@ export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountD
             : platformRoleLabel(g.role)).join("、")
           : tr("无平台权限")}</dd>
       </dl></section>
+
+    {d.deletion && <section className="col gap8"><h3 className="secttl">{tr("注销申请")}</h3>
+      {d.deletion.pending ? <>
+        <p>{tr("本人于 {requested} 申请注销，{due} 到期删除。", { requested: d.deletion.requested_at ? fmtTime(d.deletion.requested_at) : DASH, due: d.deletion.due_at ? fmtTime(d.deletion.due_at) : DASH })}</p>
+        {d.deletion.overdue ? <p className="notice" role="note">{tr("已过到期时间，等待后台任务终结；可在平台概览页立即处理。")}</p>
+          : <p className="muted small">{d.deletion.cancellation_link_valid ? tr("取消注销的链接仍然有效，到期前本人可随时取消。") : tr("取消注销的链接已失效；可在账户行的菜单里重发。")}</p>}
+      </> : d.deletion.blockers.length
+        ? <p>{tr("没有注销申请。若本人现在申请注销，将被拒绝：{rules}。", { rules: d.deletion.blockers.map((b) => tr(DELETION_BLOCKER_LABELS[b] || b)).join("、") })}</p>
+        : <p className="muted small">{tr("没有注销申请；本人现在可以申请注销。")}</p>}
+    </section>}
 
     <section className="col gap8"><h3 className="secttl">{tr("登录方式")}</h3>
       <dl className="facts">
