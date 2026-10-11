@@ -729,3 +729,7 @@ Actions 38150240686（verify 15:11–16:10Z，deploy 16:10–16:12Z，success）
 `GET /api/admin/users/{uid}`（`platform.users.view`）只返回元数据：资料与验证状态、口令有无、TOTP 开关与剩余恢复码数、Passkey 名称与时间、外部身份、平台角色（含到期）、工作空间/组织成员关系（名称随对应 view 权限，否则为 null 并在界面说明）、在线会话（去掉 id）、账户桶登录退避、持有 `platform.audit.view` 时与该账户相关的最近 50 条审计事件（否则 `permitted:false`）。界面：账户行菜单「查看详情」只读对话框（`governance/AccountDetail.tsx`）。
 测试：test_admin 新增 2 例（口令哈希值与 phc/secret/seed/token/hash/cookie 字段名均不出现；三次失败登录进入时间线、退避计数 3；support 无时间线但见名称；finance 403、普通账户 404、未知/已删除 404）+ 权限矩阵行；identity 套件 1549 通过、test_platform_access 29 通过；account-web 166 通过（新增 3 例）；typecheck/build 通过。
 浏览器（隔离合成实例 127.0.0.1:33891，系统 Chrome）：zh-Hans/en/zh-Hant 1280×900 与 zh-Hans 390 宽均打开对话框并显示七个分节、工作空间名、外部身份、在线会话（设备/方式/时间/地址，英文为「Chrome on macOS」）、退避（等待 25 秒与可重试两种状态）、时间线中的 auth.login 被拒绝/bad_password；Escape 关闭后焦点回到行菜单按钮；support 账户查看最高管理员：时间线以说明代替、显示「权限高于你的」、名称可见。英文视图唯一中文为生成的个人空间名「… 的空间」（数据）；每个上下文一次 401 为登录前 `/api/auth/me` 探测。证据 `evidence/2026-10-11-admin-account-detail/`（browser-report.json、verification.json、5 张截图）。
+
+## 2026-10-11 e99212d 生产发布核验
+
+Actions 38155466408（verify 16:26–17:23Z，deploy 17:23–17:25Z，success）回执 `evidence/2026-10-11-agent-context-kinds/ci-release.json`；17:27Z 只读核验 `production-release.json`：current 镜像 e99212d、前镜像 962b375，四应用容器 revision 一致、六容器 healthy，portal 内四个模块源码 sha256 与提交一致，五域 `/readyz` ready。未调用模型/支付，未改配置。
