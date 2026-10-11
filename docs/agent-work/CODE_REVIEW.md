@@ -258,3 +258,11 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 位置：apps/suite/web/src/apps/agent/index.tsx（`lazy(BudgetDialog)` 经 App.tsx 路由级 Suspense）。影响：低-中（键盘用户首次打开后Escape焦点落到body；第二次正常）。证据：Playwright焦点探针 attempt1 BODY / attempt2 TEXTAREA；focusin/out日志显示块加载期间输入框失焦。
 - 处置：对话框自带 `<Suspense fallback={null}>`，路由内容不再因块加载被隐藏；修复后两次均回到 `#agent-message`。既有Modal焦点逻辑未改。
 
+## CR-083 · 取消/恢复链路独立审查（2026-10-11，MASTER §10.1/10.3、C7/C9；原有，三项已修复·本地已验证）
+
+- 实读：engine `_cancel/_run/_execute/_decide/_resume_locked/_finish/recover/_api_history/_close_calls/_read_only_turn`、`useConversation`、Chat 停止按钮，以及既有测试（cancel_withdraws、restart_reconciles、stream resume、deepseek replay、incomplete charging、metering recovery、unknown usage）。
+- 成立的不变量：停止后不派发下一步（循环首、工具前、`_execute` 入口三处检查，确认 UPDATE 带 `cancel_requested=0` 条件）；未知结果不盲目重试（`unknown`→`outcome_unresolved` 失败；重启按 op_runs 对账；重新生成分支只读 `regeneration_read_only`；DeepSeek 回放用持久记录关闭未答工具调用）；刷新/重连只按 seq 续流、不提交；`_finish` 以终态 WHERE 守卫，迟到完成不改坏终态；`_update_call` 只在 running 调用上写入真实结果。
+- 修复（engine.py / Chat.tsx）：① `recover()` 把 `cancel_requested=1` 的进行中回答按用户决定收为 `cancelled`，原来一律记为 `interrupted` 失败并提示“可以重新生成”；② `_cancel` 对已无运行项的回答立即收尾时返回 `cancelled` 而非 `cancelling`；③ 会话投影新增 `turn.stopping`，Chat 在停止已受理但流未到停止点时禁用再次停止并以 `role=status` 说明“正在停止，等待当前步骤结束…”（三语）。文档 docs/agent-runtime.md 已写明。
+- 未改动但记录：队列中（尚未开始）的回答在重启后也记为 interrupted 失败，重试走只读重生成，写操作任务需重新发送；多实例 worker 租约仍未实现（文档已说明）。
+- 验证：test_agent 新增一例（waiting→cancel 立即 cancelled 且幂等、running+cancel_requested 的 stopping 投影、重启后 cancelled 无 error、无表单写入）；agent-chat 扩展 stopping 断言；suite-web 205 通过；apps/suite/tests 全量见 EVIDENCE。
+

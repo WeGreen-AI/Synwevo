@@ -291,11 +291,14 @@ export default function Chat({ conversation, loading, error, connection, configu
           </button>}
           <span className="spacer" />
           {!running && maximum}
-          {running?.turn ? <button className="btn" type="button" disabled={busy} onClick={() => void action("agent.turn.cancel", { turn_id: running.turn!.id })}>{t("停止回答")}</button>
+          {running?.turn ? <button className="btn" type="button" disabled={busy || !!running.turn.stopping} aria-describedby={running.turn.stopping ? `${id}-stopping` : undefined}
+            onClick={() => void action("agent.turn.cancel", { turn_id: running.turn!.id })}>{t("停止回答")}</button>
             : <button className="btn primary" type="submit" disabled={blocked || !text.trim()}>{t("发送消息")}</button>}
         </div>
       </form>
       <p className="ag-composer-hint" id={`${id}-hint`}>{t("Enter 发送 · Shift+Enter 换行")}{hint ? ` · ${hint}` : ""}</p>
+      {/* The stop was accepted; the stream ends at its next stop point, and nothing further starts. */}
+      {running?.turn?.stopping && <p className="muted small" id={`${id}-stopping`} role="status" aria-live="polite">{c("stopping")}</p>}
     </div>
     {reporting && conversation && <ReportDialog conversationId={conversation.id} messageId={reporting}
       send={(input) => act("agent.message.report", input)} onClose={() => setReporting(null)}

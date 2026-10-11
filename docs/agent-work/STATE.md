@@ -17,7 +17,8 @@
 - **CI阻断修复已推送**：`e7c1f054e97a724e19ceaadbae6dd0ce74507858` → main，Actions38146440152：verify的“Verify and build”（含原失败的Docs refusals门禁）已通过，运行时容器验证进行中，deploy未开始。CR-078与此修复在此SHA部署前都**未上线**。
 - **CR-079 报价前来源审阅：代码完成、本地与隔离浏览器已验证，待提交**：BudgetDialog在报价前列出每项所选资料的名称、类别（表单/数据表）与来源空间或“个人文件”，读取只走 `agent.context.resolve`/`agent.file.get` 并核对ID/快照/有效状态；任一来源变化、删除、撤权或响应损坏即阻止进入报价（提示+重试，不漏项）；offer与来源审阅共用一个AbortSignal，关闭/重载/迟到回调由generation票据保护。顺带修复首次键盘打开后Escape焦点落到body（懒加载块经路由级Suspense隐藏了输入框）：对话框自带Suspense边界。证据 `evidence/2026-10-11-agent-budget-sources/`（verification.json、三语桌面/390截图、reduced-motion截图与日志、fixture）。
 - 本地：suite-web 205通过（含4例budgetSources、4例dialog）、根typecheck/build、六守卫通过；隔离服务上三语/1024/390、Escape焦点、来源变化阻断与恢复、1报价/1运行/1结算、无重复请求、reduced-motion均已观察。
-- 下一动作：跟踪Actions38146440152 deploy→只读核验生产current/revision/五域→提交并推送CR-079（新SHA再走完整CI/CD）→写回发布回执→继续取消/恢复执行卡片独立审查与BACKLOG余项。
+- **CR-083 取消/恢复链路审查：代码完成、本地已验证、已提交**：重启时用户已停止的回答收为cancelled；取消立即收尾时返回cancelled；`turn.stopping`投影与Chat停止中反馈。apps/suite/tests全量与suite-web 205通过。
+- 下一动作：跟踪Actions38146440152 deploy→只读核验生产current/revision/五域→推送862b079+CR-083（新SHA再走完整CI/CD）→写回发布回执→继续BACKLOG余项（Agent剩余附件格式、跨空间任务、个人自动化、真实支付、Admin/API/SDK缺口）。
 
 ## 已核实的正式Agent与支付配置（不重复创建或发布）
 
@@ -40,4 +41,4 @@
 - 历史调查及状态变更保留在EVIDENCE/BACKLOG，不将旧暂停或旧发布状态作为当前事实。
 - 接续在本实施树读取MASTER_PROMPT、STATE、BACKLOG、EVIDENCE、CODE_REVIEW，核对实际Git/CI/生产和锁，复用配置与副作用记录；不重建、不重放、不绕过门禁。交接快照 `CLAUDE_CODE_HANDOFF_2026-10-11.txt` 只在主检出、不是第二份状态真相。
 
-保存时间：2026-10-11T14:43:08.216053+00:00（上一次：2026-10-11T14:14:24.422428+00:00）
+保存时间：2026-10-11T15:07:41.961948+00:00

@@ -195,6 +195,13 @@ test('Chat keeps cancellation available while sending is blocked, and preserves 
   finish(); await settleChat(); h.render();
   assert.equal(cancel().disabled, false);
   assert.equal(h.find('textarea').value, 'Fixture next question');
+  // The server accepted the stop but the stream has not reached a stop point: say so, once, and
+  // do not offer a second stop.
+  h.render({ conversation: { ...fixtureConversation(), head_id: running.id, messages: [{ ...running, turn: { ...running.turn, stopping: true } }] } });
+  assert.equal(cancel().disabled, true);
+  assert.equal(cancel()['aria-describedby'], 'chat-fixture-stopping');
+  assert.equal(h.find('p', { id: 'chat-fixture-stopping', role: 'status' }).children, 'stopping');
+  assert.equal(h.find('textarea').value, 'Fixture next question');
 });
 
 // ---------------------------------------------------------------- formatting

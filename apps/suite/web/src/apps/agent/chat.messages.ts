@@ -33,6 +33,7 @@ export const chatCopy = {
   thinking: ['正在思考…', 'Thinking…', '正在思考…'],
   thinkingNote: ['思考过程不会显示', 'The reasoning itself is not shown', '思考過程不會顯示'],
   writing: ['正在回答…', 'Writing…', '正在回答…'],
+  stopping: ['正在停止，等待当前步骤结束…', 'Stopping; waiting for the current step to end…', '正在停止，等待目前步驟結束…'],
   copy: ['复制回答', 'Copy answer', '複製回答'],
   copied: ['已复制（含 AI 标识）', 'Copied (with the AI label)', '已複製（含 AI 標識）'],
   copyFailed: ['无法复制，请手动选择文本。', 'Could not copy. Select the text manually.', '無法複製，請手動選取文字。'],

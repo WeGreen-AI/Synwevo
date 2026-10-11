@@ -692,3 +692,9 @@ identity `services/identity/web/tests/*.mjs` 同样共用Vite缓存但本轮未�
 
 发现并修复：首次键盘打开（懒加载块经App路由级Suspense）会隐藏输入框，Modal捕获不到打开者，Escape后焦点落到body（探针第1次BODY/第2次TEXTAREA）；`index.tsx` 给对话框独立Suspense边界后两次均回到输入框。源码/日志指纹、截图与fixture在 `evidence/2026-10-11-agent-budget-sources/`。未声称：真实DeepSeek产物/Stripe付款、OCR/Office附件、他人撤权场景。
 
+## 2026-10-11 CR-083取消/恢复链路审查与修复（本地）
+
+实读engine取消/运行/执行/确认/恢复/重启/历史回放与前端重连、停止按钮；既有测试覆盖取消撤回待确认、重启对账、SSE续流、DeepSeek回放、停止前后用量、计量恢复、未知用量。成立：停止后三处检查不再派发；未知结果→`outcome_unresolved`失败、重启按op_runs对账、重生成只读；重连仅按seq续流；`_finish`终态守卫。修复：重启时`cancel_requested`回答收为cancelled（原interrupted失败并建议重试）；无运行项的取消立即返回cancelled；会话投影`turn.stopping`+Chat禁用再次停止并说明（三语）。文档docs/agent-runtime.md补“Stopping”段。
+
+验证：`apps/suite/tests` 全量 1128 passed by progress dots (pyproject -qq hides the summary line), 0 F/E/s/x, exit 0（PYTHONPATH含本树与apps/docs/sdk/python；log sha256 6c324afde07409efaabff337e8c4a4048896cc3a258eb959ae0d5f42c80f43d5），其中新增 test_stopping_is_reported_and_a_restart_keeps_a_stopped_turn_cancelled；suite-web 205通过（log sha256 9f275813a4f53495ad23cfd2cedccffeb37c2a5c38a185e1363a326320a51f83，agent-chat新增stopping断言）；suite-web typecheck、四守卫通过。未做浏览器验收（停止反馈为既有按钮的禁用与status文本，无新布局）；未改多实例租约与队列中回答的重启语义（已在CODE_REVIEW记录）。
+

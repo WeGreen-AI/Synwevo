@@ -86,6 +86,14 @@ snapshots. Stream reconnection resumes by event sequence and never submits anoth
 Scope, operation version, input, resource basis and audience bind a confirmation; changes require
 a new review. Regeneration creates a read-only answer branch and cannot repeat a write.
 
+Stopping (`agent.turn.cancel`) is a request the running step honours at its next stop point: no
+further step, tool or model call starts, pending confirmations are withdrawn, and a tool call that
+was already running is recorded with its real outcome before the turn ends as `cancelled` (its
+completed results stay). The reply says `cancelled` when nothing was running (final at once) and
+`cancelling` otherwise; until then the conversation's turn carries `stopping: true`, which the chat
+shows instead of offering a second stop. A restart while a stop is pending ends the turn as
+`cancelled`, never as an `interrupted` failure inviting a retry.
+
 The current per-turn limits are 12 model steps, 20 tools per step, 120,000 accumulated tokens,
 600,000 context characters and 64,000 output characters. Admission allows three active turns
 per user and 16 overall. These are guardrails, not latency or cost measurements. The governed paid DeepSeek route also

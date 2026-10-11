@@ -21,7 +21,8 @@ export interface Message {
   error: { code: string; message: string } | null;
   /** `cost` is the ledger's settled figure for this answer (synwevo_suite.agent.turn_cost), or null
    *  when the turn has no ledger run; validate it with `validTurnCost` before showing it. */
-  turn: { id: string; status: string; model: string; credential: string; cost?: unknown } | null;
+  /** `stopping`: the person asked to stop and the answer has not reached a stop point yet. */
+  turn: { id: string; status: string; model: string; credential: string; stopping?: boolean; cost?: unknown } | null;
   tool_calls: ToolCall[]; created_at: number;
   /** Current, authorized source labels only. Hidden messages have no contexts. Never replay these. */
   contexts?: MessageContext[];

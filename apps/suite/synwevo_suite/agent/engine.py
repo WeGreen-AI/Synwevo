@@ -240,6 +240,8 @@ class Agent:
                 "contexts": [] if hidden else visible_contexts(_j(m["api_json"])),
                 "error": {"code": m["error_code"], "message": m["error_message"]} if m["error_code"] and not hidden else None,
                 "turn": ({"id": t["id"], "status": t["status"], "model": t["model"], "credential": t["credential"],
+                          # The person asked to stop and the stream has not reached a stop point yet.
+                          "stopping": bool(t["cancel_requested"]) and t["status"] in ("queued", "running", "waiting_confirmation"),
                           "usage": {"input": t["input_tokens"] if t["usage_state"] == "known" else None,
                                     "output": t["output_tokens"] if t["usage_state"] == "known" else None,
                                     "state": t["usage_state"]}} if t else None),
@@ -606,6 +608,7 @@ class Agent:
                                (now(), now(), turn_id))
             if not self.store.one("SELECT 1 FROM agent_tool_calls WHERE turn_id=? AND status='running'", (turn_id,)):
                 self._finish(t, "cancelled", None)
+                return {"turn_id": turn_id, "status": "cancelled"}
         return {"turn_id": turn_id, "status": "cancelling"}
 
     # ---------------------------------------------------------------- history
@@ -1475,6 +1478,11 @@ class Agent:
                 continue
             if (t["status"] == "waiting_confirmation" and not t["cancel_requested"] and t["id"] not in interrupted
                     and not self.store.one("SELECT 1 FROM agent_tool_calls WHERE turn_id=? AND decided_at IS NOT NULL", (t["id"],))):
+                continue
+            if t["cancel_requested"]:
+                # The person had already stopped it; the restart only ends what the stop would have.
+                self._finish(t, "cancelled", None)
+                n += 1
                 continue
             self._finish(t, "failed", ProviderError("interrupted", "服务重启，这次回答被中断。已完成的操作保留；可以重新生成。",
                                                     retryable=True))

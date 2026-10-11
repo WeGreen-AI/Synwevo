@@ -278,6 +278,32 @@ def test_cancel_withdraws_pending_actions(agent):
     assert p.store.one("SELECT COUNT(*) AS n FROM forms")["n"] == 0
 
 
+def test_stopping_is_reported_and_a_restart_keeps_a_stopped_turn_cancelled(agent):
+    """A stop with nothing running is final at once and says so; a stop the stream has not reached
+    yet is visible on the page; a restart never turns the person's stop into an interrupted failure."""
+    p = agent.people
+    agent.sign_in("bob")
+    conv, out = start(agent, [
+        call("run_operation", {"operation": "forms.form.create", "workspace_id": p.a, "input": {"title": "Later"}}),
+    ])
+    assert wait_turn(p.store, out["turn_id"]) == "waiting_confirmation"
+    answer = [m for m in op(agent, "agent.conversation.get", {"conversation_id": conv})["output"]["messages"] if m["role"] == "assistant"]
+    assert [m["turn"]["stopping"] for m in answer] == [False]
+    assert op(agent, "agent.turn.cancel", {"turn_id": out["turn_id"]})["output"]["status"] == "cancelled"
+    assert op(agent, "agent.turn.cancel", {"turn_id": out["turn_id"]})["output"]["status"] == "cancelled"
+    assert p.store.one("SELECT status FROM agent_tool_calls")["status"] == "declined"
+    # The stream had not reached a stop point when the stop was requested...
+    p.store.execute("UPDATE agent_turns SET status='running', cancel_requested=1, finished_at=NULL WHERE id=?", (out["turn_id"],))
+    answer = [m for m in op(agent, "agent.conversation.get", {"conversation_id": conv})["output"]["messages"] if m["role"] == "assistant"]
+    assert [m["turn"]["stopping"] for m in answer] == [True]
+    # ...and the process restarted before it did: the person's decision stands, nothing is retried.
+    assert agent.agent.recover() == 1
+    turn = p.store.one("SELECT * FROM agent_turns WHERE id=?", (out["turn_id"],))
+    assert turn["status"] == "cancelled" and turn["error_code"] is None
+    assert p.store.one("SELECT status FROM agent_messages WHERE id=?", (turn["assistant_message_id"],))["status"] == "cancelled"
+    assert p.store.one("SELECT COUNT(*) AS n FROM forms")["n"] == 0
+
+
 def test_provider_failures_are_reported(agent):
     """C9."""
     p = agent.people
