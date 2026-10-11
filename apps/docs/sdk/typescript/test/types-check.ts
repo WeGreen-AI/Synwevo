@@ -213,6 +213,13 @@ function describe(event: WebhookEvent): string {
     case 'invitation.accepted':
     case 'invitation.revoked':
       return `${event.type} ${event.data.invitation_id} in ${event.data.workspace_id}`;
+    case 'template.created':
+    case 'template.updated':
+    case 'template.deleted':
+    case 'template.published':
+    case 'template.released':
+    case 'template.deprecated':
+      return `${event.type} ${event.data.template_id} head ${event.data.head ?? event.data.release_no ?? ''}`;
     default:
       return `${event.type} ${event.job.id} ${event.job.status}`;
   }

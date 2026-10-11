@@ -65,6 +65,7 @@ from synwevo_core import workers
 from synwevo_core.docs_file_events import FILE_EVENT_TYPES
 from synwevo_core.member_events import MEMBER_EVENT_TYPES
 from synwevo_core.project_copies import COPY_EVENT_TYPES
+from synwevo_core.template_events import TEMPLATE_EVENT_TYPES
 
 CLAIM_MARGIN_S = 30
 POLL_S = 5.0
@@ -80,8 +81,10 @@ JOB_EVENT_TYPES = ("job.created", "job.started", "job.planned", "job.cancel_requ
 # (synwevo_core.docs_file_events): job_id is '' and data carries file_id / project_id / status.
 # Membership and invitation changes (synwevo_core.member_events): the same trigger pattern, with
 # identifiers only; `member.*` / `invitation.*` are the prefixes a directory integration subscribes to.
-EVENT_TYPES = JOB_EVENT_TYPES + FILE_EVENT_TYPES + COPY_EVENT_TYPES + MEMBER_EVENT_TYPES
-EVENT_PREFIXES = ("job.*", "file.*", "copy.*", "member.*", "invitation.*")
+# Template changes (synwevo_core.template_events): created / updated / deleted, and the organization
+# library's published / released / deprecated, ids and version numbers only.
+EVENT_TYPES = JOB_EVENT_TYPES + FILE_EVENT_TYPES + COPY_EVENT_TYPES + MEMBER_EVENT_TYPES + TEMPLATE_EVENT_TYPES
+EVENT_PREFIXES = ("job.*", "file.*", "copy.*", "member.*", "invitation.*", "template.*")
 PING_EVENT = "webhook.ping"
 DELIVERY_STATUSES = ("pending", "delivered", "failed", "dropped")
 

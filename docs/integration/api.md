@@ -527,6 +527,21 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 负载只有标识与变化本身，`job: null`；不含邮箱、姓名或邀请令牌，需要更多信息请用凭据读取目录接口。邀请过期不是行变化，不发事件（`expires_at`
 在 `invitation.created` 里）。订阅可用 `member.*`、`invitation.*` 或具体类型过滤；`GET /events?types=member.added,…` 同样可查。
 
+**模板事件（API-5）**：模板与组织模板库的变化各发一次，与行变化同事务（触发器，覆盖上传、字段编辑、恢复、跨空间复制、
+内置编辑器与发布各路径），发往模板所在工作空间（发布事件发往发布它的工作空间）：
+
+| 类型 | 何时 | `data` |
+|---|---|---|
+| `template.created` | 模板出现（上传、内置编辑器、复制进入本空间、从组织库取用） | `template_id, kind, format, head` |
+| `template.updated` | 当前版本号前移（字段编辑、保存内置模板、恢复旧版本） | `template_id, head, previous_head` |
+| `template.deleted` | 模板被删除 | `template_id, head` |
+| `template.published` | 发布到组织模板库（第 1 次发布） | `template_id, publication_id, organization_id, release_no, version_no` |
+| `template.released` | 同一发布的后续版本（`release_no` > 1） | 同上 |
+| `template.deprecated` | 发布被弃用 | `template_id, publication_id, organization_id, release_no` |
+
+负载只有标识与版本号，`job: null`；不含模板名、文件或字段，需要请用凭据读取 `/templates/{tid}`。订阅可用 `template.*` 或具体类型过滤；
+`GET /events?types=template.updated,…` 同样可查。
+
 Webhook 默认关闭，按部署配置开启：
 
 ```bash

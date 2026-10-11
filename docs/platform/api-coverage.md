@@ -69,7 +69,7 @@ Python 与 TypeScript 的独立 `WorkspaceClient` 均实现并实跑 8/8。方�
 | 事务 outbox（任务事件与状态同事务） | 已验证 | `jobs.py`、`webhooks.py` 调度游标 | 事件与投递表无保留期 |
 | Standard Webhooks 签名、轮换重叠、SSRF（每次解析、连接已验证 IP、拒绝跳转） | 已验证 | `webhooks.py`；`test_webhook_*` | 只用第一个解析地址 |
 | 重试、死信、人工重投、暂停/恢复 | 已验证 | `webhooks.py` | 暂停期间事件丢弃；无批量重放 |
-| 事件目录 | 部分 | `job.*`、`webhook.ping`；**API-2** `file.ready/needs_ocr/rejected/failed`（与状态同事务；`test_file_events.py` 8 项）；**API-5** `copy.*` 与复制状态同事务，仅来源空间可见；**API-5** `member.added/changed/removed`、`invitation.created/accepted/revoked`（`synwevo_core.member_events` 触发器，与行变化同事务，仅标识；`tests/integration/test_member_events.py`） | 模板 Webhook 事件仍需实现；本批成员写入的站内通知与审计不等于提供成员事件订阅。任务完成负载只给计数，产物需另用当前有效凭据读取，撤权即时生效 |
+| 事件目录 | 部分 | `job.*`、`webhook.ping`；**API-2** `file.ready/needs_ocr/rejected/failed`（与状态同事务；`test_file_events.py` 8 项）；**API-5** `copy.*` 与复制状态同事务，仅来源空间可见；**API-5** `member.added/changed/removed`、`invitation.created/accepted/revoked`（`synwevo_core.member_events` 触发器，与行变化同事务，仅标识；`tests/integration/test_member_events.py`）；**API-5** `template.created/updated/deleted/published/released/deprecated`（`synwevo_core.template_events`；`tests/integration/test_template_events.py`） | 本批成员写入的站内通知与审计不等于提供成员事件订阅。任务完成负载只给计数，产物需另用当前有效凭据读取，撤权即时生效 |
 | 控制台跨工作空间 Webhook 视图 | 已验证 | **API-6** 投递运行概况（元数据、接收方只显示来源）与保护性暂停；总览事件积压；`test_api_platform_webhook_ops.py`（3）；隔离实例浏览器实跑 | 平台侧重投不做（属于工作空间）；跨空间投递明细不显示负载 |
 
 ## 6. 其他模块的机器 API

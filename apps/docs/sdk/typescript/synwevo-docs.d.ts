@@ -80,12 +80,16 @@ export type CopyEventType =
 export type MemberEventType = 'member.added' | 'member.changed' | 'member.removed';
 /** Invitation life (identifiers only; never the address or the token). */
 export type InvitationEventType = 'invitation.created' | 'invitation.accepted' | 'invitation.revoked';
+/** Template changes (ids and version numbers; the template itself comes from getTemplate). */
+export type TemplateEventType =
+  | 'template.created' | 'template.updated' | 'template.deleted'
+  | 'template.published' | 'template.released' | 'template.deprecated';
 /** Types in the workspace event feed (`GET /events`). */
-export type EventType = JobEventType | FileEventType | CopyEventType | MemberEventType | InvitationEventType;
+export type EventType = JobEventType | FileEventType | CopyEventType | MemberEventType | InvitationEventType | TemplateEventType;
 /** Types a webhook delivery can carry: the feed's plus the test ping. */
 export type WebhookEventType = EventType | 'webhook.ping';
 /** A subscription filter: everything, a family, or one type. */
-export type WebhookEventFilter = '*' | 'job.*' | 'file.*' | 'copy.*' | 'member.*' | 'invitation.*' | EventType;
+export type WebhookEventFilter = '*' | 'job.*' | 'file.*' | 'copy.*' | 'member.*' | 'invitation.*' | 'template.*' | EventType;
 export type SubscriptionStatus = 'active' | 'paused' | 'disabled';
 export type DeliveryStatus = 'pending' | 'delivered' | 'failed' | 'dropped';
 /** Shortest decoded webhook key a verifier accepts; shorter is a configuration mistake. */
@@ -1434,8 +1438,31 @@ export interface InvitationFeedEvent {
   data: InvitationEventData;
 }
 
+/** A template change: the template, its head or publication numbers; never its name, file or fields. */
+export interface TemplateEventData {
+  template_id: string;
+  kind?: string | null;
+  format?: string | null;
+  head?: number;
+  previous_head?: number;
+  publication_id?: string;
+  organization_id?: string;
+  release_no?: number;
+  version_no?: number;
+}
+
+export interface TemplateFeedEvent {
+  id: string;
+  type: TemplateEventType;
+  version: number;
+  occurred_at: number;
+  job_id: null;
+  project_id: null;
+  data: TemplateEventData;
+}
+
 /** An item of events(): the workspace feed; narrow on `type`. `id` equals the webhook-id of the same event. */
-export type FeedEvent = JobFeedEvent | FileFeedEvent | CopyFeedEvent | MemberFeedEvent | InvitationFeedEvent;
+export type FeedEvent = JobFeedEvent | FileFeedEvent | CopyFeedEvent | MemberFeedEvent | InvitationFeedEvent | TemplateFeedEvent;
 
 /** The job summary a job webhook carries. The deployment endpoint's payload adds tenant and times. */
 export interface WebhookJobSummary {
@@ -1511,8 +1538,18 @@ export interface InvitationWebhookEvent {
   data: InvitationEventData;
 }
 
+export interface TemplateWebhookEvent {
+  id: string;
+  type: TemplateEventType;
+  version: number;
+  occurred_at: number;
+  tenant: string;
+  job: null;
+  data: TemplateEventData;
+}
+
 /** The JSON body of a delivery; narrow on `type`. */
-export type WebhookEvent = JobWebhookEvent | FileWebhookEvent | CopyWebhookEvent | MemberWebhookEvent | InvitationWebhookEvent | PingWebhookEvent;
+export type WebhookEvent = JobWebhookEvent | FileWebhookEvent | CopyWebhookEvent | MemberWebhookEvent | InvitationWebhookEvent | TemplateWebhookEvent | PingWebhookEvent;
 
 export interface CopyTarget {
   id: string;

@@ -764,3 +764,8 @@ Oscar 在 Agent 设置里把 Workspace B 的数据流政策从「仅限已有阅
 
 `synwevo_core.member_events` 触发器把成员关系与邀请的行变化同事务写入 `job_events`（member.added/changed/removed、invitation.created/accepted/revoked，仅标识），Docs 订阅与事件流接受 `member.*`/`invitation.*`；SDK 目录与 OpenAPI 回调同步更新；api.md 与 api-coverage 记录。
 测试：tests/integration/test_member_events.py 2 例（邀请→接受→改角色→移除→再邀请→撤回的完整序列与数据；feed 与 outbox 不含邮箱/令牌/空间名；另一空间凭据只见自身；订阅过滤接受 `member.*`、拒绝未知类型并在 allowed 中列出新类型）；apps/docs test_file_events + test_api_docs + 事件流/订阅相关测试通过；Python SDK 55、TypeScript SDK 48 通过；五守卫通过。未做浏览器验收（无界面变化）。
+
+## 2026-10-11 CR-092 模板与组织模板库事件（本地）
+
+`synwevo_core.template_events` 触发器把模板行与组织模板库的变化同事务写入 `job_events`（template.created/updated/deleted/published/released/deprecated，仅标识与版本号，发往模板所在/发布它的工作空间），Docs 订阅与事件流接受 `template.*`；SDK 目录与 OpenAPI 回调同步更新；api.md 与 api-coverage 记录。
+测试：tests/integration/test_template_events.py 1 例（复用组织发布夹具：上传→新版本→发布→再新版本→后续版本→弃用→删除，7 条事件的类型、顺序与 data 逐项断言；feed 与 outbox 不含备注、文档文字或夹具名；组织内另一空间凭据只见空）；apps/docs test_file_events + test_api_docs + 事件流/订阅/成员事件测试 38 通过；Python SDK 55、TypeScript SDK 48 通过；tsc 与五守卫通过。未做浏览器验收（无界面变化）。

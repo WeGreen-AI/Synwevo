@@ -903,6 +903,11 @@ class Store:
         # v18: templates published to an organization, as frozen releases.
         from .docs_templates import SCHEMA as DOCS_TEMPLATES_SCHEMA
         c.executescript(DOCS_TEMPLATES_SCHEMA)
+        # API-5 (additive): template changes become event rows in the same transaction
+        # (template.created / updated / deleted / published / released / deprecated), identifiers
+        # and version numbers only. Needs templates.tenant and the organization template tables above.
+        from .template_events import SCHEMA_SQL as TEMPLATE_EVENTS_SCHEMA
+        c.executescript(TEMPLATE_EVENTS_SCHEMA)
         # v20/v21: live co-editing of built-in document templates (persisted state + change log) and
         # the attributed project activity behind the project page's live updates.
         from .docs_collab import COLUMNS as DOCS_COLLAB_COLUMNS, SCHEMA as DOCS_COLLAB_SCHEMA

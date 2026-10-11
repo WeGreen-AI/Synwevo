@@ -11342,6 +11342,456 @@ webhooks:
       responses:
         2XX:
           description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  template.created:
+    post:
+      summary: template.created 事件回调
+      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      operationId: webhook_template_created
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  template.updated:
+    post:
+      summary: template.updated 事件回调
+      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      operationId: webhook_template_updated
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  template.deleted:
+    post:
+      summary: template.deleted 事件回调
+      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      operationId: webhook_template_deleted
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  template.published:
+    post:
+      summary: template.published 事件回调
+      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      operationId: webhook_template_published
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  template.released:
+    post:
+      summary: template.released 事件回调
+      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      operationId: webhook_template_released
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
+  template.deprecated:
+    post:
+      summary: template.deprecated 事件回调
+      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      operationId: webhook_template_deprecated
+      parameters:
+        - name: webhook-id
+          in: header
+          required: true
+          description: 事件 id；重试与重新投递时不变，接收端按它去重（Standard Webhooks）
+          schema:
+            type: string
+        - name: webhook-timestamp
+          in: header
+          required: true
+          description: 签名时间（Unix 秒）；拒绝与当前时间相差超过 5 分钟的请求
+          schema:
+            type: string
+        - name: webhook-signature
+          in: header
+          required: true
+          description: "空格分隔的一个或多个 v1,<base64(HMAC-SHA256(密钥, \"<id>.<timestamp>.<body>\"))>；轮换密钥期间同时带新旧两个签名，任一验证通过即可。whsec_ 前缀的密钥先去前缀再 base64 解码"
+          schema:
+            type: string
+        - name: X-Synwevo-Event
+          in: header
+          required: false
+          description: 事件类型（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-Synwevo-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅工作空间订阅）
+          schema:
+            type: string
+        - name: X-DocWeave-Event
+          in: header
+          required: false
+          description: 事件类型（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Event-Id
+          in: header
+          required: false
+          description: 事件 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Delivery
+          in: header
+          required: false
+          description: 本次投递 id（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Timestamp
+          in: header
+          required: false
+          description: 签名时间（Unix 秒；仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））
+          schema:
+            type: string
+        - name: X-DocWeave-Signature
+          in: header
+          required: false
+          description: "v1=<hex(HMAC-SHA256(密钥, \"<timestamp>.<body>\"))>（仅部署级端点（SYNWEVO_DOCS_WEBHOOK_URLS））"
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookEvent"
+      responses:
+        2XX:
+          description: 已接收。非 2xx 按退避重试（410 表示停用该订阅）
   webhook.ping:
     post:
       summary: webhook.ping 事件回调

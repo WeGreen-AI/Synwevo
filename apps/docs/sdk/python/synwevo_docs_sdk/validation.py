@@ -28,8 +28,10 @@ EVENT_TYPES = ("job.created", "job.started", "job.planned", "job.cancel_requeste
                "copy.requested", "copy.approved", "copy.rejected", "copy.withdrawn", "copy.expired",
                "copy.done", "copy.failed", "copy.stale",
                "member.added", "member.changed", "member.removed",
-               "invitation.created", "invitation.accepted", "invitation.revoked")
-EVENT_FILTERS = ("*", "job.*", "file.*", "copy.*", "member.*", "invitation.*") + EVENT_TYPES
+               "invitation.created", "invitation.accepted", "invitation.revoked",
+               "template.created", "template.updated", "template.deleted",
+               "template.published", "template.released", "template.deprecated")
+EVENT_FILTERS = ("*", "job.*", "file.*", "copy.*", "member.*", "invitation.*", "template.*") + EVENT_TYPES
 _FORMAT = re.compile(r"^[a-z0-9]{1,10}$")
 
 
