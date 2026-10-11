@@ -1643,5 +1643,23 @@ export const governanceMessages = {
   "找不到该账户的这个安全密钥，可能已经移除。": { en: "This passkey of the account was not found; it may have been removed already.", "zh-Hant": "找不到該帳戶的這個安全金鑰，可能已經移除。" },
   "这是该账户唯一的登录方式，不能解除关联；需要停止访问请停用账户。": { en: "This is the account's only way to sign in, so it cannot be unlinked; to stop access, suspend the account.", "zh-Hant": "這是該帳戶唯一的登入方式，不能解除關聯；需要停止存取請停用帳戶。" },
   "这是该账户唯一的登录方式，不能移除；需要停止访问请停用账户。": { en: "This is the account's only way to sign in, so it cannot be removed; to stop access, suspend the account.", "zh-Hant": "這是該帳戶唯一的登入方式，不能移除；需要停止存取請停用帳戶。" },
+  // Administrator second-factor policy (admin coverage A11).
+  "策略已更改，请刷新后重试。": { en: "The policy changed in the meantime; reload and try again.", "zh-Hant": "策略已變更，請重新整理後重試。" },
+  "至少需要一名可用的最高管理员已登记安全密钥或动态验证码，才能要求管理员使用第二因素。": { en: "At least one usable super administrator must have enrolled a passkey or an authenticator before administrators can be required to use a second factor.", "zh-Hant": "至少需要一名可用的最高管理員已登記安全金鑰或動態驗證碼，才能要求管理員使用第二因素。" },
+  "请选择有效的第二因素策略。": { en: "Choose a valid second-factor policy.", "zh-Hant": "請選擇有效的第二因素策略。" },
+  "不要求（沿用现有规则）": { en: "Not required (existing rule)", "zh-Hant": "不要求（沿用現有規則）" },
+  "要求管理员使用第二因素": { en: "Required for administrators", "zh-Hant": "要求管理員使用第二因素" },
+  "管理员第二因素": { en: "Administrator second factor", "zh-Hant": "管理員第二因素" },
+  "要求后，平台管理员的登录必须包含第二个因素（动态验证码或经用户验证的安全密钥）才能使用平台管理与 API 管理；只验证口令的登录会被锁在管理之外，账户本身不受影响。": { en: "Once required, a platform administrator's sign-in must include a second factor (an authenticator code or a user-verified passkey) before platform or API management can be used; a password-only sign-in is locked out of management, the account itself is unaffected.", "zh-Hant": "要求後，平台管理員的登入必須包含第二個因素（動態驗證碼或經使用者驗證的安全金鑰）才能使用平台管理與 API 管理；只驗證口令的登入會被鎖在管理之外，帳戶本身不受影響。" },
+  "可用最高管理员 {total} 人，其中 {enrolled} 人已登记安全密钥或动态验证码。": { en: "{total} usable super administrators, {enrolled} of them with a passkey or an authenticator enrolled.", "zh-Hant": "可用最高管理員 {total} 人，其中 {enrolled} 人已登記安全金鑰或動態驗證碼。" },
+  "你自己尚未登记安全密钥或动态验证码：要求第二因素后，你的下一次管理操作会被锁定，直到登记并重新登录。": { en: "You have not enrolled a passkey or an authenticator yourself: once a second factor is required, your next management action is locked until you enrol and sign in again.", "zh-Hant": "你自己尚未登記安全金鑰或動態驗證碼：要求第二因素後，你的下一次管理操作會被鎖定，直到登記並重新登入。" },
+  "你本次登录只验证了口令：要求第二因素后，需要用安全密钥确认或退出后用口令和动态验证码重新登录，才能继续管理。": { en: "This sign-in proved the password only: once a second factor is required, confirm with a passkey or sign out and sign in again with the password and the authenticator code to continue managing.", "zh-Hant": "你本次登入只驗證了口令：要求第二因素後，需要用安全金鑰確認或登出後用口令和動態驗證碼重新登入，才能繼續管理。" },
+  "新的第二因素策略": { en: "New second-factor policy", "zh-Hant": "新的第二因素策略" },
+  "只有至少一名可用的最高管理员已登记第二因素时才能开启；策略只约束平台管理，不改变账户登录本身。": { en: "It can be required only while at least one usable super administrator has a second factor enrolled; the policy binds platform management only, not account sign-in itself.", "zh-Hant": "只有至少一名可用的最高管理員已登記第二因素時才能開啟；策略只約束平台管理，不改變帳戶登入本身。" },
+  "你的平台角色可以查看第二因素策略，但不能修改。": { en: "Your platform role can view the second-factor policy, not change it.", "zh-Hant": "你的平台角色可以檢視第二因素策略，但不能修改。" },
+  "保存第二因素策略": { en: "Save second-factor policy", "zh-Hant": "儲存第二因素策略" },
+  "第二因素策略将从「{before}」改为「{after}」。": { en: "The second-factor policy changes from “{before}” to “{after}”.", "zh-Hant": "第二因素策略將從「{before}」改為「{after}」。" },
+  "第二因素策略已保存": { en: "Second-factor policy saved", "zh-Hant": "第二因素策略已儲存" },
+  "平台要求管理员使用第二因素：请用安全密钥确认身份，或先登记安全密钥/动态验证码后重新登录": { en: "The platform requires administrators to use a second factor: confirm with your passkey, or enrol a passkey or an authenticator first and sign in again.", "zh-Hant": "平台要求管理員使用第二因素：請用安全金鑰確認身分，或先登記安全金鑰/動態驗證碼後重新登入" },
 };
 registerMessages(governanceMessages);

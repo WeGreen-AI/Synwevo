@@ -349,7 +349,10 @@ class PlatformAccess:
         totp = self.store.one("SELECT 1 AS x FROM totp_secrets WHERE user_id=? AND confirmed_at IS NOT NULL",
                               (uid,)) is not None
         return {"capable": password or passkey or totp, "password": password, "passkey_uv": passkey,
-                "totp": totp, "reauth": password or passkey}
+                "totp": totp, "reauth": password or passkey,
+                # a second factor the admin second-factor policy accepts (A11): a TOTP app or a
+                # user-verifying passkey; the password alone is one factor however often re-entered
+                "second_factor": totp or passkey}
 
     def usable_super_admins(self, *, excluding: str | None = None) -> list[dict]:
         """Currently capable highest administrators; offer-linked grants must also be ready.
@@ -766,6 +769,40 @@ def require_outranking(request, actor: dict, target_id: str, *, store: Store, au
                            {"permissions": sorted_permissions(missing)})
 
 
+#: Platform setting (`meta`): whether every platform administrator's session must have proved a
+#: second, distinct factor — a TOTP code or a user-verified passkey, not the password re-entered —
+#: before it may exercise platform administration (admin coverage A11). Default off: the existing
+#: rule (sessions.admin_capable) stays. "all" and per-organization requirements are not offered.
+ADMIN_SECOND_FACTOR_KEY = "security.admin_second_factor"
+ADMIN_SECOND_FACTOR_MODES = ("off", "required")
+
+
+def admin_second_factor_mode(store: Store) -> str:
+    try:
+        row = store.one("SELECT value FROM meta WHERE key=?", (ADMIN_SECOND_FACTOR_KEY,))
+    except sqlite3.Error:
+        return "off"
+    return row["value"] if row and row["value"] in ADMIN_SECOND_FACTOR_MODES else "off"
+
+
+def session_strong(amr: str) -> bool:
+    """Two distinct factor kinds on the session, or a user-verifying passkey ceremony."""
+    from .sessions import factor_kinds
+    kinds = factor_kinds(amr)
+    return "user_verification" in kinds or len(kinds) >= 2
+
+
+def admin_session_shortfall(store: Store, amr: str) -> str | None:
+    """Why this session may not exercise platform administration yet: `one_factor` (the standing
+    rule, sessions.admin_capable), `second_factor` (the A11 policy), or None when it may."""
+    from .sessions import admin_capable
+    if not admin_capable(amr or ""):
+        return "one_factor"
+    if admin_second_factor_mode(store) == "required" and not session_strong(amr or ""):
+        return "second_factor"
+    return None
+
+
 def require_platform(request, permission: str | None, *, store: Store, audit=None,
                      dangerous: bool = False, step_up: bool = True) -> dict:
     """The one check every `/api/admin` route and the API console use. Returns the caller's user
@@ -801,12 +838,19 @@ def require_platform(request, permission: str | None, *, store: Store, audit=Non
         audit_denied(store, audit, request, user["id"], permission)
         raise ServiceError(403, "platform_permission_denied", "你的平台角色不包含这项操作所需的权限",
                            {"permission": permission})
-    if step_up and not admin_capable(s.get("amr") or ""):
+    shortfall = admin_session_shortfall(store, s.get("amr") or "") if step_up else None
+    if shortfall == "one_factor":
         # The role is real; this session proved one factor (a mailed code, an external provider).
         # Platform administration waits for a second one — the password on the account page, or
         # a second-factor sign-in.
         raise ServiceError(403, "step_up_required", "当前登录只验证了一个因素：请在账户页输入口令确认身份后再使用平台管理",
                            {"scope": "admin"})
+    if shortfall == "second_factor":
+        # The platform requires administrators to use a second factor (A11). Re-entering the
+        # password proves nothing new; a user-verified passkey does, or a sign-in with TOTP.
+        enrolled = PlatformAccess(store).step_up(user["id"])["second_factor"]
+        raise ServiceError(403, "step_up_required", "平台要求管理员使用第二因素：请用安全密钥确认身份，或先登记安全密钥/动态验证码后重新登录",
+                           {"scope": "admin", "policy": "admin_second_factor", "second_factor_enrolled": enrolled})
     # strict=True: signing in a moment ago is not the same as confirming *this*.
     if dangerous and not Sessions.reauth_fresh(s, "admin", strict=True):
         raise ServiceError(403, "reauth_required", "这一步需要重新验证身份", {"scope": "admin"})

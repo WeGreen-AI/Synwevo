@@ -168,7 +168,8 @@ def test_platform_administrators_get_a_one_factor_session_that_cannot_manage_unt
     assert denied.status_code == 403 and denied.json()["error"] == "step_up_required"
     # the locked administrator can still learn what is missing, and nothing more
     session = c.get("/api/admin/session")
-    assert session.status_code == 200 and session.json()["step_up"] == {"required": True, "amr": "email"}
+    assert session.status_code == 200 and session.json()["step_up"] == {"required": True, "amr": "email", "reason": "one_factor",
+                                                                          "policy": "off", "second_factor_enrolled": False}
     assert me["platform_roles"] == ["super_admin"] and "api_platform.manage" in me["platform_permissions"]
     assert c.get("/api/admin/api-platform/overview").status_code == 403
     # The password, re-entered on the account page, is the second distinct factor.

@@ -24,8 +24,9 @@ from fastapi import APIRouter, Body, Query, Request
 
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity, REGISTRATION_MODES, registration_mode
-from synwevo_core.platform_access import (ASSIGN, ASSIGN_SUPER, PlatformAccess, ROLES, SUPER_ADMIN, catalogue, clock,
-                                          require_outranking, require_platform, sorted_permissions, sorted_roles)
+from synwevo_core.platform_access import (ADMIN_SECOND_FACTOR_KEY, ADMIN_SECOND_FACTOR_MODES, ASSIGN, ASSIGN_SUPER, PlatformAccess,
+                                          ROLES, SUPER_ADMIN, admin_second_factor_mode, admin_session_shortfall, catalogue, clock,
+                                          require_outranking, require_platform, session_strong, sorted_permissions, sorted_roles)
 from synwevo_core.organizations import Organizations
 from synwevo_core.sessions import admin_capable, Sessions
 from synwevo_core.store import LEGACY_WORKSPACE_NAME, Store, now
@@ -146,6 +147,54 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                   object_kind="setting", object_id="registration.mode", result="ok",
                   meta={"before": before, "mode": mode, "reason": reason})
         return _policy()
+
+    # ------------------------------------------------------------------ administrator second factor (A11)
+    def _second_factor_policy(request: Request, actor: dict) -> dict:
+        access = PlatformAccess(store)
+        row = store.one("SELECT value FROM meta WHERE key=?", (ADMIN_SECOND_FACTOR_KEY,))
+        supers = access.usable_super_admins()
+        enrolled = sum(1 for u in supers if access.step_up(u["id"])["second_factor"])
+        s = request.state.session
+        return {"mode": admin_second_factor_mode(store),
+                "source": "database" if row and row["value"] in ADMIN_SECOND_FACTOR_MODES else "default",
+                "usable_super_admins": len(supers), "enrolled_super_admins": enrolled,
+                "caller_second_factor": access.step_up(actor["id"])["second_factor"],
+                "caller_session_strong": session_strong(s.get("amr") or "")}
+
+    @r.get("/security/second-factor")
+    def second_factor_policy(request: Request):
+        """Whether platform administrators must prove a second factor (A11), and whether the
+        caller and the usable super administrators could meet it."""
+        return _second_factor_policy(request, _admin(request, "platform.config.view"))
+
+    @r.post("/security/second-factor")
+    def set_second_factor_policy(request: Request, body: dict = Body(...)):
+        """`{"mode": "off" | "required", "expected_mode", "reason"}` with strict re-authentication.
+        Requiring a second factor is refused while no usable super administrator has one enrolled:
+        the policy must never lock every administrator out of administration. It applies to
+        platform administration only — a locked administrator keeps their own account, where
+        they enrol a passkey or an authenticator and sign in again."""
+        actor = _admin(request, "platform.config.manage", dangerous=True)
+        reason = _reason(body)
+        mode = body.get("mode")
+        if mode not in ADMIN_SECOND_FACTOR_MODES:
+            raise ServiceError(400, "bad_second_factor_mode", "请选择有效的第二因素策略")
+        with _write(request, "platform.config.manage", object_kind="setting", object_id=ADMIN_SECOND_FACTOR_KEY):
+            actor = _admin(request, "platform.config.manage", dangerous=True)
+            before = admin_second_factor_mode(store)
+            if body.get("expected_mode", before) != before:
+                raise ServiceError(409, "policy_changed", "第二因素策略已更改，请刷新后重试")
+            access = PlatformAccess(store)
+            enrolled = sum(1 for u in access.usable_super_admins() if access.step_up(u["id"])["second_factor"])
+            if mode == "required" and enrolled == 0:
+                raise ServiceError(409, "no_second_factor_admin",
+                                   "至少需要一名可用的最高管理员已登记安全密钥或动态验证码，才能要求管理员使用第二因素")
+            store.execute("INSERT INTO meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                          (ADMIN_SECOND_FACTOR_KEY, mode))
+            audit(request, "admin.security.second_factor", actor_id=actor["id"], object_kind="setting",
+                  object_id=ADMIN_SECOND_FACTOR_KEY, result="ok",
+                  meta={"before": before, "mode": mode, "reason": reason, "enrolled_super_admins": enrolled})
+        return _second_factor_policy(request, actor)
 
     # ------------------------------------------------------------------ delivery metadata / recovery
     def _mail(request):
@@ -1123,7 +1172,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         left = max(0, int(REAUTH_SECONDS - (now() - s["reauth_at"]))) if fresh else 0
         return {"user": {"id": user["id"], "email": user["email"], "display_name": user.get("display_name")},
                 "roles": explained["roles"], "permissions": explained["permissions"],
-                "step_up": {"required": not admin_capable(s.get("amr") or ""), "amr": s.get("amr") or ""},
+                "step_up": {"required": admin_session_shortfall(store, s.get("amr") or "") is not None, "amr": s.get("amr") or "",
+                            "reason": admin_session_shortfall(store, s.get("amr") or ""),
+                            "policy": admin_second_factor_mode(store),
+                            "second_factor_enrolled": PlatformAccess(store).step_up(user["id"])["second_factor"]},
                 "reauth": {"scope": REAUTH_SCOPE, "seconds_left": left, "window_s": REAUTH_SECONDS},
                 "environment": {"instance": store.instance_kind()},
                 "super_admins": len(ident.platform_admins())}

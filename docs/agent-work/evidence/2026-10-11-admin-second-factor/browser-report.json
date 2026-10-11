@@ -1,0 +1,72 @@
+{
+ "base": "http://127.0.0.1:33925",
+ "engine": "chrome",
+ "steps": {
+  "before": {
+   "policy": {
+    "mode": "off",
+    "source": "default",
+    "usable_super_admins": 1,
+    "enrolled_super_admins": 0,
+    "caller_second_factor": false,
+    "caller_session_strong": false
+   },
+   "card_mentions_enrolled_0": true,
+   "self_warning": true
+  },
+  "refused": {
+   "wording": true,
+   "policy_after": "off"
+  },
+  "enrol": {
+   "buttons_seen": [
+    "确认启用",
+    "取消"
+   ],
+   "enabled_badge": true,
+   "recovery_shown": true
+  },
+  "card_after_enrol": {
+   "mentions_enrolled_1": true,
+   "session_note": true
+  },
+  "required": {
+   "mode": null,
+   "me_admin_locked": true,
+   "me_admin_lock": {
+    "reason": "second_factor",
+    "second_factor_enrolled": true
+   },
+   "overview_status": 403,
+   "lock_notice": true,
+   "enrolled_wording": false
+  },
+  "strong": {
+   "amr": "password+totp",
+   "admin_locked": false,
+   "users_status": 200
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+   "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+   "Failed to load resource: the server responded with a status of 409 (Conflict)",
+   "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+   "Failed to load resource: the server responded with a status of 403 (Forbidden)",
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "support": {
+   "me_admin_lock": {
+    "reason": "second_factor",
+    "second_factor_enrolled": false
+   },
+   "users_status": 403,
+   "guidance": true,
+   "enrol_link": 1
+  },
+  "support_account_page": {
+   "heading": true,
+   "no_password_form_for_policy": true
+  }
+ }
+}

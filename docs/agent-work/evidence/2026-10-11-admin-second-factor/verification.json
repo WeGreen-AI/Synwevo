@@ -1,0 +1,99 @@
+{
+ "package": "CR-090 / admin-coverage A11 — administrators must use a second factor (platform policy)",
+ "date": "2026-10-11",
+ "tree": "worktree claude/agent-billing on 65bf805, CR-090 changes uncommitted at verification time",
+ "contract": {
+  "setting": "meta key security.admin_second_factor ∈ {off, required}; default off keeps the standing rule (sessions.admin_capable)",
+  "rule": "synwevo_core.platform_access.admin_session_shortfall: one_factor (standing rule) or second_factor (policy): under 'required' a platform administrator's session must carry two distinct factor kinds or a user-verified passkey ceremony; the password re-entered proves nothing new; require_platform answers 403 step_up_required with detail {policy: admin_second_factor, second_factor_enrolled}; /api/auth/me carries admin_lock {reason, second_factor_enrolled}; /api/admin/session step_up carries reason/policy/second_factor_enrolled",
+  "routes": "GET /api/admin/security/second-factor (platform.config.view) and POST (platform.config.manage, strict re-authentication, reason, expected_mode); requiring is refused with 409 no_second_factor_admin while no usable super administrator has a TOTP app or a user-verified passkey enrolled, so the policy can never lock every administrator out; audit admin.security.second_factor",
+  "scope": "platform administration only — the person keeps their account and enrols there; 'all users' and per-organization requirements are not offered; no grace period (the lock applies at once and ends with a passkey confirmation or a sign-in with the code)"
+ },
+ "tests": {
+  "services/identity/tests/test_platform_access.py": "new test_the_admin_second_factor_policy_locks_password_only_administrators_until_they_prove_one (refusal while nobody enrolled; TOTP enrolment through the real path; policy on → password-only super admin 403 with detail, /api/admin/session reason, me.admin_lock; password re-entry changes nothing; password+totp sign-in restores; an access_admin without any factor locked with second_factor_enrolled=false and still signed in; off restores; stale expected_mode 409; audit trail) + two matrix rows; roster expectation gains step_up.second_factor",
+  "services/identity/tests/test_email_code_login.py": "one-factor step-up projection expectation extended (reason one_factor, policy off)",
+  "identity + integration suites": "2903 passed (19:56–20:05Z)",
+  "account shell": "npm test -w @synwevo/account-web 167 passed (refusal gate catalogues the new server sentences); typecheck exit 0; build exit 0; guards exit 0"
+ },
+ "browser": {
+  "server": "isolated synthetic admin instance http://127.0.0.1:33925 (scratchpad a13/isolated_admin.py)",
+  "engine": "chrome",
+  "report": "browser-report.json",
+  "screenshots": [
+   "a11-admin-with-totp.png",
+   "a11-card-before.png",
+   "a11-locked-after-enable.png",
+   "a11-refused-nobody-enrolled.png",
+   "a11-support-account-step-up.png",
+   "a11-support-locked-guidance.png",
+   "a11-totp-enrolled.png"
+  ],
+  "observed": {
+   "before": {
+    "policy": {
+     "mode": "off",
+     "source": "default",
+     "usable_super_admins": 1,
+     "enrolled_super_admins": 0,
+     "caller_second_factor": false,
+     "caller_session_strong": false
+    },
+    "card_mentions_enrolled_0": true,
+    "self_warning": true
+   },
+   "refused": {
+    "wording": true,
+    "policy_after": "off"
+   },
+   "enrol": {
+    "buttons_seen": [
+     "确认启用",
+     "取消"
+    ],
+    "enabled_badge": true,
+    "recovery_shown": true
+   },
+   "card_after_enrol": {
+    "mentions_enrolled_1": true,
+    "session_note": true
+   },
+   "required": {
+    "mode": null,
+    "me_admin_locked": true,
+    "me_admin_lock": {
+     "reason": "second_factor",
+     "second_factor_enrolled": true
+    },
+    "overview_status": 403,
+    "lock_notice": true,
+    "enrolled_wording": false
+   },
+   "strong": {
+    "amr": "password+totp",
+    "admin_locked": false,
+    "users_status": 200
+   },
+   "support": {
+    "me_admin_lock": {
+     "reason": "second_factor",
+     "second_factor_enrolled": false
+    },
+    "users_status": 403,
+    "guidance": true,
+    "enrol_link": 1
+   },
+   "support_account_page": {
+    "heading": true,
+    "no_password_form_for_policy": true
+   }
+  },
+  "notes": [
+   "'required.mode' is null in the report because the policy GET itself answers step_up_required to the now-locked session — the lock is the observation; me.admin_lock and the 403 on /api/admin/overview carry it",
+   "the TOTP secret was read from the enrolment screen to compute codes with pyotp; the recovery codes were dismissed (我已保存) before the screenshot",
+   "console errors are the expected 401 (sign-in probe), 403 (reauth_required / step_up_required) and 409 (the refusal while nobody was enrolled)"
+  ]
+ },
+ "not_done": [
+  "user-verified passkey as the second factor — not driven in the browser (no WebAuthn authenticator in the proof); the rule accepts it by amr",
+  "no production verification: deployment is blocked by GitHub billing at this point"
+ ]
+}

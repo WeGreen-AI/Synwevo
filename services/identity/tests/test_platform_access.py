@@ -115,6 +115,8 @@ ROUTES = [
     ("POST", "/api/admin/billing/risk/reconciliations/run", "platform.config.manage", False),
     ("GET", "/api/admin/registration", "platform.config.view", False),
     ("POST", "/api/admin/registration", "platform.config.manage", True),
+    ("GET", "/api/admin/security/second-factor", "platform.config.view", False),
+    ("POST", "/api/admin/security/second-factor", "platform.config.manage", True),
     ("GET", "/api/admin/identity-providers", "platform.config.view", False),
     ("GET", "/api/admin/mail", "platform.mail.view", False),
     ("POST", "/api/admin/mail/{mid}/retry", "platform.mail.manage", True),
@@ -922,7 +924,7 @@ def test_session_roster_and_explanation(world):
     by_email = {row["user"]["email"]: row for row in roster["roster"]}
     assert by_email["root@example.test"]["roles"] == [SUPER_ADMIN]
     assert by_email["root@example.test"]["step_up"] == {"capable": True, "password": True, "passkey_uv": False,
-                                                         "totp": False, "reauth": True}
+                                                         "totp": False, "reauth": True, "second_factor": False}
     assert by_email["root@example.test"]["last_sign_in_at"]
     assert by_email["auditor@example.test"]["roles"] == ["auditor"]
     assert "plain@example.test" not in by_email
@@ -995,3 +997,69 @@ def test_the_rollback_mirror_follows_every_grant_and_carries_a_rollbacks_changes
     carried = grant_of({"store": reopened}, delegated, SUPER_ADMIN)
     assert carried["granted_by"] == "reconcile:mirror"
     assert (role_of(a), role_of(b), role_of(delegated)) == ("none", "admin", "admin")
+
+
+def _enable_totp(c):
+    """The real enrolment path (test_mfa): recent re-authentication, begin, confirm; returns the secret."""
+    import pyotp
+    assert post(c, "/api/auth/mfa/reauth", {"password": PW}).status_code == 200
+    secret = post(c, "/api/auth/mfa/totp/begin").json()["secret"]
+    r = post(c, "/api/auth/mfa/totp/confirm", {"code": pyotp.TOTP(secret).now()})
+    assert r.status_code == 200, r.text
+    return secret
+
+
+def _login_with_totp(api, email, secret):
+    import pyotp, time
+    c = TestClient(api)
+    step = post(c, "/api/auth/login", {"email": email, "password": PW}).json()
+    assert step.get("mfa_required") and step.get("ticket"), step
+    r = post(c, "/api/auth/login/mfa", {"ticket": step["ticket"], "code": pyotp.TOTP(secret).at(int(time.time()) + 30)})
+    assert r.status_code == 200 and r.json()["session"]["amr"] == "password+totp", r.text
+    return c
+
+
+def test_the_admin_second_factor_policy_locks_password_only_administrators_until_they_prove_one(world):
+    """A11: requiring a second factor is refused while nobody could meet it; once on, a password-only
+    administrator session is locked out of administration (not out of the account) with the
+    reason and whether they have enrolled; a TOTP sign-in or a user-verified passkey meets it."""
+    w, store = world, world["store"]
+    root = w["login"](w["root"])
+    policy = root.get("/api/admin/security/second-factor").json()
+    assert policy["mode"] == "off" and policy["source"] == "default" and policy["enrolled_super_admins"] == 0
+    assert policy["usable_super_admins"] == 1 and policy["caller_second_factor"] is False
+    reauth(root)
+    refused = post(root, "/api/admin/security/second-factor", {"mode": "required", "expected_mode": "off", "reason": REASON})
+    assert refused.status_code == 409 and refused.json()["error"] == "no_second_factor_admin"
+    assert root.get("/api/admin/overview").status_code == 200, "nothing changed"
+    secret = _enable_totp(root)
+    reauth(root)
+    enabled = post(root, "/api/admin/security/second-factor", {"mode": "required", "expected_mode": "off", "reason": REASON})
+    assert enabled.status_code == 200 and enabled.json()["mode"] == "required" and enabled.json()["enrolled_super_admins"] == 1
+    # This very session proved the password only: administration waits; the account does not.
+    denied = root.get("/api/admin/overview")
+    assert denied.status_code == 403 and denied.json()["error"] == "step_up_required"
+    assert denied.json()["detail"] == {"scope": "admin", "policy": "admin_second_factor", "second_factor_enrolled": True}
+    session = root.get("/api/admin/session").json()["step_up"]
+    assert session["required"] is True and session["reason"] == "second_factor" and session["policy"] == "required"
+    me = root.get("/api/auth/me").json()
+    assert me["admin_locked"] is True and me["admin_lock"] == {"reason": "second_factor", "second_factor_enrolled": True}
+    assert me["permissions"] == [] and me["platform_roles"] == ["super_admin"]
+    reauth(root)  # the password again is the same factor
+    assert root.get("/api/admin/overview").status_code == 403
+    strong = _login_with_totp(w["api"], w["root"]["email"], secret)
+    assert strong.get("/api/admin/overview").status_code == 200
+    assert strong.get("/api/auth/me").json()["admin_locked"] is False
+    # An administrator with no second factor at all: locked, told to enrol, still signed in.
+    other = w["login"](holder(w, "access_admin"))
+    denied = other.get("/api/admin/users")
+    assert denied.status_code == 403 and denied.json()["detail"]["second_factor_enrolled"] is False
+    assert other.get("/api/auth/me").json()["admin_lock"] == {"reason": "second_factor", "second_factor_enrolled": False}
+    assert other.get("/api/admin/session").status_code == 200, "a locked administrator still learns what is missing"
+    # Off again restores the standing rule for everyone.
+    reauth(strong)
+    assert post(strong, "/api/admin/security/second-factor", {"mode": "off", "expected_mode": "required", "reason": REASON}).status_code == 200
+    assert other.get("/api/admin/users").status_code == 200 and root.get("/api/admin/overview").status_code == 200
+    stale = post(strong, "/api/admin/security/second-factor", {"mode": "required", "expected_mode": "required", "reason": REASON})
+    assert stale.status_code == 409 and stale.json()["error"] == "policy_changed"
+    assert [json.loads(r["meta"])["mode"] for r in store.all("SELECT meta FROM audit_events WHERE action='admin.security.second_factor' ORDER BY seq")] == ["required", "off"]

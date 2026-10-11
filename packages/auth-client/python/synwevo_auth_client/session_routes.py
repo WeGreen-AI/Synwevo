@@ -124,11 +124,12 @@ def describe_user(user: dict, spaces: list[dict], session: dict | None = None, *
     account page to say so and to offer the password step-up. `api_platform.manage` appears in
     `permissions` only when a grant carries it.
     """
-    from synwevo_core.platform_access import PlatformAccess, sorted_permissions
-    from synwevo_core.sessions import admin_capable
+    from synwevo_core.platform_access import PlatformAccess, admin_session_shortfall, sorted_permissions
     access = PlatformAccess(store)
     held = access.effective_permissions(user) if user["status"] == "active" else frozenset()
-    capable = admin_capable(session.get("amr") or "") if session is not None else True
+    # one_factor: the standing rule; second_factor: the platform's A11 policy (platform_access)
+    shortfall = admin_session_shortfall(store, session.get("amr") or "") if session is not None else None
+    capable = shortfall is None
     return {"id": user["id"], "email": user["email"], "display_name": user.get("display_name"),
             "status": user["status"], "platform_role": user["platform_role"],
             "platform_permissions": sorted_permissions(held),
@@ -138,6 +139,8 @@ def describe_user(user: dict, spaces: list[dict], session: dict | None = None, *
             "onboarding_completed": bool(user.get("onboarding_completed_at") or spaces),
             "permissions": ["api_platform.manage"] if "api_platform.manage" in held and capable else [],
             "admin_locked": bool(held and not capable),
+            "admin_lock": ({"reason": shortfall, "second_factor_enrolled": access.step_up(user["id"])["second_factor"]}
+                           if held and shortfall else None),
             "workspaces": [{"id": w["id"], "name": w["name"], "kind": w["kind"],
                             "status": w.get("status", "active"),
                             "organization_id": w.get("organization_id"), "organization_name": w.get("organization_name"),

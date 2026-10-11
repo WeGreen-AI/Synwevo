@@ -45,6 +45,44 @@ export function RegistrationTab({ onDenied, held }: Props) {
   </section>;
 }
 
+type SecondFactorPolicy = { mode: "off" | "required"; source: "database" | "default"; usable_super_admins: number; enrolled_super_admins: number;
+  caller_second_factor: boolean; caller_session_strong: boolean };
+/** Admin coverage A11: whether platform administrators must prove a second factor. The server
+ *  refuses to require it while no usable super administrator could meet it. */
+export function AdminSecondFactorTab({ onDenied, held }: Props) {
+  const { t } = useI18n();
+  const manage = permitted(held, "platform.config.manage");
+  const load = useAdminData<SecondFactorPolicy>("/api/admin/security/second-factor", onDenied);
+  const [mode, setMode] = useState<SecondFactorPolicy["mode"]>("off");
+  const [change, setChange] = useState<{ mode: SecondFactorPolicy["mode"]; before: SecondFactorPolicy["mode"] } | null>(null);
+  const toast = useToast();
+  useEffect(() => { if (load.data) setMode(load.data.mode); }, [load.data]);
+  const names = { off: t("不要求（沿用现有规则）"), required: t("要求管理员使用第二因素") };
+  const d = load.data;
+  return <section className="card card-b col gap12">
+    <h2>{t("管理员第二因素")}</h2>
+    <p className="muted">{t("要求后，平台管理员的登录必须包含第二个因素（动态验证码或经用户验证的安全密钥）才能使用平台管理与 API 管理；只验证口令的登录会被锁在管理之外，账户本身不受影响。")}</p>
+    {load.err && <p className="notice err" role="alert">{load.err}</p>}
+    <button className="btn sm" disabled={load.loading} onClick={load.reload}>{t("刷新")}</button>
+    {load.loading ? <p role="status">{t("加载中…")}</p> : d && <>
+      <p>{t("当前策略：{mode}；来源：{source}", { mode: names[d.mode], source: d.source === "database" ? t("平台设置") : t("环境配置或默认值") })}</p>
+      <p className="small muted">{t("可用最高管理员 {total} 人，其中 {enrolled} 人已登记安全密钥或动态验证码。", { total: d.usable_super_admins, enrolled: d.enrolled_super_admins })}</p>
+      {!d.caller_second_factor && <p className="notice" role="note">{t("你自己尚未登记安全密钥或动态验证码：要求第二因素后，你的下一次管理操作会被锁定，直到登记并重新登录。")}</p>}
+      {d.caller_second_factor && !d.caller_session_strong && <p className="notice" role="note">{t("你本次登录只验证了口令：要求第二因素后，需要用安全密钥确认或退出后用口令和动态验证码重新登录，才能继续管理。")}</p>}
+      <fieldset className="col gap12" disabled={!!load.err || manage.disabled}><legend>{t("新的第二因素策略")}</legend>
+        {(["off", "required"] as const).map(value => <label key={value} className="check"><input type="radio" name="second-factor-mode" value={value} checked={mode === value} onChange={() => setMode(value)} />{names[value]}</label>)}
+      </fieldset>
+      <p className="small muted">{t("只有至少一名可用的最高管理员已登记第二因素时才能开启；策略只约束平台管理，不改变账户登录本身。")}</p>
+      {manage.hint && <p className="notice" role="note">{t("你的平台角色可以查看第二因素策略，但不能修改。")}</p>}
+      <button className="btn primary" disabled={!!load.err || mode === d.mode || manage.disabled} onClick={() => setChange({ mode, before: d.mode })}>{t("保存第二因素策略")}</button>
+    </>}
+    {change && <ActionDialog title={t("保存第二因素策略")} confirmLabel={t("保存策略")} reason="required" danger={change.mode === "required"}
+      impact={t("第二因素策略将从「{before}」改为「{after}」。", { before: names[change.before], after: names[change.mode] })}
+      run={reason => post<SecondFactorPolicy>("/api/admin/security/second-factor", { mode: change.mode, expected_mode: change.before, reason })}
+      onClose={() => setChange(null)} onDone={() => { setChange(null); load.reload(); toast(t("第二因素策略已保存"), "ok"); }} />}
+  </section>;
+}
+
 type Delivery = { id: string; to_addr: string; kind: string; ref_id: string | null; status: string; attempts: number; created_at: number; sent_at: number | null; next_attempt_at: number | null; error_code: string | null; retryable: boolean };
 export function MailTab({ onDenied, held }: Props) {
   const { t } = useI18n();

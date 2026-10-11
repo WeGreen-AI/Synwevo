@@ -305,3 +305,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：与 A14/A16 同一护栏——`platform.users.manage`、`dangerous=True` 严格重认证、`_reason` 8–500 字、`_not_outranked` 在事务外与写锁内各复核一次、审计 meta 只含理由与计数/标识；复用本人路径的原语（`Sessions.revoke_device` 只结束该设备与它签发的令牌和依赖方会话；`Passkeys.remove` 自带 last_factor/last_super_admin 拒绝；解绑复用 `other_sign_in_methods`），管理员不能借此把人锁在门外——只能停用账户；通知走 `security.change`（设备用既有 `sessions_revoked` 文案，本人在其他设备看到「结束了其他设备的登录」）；前端按钮只在服务器会放行的条件下出现（持有 manage、未被越级、非应用身份），最终仍由服务器判定；单设备撤销不写安全日志并在路由文档说明原因。
 - 风险/未做：推送订阅撤销无调用方未做；`last_factor` 原句含「你」在管理员视角不妥，前端 labels.ts 已改为管理员措辞；查看详情仍不审计。
 - 验证：见 EVIDENCE「CR-089」与 evidence/2026-10-11-admin-account-actions/verification.json。
+
+## CR-090 · Admin A11 管理员第二因素策略（2026-10-11，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：packages/core/synwevo_core/platform_access.py（`ADMIN_SECOND_FACTOR_KEY/MODES`、`admin_second_factor_mode`、`session_strong`、`admin_session_shortfall`、`require_platform` 第 4 步、`step_up()["second_factor"]`）；packages/auth-client/python `session_routes.describe_user`（`admin_locked` 按策略、`admin_lock`）；services/identity admin_routes（`/api/admin/session` step_up 字段、`GET/POST /security/second-factor`）；web：auth-client `session.tsx` 类型、`AdminStepUp.tsx`、`GovernanceTabs.AdminSecondFactorTab`、`SettingsTab`、labels.ts、messages.ts；tests：test_platform_access（新例 + 矩阵行 + roster 期望）、test_email_code_login 期望；docs/platform/admin-coverage.md A11。
+- 审查要点：默认 off 时行为与之前完全一致（`admin_capable` 不变，`step_up_required` 原句不变）；required 时判定只看会话 `amr`（两类不同因素或 passkey_uv），口令重输不满足（`confirm_reauth` 只是把同一因素再记一次）；开启前置条件由服务器判定（至少一名可用最高管理员已登记 TOTP 或 UV Passkey），避免把所有管理员锁在管理之外；锁定只影响 `require_platform`（平台管理与 API 控制台），账户页、登记流程与 `/api/admin/session` 仍可用，所以被锁管理员总能自助解锁；策略写入与读取都在 meta，`sqlite3.Error` 时按 off 处理（与其他设置读取一致）；审计 meta 只含 before/mode/理由/已登记人数。
+- 风险/未做：没有宽限期——开启后所有仅口令的管理员会话立刻被锁（界面在开启前提示本人与人数）；`caller_session_strong` 仅供提示；组织级与全体用户范围、Passkey 浏览器实测未做；`platform.security.manage` 未新增，沿用 config.manage。
+- 验证：见 EVIDENCE「CR-090」与 evidence/2026-10-11-admin-second-factor/verification.json。

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError, post } from "@synwevo/auth-client";
 import { formatNumber, fmtTime, useI18n } from "@synwevo/ui";
 import { ActionDialog } from "./ActionDialog";
-import { RegistrationTab } from "./GovernanceTabs";
+import { AdminSecondFactorTab, RegistrationTab } from "./GovernanceTabs";
 import { permitted, type Held } from "./access";
 import { useAdminData } from "./data";
 import { errText } from "./labels";
@@ -131,6 +131,7 @@ export function SettingsTab({ onDenied, held }: { onDenied: () => void; held: He
       </>}
     </section>
     <RegistrationTab onDenied={onDenied} held={held} />
+    <AdminSecondFactorTab onDenied={onDenied} held={held} />
     {confirmation && <ActionDialog key={confirmation.key} title={t("发布消息摘要策略")} confirmLabel={t("发布配置")} reason="required" ready={confirmed && !previewing && !conflict}
       impact={<div className="col gap8"><p>{t("仅影响全平台已开启的消息摘要；不打开邮件偏好，不撤回已发送邮件。")}</p>
         <ul>{fields.map(field => <li key={field.key}>{t(NAMES[field.key] || field.key)}：{value(confirmation.plan.before, field.key)}（{source(confirmation.plan.before, field.key)}） → {value(confirmation.plan.after, field.key)}（{source(confirmation.plan.after, field.key)}）</li>)}</ul>

@@ -753,3 +753,9 @@ Oscar 在 Agent 设置里把 Workspace B 的数据流政策从「仅限已有阅
 三条管理路由（结束单设备登录 / 移除 Passkey / 解除外部身份）：`platform.users.manage` + 严格重认证 + 理由 + 越级检查，复用本人路径原语与锁死保护（last_factor、last_super_admin、last_sign_in_method），审计 `admin.user.revoke_session|passkey_remove|external_unlink`，本人收到 `security.change` 通知；A13 详情补回可操作 id，对话框内逐项按钮经 ActionDialog 确认。
 测试：test_admin 新增 1 例通过（两台设备留一台：/api/auth/me 分别 200/401；审计含理由；重复移除 404；唯一登录方式 409；support 403；access_admin 越级 403）；权限矩阵 29 通过（新增 3 行危险路由）；account-web 167 通过（详情测试 4 例、refusals 门禁 10 例含五个新措辞）；typecheck/build、五守卫通过；identity 全量 1550 通过（19:42–19:46Z）。
 浏览器（隔离合成实例 127.0.0.1:33921，系统 Chrome）：详情显示 2 个在线会话、安全密钥与外部身份各带按钮；结束一台设备后剩 1 行且两台设备 /api/auth/me 为 200/401；移除安全密钥、解除外部身份后详情不再列出；时间线显示三条 admin.user.* 事件与理由；英文视图按钮「Sign this device out」；support 账户无任何按钮并看到说明。证据 `evidence/2026-10-11-admin-account-actions/`（browser-report.json、verification.json、5 张截图）。
+
+## 2026-10-11 CR-090 Admin A11 管理员第二因素策略（本地+隔离浏览器）
+
+平台设置 `security.admin_second_factor`（off/required）：required 时平台管理员会话须含两类不同因素或经用户验证的 Passkey，否则 `require_platform` 回答 `step_up_required`（detail 含策略与是否已登记），`/api/auth/me` 给出 `admin_lock`；开启前至少一名可用最高管理员须已登记 TOTP 或 UV Passkey（否则 409 `no_second_factor_admin`）；平台配置页卡片与 `AdminStepUp` 按原因提示登记或用安全密钥确认/重新登录。
+测试：test_platform_access 新增 1 例 + 矩阵 2 行通过（含真实 TOTP 登记与口令+验证码登录）；account-web 167 通过（refusals 门禁含新句）；typecheck/build、五守卫通过；identity+integration 全量 2903 通过（19:56–20:05Z）。
+浏览器（隔离合成实例 127.0.0.1:33925，系统 Chrome）：开启被拒（卡片提示 0 人已登记，对话框显示「至少需要一名可用的最高管理员…」）→ 在账户安全页真实登记动态验证码（读取密钥用 pyotp 计算验证码，恢复码在截图前关闭）→ 卡片显示 1 人已登记与「本次登录只验证了口令」提示 → 开启成功后当前仅口令会话立即被锁（`admin_lock.reason=second_factor`，/api/admin/overview 403，管理页提示「平台要求管理员使用第二因素」）→ 退出后口令+验证码登录（amr password+totp）管理恢复 → support 角色管理员无第二因素：被锁、提示「你尚未登记安全密钥或动态验证码」并给出「前往账户安全页登记」链接，账户页步骤卡不再提供口令表单。证据 `evidence/2026-10-11-admin-second-factor/`（browser-report.json、verification.json、7 张截图）。
