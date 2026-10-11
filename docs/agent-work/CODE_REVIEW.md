@@ -312,3 +312,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：默认 off 时行为与之前完全一致（`admin_capable` 不变，`step_up_required` 原句不变）；required 时判定只看会话 `amr`（两类不同因素或 passkey_uv），口令重输不满足（`confirm_reauth` 只是把同一因素再记一次）；开启前置条件由服务器判定（至少一名可用最高管理员已登记 TOTP 或 UV Passkey），避免把所有管理员锁在管理之外；锁定只影响 `require_platform`（平台管理与 API 控制台），账户页、登记流程与 `/api/admin/session` 仍可用，所以被锁管理员总能自助解锁；策略写入与读取都在 meta，`sqlite3.Error` 时按 off 处理（与其他设置读取一致）；审计 meta 只含 before/mode/理由/已登记人数。
 - 风险/未做：没有宽限期——开启后所有仅口令的管理员会话立刻被锁（界面在开启前提示本人与人数）；`caller_session_strong` 仅供提示；组织级与全体用户范围、Passkey 浏览器实测未做；`platform.security.manage` 未新增，沿用 config.manage。
 - 验证：见 EVIDENCE「CR-090」与 evidence/2026-10-11-admin-second-factor/verification.json。
+
+## CR-091 · 成员关系与邀请的 Webhook/事件（API-5，2026-10-11，本轮新增，本地已验证）
+
+- 位置：packages/core/synwevo_core/member_events.py（六个触发器：memberships 的 INSERT/UPDATE OF role,can_export/DELETE，invitations 的 INSERT/UPDATE OF accepted_at/UPDATE OF revoked_at），store.py 安装；apps/docs/synwevo_docs/webhooks.py `EVENT_TYPES`/`EVENT_PREFIXES`；SDK 目录（python `validation.py`、typescript `synwevo-docs.d.ts` + `types-check.ts`）；`docs/integration/openapi.yaml` 重新生成（回调条目）；`docs/integration/api.md`、`docs/platform/api-coverage.md`；tests/integration/test_member_events.py。
+- 审查要点：与来源文件事件同一模式——事件与行变化同事务（触发器），覆盖成员页、邀请接受、管理员认领/撤销、账户注销、安全日志恢复各路径，不依赖每个写入点记得发事件；负载只有标识与变化事实（workspace_id、user_id、role、can_export、previous_*、invitation_id、expires_at），不含邮箱、姓名、邀请令牌；tenant 为工作空间 id，只有该空间的凭据/订阅可见（测试另一空间只见自己）；`can_export` 用 `json(CASE …)` 写成 JSON 布尔；邀请过期不是行变化不发事件，`invitation.revoked` 只在未接受时发；旧代码不认识的类型按既有回滚语义忽略。
+- 风险/未做：新空间创建与账户注销也会产生 member.added/removed（真实变化，已在文档说明）；恢复安全日志回放的成员变更同样发事件（它们确是状态变化，但订阅方会在恢复时收到一批）；模板 Webhook 事件仍未做；`job_events` 中的 user_id 在账户注销后保留（与审计一致，标识非内容）。
+- 验证：tests/integration/test_member_events.py 2 例通过；apps/docs test_file_events（含 SDK 目录一致）、test_api_docs（openapi 同步）、事件流/订阅测试通过；Python SDK 55 通过；TypeScript SDK 48 通过；五守卫通过。

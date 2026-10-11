@@ -849,6 +849,11 @@ class Store:
         # the types it does not know; the trigger keeps writing rows its feed lists with job_id ''.
         from .docs_file_events import SCHEMA_SQL as DOCS_FILE_EVENTS_SCHEMA
         c.executescript(DOCS_FILE_EVENTS_SCHEMA)
+        # API-5 (additive): membership and invitation changes become event rows in the same
+        # transaction (member.added / changed / removed, invitation.created / accepted / revoked),
+        # identifiers only. Rollback: as above — older code ignores the types it does not know.
+        from .member_events import SCHEMA_SQL as MEMBER_EVENTS_SCHEMA
+        c.executescript(MEMBER_EVENTS_SCHEMA)
         # API-4 (additive): a person's consent to an integration, and authorization requests parked
         # for it. Live delegations that predate consent are recorded once as legacy consents so they
         # can be seen and withdrawn. Rollback: older code never reads either table (it issues codes

@@ -759,3 +759,8 @@ Oscar 在 Agent 设置里把 Workspace B 的数据流政策从「仅限已有阅
 平台设置 `security.admin_second_factor`（off/required）：required 时平台管理员会话须含两类不同因素或经用户验证的 Passkey，否则 `require_platform` 回答 `step_up_required`（detail 含策略与是否已登记），`/api/auth/me` 给出 `admin_lock`；开启前至少一名可用最高管理员须已登记 TOTP 或 UV Passkey（否则 409 `no_second_factor_admin`）；平台配置页卡片与 `AdminStepUp` 按原因提示登记或用安全密钥确认/重新登录。
 测试：test_platform_access 新增 1 例 + 矩阵 2 行通过（含真实 TOTP 登记与口令+验证码登录）；account-web 167 通过（refusals 门禁含新句）；typecheck/build、五守卫通过；identity+integration 全量 2903 通过（19:56–20:05Z）。
 浏览器（隔离合成实例 127.0.0.1:33925，系统 Chrome）：开启被拒（卡片提示 0 人已登记，对话框显示「至少需要一名可用的最高管理员…」）→ 在账户安全页真实登记动态验证码（读取密钥用 pyotp 计算验证码，恢复码在截图前关闭）→ 卡片显示 1 人已登记与「本次登录只验证了口令」提示 → 开启成功后当前仅口令会话立即被锁（`admin_lock.reason=second_factor`，/api/admin/overview 403，管理页提示「平台要求管理员使用第二因素」）→ 退出后口令+验证码登录（amr password+totp）管理恢复 → support 角色管理员无第二因素：被锁、提示「你尚未登记安全密钥或动态验证码」并给出「前往账户安全页登记」链接，账户页步骤卡不再提供口令表单。证据 `evidence/2026-10-11-admin-second-factor/`（browser-report.json、verification.json、7 张截图）。
+
+## 2026-10-11 CR-091 成员关系与邀请事件（本地）
+
+`synwevo_core.member_events` 触发器把成员关系与邀请的行变化同事务写入 `job_events`（member.added/changed/removed、invitation.created/accepted/revoked，仅标识），Docs 订阅与事件流接受 `member.*`/`invitation.*`；SDK 目录与 OpenAPI 回调同步更新；api.md 与 api-coverage 记录。
+测试：tests/integration/test_member_events.py 2 例（邀请→接受→改角色→移除→再邀请→撤回的完整序列与数据；feed 与 outbox 不含邮箱/令牌/空间名；另一空间凭据只见自身；订阅过滤接受 `member.*`、拒绝未知类型并在 allowed 中列出新类型）；apps/docs test_file_events + test_api_docs + 事件流/订阅相关测试通过；Python SDK 55、TypeScript SDK 48 通过；五守卫通过。未做浏览器验收（无界面变化）。

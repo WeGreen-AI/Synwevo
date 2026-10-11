@@ -205,6 +205,14 @@ function describe(event: WebhookEvent): string {
     case 'copy.failed':
     case 'copy.stale':
       return `${event.type} ${event.data.copy_id} → ${event.data.target_workspace_id}`;
+    case 'member.added':
+    case 'member.changed':
+    case 'member.removed':
+      return `${event.type} ${event.data.user_id} ${event.data.role} in ${event.data.workspace_id}`;
+    case 'invitation.created':
+    case 'invitation.accepted':
+    case 'invitation.revoked':
+      return `${event.type} ${event.data.invitation_id} in ${event.data.workspace_id}`;
     default:
       return `${event.type} ${event.job.id} ${event.job.status}`;
   }

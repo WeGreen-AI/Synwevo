@@ -512,6 +512,21 @@ CSV 选项只适用于 CSV/TSV，未提供的组内控件恢复默认值。解�
 `/files/{fid}`。扫描暂不可用（`scan_failed`，有限自动重试或等待人工恢复）期间不发事件；查询来源的scan字段区分。订阅可用 `file.*` 或具体类型过滤；
 `GET /events?types=file.ready,…` 同样可查，条目带 `file_id`、`project_id`，`job_id` 为 null。
 
+**成员与邀请事件（API-5）**：工作空间成员关系与邀请的变化各发一次，与行的变化在同一事务里写入（数据库触发器，覆盖成员页、
+邀请接受、管理员认领/撤销、账户注销与安全日志恢复各条路径）：
+
+| 类型 | 何时 | `data` |
+|---|---|---|
+| `member.added` | 出现成员关系：接受邀请、直接加入、新空间的所有者、管理员认领 | `workspace_id, user_id, role, can_export` |
+| `member.changed` | 角色或导出权变化 | 以上加 `previous_role, previous_can_export` |
+| `member.removed` | 成员关系消失：移除、所有权交接清理、账户注销、恢复撤销加入 | `workspace_id, user_id, role` |
+| `invitation.created` | 发出邀请 | `workspace_id, invitation_id, role, can_export, expires_at` |
+| `invitation.accepted` | 邀请被接受（同时产生 `member.added`） | `workspace_id, invitation_id, user_id, role` |
+| `invitation.revoked` | 邀请被撤回 | `workspace_id, invitation_id` |
+
+负载只有标识与变化本身，`job: null`；不含邮箱、姓名或邀请令牌，需要更多信息请用凭据读取目录接口。邀请过期不是行变化，不发事件（`expires_at`
+在 `invitation.created` 里）。订阅可用 `member.*`、`invitation.*` 或具体类型过滤；`GET /events?types=member.added,…` 同样可查。
+
 Webhook 默认关闭，按部署配置开启：
 
 ```bash

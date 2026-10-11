@@ -76,12 +76,16 @@ export type FileEventType = 'file.ready' | 'file.needs_ocr' | 'file.rejected' | 
 export type CopyEventType =
   | 'copy.requested' | 'copy.approved' | 'copy.rejected' | 'copy.withdrawn' | 'copy.expired'
   | 'copy.done' | 'copy.failed' | 'copy.stale';
+/** Workspace membership changes (identifiers only; the directory API has the rest). */
+export type MemberEventType = 'member.added' | 'member.changed' | 'member.removed';
+/** Invitation life (identifiers only; never the address or the token). */
+export type InvitationEventType = 'invitation.created' | 'invitation.accepted' | 'invitation.revoked';
 /** Types in the workspace event feed (`GET /events`). */
-export type EventType = JobEventType | FileEventType | CopyEventType;
+export type EventType = JobEventType | FileEventType | CopyEventType | MemberEventType | InvitationEventType;
 /** Types a webhook delivery can carry: the feed's plus the test ping. */
 export type WebhookEventType = EventType | 'webhook.ping';
 /** A subscription filter: everything, a family, or one type. */
-export type WebhookEventFilter = '*' | 'job.*' | 'file.*' | 'copy.*' | EventType;
+export type WebhookEventFilter = '*' | 'job.*' | 'file.*' | 'copy.*' | 'member.*' | 'invitation.*' | EventType;
 export type SubscriptionStatus = 'active' | 'paused' | 'disabled';
 export type DeliveryStatus = 'pending' | 'delivered' | 'failed' | 'dropped';
 /** Shortest decoded webhook key a verifier accepts; shorter is a configuration mistake. */
@@ -1390,8 +1394,48 @@ export interface CopyFeedEvent {
   data: CopyEventData;
 }
 
+/** A membership change: who, which role, the export right; `previous_*` only on member.changed. */
+export interface MemberEventData {
+  workspace_id: string;
+  user_id: string;
+  role: 'viewer' | 'editor' | 'admin' | 'owner';
+  can_export?: boolean;
+  previous_role?: 'viewer' | 'editor' | 'admin' | 'owner';
+  previous_can_export?: boolean;
+}
+
+/** An invitation's life: ids and the role; `user_id` on invitation.accepted, `expires_at` on invitation.created. */
+export interface InvitationEventData {
+  workspace_id: string;
+  invitation_id: string;
+  role?: 'viewer' | 'editor' | 'admin' | 'owner';
+  can_export?: boolean;
+  expires_at?: number;
+  user_id?: string;
+}
+
+export interface MemberFeedEvent {
+  id: string;
+  type: MemberEventType;
+  version: number;
+  occurred_at: number;
+  job_id: null;
+  project_id: null;
+  data: MemberEventData;
+}
+
+export interface InvitationFeedEvent {
+  id: string;
+  type: InvitationEventType;
+  version: number;
+  occurred_at: number;
+  job_id: null;
+  project_id: null;
+  data: InvitationEventData;
+}
+
 /** An item of events(): the workspace feed; narrow on `type`. `id` equals the webhook-id of the same event. */
-export type FeedEvent = JobFeedEvent | FileFeedEvent | CopyFeedEvent;
+export type FeedEvent = JobFeedEvent | FileFeedEvent | CopyFeedEvent | MemberFeedEvent | InvitationFeedEvent;
 
 /** The job summary a job webhook carries. The deployment endpoint's payload adds tenant and times. */
 export interface WebhookJobSummary {
@@ -1447,8 +1491,28 @@ export interface CopyWebhookEvent {
   data: CopyEventData;
 }
 
+export interface MemberWebhookEvent {
+  id: string;
+  type: MemberEventType;
+  version: number;
+  occurred_at: number;
+  tenant: string;
+  job: null;
+  data: MemberEventData;
+}
+
+export interface InvitationWebhookEvent {
+  id: string;
+  type: InvitationEventType;
+  version: number;
+  occurred_at: number;
+  tenant: string;
+  job: null;
+  data: InvitationEventData;
+}
+
 /** The JSON body of a delivery; narrow on `type`. */
-export type WebhookEvent = JobWebhookEvent | FileWebhookEvent | CopyWebhookEvent | PingWebhookEvent;
+export type WebhookEvent = JobWebhookEvent | FileWebhookEvent | CopyWebhookEvent | MemberWebhookEvent | InvitationWebhookEvent | PingWebhookEvent;
 
 export interface CopyTarget {
   id: string;

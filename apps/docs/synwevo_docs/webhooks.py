@@ -63,6 +63,7 @@ from synwevo_core.webhook_delivery import (
 from synwevo_core.store import Store, new_id
 from synwevo_core import workers
 from synwevo_core.docs_file_events import FILE_EVENT_TYPES
+from synwevo_core.member_events import MEMBER_EVENT_TYPES
 from synwevo_core.project_copies import COPY_EVENT_TYPES
 
 CLAIM_MARGIN_S = 30
@@ -77,8 +78,10 @@ JOB_EVENT_TYPES = ("job.created", "job.started", "job.planned", "job.cancel_requ
                    "job.completed", "job.completed_with_errors", "job.failed", "job.cancelled")
 # Source-file verdicts, written by a trigger in the transaction that changes the file's status
 # (synwevo_core.docs_file_events): job_id is '' and data carries file_id / project_id / status.
-EVENT_TYPES = JOB_EVENT_TYPES + FILE_EVENT_TYPES + COPY_EVENT_TYPES
-EVENT_PREFIXES = ("job.*", "file.*", "copy.*")
+# Membership and invitation changes (synwevo_core.member_events): the same trigger pattern, with
+# identifiers only; `member.*` / `invitation.*` are the prefixes a directory integration subscribes to.
+EVENT_TYPES = JOB_EVENT_TYPES + FILE_EVENT_TYPES + COPY_EVENT_TYPES + MEMBER_EVENT_TYPES
+EVENT_PREFIXES = ("job.*", "file.*", "copy.*", "member.*", "invitation.*")
 PING_EVENT = "webhook.ping"
 DELIVERY_STATUSES = ("pending", "delivered", "failed", "dropped")
 

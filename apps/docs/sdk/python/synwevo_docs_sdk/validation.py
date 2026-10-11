@@ -26,8 +26,10 @@ EVENT_TYPES = ("job.created", "job.started", "job.planned", "job.cancel_requeste
                "job.completed", "job.completed_with_errors", "job.failed", "job.cancelled",
                "file.ready", "file.needs_ocr", "file.rejected", "file.failed",
                "copy.requested", "copy.approved", "copy.rejected", "copy.withdrawn", "copy.expired",
-               "copy.done", "copy.failed", "copy.stale")
-EVENT_FILTERS = ("*", "job.*", "file.*", "copy.*") + EVENT_TYPES
+               "copy.done", "copy.failed", "copy.stale",
+               "member.added", "member.changed", "member.removed",
+               "invitation.created", "invitation.accepted", "invitation.revoked")
+EVENT_FILTERS = ("*", "job.*", "file.*", "copy.*", "member.*", "invitation.*") + EVENT_TYPES
 _FORMAT = re.compile(r"^[a-z0-9]{1,10}$")
 
 
