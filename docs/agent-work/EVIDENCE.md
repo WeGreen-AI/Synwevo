@@ -720,3 +720,6 @@ services/identity/web 的 12 个 Vite SSR 测试改用 `tests/_vite.mjs`（私�
 
 测试：test_agent_context 新增 2 例（审批模板/请求、提取模板、数据处理方案列出/搜索/核对/一起发送，前缀错配 422；走查有界）；apps/suite/tests 全量 1130 通过（点计数，exit 0）；suite-web 206；根 typecheck/build、四守卫通过。隔离真实服务（33885，含第二成员作为审批人、真实模板/请求/提取模板/方案）Playwright：类型下拉 8 项、每类说明与对象列出、四枚来源片、报价对话框列出“名称 · 类型 · 空间”四项；控制台仅登录前 401。证据 `evidence/2026-10-11-agent-context-kinds/`。
 
+## 2026-10-11 962b375 生产发布核验
+
+Actions 38150240686（verify 15:11–16:10Z，deploy 16:10–16:12Z，success）回执 `evidence/2026-10-11-agent-budget-sources/ci-release.json`；16:16Z 只读核验 `production-release.json`：current 镜像 962b375、前镜像 e7c1f05、备份 20261011T161149Z，四应用容器 revision 一致、六容器 healthy，portal 内四个模块源码 sha256 与提交一致，五域 `/readyz` ready。未调用模型/支付，未改配置。
