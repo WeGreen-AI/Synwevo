@@ -14,10 +14,10 @@
 
 ## 当前工作包与下一条动作
 
-- **CI阻断修复（本次提交）**：Docs门禁把extract_context的7句拒绝记为仅经Agent个人文件路径到达、由Suite `files.ts`/`files.messages.ts` 三语言呈现（Suite测试已约束）；ingest内部两处LimitError改为直接抛同一context_limit_exceeded；Suite worker自身字数上限改用context_limit_exceeded（context_too_large是业务资料选择器的码，agentErrorText先查文件码会串词）；parse_cancelled改按“解析中断”呈现。另修前端测试缓存竞争：每个Vite测试服务器独占临时cacheDir并关闭时删除、关闭依赖优化器（`tests/_vite.ts`），不改任何断言。
-- 本地：Docs门禁16通过；docs-web 145、suite-web 201×2（0 ENOTEMPTY）、导出已提交树197+145通过；ingest+agent_files pytest 98通过；根typecheck/build、六守卫通过。回执 `evidence/2026-10-11-ci-refusals/verification.json`。未跑完整三套pytest与容器验证，交由CI。
-- **CR-079 报价前来源审阅（未提交，保留）**：`BudgetDialog.tsx`、`budget.messages.ts`、`budgetSources.ts`、`tests/agent-budget-sources.test.ts`（4例在本地通过）。尚未按F2要求完成：会话切换/关闭/刷新报价/迟到回调/AbortSignal审查、来源失效阻止进入报价的交互、浏览器三语/390px/键盘/减少动态验收。不与本次CI修复混提。
-- 下一动作：提交推送本修复→跟踪新SHA Actions verify/deploy→部署完成后只读核验current/revision/五域→写回STATE/EVIDENCE→继续CR-079完整验证，再按BACKLOG继续取消/恢复审查与剩余范围。
+- **CI阻断修复已推送**：`e7c1f054e97a724e19ceaadbae6dd0ce74507858` → main，Actions38146440152：verify的“Verify and build”（含原失败的Docs refusals门禁）已通过，运行时容器验证进行中，deploy未开始。CR-078与此修复在此SHA部署前都**未上线**。
+- **CR-079 报价前来源审阅：代码完成、本地与隔离浏览器已验证，待提交**：BudgetDialog在报价前列出每项所选资料的名称、类别（表单/数据表）与来源空间或“个人文件”，读取只走 `agent.context.resolve`/`agent.file.get` 并核对ID/快照/有效状态；任一来源变化、删除、撤权或响应损坏即阻止进入报价（提示+重试，不漏项）；offer与来源审阅共用一个AbortSignal，关闭/重载/迟到回调由generation票据保护。顺带修复首次键盘打开后Escape焦点落到body（懒加载块经路由级Suspense隐藏了输入框）：对话框自带Suspense边界。证据 `evidence/2026-10-11-agent-budget-sources/`（verification.json、三语桌面/390截图、reduced-motion截图与日志、fixture）。
+- 本地：suite-web 205通过（含4例budgetSources、4例dialog）、根typecheck/build、六守卫通过；隔离服务上三语/1024/390、Escape焦点、来源变化阻断与恢复、1报价/1运行/1结算、无重复请求、reduced-motion均已观察。
+- 下一动作：跟踪Actions38146440152 deploy→只读核验生产current/revision/五域→提交并推送CR-079（新SHA再走完整CI/CD）→写回发布回执→继续取消/恢复执行卡片独立审查与BACKLOG余项。
 
 ## 已核实的正式Agent与支付配置（不重复创建或发布）
 
@@ -40,4 +40,4 @@
 - 历史调查及状态变更保留在EVIDENCE/BACKLOG，不将旧暂停或旧发布状态作为当前事实。
 - 接续在本实施树读取MASTER_PROMPT、STATE、BACKLOG、EVIDENCE、CODE_REVIEW，核对实际Git/CI/生产和锁，复用配置与副作用记录；不重建、不重放、不绕过门禁。交接快照 `CLAUDE_CODE_HANDOFF_2026-10-11.txt` 只在主检出、不是第二份状态真相。
 
-保存时间：2026-10-11T14:14:24.422428+00:00
+保存时间：2026-10-11T14:43:08.216053+00:00（上一次：2026-10-11T14:14:24.422428+00:00）

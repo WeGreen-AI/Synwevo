@@ -16,6 +16,8 @@ import { consentTotal, consentInput, type Consent, type ConsentInput, type Conse
 import { ConsentRecovery, ConsentScope, ConsentTerms, consentErrorKey, useConsentText } from './ConsentControls';
 import type { ConsentText } from './consent.messages';
 import type { Workspace } from './types';
+import { resolveBudgetSources, SourceReviewError, type BudgetSource } from './budgetSources';
+import { contextCopy } from './context.messages';
 
 export type { BudgetIntent, Offer, Quote, QuoteParams } from './budget';
 export interface BudgetDialogProps {
@@ -91,7 +93,9 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
   const m = (key: BudgetText, params?: Params) => t(budgetCopy[key][0], params);
   const { m: c } = useConsentText();
   const id = useId();
-  const [fixedIntent] = useState<BudgetIntent>(() => ({ ...intent }));
+  const [fixedIntent] = useState<BudgetIntent>(() => ({ ...intent,
+    context_refs: intent.context_refs?.map((ref) => ({ ...ref })), file_refs: intent.file_refs?.map((ref) => ({ ...ref })) }));
+  const [sources, setSources] = useState<BudgetSource[]>([]);
   // Fixed when the dialog opens: saving a consent refreshes the page's list, which must not
   // withdraw this dialog's next step or bring back the retired single-run quote.
   const [consent] = useState(offered);
@@ -136,11 +140,16 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
     setPhase('loading');
     setError(null);
     setOffer(null);
+    setSources([]);
     try {
-      const result = await read<Offer>('agent.billing.offer', {}, null, controller.signal);
+      const [result, reviewed] = await Promise.all([
+        read<Offer>('agent.billing.offer', {}, null, controller.signal),
+        resolveBudgetSources(fixedIntent, read, controller.signal),
+      ]);
       validateOffer(result);
       if (!alive.current || generation.current !== ticket) return;
       setOffer(result);
+      setSources(reviewed);
       const reuse = priorRef.current && renewalParams(priorRef.current, result, priorRef.current.terms.unit);
       if (reuse) {
         setBudget(majorDecimal(reuse.budget, result.unit.scale));
@@ -388,6 +397,13 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
         {fixedIntent.text != null && <div className="notice" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: '12rem', overflow: 'auto' }} tabIndex={0}>{fixedIntent.text}</div>}
         {fixedIntent.regenerate_of && <p>{m('regenerate', { id: fixedIntent.regenerate_of })}</p>}
         {fixedIntent.parent_message_id && <p className="muted small">{m('parent', { id: fixedIntent.parent_message_id })}</p>}
+        {(fixedIntent.context_refs?.length || fixedIntent.file_refs?.length) ? <section aria-label={m('sources')}>
+          <h4>{m('sources')}</h4>
+          <p className="muted small">{m('sourcesNote')}</p>
+          {sources.length > 0 && <ul aria-label={m('sources')} style={{ margin: 0, paddingInlineStart: '1.25em' }}>{sources.map((source, i) => <li key={i}>
+            <strong>{source.title}</strong> · {source.kind === 'file' ? m('personalFile') : `${t(contextCopy[source.kind][0])} · ${source.workspace}`}
+          </li>)}</ul>}
+        </section> : null}
       </section>
       {changed && <p className="notice warn" role="alert">{m('changed')}</p>}
       {!hasIntent && <p className="notice err" role="alert">{m('missing')}</p>}
@@ -398,7 +414,7 @@ export default function BudgetDialog({ intent, onQuote, onConfirm, onClose, cons
       </div>}
       {differs && phase === 'review' && <p className="notice warn" role="alert">{ct('quoteDiffers')}</p>}
       {['offerError', 'quoteError', 'confirmError'].includes(phase) && <div>
-        <Failure error={new Error(paymentRefusal(error) ?? m(errorText(error, phase === 'offerError' ? 'offerError' : phase === 'quoteError' ? 'quoteError' : 'confirmError')))}
+        <Failure error={new Error(error instanceof SourceReviewError ? m('sourcesUnavailable') : paymentRefusal(error) ?? m(errorText(error, phase === 'offerError' ? 'offerError' : phase === 'quoteError' ? 'quoteError' : 'confirmError')))}
           onRetry={phase === 'offerError' ? () => void loadOffer() : undefined} />
         {error instanceof ApiError && error.requestId && <p className="muted small">{m('requestId', { id: error.requestId })}</p>}
       </div>}

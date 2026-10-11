@@ -247,3 +247,14 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 处置：`tests/_vite.ts testServer()`：独占mkdtemp cacheDir、`optimizeDeps.noDiscovery=true/include=[]`、close时删除自身目录；10个已提交测试与未提交的CR-079测试改用。不串行、不删测、不动全局。
 - 验证：suite-web 201×2通过、0 ENOTEMPTY、tmpdir无残留；导出树197通过。后续：services/identity/web/tests 同模式未改（未观察到失败）。
 
+## CR-079 · 报价前展示并核对所选来源（2026-10-11，本轮新增，已验证·本地+隔离浏览器）
+
+- 位置：apps/suite/web/src/apps/agent/budgetSources.ts、BudgetDialog.tsx、budget.messages.ts；测试 tests/agent-budget-sources.test.ts、tests/agent-budget-dialog.test.ts。
+- 审查结论：读取只用个人操作且与选择器同一快照校验；来源变化/删除/撤权/损坏整体阻止报价并给出重试与安全返回；offer与审阅共用AbortSignal，close/renew/unmount中止并以generation票据丢弃迟到结果；`sameIntent` 已含file_refs/context_refs，父组件意图变化时按钮禁用；服务端在quote/start仍重新核对（前端展示非唯一安全措施）。`personalFile` 英文与 fileCopy.open/contextCopy.personalFile 同源串一致（先注册者生效），已对齐避免误导。
+- 验证：见 evidence/2026-10-11-agent-budget-sources/verification.json（205前端、三语/390/键盘/来源变化/计数/reduced-motion）。
+
+## CR-082 · 懒加载报价对话框首次打开丢失焦点返回目标（2026-10-11，原有，已修复·探针验证）
+
+- 位置：apps/suite/web/src/apps/agent/index.tsx（`lazy(BudgetDialog)` 经 App.tsx 路由级 Suspense）。影响：低-中（键盘用户首次打开后Escape焦点落到body；第二次正常）。证据：Playwright焦点探针 attempt1 BODY / attempt2 TEXTAREA；focusin/out日志显示块加载期间输入框失焦。
+- 处置：对话框自带 `<Suspense fallback={null}>`，路由内容不再因块加载被隐藏；修复后两次均回到 `#agent-message`。既有Modal焦点逻辑未改。
+

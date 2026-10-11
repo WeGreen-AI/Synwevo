@@ -1,4 +1,4 @@
-import { lazy, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Route, useLocation, useMatch, useNavigate } from "react-router-dom";
 import { ApiError, PlatformNav, RequireSession, get, useSession } from "@synwevo/auth-client";
 import { Brand, useDialog, useI18n } from "@synwevo/ui";
@@ -329,7 +329,9 @@ function AgentApp() {
             </>} />
         </>}
       </main>
-      {budgetIntent && <BudgetDialog intent={budgetIntent} onClose={() => setBudgetIntent(undefined)}
+      {/* Its own boundary: through the route's Suspense the first (lazy) open hid the composer while the
+          chunk loaded, so the dialog found nothing focused to return focus to on close (CR-079). */}
+      {budgetIntent && <Suspense fallback={null}><BudgetDialog intent={budgetIntent} onClose={() => setBudgetIntent(undefined)}
         onQuote={async (params) => {
           const quote = await write("agent.turn.quote", { ...budgetIntent, ...params, ...payerInput(payer, userId) });
           // The quote must name the payer shown in the dialog; a server that ignores the choice
@@ -367,7 +369,7 @@ function AgentApp() {
             consents.refresh();
             await refresh();
           },
-        }} />}
+        }} /></Suspense>}
     </div>
   </div>;
 }

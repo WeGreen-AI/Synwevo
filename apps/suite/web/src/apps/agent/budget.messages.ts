@@ -8,6 +8,11 @@ export const budgetCopy = {
   live: ['正式环境', 'Live environment', '正式環境'],
   message: ['本次固定消息', 'Message for this run', '本次固定訊息'],
   fixed: ['此报价只适用于下面的消息或重新生成请求。', 'This quote applies only to the message or regeneration request below.', '此報價只適用於下方的訊息或重新產生請求。'],
+  sources: ['本次选择的参考资料', 'Sources selected for this message', '本次選擇的參考資料'],
+  sourcesNote: ['以下资料的所选版本将随这条消息发送。原有对话上下文仍遵循当前来源权限。', 'The selected versions below will be sent with this message. Earlier conversation context remains subject to current source permissions.', '以下資料的所選版本將隨這條訊息傳送。原有對話上下文仍遵循目前來源權限。'],
+  // The same source string as fileCopy.open / contextCopy.personalFile, whose registration wins.
+  personalFile: ['个人文件', 'Personal files', '個人檔案'],
+  sourcesUnavailable: ['无法核对所选资料或其版本已变化。请重试；如仍不可用，请关闭报价并重新选择资料。', 'The selected sources could not be verified or their versions changed. Retry; if still unavailable, close this quote and choose the sources again.', '無法核對所選資料或其版本已變更。請重試；如仍不可用，請關閉報價並重新選擇資料。'],
   regenerate: ['重新生成指定回答：{id}。将保留原回答，费用仅授权给这次重新生成。', 'Regenerate answer {id}. The original answer is kept; this consent covers only this regeneration.', '重新產生指定回答：{id}。將保留原回答，費用僅授權給這次重新產生。'],
   parent: ['接续消息：{id}', 'Continue from message: {id}', '接續訊息：{id}'],
   missing: ['没有可确认的消息或重新生成请求，请关闭后重新选择。', 'No message or regeneration request is available. Close and select it again.', '沒有可確認的訊息或重新產生請求，請關閉後重新選擇。'],

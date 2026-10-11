@@ -1,0 +1,16 @@
+{
+ "base": "http://127.0.0.1:33879",
+ "user_id": "u_9f70ea65bd40",
+ "email": "metering@example.test",
+ "workspace": "w_540227458807",
+ "workspace2": "w_011076695b75",
+ "forms": [
+  "frm_7e33406c995b",
+  "frm_0ef134fb5a24"
+ ],
+ "other_form": "frm_723e02e129ee",
+ "table": "tbl_bab458afaf22",
+ "conversation": "conv_348e07d1b6b6",
+ "data_root": "/private/tmp/claude-501/-Users-lihiko-repo-wegreen-synwevo/13b6809f-79a1-4e4a-a165-a3ad0a392642/scratchpad/cr079/data",
+ "environment": "isolated synthetic data in the session scratchpad; model and payment are explicit test transports; all network dispatch refused"
+}

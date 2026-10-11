@@ -1,0 +1,74 @@
+{
+  "recorded_at": "2026-10-11T14:42:20.405951+00:00",
+  "base_commit": "e7c1f054e97a724e19ceaadbae6dd0ce74507858",
+  "work_package": "CR-079 pre-quote source review (names of the chosen attachments/business resources, their kind and workspace or “Personal files”, shown before any payment consent)",
+  "source_sha256": {
+    "apps/suite/web/src/apps/agent/BudgetDialog.tsx": "1c8e2fc922875d74dee280bc055515740cb57789b5474d3cbc89e06f505a0231",
+    "apps/suite/web/src/apps/agent/budget.messages.ts": "18377f5d366b7985fa369bfc646d37efb8e702afdb864bbd1b7c5511368fa680",
+    "apps/suite/web/src/apps/agent/budgetSources.ts": "ee79b4171f7701cf9dabe72e7e91d11441f5c0333d38f22b02a9fd69b46c61fe",
+    "apps/suite/web/src/apps/agent/index.tsx": "b26ea8bd12e821ad1cb97fe82ee084c336852d838e7ee293a8cc313a26838f1f",
+    "apps/suite/web/tests/agent-budget-sources.test.ts": "a7fca0abba7215fc117a0b18150865a6bdd0ae51812ebb3d7335c9d4596099b5",
+    "apps/suite/web/tests/agent-budget-dialog.test.ts": "208e2de73ff1d8f54c3585c9a043ee9845edf1c244f179ef787cb58a5226cfae"
+  },
+  "checks": {
+    "suite_web_full": {
+      "log_sha256": "a1fbd1d1abf74974a9c758138747ca12f9dc109049e477d7d8aea5f35a540530",
+      "result": "205 passed, 0 failed, 0 ENOTEMPTY (197 existing + 4 budgetSources + 4 dialog)"
+    },
+    "dialog_tests": "apps/suite/web/tests/agent-budget-dialog.test.ts: compiled production BudgetDialog with read doubles — sources listed with kind/workspace or Personal files, one shared AbortSignal, no body text; changed/deleted/revoked source blocks the quote with sourcesUnavailable, retry re-reads offer + every source and recovers; offer failure keeps its wording; plain/regeneration intents read only the offer; close while pending aborts and a late answer changes nothing",
+    "root_typecheck": {
+      "log_sha256": "2a4b215b7659f992e7dc91dc83a388ee54517e5aedaee1c78f8f7fc1a3f5990b",
+      "result": "exit 0"
+    },
+    "root_build": {
+      "log_sha256": "d9baf466d2238cdcf814e0a6f3b2d29833d6b24b1bd7ecc2a5f6d9ff353c2abe",
+      "result": "exit 0"
+    },
+    "guards": "check_boundaries, check_brand, check_design, check_component_names, brand_assets --check, app_icon_assets --check: ok",
+    "not_run": [
+      "python suites (no Python change in this package)",
+      "identity/docs/messages/portal web tests (unchanged)",
+      "docker verify image",
+      "real DeepSeek or Stripe"
+    ]
+  },
+  "browser": {
+    "server": "isolated single-process role=all on 127.0.0.1:33879 from this worktree's packages (Python 3.12 env), SYNWEVO_TEST_INSTANCE=1, BILLING_ENVIRONMENT=test, data in the session scratchpad (never data/); real Store/auth/Docs reader/ledger/quotes; metering gateway fixture as model + payment test transports; outbound network refused; the Agent files ticker ran",
+    "fixture": "fixture.json (synthetic account metering@example.test, two workspaces, forms, table, conversation); file af_6935157884da uploaded through the real file dialog/route (140 bytes, parsed, ready)",
+    "tool": "Claude desktop built-in browser (Chromium) 1024×768 and emulated 390×844; Playwright Chrome channel for reduced motion and the focus probe",
+    "languages": [
+      "zh-Hans",
+      "en",
+      "zh-Hant"
+    ],
+    "observed": [
+      "dialog lists the form (表单/Form · Synthetic acceptance A), the table (数据表/Table · Synthetic acceptance A) and the file (· 个人文件/Personal files) by name before the quote, long names wrap, no source body shown",
+      "each open: 1 agent.billing.offer + 1 agent.context.resolve per business ref + 1 agent.file.get per file, all 200; reopen repeats exactly once",
+      "quote: 1 agent.turn.quote; confirm test budget: 1 agent.turn.start; DB after: quotes 1 (accepted), turns 1 succeeded, attempts 1 settled, settlements 1, files 1 ready, messages 2; wallet 0.001 → 0.000958, answer 'actual fixture response'",
+      "source changed (a field added to the form in the Forms app, forms.form.update_draft) → next send: alert 无法核对所选资料或其版本已变化…, no quote button, no partial list, no raw server text; retry re-reads and stays blocked; close keeps draft and chips; removing and re-choosing the form recovers with the current version; the fixture conversation that had used the old version then showed its history hidden (access changed) and a disabled composer, as CR-077 specifies",
+      "390×844: document and dialog overflow 0, list items overflow 0",
+      "Escape closes the dialog and returns focus to the opener (send button after a click; the message box after Enter) with draft and chips intact; Tab stays inside the dialog",
+      "prefers-reduced-motion: reduce (Chrome channel): dialog animation none / 0.001s, listed sources shown within ~0.8 s, console only the pre-sign-in 401",
+      "console errors over the whole session: the pre-sign-in 401 and one 403 from my own manual fetch without the CSRF header (not product behaviour)"
+    ],
+    "found_and_fixed": "first keyboard open per page: the lazy BudgetDialog chunk loaded through the route-level Suspense, which hid the composer, so the shared Modal captured no opener and Escape left focus on <body> (focus probe attempt 1 BODY / attempt 2 TEXTAREA); index.tsx now wraps the dialog in its own Suspense(fallback null): probe attempt 1 and 2 both return to #agent-message",
+    "screenshots": [
+      "en-desktop-sources.jpg",
+      "en-reduced-motion-desktop.png",
+      "zh-hans-desktop-sources.jpg",
+      "zh-hans-mobile-390-sources.jpg",
+      "zh-hans-reduced-motion-desktop.png",
+      "zh-hant-desktop-sources.jpg"
+    ],
+    "logs": {
+      "reduced-motion.log": "d375c775d9de9b0b23c4bf0b6538136cb5b525b73ea8cb44648647213978df50"
+    },
+    "not_claimed": [
+      "real DeepSeek artifact or Stripe payment",
+      "OCR/Office attachments",
+      "a second person's revocation (only a definition change was exercised)",
+      "identity web Vite cache (unchanged)"
+    ],
+    "cleanup": "isolated server stopped; Forms tab closed; scratchpad data left in the session scratchpad only"
+  }
+}

@@ -682,3 +682,13 @@ Newton独立审查发现过期清扫窗口、旧账户删除兼容两项并复�
 
 identity `services/identity/web/tests/*.mjs` 同样共用Vite缓存但本轮未观察到失败，记为后续项，不在本次提交内改动。
 
+## 2026-10-11 CR-079报价前来源审阅（本地+隔离浏览器）
+
+实现：`budgetSources.ts` 只按所选引用读取（业务用 `agent.context.resolve`、文件用 `agent.file.get`，均个人上下文），核对ID、快照与ready状态，不保留正文或链接；超过5项、任一失败或响应损坏整体抛SourceReviewError。`BudgetDialog` 与offer并行读取并共用AbortSignal，列出“名称 · 类别 · 来源空间”或“名称 · 个人文件”；失败时显示 `sourcesUnavailable` 并提供重试，不出现报价按钮；意图深拷贝固定、关闭/重载/迟到回调由generation票据与alive保护。
+
+测试：`agent-budget-sources.test.ts` 4例（只读所选、快照/删除/撤权/损坏整体拒绝、普通与重生成不读来源、超限不读）；新增 `agent-budget-dialog.test.ts` 4例，用既有编译组件夹具跑生产BudgetDialog：列表与共享信号、变化/删除/撤权阻断与重试恢复、offer失败保留原措辞、关闭中止且迟到结果不改状态。suite-web全量205通过、0 ENOTEMPTY；根typecheck/build、六守卫通过。
+
+隔离真实服务（本树代码，Python3.12环境，127.0.0.1:33879，scratchpad数据，真实Store/认证/Docs解析/账本/报价，模型与支付为夹具传输、禁止外发）：真实文件对话框上传140字节文本并解析就绪；选择长名表单+数据表+文件后发送，对话框三语（简/英/繁）列出三项来源；每次打开恰好1 offer+2 resolve+1 file.get；390×844文档/对话框/列表项溢出均为0；Escape关闭后焦点回到打开者、草稿与已选保留；获取报价1次、确认测试预算1次→1 turn成功、1 attempt结算、1 settlement、余额0.001→0.000958，无重复quote/start。随后在Forms应用给该表单加一个字段（update_draft），再次发送：对话框显示“无法核对所选资料或其版本已变化…”、无报价按钮、无部分列表；重试重新读取仍阻止；关闭保留草稿；移除并重新选择后恢复正常。原使用旧版本的会话随即按CR-077规则隐藏历史并禁用输入。Playwright Chrome通道 `reduced_motion=reduce`：动画none/0.001s，来源在约0.8秒内显示。控制台仅登录前401与我手工无CSRF头的一次403（非产品行为）。
+
+发现并修复：首次键盘打开（懒加载块经App路由级Suspense）会隐藏输入框，Modal捕获不到打开者，Escape后焦点落到body（探针第1次BODY/第2次TEXTAREA）；`index.tsx` 给对话框独立Suspense边界后两次均回到输入框。源码/日志指纹、截图与fixture在 `evidence/2026-10-11-agent-budget-sources/`。未声称：真实DeepSeek产物/Stripe付款、OCR/Office附件、他人撤权场景。
+
