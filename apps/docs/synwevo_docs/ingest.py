@@ -32,11 +32,14 @@ FORMATS = ("csv", "tsv", "xlsx", "xlsm", "xls", "ods", "json", "txt", "md", "htm
 # Context is an all-or-nothing reader, deliberately narrower than member import.
 # chars counts decoded text (including CSV syntax), or PDF text including line separators;
 # output_chars also bounds the ENTIRE compact, ensure_ascii=False JSON result, sources included.
-CONTEXT_FORMATS = ("txt", "md", "csv", "tsv", "pdf")
+CONTEXT_FORMATS = ("txt", "md", "csv", "tsv", "pdf", "docx", "xlsx")
 CONTEXT_LIMITS = {"file_bytes": 20 * 1024 * 1024, "pages": 200, "lines": 5000,
-                  "tables": 1, "rows": 2000, "columns": 100, "cells": 10000,
+                  "tables": 32, "rows": 2000, "columns": 100, "cells": 10000,
                   "line_chars": 10000, "cell_chars": 10000, "chars": 60000,
                   "output_chars": 60000}
+#: An OLE compound file: a password-protected Office file (holding EncryptedPackage), or a
+#: legacy binary document under a modern extension.
+OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
 def _context_limit(kind: str, count: int) -> None:
@@ -62,6 +65,10 @@ def _context_invalid() -> None:
 def _context_needs_ocr() -> None:
     raise ServiceError(400, "context_needs_ocr", "文件含有图片、扫描或无法验证的文字内容，暂不支持完整上下文解析",
                        {"needsOCR": True})
+
+
+def _context_encrypted() -> None:
+    raise ServiceError(400, "context_encrypted", "加密文件不支持完整上下文解析，请先移除加密") from None
 
 
 def _context_line(out: dict, text: str, source: dict) -> None:
@@ -122,8 +129,15 @@ class DocumentIngest:
         PDF requires the existing full Docs engine's diagnostics. Only unencrypted, unrepaired
         text pages (and truly blank pages) are accepted: images, drawings, OCR/invisible text,
         annotations, forms, attachments and optional layers cannot be represented completely.
-        No OCR is attempted, even when requested. DOCX/XLSX and converters are intentionally
-        excluded: their import readers omit parts such as headers, comments or uncached values.
+        No OCR is attempted, even when requested.
+
+        DOCX is read in full as text: body, headers, footers, footnotes, endnotes, comments and
+        text boxes, tables as tab-separated rows, hyperlink targets after their text. Anything a
+        plain text cannot carry refuses the whole file: images (needs OCR), embedded objects,
+        charts, SmartArt, equations, macros. XLSX gives every sheet (hidden ones marked) as the
+        cell text Excel last showed; formulas without a saved result, charts, drawings, images,
+        comments, pivots, external links and macros refuse. Legacy binary formats and
+        converters stay excluded.
 
         The caller owns acceptance, authorization and an isolated resource-limited subprocess.
         In particular, PDF diagnostics are process-global; do not run this in request threads.
@@ -141,9 +155,15 @@ class DocumentIngest:
             if len(data) > LIMITS.max_file_bytes:
                 _context_engine_limit()
             out = empty_extraction("docs", ext, "pdf" if ext == "pdf" else
-                                   ("tabular" if ext in ("csv", "tsv") else "text"))
+                                   ("tabular" if ext in ("csv", "tsv", "xlsx") else "text"))
             if ext == "pdf":
                 self._context_pdf(out, data)
+            elif ext in ("docx", "xlsx"):
+                if data.startswith(OLE_MAGIC):
+                    if "EncryptedPackage".encode("utf-16-le") in data:
+                        _context_encrypted()
+                    _context_unsupported()
+                (self._context_docx if ext == "docx" else self._context_xlsx)(out, data)
             else:
                 text = data.decode("utf-8-sig", errors="strict")
                 _context_limit("chars", len(text))
@@ -267,6 +287,191 @@ class DocumentIngest:
             diagnostics.reset_mupdf_warnings()
             diagnostics.mupdf_display_errors(show_errors)
             diagnostics.mupdf_display_warnings(show_warnings)
+
+
+    # ---------------------------------------------------------------- Office context readers
+    _DOCX_NOTE_PARTS = {
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes": "footnotes",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes": "endnotes",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments": "comments",
+    }
+
+    def _context_docx(self, out: dict, data: bytes) -> None:
+        from .engine import docx_core as D
+        from .engine.ooxml import NS, Package
+
+        pkg = Package(data)
+        if pkg.has("EncryptedPackage"):
+            _context_encrypted()
+        inventory = pkg.inventory()
+        if any(inventory.get(kind) for kind in ("embeddings", "charts", "diagrams", "vba", "activeX", "ink")):
+            _context_unsupported()
+        if inventory.get("media"):
+            _context_needs_ocr()
+        main = pkg.main_part()
+        parts = [(entry["part"], "body" if entry["kind"] == "body" else f"{entry['kind']}:{entry['label'].split()[-1]}")
+                 for entry in D.list_parts(pkg)]
+        for rel in pkg.rels(main):
+            if not rel.external and rel.type in self._DOCX_NOTE_PARTS:
+                parts.append((pkg.resolve(main, rel.target), self._DOCX_NOTE_PARTS[rel.type]))
+        state = {"chars": 0}
+        for part, label in parts:
+            root = pkg.xml(part)
+            links = {rel.id: rel.target for rel in pkg.rels(part) if rel.external}
+            body = root.find(D.w("body"))
+            if body is not None:
+                containers = [body]
+            elif label in ("footnotes", "endnotes", "comments"):
+                # Each note or comment holds its own paragraphs; separators carry no text.
+                containers = [note for note in root if isinstance(note.tag, str)
+                              and note.get(D.w("type")) not in ("separator", "continuationSeparator")]
+            else:
+                containers = [root]
+            counters = {"paragraph": 0, "table": 0}
+            for container in containers:
+                self._docx_blocks(out, container, label, links, state, counters, D, NS)
+
+    def _docx_blocks(self, out: dict, container, label: str, links: dict, state: dict, counters: dict, D, NS) -> None:
+        for block in D.iter_blocks(container):
+            if block.tag == D.w("p"):
+                counters["paragraph"] += 1
+                text, boxes = self._docx_paragraph(block, links, D, NS)
+                source = {"part": label, "paragraph": counters["paragraph"]}
+                if text.strip():
+                    self._docx_line(out, text, source, state)
+                for number, lines in enumerate(boxes, start=1):
+                    for line in lines:
+                        self._docx_line(out, line, {**source, "textbox": number}, state)
+            else:
+                counters["table"] += 1
+                for number, row in enumerate(self._docx_table_rows(block, links, D, NS), start=1):
+                    self._docx_line(out, row, {"part": label, "table": counters["table"], "row": number}, state)
+
+    def _docx_line(self, out: dict, text: str, source: dict, state: dict) -> None:
+        state["chars"] += len(text) + 1
+        _context_limit("chars", state["chars"])
+        _context_line(out, text, source)
+
+    def _docx_table_rows(self, tbl, links: dict, D, NS) -> list[str]:
+        rows = []
+        for tr in D.iter_rows(tbl):
+            cells = []
+            for tc in D.iter_cells(tr):
+                lines: list[str] = []
+                for block in D.iter_blocks(tc):
+                    if block.tag == D.w("p"):
+                        text, boxes = self._docx_paragraph(block, links, D, NS)
+                        if text.strip():
+                            lines.append(text)
+                        for box in boxes:
+                            lines.extend(box)
+                    else:
+                        lines.extend(self._docx_table_rows(block, links, D, NS))
+                cells.append("\n".join(lines))
+            rows.append("\t".join(cells))
+        return rows
+
+    def _docx_paragraph(self, p, links: dict, D, NS) -> tuple[str, list[list[str]]]:
+        """The paragraph's text with its external link targets, and the lines of its text boxes.
+        Footnote/endnote marks are dropped (their notes are read as their own part); any other
+        object refuses the file, so no placeholder ever stands for content."""
+        text, segs = D.para_segments(p)
+        if any(seg.kind == "obj" for seg in segs):
+            text = "".join(seg.text for seg in segs if seg.kind != "obj")
+        boxes: list[list[str]] = []
+        for seg in segs:
+            if seg.kind != "obj":
+                continue
+            tag = seg.child.tag if isinstance(seg.child.tag, str) else ""
+            if tag in (D.w("footnoteReference"), D.w("endnoteReference")):
+                continue
+            if tag == D.w("object") or tag.startswith("{%s}" % D.MATH_NS):
+                _context_unsupported()
+            boxes.extend(self._docx_object(seg.child, links, D, NS))
+        targets = []
+        for link in p.iter(D.w("hyperlink")):
+            target = links.get(link.get("{%s}id" % NS["r"]))
+            if target and target not in text and target not in targets:
+                targets.append(target)
+        if targets:
+            text = (text + " " if text else "") + " ".join(f"<{target}>" for target in targets)
+        return text, boxes
+
+    def _docx_object(self, el, links: dict, D, NS) -> list[list[str]]:
+        """A drawing, picture or compatibility wrapper: text boxes are read, pictures need OCR,
+        charts, diagrams and embedded objects cannot be represented."""
+        if el.tag == "{%s}AlternateContent" % NS["mc"]:
+            # Both branches describe the same object; the first is the document's own.
+            branch = el.find("{%s}Choice" % NS["mc"])
+            el = branch if branch is not None else el.find("{%s}Fallback" % NS["mc"])
+            if el is None:
+                return []
+        images = ("{%s}blip" % NS["a"], "{%s}imagedata" % NS["v"], "{%s}pic" % NS["pic"])
+        for node in el.iter():
+            tag = node.tag if isinstance(node.tag, str) else ""
+            if tag in images:
+                _context_needs_ocr()
+            if tag.endswith("}chart") or tag.endswith("}OLEObject") or tag.endswith("}relIds") or tag == D.w("object"):
+                _context_unsupported()
+        boxes: list[list[str]] = []
+        for box in el.iter(D.w("txbxContent")):
+            parent = box.getparent()
+            nested = False
+            while parent is not None and parent is not el:
+                if parent.tag == D.w("txbxContent"):
+                    nested = True
+                    break
+                parent = parent.getparent()
+            if nested:
+                continue                      # read with the box that contains it
+            lines: list[str] = []
+            for block in D.iter_blocks(box):
+                if block.tag == D.w("p"):
+                    text, inner = self._docx_paragraph(block, links, D, NS)
+                    if text.strip():
+                        lines.append(text)
+                    for inner_box in inner:
+                        lines.extend(inner_box)
+                else:
+                    lines.extend(self._docx_table_rows(block, links, D, NS))
+            boxes.append(lines)
+        return boxes
+
+    def _context_xlsx(self, out: dict, data: bytes) -> None:
+        from .engine import tabular
+        from .engine.ooxml import Package
+
+        pkg = Package(data)
+        if pkg.has("EncryptedPackage"):
+            _context_encrypted()
+        inventory = pkg.inventory()
+        if inventory.get("media"):
+            _context_needs_ocr()
+        if any(inventory.get(kind) for kind in ("charts", "drawings", "embeddings", "pivot", "vba", "activeX",
+                                                "externalLinks", "comments", "slicers", "ctrlProps", "ink", "diagrams")):
+            _context_unsupported()
+        wb = tabular.read_xlsx(data)
+        if not wb.sheets:
+            _context_invalid()
+        if any(sheet.formula_without_cache for sheet in wb.sheets):
+            # Saved without Excel's results: nothing the person saw can be verified.
+            _context_unsupported()
+        cells = 0
+        for sheet in wb.sheets:
+            _context_limit("tables", len(out["tables"]) + 1)
+            rows = []
+            for number, row in enumerate(sheet.rows, start=1):
+                _context_limit("rows", number)
+                values = [cell.text for cell in row]
+                _context_limit("columns", len(values))
+                cells += max(1, len(values))
+                _context_limit("cells", cells)
+                for value in values:
+                    _context_limit("cell_chars", len(value))
+                rows.append(values)
+            source = {"sheet": sheet.name, **({"hidden": True} if sheet.hidden else {})}
+            out["tables"].append({"name": sheet.name, "source": source, "rows": rows,
+                                  "row_numbers": list(range(1, len(rows) + 1)), "truncated": False})
 
     def extract(self, data: bytes, filename: str, *, ocr: bool = False) -> dict:
         from .engine.sources import parse_source

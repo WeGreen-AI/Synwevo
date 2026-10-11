@@ -1,0 +1,77 @@
+{
+  "recorded_at": "2026-10-11T15:30:39.509138+00:00",
+  "base_commit": "b5b9c56 (on 962b375)",
+  "work_package": "CR-084 AG-ATTACH Office text documents: DOCX and XLSX added to the Agent's complete-context formats",
+  "contract": {
+    "docx": "body, headers, footers, footnotes, endnotes, comments and text boxes as lines; tables as tab-separated rows; external hyperlink targets appended as <url>; footnote/endnote marks dropped (their notes are read as their own part)",
+    "docx_refusals": {
+      "context_needs_ocr": "any picture (media part, blip/pic/imagedata)",
+      "context_format_unsupported": "embedded objects, charts, SmartArt, equations (OMML), macros/VBA, ActiveX, ink, OLE container that is not an encrypted package, .docm/.doc",
+      "context_encrypted": "OLE container with EncryptedPackage"
+    },
+    "xlsx": "every sheet (hidden marked) as the displayed cell text; dates/booleans/leading zeros as shown; merged cells carry their top-left value",
+    "xlsx_refusals": {
+      "context_format_unsupported": "formulas without a saved result, charts, drawings, embeddings, pivots, external links, comments, slicers, controls, macros, .xlsm/.xls",
+      "context_needs_ocr": "pictures"
+    },
+    "limits": "CONTEXT_LIMITS unchanged except tables 1→32 (sheets); engine LIMITS apply underneath; no partial output ever"
+  },
+  "source_sha256": {
+    "apps/docs/synwevo_docs/ingest.py": "ff1dc00375799c7aa547d4ea1d5be3a3d7be1baf99662484e032c6cb7a840068",
+    "apps/docs/tests/test_ingest_context.py": "6539b0aedd526edfd291c1d1ce84960e11e41623c6d79cb4aca902bbd0d24bc4",
+    "apps/suite/web/src/apps/agent/files.ts": "28c7a6f54aa34b5d51ad68210ae0b5265f7b48ecea17d9598da2a2c5c7316631",
+    "apps/suite/web/src/apps/agent/files.messages.ts": "0592e487aacd06ddb53cc00972de9aa7a18629013d93f1c8b4e2fbbe85ec8e28",
+    "apps/suite/web/src/apps/agent/FilePicker.tsx": "78647316f66adc91682d2a88204aa63e295c11f507d634ee11d640f71b6b3021",
+    "apps/suite/web/tests/agent-files.test.ts": "4c488cbd68999d64f302b9a49078e29725957429f6dcaabaa80bc93e8a013121"
+  },
+  "checks": {
+    "docs_context_and_suite_files_pytest": {
+      "log_sha256": "4cda36e723d79817533a166a63fef8b198ead087ef915779f5820bf5ff863dce",
+      "result": "106 passed (apps/docs/tests/test_ingest_context.py incl. 8 new Office cases, apps/suite/tests/test_agent_files.py)"
+    },
+    "docs_refusals_gate": "16/16 (no new refusal sentence; the Office readers reuse the catalogued context_* sentences)",
+    "suite_web_tests": {
+      "log_sha256": "6fad6fd11516df4f606c97f88a7f5eafea512be6fce776ddb53069a4956e2ffd",
+      "result": "205 passed before the refusal-copy refinement; agent-files 23/23 after it; full rerun recorded in EVIDENCE"
+    },
+    "suite_web_typecheck": {
+      "log_sha256": "09819d4a72a737ae0643ec785f39d881f87cfd75148e50a4bb1f436b20ea9d06",
+      "result": "exit 0"
+    },
+    "suite_web_build": {
+      "log_sha256": "8fceae875589808c48ded64b9d8921baf92da9ac8d1e2d0c1871518d273f55c3",
+      "result": "exit 0"
+    },
+    "not_run": [
+      "python suites outside the two files above",
+      "identity/docs/messages web tests",
+      "docker verify image",
+      "real model or payment"
+    ]
+  },
+  "browser": {
+    "server": "isolated single-process role=all on 127.0.0.1:33881 then :33883 (rebuilt shell), worktree code, Python 3.12 env, scratchpad data; real upload route, real Docs reader through the files ticker",
+    "tool": "Playwright Chrome channel 1280×900 zh-Hans (set_input_files on the real file input)",
+    "fixtures": "python-docx / openpyxl generated: complete DOCX (heading, body, 2×3 table, header, footer, comment), DOCX with a 2×2 PNG, XLSX with Main + hidden sheet (number, date, boolean, leading zeros), XLSX with an uncached formula",
+    "observed": [
+      "capabilities list reads 格式：txt, md, csv, tsv, pdf, docx, xlsx and the Office note is shown",
+      "complete DOCX and the workbook parse to 可用于提问; the picture DOCX fails with the OCR copy; the formula XLSX fails with the refined unsupported-content copy (second pass, rebuilt shell)",
+      "DOCX preview labels: 正文 第 n 段 / 正文 表格 1 第 r 行 / 页眉 1 第 1 段 / 页脚 1 第 1 段 / 批注 第 1 段 with the full text",
+      "XLSX preview: 表格“Main” rows as shown (12.5, 2026-10-11, 00012, TRUE) and 表格“Hidden”（隐藏工作表）",
+      "console errors: only the pre-sign-in 401"
+    ],
+    "files": [
+      "browser-report.json",
+      "fixture.json",
+      "zh-hans-office-files.png",
+      "zh-hans-preview-docx.png",
+      "zh-hans-preview-xlsx.png"
+    ],
+    "not_claimed": [
+      "OCR or image attachments",
+      "legacy .doc/.xls, .pptx",
+      "a paid run with an Office source (the quote/run path is unchanged and was proven in CR-078/079)",
+      "three-language screenshots of the Office copy (catalogue validated by tests)"
+    ]
+  }
+}

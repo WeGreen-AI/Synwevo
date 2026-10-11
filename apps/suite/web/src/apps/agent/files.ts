@@ -80,7 +80,21 @@ export function fileSourceLabel(source: unknown, f: (key: FileText, params?: Rec
     return positive(source.line) ? f('sourcePageLine', { page: source.page, line: source.line }) : f('sourcePage', { page: source.page });
   }
   if (positive(source.line)) return f('sourceLine', { line: source.line });
-  if (text(source.sheet)) return f('sourceTable', { name: source.sheet });
+  if (text(source.sheet)) return f(source.hidden === true ? 'sourceTableHidden' : 'sourceTable', { name: source.sheet });
+  if (text(source.part)) {
+    // A Word document's parts: body, header:n, footer:n, footnotes, endnotes, comments.
+    const [kind, index] = source.part.split(':');
+    const parts: Record<string, FileText> = { body: 'partBody', header: 'partHeader', footer: 'partFooter', footnotes: 'partFootnotes', endnotes: 'partEndnotes', comments: 'partComments' };
+    const key = parts[kind];
+    if (!key || ((kind === 'header' || kind === 'footer') !== (index !== undefined)) || (index !== undefined && !/^[1-9]\d{0,3}$/.test(index))) return f('sourceUnavailable');
+    const part = f(key, { n: index ?? '' });
+    let label: string;
+    if (positive(source.paragraph) && !('table' in source)) label = f('sourcePartParagraph', { part, paragraph: source.paragraph });
+    else if (positive(source.table) && positive(source.row) && !('paragraph' in source)) label = f('sourcePartTableRow', { part, table: source.table, row: source.row });
+    else return f('sourceUnavailable');
+    if ('textbox' in source) return positive(source.textbox) ? f('sourceTextbox', { label, n: source.textbox }) : f('sourceUnavailable');
+    return label;
+  }
   return f('sourceUnavailable');
 }
 export function fileRowLabel(row: unknown, f: (key: FileText, params?: Record<string, string | number>) => string): string {

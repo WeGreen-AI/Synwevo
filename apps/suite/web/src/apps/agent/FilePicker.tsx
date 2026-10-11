@@ -183,7 +183,7 @@ export function FileDialog({ client, selected, businessCount, onChoose, onRemove
         <p className="muted small">{f('limits', { formats: caps.formats.join(', ') || '—', bytes: caps.max_bytes,
           count: caps.max_files, storage: caps.max_storage_bytes, chars: caps.max_context_chars })}</p>
         <p className="muted small">{f('retention', { hours: caps.unattached_retention_seconds / 3600 })}</p>
-        <p className="muted small">{f('encoding')}</p><p className="notice">{f('noOcr')}</p><p className="muted small">{f(scannerLabel(caps.scanner))}</p>
+        <p className="muted small">{f('encoding')}</p>{caps.formats.some((x) => ['docx', 'xlsx'].includes(x.toLowerCase())) && <p className="muted small">{f('office')}</p>}<p className="notice">{f('noOcr')}</p><p className="muted small">{f(scannerLabel(caps.scanner))}</p>
       </>}
       <label htmlFor={`${id}-file`}>{f('chooseUpload')}
         <input id={`${id}-file`} className="input" type="file" disabled={!caps?.configured || busy}

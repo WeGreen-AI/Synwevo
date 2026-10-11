@@ -702,3 +702,11 @@ identity `services/identity/web/tests/*.mjs` 同样共用Vite缓存但本轮未�
 
 Actions38146440152 verify/deploy成功（verify 14:15:27–15:07:26Z，deploy 15:07:29–15:09:32Z）。15:10Z只读核验：current镜像e7c1f05、previous b1c8a0b、备份20261011T150904Z；四应用容器revision e7c1f05、六容器healthy；portal容器内ingest/agent.files/agent.engine/billing.ledger源码哈希与提交一致；五域readyz/根页200。回执 `evidence/2026-10-11-ci-refusals/{ci-release,production-release}.json`。CR-078附件与CI修复由此上线；不等于真实模型产物或付款验收。随后推送862b079（CR-079）与ea047ad（CR-083），由新SHA再走完整CI/CD。
 
+## 2026-10-11 CR-084 Office 文本附件（本地+隔离浏览器）
+
+Docs `extract_context` 新增 DOCX/XLSX 严格读取：DOCX 正文/页眉页脚/脚注尾注/批注/文本框全部文字、表格按行、链接附网址；图片→needs_ocr，嵌入对象/图表/SmartArt/公式/宏→unsupported，OLE 加密包→encrypted。XLSX 每表显示值（隐藏表标记），未缓存公式/图表/绘图/嵌入/透视/外链/批注/宏→unsupported，图片→needs_ocr。`CONTEXT_LIMITS.tables` 1→32，其余不变。Suite 前端来源标签支持 Word 部件/段落/表格行/文本框与隐藏工作表，`unsupported` 文案改为“格式或文件内容”，选择器显示 Office 说明。
+
+测试：test_ingest_context 新增 8 例（完整 DOCX 含链接/批注、文本框只读一次、图片/对象/公式拒绝、OLE 加密与非包、XLSX 含隐藏表/日期/布尔/前导零/合并、公式/图表/图片拒绝、三类上限），与 test_agent_files 合计 106 通过；Docs refusals 门禁 16/16；agent-files 前端 23 通过；suite-web 全量 205 通过（见本节下方最终运行）；suite-web typecheck/build、四守卫通过。
+
+隔离真实服务（127.0.0.1:33881/33883，scratchpad 数据，真实上传路由与 Docs 解析）Playwright Chrome 1280×900：能力说明列出 docx/xlsx 与 Office 注记；完整 DOCX 与工作簿解析就绪，含图 DOCX 以 OCR 文案失败，公式 XLSX 以“格式或文件内容…未保存计算结果的公式”文案失败（重建外壳后第二遍）；DOCX 预览显示“正文 第 n 段 / 正文 表格 1 第 r 行 / 页眉 1 第 1 段 / 页脚 1 第 1 段 / 批注 第 1 段”；XLSX 预览显示“表格“Main””各行与“表格“Hidden”（隐藏工作表）”；控制台仅登录前 401。截图、browser-report.json、fixture 与指纹在 `evidence/2026-10-11-agent-office-files/`。未声称 OCR/图片附件、旧二进制格式、pptx，亦未进行付费运行。
+

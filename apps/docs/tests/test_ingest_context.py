@@ -151,7 +151,7 @@ def test_limit_edges_and_large_complete_tail():
     assert "\n".join(line["text"] for line in result["lines"]) == text
 
 
-@pytest.mark.parametrize("name", ["fixture.docx", "fixture.xlsx", "fixture.json", "fixture.html", "fixture.png", "fixture"])
+@pytest.mark.parametrize("name", ["fixture.docm", "fixture.xlsm", "fixture.pptx", "fixture.json", "fixture.html", "fixture.png", "fixture"])
 def test_unverified_formats_are_explicitly_unsupported(name):
     refused(b"TEST FIXTURE", name, "context_format_unsupported")
 
@@ -288,12 +288,12 @@ def test_basic_pdf_engine_fails_closed_and_capabilities_preserve_old_fields(monk
     full = DocumentIngest().describe()
     assert full["formats"] == list(FORMATS)
     assert full["limits"] == {"text_pages": 200, "ocr_pages": 20, "table_rows": 2000}
-    assert full["context_formats"] == ["txt", "md", "csv", "tsv", "pdf"]
+    assert full["context_formats"] == ["txt", "md", "csv", "tsv", "pdf", "docx", "xlsx"]
     assert full["context_limits"] == CONTEXT_LIMITS and full["context_ocr"] is False
     pe.use_engine("pdfium")
     refused(pdf_bytes([["body"]]), "fixture.pdf", "context_format_unsupported")
     basic = DocumentIngest().describe()
-    assert basic["context_formats"] == ["txt", "md", "csv", "tsv"]
+    assert basic["context_formats"] == ["txt", "md", "csv", "tsv", "docx", "xlsx"]
     assert basic["limits"] == full["limits"] and basic["formats"] == full["formats"]
 
 
@@ -309,3 +309,193 @@ def test_old_extract_remains_compatible():
     data = pdf_bytes([["first", "second"], ["third"]])
     old, new = reader.extract(data, "fixture.pdf"), extract(data, "fixture.pdf")
     assert old["lines"] == new["lines"] and old["pages"] == new["pages"]
+
+
+# ---------------------------------------------------------------- Office text documents (synthetic fixtures)
+
+def docx_bytes(build=None):
+    """A python-docx document; `build(document)` adds the fixture's content."""
+    import docx
+    document = docx.Document()
+    if build:
+        build(document)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def xlsx_bytes(build=None):
+    import openpyxl
+    workbook = openpyxl.Workbook()
+    if build:
+        build(workbook)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def png_bytes():
+    return pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 2, 2), 0).tobytes("png")
+
+
+def test_docx_text_is_read_completely_with_parts_tables_links_and_comments():
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    def build(document):
+        document.add_heading("合成标题 Fixture", 1)
+        paragraph = document.add_paragraph("Body line\twith tab and ")
+        rid = paragraph.part.relate_to("https://example.invalid/fixture", RT.HYPERLINK, is_external=True)
+        link = OxmlElement("w:hyperlink")
+        link.set(qn("r:id"), rid)
+        run = OxmlElement("w:r")
+        text = OxmlElement("w:t")
+        text.text = "a link"
+        run.append(text)
+        link.append(run)
+        paragraph._p.append(link)
+        document.add_paragraph("")                                   # formatting only
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 0).text = "A1"
+        table.cell(0, 1).text = "B1 first\nB1 second"
+        table.cell(1, 0).text = "A2"
+        table.cell(1, 1).text = ""
+        document.sections[0].header.paragraphs[0].text = "Header 合成"
+        document.sections[0].footer.paragraphs[0].text = "Footer 合成"
+        commented = document.add_paragraph()
+        document.add_comment(commented.add_run("commented text"), text="A reviewer's note", author="Fixture")
+    result = extract(docx_bytes(build), "fixture.docx")
+    assert result["tables"] == []
+    assert [(line["text"], line["source"]) for line in result["lines"]] == [
+        ("合成标题 Fixture", {"part": "body", "paragraph": 1}),
+        ("Body line\twith tab and a link <https://example.invalid/fixture>", {"part": "body", "paragraph": 2}),
+        ("A1\tB1 first\nB1 second", {"part": "body", "table": 1, "row": 1}),
+        ("A2\t", {"part": "body", "table": 1, "row": 2}),
+        ("commented text", {"part": "body", "paragraph": 4}),
+        ("Header 合成", {"part": "header:1", "paragraph": 1}),
+        ("Footer 合成", {"part": "footer:1", "paragraph": 1}),
+        ("A reviewer's note", {"part": "comments", "paragraph": 1}),
+    ]
+
+
+def test_docx_text_boxes_are_read_once_from_the_document_branch():
+    from docx.oxml import parse_xml
+    xml = (
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+        'xmlns:v="urn:schemas-microsoft-com:vml"><mc:AlternateContent><mc:Choice Requires="wps">'
+        '<w:drawing><wp:inline><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
+        '<wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Box line one</w:t></w:r></w:p><w:p><w:r><w:t>Box line two</w:t></w:r></w:p>'
+        '</w:txbxContent></wps:txbx></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing></mc:Choice>'
+        '<mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>Box line one</w:t></w:r></w:p>'
+        '</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r>')
+
+    def build(document):
+        paragraph = document.add_paragraph("Before the box ")
+        paragraph._p.append(parse_xml(xml))
+        document.add_paragraph("After the box")
+    result = extract(docx_bytes(build), "fixture.docx")
+    assert [(line["text"], line["source"]) for line in result["lines"]] == [
+        ("Before the box ", {"part": "body", "paragraph": 1}),
+        ("Box line one", {"part": "body", "paragraph": 1, "textbox": 1}),
+        ("Box line two", {"part": "body", "paragraph": 1, "textbox": 1}),
+        ("After the box", {"part": "body", "paragraph": 2}),
+    ]
+
+
+def test_docx_with_a_picture_needs_ocr_and_objects_or_equations_are_unsupported():
+    from docx.oxml import parse_xml
+    from docx.shared import Pt
+
+    def picture(document):
+        document.add_paragraph("text")
+        document.add_picture(io.BytesIO(png_bytes()), width=Pt(4))
+    error = refused(docx_bytes(picture), "fixture.docx", "context_needs_ocr")
+    assert error.detail == {"needsOCR": True}
+    ole = ('<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+           'xmlns:o="urn:schemas-microsoft-com:office:office"><w:object><o:OLEObject ProgID="Fixture.Object"/></w:object></w:r>')
+    math = ('<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+            'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><m:r><m:t>x</m:t></m:r></m:oMath>')
+    for fragment in (ole, math):
+        def build(document, fragment=fragment):
+            document.add_paragraph("plain").\
+                _p.append(parse_xml(fragment))
+        refused(docx_bytes(build), "fixture.docx", "context_format_unsupported")
+
+
+def test_office_ole_containers_are_encrypted_or_unsupported_never_parsed():
+    from synwevo_docs.ingest import OLE_MAGIC
+    encrypted = OLE_MAGIC + b"\0" * 24 + "EncryptedPackage".encode("utf-16-le") + b"\0" * 64
+    for name in ("fixture.docx", "fixture.xlsx"):
+        refused(encrypted, name, "context_encrypted")
+        refused(OLE_MAGIC + b"\0" * 120, name, "context_format_unsupported")
+    for name in ("fixture.docm", "fixture.xlsm", "fixture.xls", "fixture.doc", "fixture.pptx"):
+        refused(b"PK\x03\x04fixture", name, "context_format_unsupported")
+    refused(b"PK\x03\x04 not a package", "fixture.docx", "context_parse_error")
+
+
+def test_xlsx_sheets_are_read_as_shown_including_hidden_sheets_and_dates():
+    import datetime
+
+    def build(workbook):
+        sheet = workbook.active
+        sheet.title = "Main"
+        sheet.append(["name", "amount", "when"])
+        sheet.append(["x", 12.5, datetime.date(2026, 10, 11)])
+        sheet.append(["00012", True, None])
+        sheet.merge_cells("A5:B5")
+        sheet["A5"] = "merged"
+        hidden = workbook.create_sheet("Hidden")
+        hidden.sheet_state = "hidden"
+        hidden.append(["hidden fixture row"])
+    result = extract(xlsx_bytes(build), "fixture.xlsx")
+    assert result["lines"] == []
+    assert result["tables"] == [
+        {"name": "Main", "source": {"sheet": "Main"}, "row_numbers": [1, 2, 3, 4, 5], "truncated": False,
+         "rows": [["name", "amount", "when"], ["x", "12.5", "2026-10-11"], ["00012", "TRUE"], [], ["merged"]]},
+        {"name": "Hidden", "source": {"sheet": "Hidden", "hidden": True}, "row_numbers": [1], "truncated": False,
+         "rows": [["hidden fixture row"]]},
+    ]
+
+
+def test_xlsx_with_uncached_formulas_charts_or_pictures_is_refused():
+    import openpyxl.chart
+    import openpyxl.drawing.image
+
+    def formula(workbook):
+        workbook.active.append([1, 2])
+        workbook.active["C1"] = "=A1+B1"            # saved without Excel's result
+    refused(xlsx_bytes(formula), "fixture.xlsx", "context_format_unsupported")
+
+    def chart(workbook):
+        workbook.active.append(["a", 1])
+        bars = openpyxl.chart.BarChart()
+        bars.add_data(openpyxl.chart.Reference(workbook.active, min_col=2, min_row=1, max_row=1))
+        workbook.active.add_chart(bars, "D2")
+    refused(xlsx_bytes(chart), "fixture.xlsx", "context_format_unsupported")
+
+    def picture(workbook):
+        workbook.active.append(["a"])
+        workbook.active.add_image(openpyxl.drawing.image.Image(io.BytesIO(png_bytes())), "C3")
+    refused(xlsx_bytes(picture), "fixture.xlsx", "context_needs_ocr")
+
+
+def test_office_limits_fail_whole():
+    def long_document(document):
+        for index in range(5001):
+            document.add_paragraph(f"line {index}")
+    refused(docx_bytes(long_document), "fixture.docx", "context_limit_exceeded", "lines")
+
+    def wide_sheet(workbook):
+        for _ in range(3):
+            workbook.active.append(["c"] * 101)
+    refused(xlsx_bytes(wide_sheet), "fixture.xlsx", "context_limit_exceeded", "columns")
+
+    def many_sheets(workbook):
+        for index in range(33):
+            workbook.create_sheet(f"S{index}")
+    refused(xlsx_bytes(many_sheets), "fixture.xlsx", "context_limit_exceeded", "tables")

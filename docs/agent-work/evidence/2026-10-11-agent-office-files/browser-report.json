@@ -1,0 +1,15 @@
+{
+ "locale": "zh-Hans",
+ "files": {
+  "Synthetic-document-合成文档-2026-10-11.docx": {
+   "preview": "提取正文与来源\n\n正文 第 1 段\n合成 DOCX 夹具标题\n正文 第 2 段\nBody paragraph with leading zeros 000123 and 繁體/简体 mixed text.\n正文 表格 1 第 1 行\n列A 列B 列C\n正文 表格 1 第 2 行\na2 b2 c2\n正文 第 3 段\nCommented paragraph\n页眉 1 第 1 段\nSynthetic header\n页脚 1 第 1 段\nSynthetic footer\n批注 第 1 段\nReviewer comment fixture\n完成文件选择"
+  },
+  "Synthetic-workbook-合成表.xlsx": {
+   "preview": "提取正文与来源\n\nMain\n\n表格“Main”\n第 1 行 name amount when\n第 2 行 x 12.5 2026-10-11\n第 3 行 00012 TRUE\n\nHidden\n\n表格“Hidden”（隐藏工作表）\n第 1 行 hidden fixture row\n完成文件选择"
+  }
+ },
+ "formula_refusal": "此格式或文件内容暂不支持完整读取（如图表、嵌入对象、公式对象、宏，或未保存计算结果的公式）。请使用当前支持的格式与纯文字内容，扫描件和图片需先另行识别。",
+ "console_errors": [
+  "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+ ]
+}

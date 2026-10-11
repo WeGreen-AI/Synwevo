@@ -498,6 +498,17 @@ test('preview sources use real page/line/table/row labels in three languages and
     assert.equal(helpers.fileSourceLabel({ line: 4 }, f), f('sourceLine', { line: 4 }));
     assert.equal(helpers.fileSourceLabel({ page: 3 }, f), f('sourcePage', { page: 3 }));
     assert.equal(helpers.fileSourceLabel({ sheet: 'Fixture table' }, f), f('sourceTable', { name: 'Fixture table' }));
+    assert.equal(helpers.fileSourceLabel({ sheet: 'Hidden', hidden: true }, f), f('sourceTableHidden', { name: 'Hidden' }));
+    assert.equal(helpers.fileSourceLabel({ part: 'body', paragraph: 3 }, f), f('sourcePartParagraph', { part: f('partBody', { n: '' }), paragraph: 3 }));
+    assert.equal(helpers.fileSourceLabel({ part: 'header:2', paragraph: 1 }, f), f('sourcePartParagraph', { part: f('partHeader', { n: '2' }), paragraph: 1 }));
+    assert.equal(helpers.fileSourceLabel({ part: 'footer:1', table: 1, row: 4 }, f), f('sourcePartTableRow', { part: f('partFooter', { n: '1' }), table: 1, row: 4 }));
+    assert.equal(helpers.fileSourceLabel({ part: 'comments', paragraph: 2 }, f), f('sourcePartParagraph', { part: f('partComments', { n: '' }), paragraph: 2 }));
+    assert.equal(helpers.fileSourceLabel({ part: 'body', paragraph: 1, textbox: 2 }, f),
+      f('sourceTextbox', { label: f('sourcePartParagraph', { part: f('partBody', { n: '' }), paragraph: 1 }), n: 2 }));
+    for (const bad of [{ part: 'body' }, { part: 'header', paragraph: 1 }, { part: 'body:1', paragraph: 1 }, { part: 'macros', paragraph: 1 },
+      { part: 'body', paragraph: 1, table: 1, row: 1 }, { part: 'body', table: 1 }, { part: 'body', paragraph: 0 }, { part: 'body', paragraph: 1, textbox: 0 }]) {
+      assert.equal(helpers.fileSourceLabel(bad, f), f('sourceUnavailable'), JSON.stringify(bad));
+    }
     assert.equal(helpers.fileRowLabel(7, f), f('sourceRow', { row: 7 }));
     for (const source of [null, {}, { page: 0, line: 3 }, { line: -1 }, { line: '3' }, { unknown_schema_field: 1 }]) {
       assert.equal(helpers.fileSourceLabel(source, f), f('sourceUnavailable'));

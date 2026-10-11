@@ -266,3 +266,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 未改动但记录：队列中（尚未开始）的回答在重启后也记为 interrupted 失败，重试走只读重生成，写操作任务需重新发送；多实例 worker 租约仍未实现（文档已说明）。
 - 验证：test_agent 新增一例（waiting→cancel 立即 cancelled 且幂等、running+cancel_requested 的 stopping 投影、重启后 cancelled 无 error、无表单写入）；agent-chat 扩展 stopping 断言；suite-web 205 通过；apps/suite/tests 全量见 EVIDENCE。
 
+## CR-084 · AG-ATTACH Office 文本文档（2026-10-11，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：apps/docs/synwevo_docs/ingest.py（`_context_docx/_context_xlsx` 及辅助、`CONTEXT_FORMATS` 加 docx/xlsx、`tables` 上限 1→32、OLE 容器判定）；Suite 前端 files.ts `fileSourceLabel`（Word 部件/段落/表格行/文本框、隐藏工作表）、files.messages.ts（Office 说明、来源标签、`unsupported` 文案改为“格式或内容”）、FilePicker 说明；测试 test_ingest_context.py 8 例、agent-files.test.ts 标签断言。
+- 契约：DOCX 完整文字（正文/页眉页脚/脚注尾注/批注/文本框，表格按行，链接附网址，脚注标记去除）；任何图片→`context_needs_ocr`；嵌入对象/图表/SmartArt/公式/宏/ActiveX/墨迹→`context_format_unsupported`；OLE 加密包→`context_encrypted`。XLSX 每个工作表显示值（隐藏表标记）；无缓存结果的公式、图表、绘图、嵌入、透视、外链、批注、切片器、控件、宏→unsupported；图片→needs_ocr。全部或拒绝，不做部分读取；复用既有拒绝原句，Docs 门禁无新句。
+- 审查要点：`para_segments` 的对象占位符不进入文本；AlternateContent 只读 Choice 分支避免文本框重复；嵌套文本框不重复计数；`tabular.read_xlsx` 的内置公式计算结果不被采信（有未缓存公式即拒绝）；member-import 的 `extract()` 路径未改。
+- 验证：见 evidence/2026-10-11-agent-office-files/verification.json 与 browser-report.json（真实上传/解析/预览标签/拒绝文案）。未声称 OCR/图片、旧二进制格式、pptx。
+

@@ -17,7 +17,8 @@
 - **CR-079 报价前来源审阅：代码完成、本地与隔离浏览器已验证，待提交**：BudgetDialog在报价前列出每项所选资料的名称、类别（表单/数据表）与来源空间或“个人文件”，读取只走 `agent.context.resolve`/`agent.file.get` 并核对ID/快照/有效状态；任一来源变化、删除、撤权或响应损坏即阻止进入报价（提示+重试，不漏项）；offer与来源审阅共用一个AbortSignal，关闭/重载/迟到回调由generation票据保护。顺带修复首次键盘打开后Escape焦点落到body（懒加载块经路由级Suspense隐藏了输入框）：对话框自带Suspense边界。证据 `evidence/2026-10-11-agent-budget-sources/`（verification.json、三语桌面/390截图、reduced-motion截图与日志、fixture）。
 - 本地：suite-web 205通过（含4例budgetSources、4例dialog）、根typecheck/build、六守卫通过；隔离服务上三语/1024/390、Escape焦点、来源变化阻断与恢复、1报价/1运行/1结算、无重复请求、reduced-motion均已观察。
 - **CR-083 取消/恢复链路审查：代码完成、本地已验证、已提交**：重启时用户已停止的回答收为cancelled；取消立即收尾时返回cancelled；`turn.stopping`投影与Chat停止中反馈。apps/suite/tests全量与suite-web 205通过。
-- 下一动作：跟踪862b079+ea047ad的新Actions verify/deploy→部署后只读核验并写回执→继续BACKLOG余项（Agent剩余附件格式、跨空间任务、个人自动化、真实支付、Admin/API/SDK缺口）。
+- **CR-084 AG-ATTACH Office 文本文档：代码完成、本地与隔离浏览器已验证、已本地提交**：DOCX/XLSX 加入 Agent 完整上下文格式（全部文字或拒绝；图片→需 OCR，嵌入对象/图表/公式/宏/未缓存公式→不支持，加密→加密），前端来源标签与说明随之更新。证据 `evidence/2026-10-11-agent-office-files/`。
+- 下一动作：跟踪 962b375 的 Actions38150240686 verify/deploy→部署后只读核验并写回执→推送 CR-084（新 SHA 再走完整 CI/CD）→继续 BACKLOG 余项（图片/OCR 附件、跨空间任务、个人自动化、真实支付、Admin/API/SDK 缺口）。
 
 ## 已核实的正式Agent与支付配置（不重复创建或发布）
 
@@ -40,4 +41,4 @@
 - 历史调查及状态变更保留在EVIDENCE/BACKLOG，不将旧暂停或旧发布状态作为当前事实。
 - 接续在本实施树读取MASTER_PROMPT、STATE、BACKLOG、EVIDENCE、CODE_REVIEW，核对实际Git/CI/生产和锁，复用配置与副作用记录；不重建、不重放、不绕过门禁。交接快照 `CLAUDE_CODE_HANDOFF_2026-10-11.txt` 只在主检出、不是第二份状态真相。
 
-保存时间：2026-10-11T15:14:44.553614+00:00
+保存时间：2026-10-11T15:31:15.947328+00:00
