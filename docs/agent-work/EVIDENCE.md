@@ -698,3 +698,7 @@ identity `services/identity/web/tests/*.mjs` 同样共用Vite缓存但本轮未�
 
 验证：`apps/suite/tests` 全量 1128 passed by progress dots (pyproject -qq hides the summary line), 0 F/E/s/x, exit 0（PYTHONPATH含本树与apps/docs/sdk/python；log sha256 6c324afde07409efaabff337e8c4a4048896cc3a258eb959ae0d5f42c80f43d5），其中新增 test_stopping_is_reported_and_a_restart_keeps_a_stopped_turn_cancelled；suite-web 205通过（log sha256 9f275813a4f53495ad23cfd2cedccffeb37c2a5c38a185e1363a326320a51f83，agent-chat新增stopping断言）；suite-web typecheck、四守卫通过。未做浏览器验收（停止反馈为既有按钮的禁用与status文本，无新布局）；未改多实例租约与队列中回答的重启语义（已在CODE_REVIEW记录）。
 
+## 2026-10-11 e7c1f05 准确发布与生产核验
+
+Actions38146440152 verify/deploy成功（verify 14:15:27–15:07:26Z，deploy 15:07:29–15:09:32Z）。15:10Z只读核验：current镜像e7c1f05、previous b1c8a0b、备份20261011T150904Z；四应用容器revision e7c1f05、六容器healthy；portal容器内ingest/agent.files/agent.engine/billing.ledger源码哈希与提交一致；五域readyz/根页200。回执 `evidence/2026-10-11-ci-refusals/{ci-release,production-release}.json`。CR-078附件与CI修复由此上线；不等于真实模型产物或付款验收。随后推送862b079（CR-079）与ea047ad（CR-083），由新SHA再走完整CI/CD。
+

@@ -877,3 +877,9 @@ through the pre-fix transport, which lacked explicit certificate verification.
 操作者：所有者授权的Codex协调者。已核对生产25b084f完整CI/CD成功。当前待发布5ffec9d相对25b084f的apps/suite、apps/portal、infra/server及core/billing无差异；新发布只涉及支付/通知恢复、测试维护及blob分类。为优先完成真实Agent链路，先在已验证的25b084f沿operations§11.1执行二级开关恢复：备份runtime.env、保留五个应用并添加agent、持有现有deploy.lock、仅重建portal，不更新镜像/治理/业务数据。成本策略、提供方、价格与指定所有者放行名单已真实发布。付款入口仍关闭，等待5ffec9d完整CI和部署；公开放量仍受§11.3观察门槛。以下追加真实执行回执，准备不表示已成功。
 
 12:35:19Z执行成功：已持有deploy.lock并确认准确25b084f镜像，备份/opt/synwevo/config/runtime.env.bak-agent-20261008T123519Z；portal force-recreate后Healthy。证据agent-activation/activation-applied.json；没有重复部署其它角色、没有运行模型或付款。浏览器与健康验证继续。
+
+## 2026-10-11 e7c1f05 发布（CR-078 个人附件 + f919d2f CI 阻断修复）
+
+操作者：Claude Code 协调者会话 13b6809f（接自 Codex 交接）。f919d2f 的 Actions 38054090562 在 Docs refusals 门禁失败、未部署；修复提交 e7c1f054e97a724e19ceaadbae6dd0ce74507858 推送 main 后，Actions 38146440152 verify（14:15–15:07Z）与 deploy（15:07–15:09Z）成功。
+15:10Z 只读核验（`docs/agent-work/evidence/2026-10-11-ci-refusals/production-release.json`）：`/opt/synwevo/current.json` 镜像 `synwevo:e7c1f05…`、前镜像 b1c8a0b、备份 `/opt/synwevo/backups/20261011T150904Z`；accounts/docs/portal/messages 四容器 OCI revision 均 e7c1f05，含 gateway/clamav 六容器 healthy；portal 容器内 `synwevo_docs.ingest`、`synwevo_suite.agent.files`、`agent.engine`、`billing.ledger` 源码 sha256 与该提交一致；五域 `/readyz` 与根页 200。未调用生产模型或支付，未改任何配置。随该版本上线：Agent 个人文件上传/严格解析/预览/下载/删除（CR-078）、文件 worker 的 `context_limit_exceeded`/`parse_cancelled` 三语言呈现、Docs 门禁决定与 Suite 测试缓存隔离（仅测试）。
+
