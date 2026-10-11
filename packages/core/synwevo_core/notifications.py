@@ -294,6 +294,7 @@ SECURITY_WHAT = {
     "external_linked": {"zh-Hans": "关联了外部登录方式（{provider}）", "zh-Hant": "已連結外部登入方式（{provider}）", "en": "External sign-in linked ({provider})"},
     "external_unlinked": {"zh-Hans": "解除了外部登录方式（{provider}）", "zh-Hant": "已解除外部登入方式（{provider}）", "en": "External sign-in unlinked ({provider})"},
     "sessions_revoked": {"zh-Hans": "结束了其他设备的登录", "zh-Hant": "已結束其他裝置的登入", "en": "Other devices were signed out"},
+    "push_revoked": {"zh-Hans": "撤销了全部浏览器推送设备", "zh-Hant": "已撤銷全部瀏覽器推播裝置", "en": "All browser push devices were revoked"},
 }
 #: Legacy callers pass the zh-Hans sentence; map it back to a key so every reader gets their language.
 _WHAT_BY_ZH = {v["zh-Hans"]: k for k, v in SECURITY_WHAT.items()}

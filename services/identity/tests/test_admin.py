@@ -709,3 +709,40 @@ def test_pending_deletions_are_visible_and_a_lost_cancellation_link_can_be_re_se
     assert ident.get_user(alice["id"]) is None and c.get(f"/api/admin/users/{alice['id']}").status_code == 404
     assert store.one("SELECT 1 AS n FROM audit_events WHERE action='admin.accounts.finalize_deletions' AND result='ok'")
     assert post(c, "/api/admin/account-deletions/finalize", {"reason": "再次运行应当没有可处理的申请"}).json()["finalized"] == 0
+
+
+def test_an_administrator_revokes_every_push_device_of_an_account(env):
+    """A17: the account's browser push devices are listed without their endpoints, and one
+    confirmed action stops them all; the person is told and may subscribe again."""
+    import base64
+    import json
+    from synwevo_core.push import PushSubscriptions
+    c, store, ident, alice, api = env["c"], env["store"], env["ident"], env["alice"], env["api"]
+    b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()  # noqa: E731
+    sid = store.one("SELECT id FROM sessions WHERE user_id=? AND revoked_at IS NULL", (alice["id"],))["id"]
+    subs = PushSubscriptions(store)
+    for i in range(2):
+        # FIXTURE: synthetic subscriptions (public key material only); the second has no session.
+        subs.add(alice["id"], sid if i == 0 else None,
+                 {"endpoint": f"https://push.example.test/fixture-{i}", "keys": {"p256dh": b64(b"\x04" + bytes([i + 1]) * 64), "auth": b64(b"\x02" * 16)}},
+                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/128.0 Safari/537.36")
+    d = c.get(f"/api/admin/users/{alice['id']}").json()
+    assert len(d["push_subscriptions"]) == 2 and all(p["active"] for p in d["push_subscriptions"])
+    assert "endpoint" not in json.dumps(d) and "push.example.test" not in json.dumps(d), "the capability URL never reaches administration"
+    path = f"/api/admin/users/{alice['id']}/push-subscriptions/revoke"
+    assert post(c, path, {"reason": "用户报告设备丢失，停止全部推送"}).json()["error"] == "reauth_required"
+    _reauth(c)
+    r = post(c, path, {"reason": "用户报告设备丢失，停止全部推送"})
+    assert r.status_code == 200 and r.json() == {"ok": True, "revoked": 2, "notified": True}, r.text
+    assert c.get(f"/api/admin/users/{alice['id']}").json()["push_subscriptions"] == [] and not subs.has_active(alice["id"])
+    assert post(c, path, {"reason": "再次执行应当没有可撤销的设备"}).json() == {"ok": True, "revoked": 0, "notified": False}
+    row = store.one("SELECT meta FROM audit_events WHERE action='admin.user.push_revoke' ORDER BY at LIMIT 1")
+    assert row and json.loads(row["meta"])["revoked"] == 2
+    note = store.one("SELECT * FROM notifications WHERE user_id=? ORDER BY seq DESC LIMIT 1", (alice["id"],))
+    assert note and "push_revoked" in json.dumps(dict(note), default=str)
+    assert env["plain"].get("/api/auth/me").status_code == 200, "the person's session is untouched"
+    make_platform_admin(store, ident.create_user("support@example.com", PW, status="active"), role="support")
+    s = TestClient(api)
+    assert post(s, "/api/auth/login", {"email": "support@example.com", "password": PW}).status_code == 200
+    _reauth(s)
+    assert post(s, path, {"reason": "支持角色不能撤销推送设备"}).json()["error"] == "platform_permission_denied"

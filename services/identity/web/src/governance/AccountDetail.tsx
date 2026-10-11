@@ -41,6 +41,8 @@ export type AccountDetail = {
   sessions: { id: string; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string;
     client_parts?: { browser: string | null; platform: string | null }; ip: string | null; persistent: boolean; auth_provider: string | null }[];
   backoff: { failures: number; first_failure_at: number; last_failure_at: number; retry_after: number } | null;
+  /** A17: browser push devices, never their endpoints; `active` means a live session still backs the device. */
+  push_subscriptions?: { id: string; user_agent: string | null; created_at: number; last_sent_at: number | null; fail_count: number; active: boolean }[];
   /** A20: the deletion request, or the rules that would refuse one today (profile.deletion_state). */
   deletion?: { pending: boolean; requested_at: number | null; due_at: number | null; overdue: boolean;
     cancellation_link_valid: boolean; blockers: string[] };
@@ -82,8 +84,16 @@ export function deviceText(s: { client: string; client_parts?: { browser: string
 
 const DASH = "—";
 
+/** "Chrome · macOS" from the user agent the browser sent when it subscribed (the account page's own wording). */
+export function pushDeviceText(ua: string | null | undefined): string {
+  const s = ua || "";
+  const browser = /Edg\//.test(s) ? "Edge" : /OPR\//.test(s) ? "Opera" : /Firefox\//.test(s) ? "Firefox" : /Chrome\//.test(s) ? "Chrome" : /Safari\//.test(s) ? "Safari" : tr("浏览器");
+  const os = /iPhone|iPad/.test(s) ? "iOS" : /Android/.test(s) ? "Android" : /Mac OS X/.test(s) ? "macOS" : /Windows/.test(s) ? "Windows" : /Linux/.test(s) ? "Linux" : "";
+  return os ? `${browser} · ${os}` : browser;
+}
+
 /** One of the per-object actions (A17); the dialog confirms it with a reason and re-authentication. */
-export type AccountAction = { kind: "session" | "passkey" | "external"; id: string; label: string };
+export type AccountAction = { kind: "session" | "passkey" | "external" | "push"; id: string; label: string };
 
 export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountDetail; held?: Held; onAct?: (action: AccountAction) => void }) {
   useI18n();
@@ -169,6 +179,19 @@ export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountD
       <p className="muted small">{tr("地址是登录时记录的来源地址，不推断位置；撤销会话在账户行的菜单里。")}</p>
     </section>
 
+    {d.push_subscriptions && <section className="col gap8"><h3 className="secttl">{tr("推送设备（{count} 个）", { count: d.push_subscriptions.length })}</h3>
+      {d.push_subscriptions.length ? <>
+        <div className="list-wrap"><table className="gov" aria-label={tr("推送设备")}>
+          <thead><tr><th scope="col">{tr("设备")}</th><th scope="col">{tr("开启时间")}</th><th scope="col">{tr("最近推送")}</th><th scope="col">{tr("状态")}</th></tr></thead>
+          <tbody>{d.push_subscriptions.map((p) => <tr key={p.id}>
+            <th scope="row">{pushDeviceText(p.user_agent)}</th><td>{fmtTime(p.created_at)}</td>
+            <td>{p.last_sent_at ? fmtTime(p.last_sent_at) : tr("未推送过")}{p.fail_count > 0 ? ` · ${tr("最近 {count} 次推送失败", { count: p.fail_count })}` : ""}</td>
+            <td>{p.active ? tr("可接收") : tr("登录已结束，不再接收")}</td>
+          </tr>)}</tbody></table></div>
+        {mayAct && <div>{act({ kind: "push", id: "all", label: tr("撤销全部推送订阅") })}</div>}
+      </> : <p className="muted small">{tr("没有开启推送的设备。")}</p>}
+    </section>}
+
     <section className="col gap8"><h3 className="secttl">{tr("登录退避")}</h3>
       {b ? <p>{b.retry_after > 0
         ? tr("连续失败 {count} 次，最近一次 {time}；下次尝试需等待 {wait}。", { count: b.failures, time: fmtTime(b.last_failure_at), wait: fmtDuration(b.retry_after) })
@@ -195,14 +218,16 @@ const ACTION_PATH: Record<AccountAction["kind"], (uid: string, id: string) => st
   session: (uid, id) => `/api/admin/users/${encodeURIComponent(uid)}/sessions/${encodeURIComponent(id)}/revoke`,
   passkey: (uid, id) => `/api/admin/users/${encodeURIComponent(uid)}/passkeys/${encodeURIComponent(id)}/remove`,
   external: (uid, id) => `/api/admin/users/${encodeURIComponent(uid)}/external-identities/${encodeURIComponent(id)}/unlink`,
+  push: (uid) => `/api/admin/users/${encodeURIComponent(uid)}/push-subscriptions/revoke`,
 };
 const ACTION_IMPACT: Record<AccountAction["kind"], string> = {
   session: "{email}：该设备的登录与它签发的应用访问将立即结束；其他设备不受影响。本人会收到安全通知。",
   passkey: "{email}：该安全密钥将不能再用于登录；若它是账户唯一的登录方式，服务器会拒绝。本人会收到安全通知。",
   external: "{email}：该外部账户的下一次登录将不再进入此账户；若它是唯一的登录方式，服务器会拒绝。本人会收到安全通知。",
+  push: "{email}：该账户所有浏览器的推送订阅将被撤销，这些设备不再收到系统通知；登录与登录方式不变。本人会收到安全通知，可在自己的设备上重新开启。",
 };
 const ACTION_DONE: Record<AccountAction["kind"], string> = {
-  session: "已结束该设备的登录。", passkey: "已移除该安全密钥。", external: "已解除该外部身份。",
+  session: "已结束该设备的登录。", passkey: "已移除该安全密钥。", external: "已解除该外部身份。", push: "已撤销全部推送订阅。",
 };
 
 export function AccountDetailDialog({ user, held, onClose, onChanged }: {

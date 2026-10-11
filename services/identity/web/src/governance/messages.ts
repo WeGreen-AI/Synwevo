@@ -1686,5 +1686,19 @@ export const governanceMessages = {
   "最后一名可用的最高管理员": { en: "the last usable super administrator", "zh-Hant": "最後一名可用的最高管理員" },
   "共享工作空间的所有权或管理权未移交": { en: "ownership or administration of a shared workspace not yet handed over", "zh-Hant": "共享工作空間的所有權或管理權未移交" },
   "组织的所有权或管理权未移交": { en: "ownership or administration of an organization not yet handed over", "zh-Hant": "組織的所有權或管理權未移交" },
+  // A17: browser push devices in the account detail
+  "推送设备（{count} 个）": { en: "Push devices ({count})", "zh-Hant": "推播裝置（{count} 個）" },
+  "推送设备": { en: "Push devices", "zh-Hant": "推播裝置" },
+  "开启时间": { en: "Enabled on", "zh-Hant": "開啟時間" },
+  "最近推送": { en: "Last push", "zh-Hant": "最近推播" },
+  "未推送过": { en: "Never pushed", "zh-Hant": "未推播過" },
+  "最近 {count} 次推送失败": { en: "Last {count} pushes failed", "zh-Hant": "最近 {count} 次推播失敗" },
+  "可接收": { en: "Receiving", "zh-Hant": "可接收" },
+  "登录已结束，不再接收": { en: "Session ended; no longer receiving", "zh-Hant": "登入已結束，不再接收" },
+  "撤销全部推送订阅": { en: "Revoke all push subscriptions", "zh-Hant": "撤銷全部推播訂閱" },
+  "没有开启推送的设备。": { en: "No device has push enabled.", "zh-Hant": "沒有開啟推播的裝置。" },
+  "浏览器": { en: "Browser", "zh-Hant": "瀏覽器" },
+  "{email}：该账户所有浏览器的推送订阅将被撤销，这些设备不再收到系统通知；登录与登录方式不变。本人会收到安全通知，可在自己的设备上重新开启。": { en: "{email}: every browser push subscription of this account is revoked and those devices stop receiving system notifications; sessions and sign-in methods are unchanged. The person gets a security notice and can enable push again on a device they hold.", "zh-Hant": "{email}：該帳戶所有瀏覽器的推播訂閱將被撤銷，這些裝置不再收到系統通知；登入與登入方式不變。本人會收到安全通知，可在自己的裝置上重新開啟。" },
+  "已撤销全部推送订阅。": { en: "All push subscriptions revoked.", "zh-Hant": "已撤銷全部推播訂閱。" },
 };
 registerMessages(governanceMessages);

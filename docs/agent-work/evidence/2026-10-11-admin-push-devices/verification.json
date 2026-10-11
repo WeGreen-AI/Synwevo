@@ -1,0 +1,76 @@
+{
+ "package": "CR-094 · Admin A17 推送设备：按账户列出、撤销全部推送订阅",
+ "written_at": "2026-10-11T21:45:52+00:00",
+ "worktree": ".claude/worktrees/agent-billing (branch claude/agent-billing)",
+ "environment": "http://127.0.0.1:33934 — isolated synthetic instance (synwevo_server create_app role=all, start_jobs=False) in the session scratchpad; SYNWEVO_TEST_INSTANCE=1; two synthetic push subscriptions (public key material, synthetic endpoints) added through PushSubscriptions.add for the member; no production data, model, payment or outbound network; Playwright Chrome",
+ "backend_tests": {
+  "services/identity/tests/test_admin.py + test_platform_access.py -k 'push or account_detail or ends_one_device or deletion or matrix…'": "15 passed (new: test_an_administrator_revokes_every_push_device_of_an_account; matrix row added)",
+  "services/identity/tests/test_push*.py + test_notif*.py": "58 passed (SECURITY_WHAT gained push_revoked)"
+ },
+ "frontend": {
+  "account-web typecheck": "exit 0",
+  "account-web npm test": "167 passed (admin-account-detail: push section, button by permission, empty state)",
+  "account-web build": "ok"
+ },
+ "browser_steps": {
+  "before": {
+   "heading": true,
+   "rows": 2,
+   "devices": [
+    "Chrome · macOS\t2026/10/12 05:45\t未推送过\t可接收",
+    "Safari · iOS\t2026/10/12 05:45\t未推送过\t可接收"
+   ],
+   "button": 1,
+   "endpoint_leak": false
+  },
+  "after": {
+   "toast": 1,
+   "empty_sentence": true,
+   "button": 0,
+   "db_active": 0,
+   "db_revoked_reason": [
+    "admin_revoked"
+   ],
+   "audit": [
+    "admin.user.push_revoke"
+   ],
+   "timeline_mentions": [
+    "2026/10/12 05:45\tadmin.user.push_revoke\tadmin-fixture@example.test\tu_07aff4cd42af\t成功\t用户报告手机丢失，停止该账户全部推送（合成验收）"
+   ]
+  },
+  "en": {
+   "heading": true,
+   "empty": true
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+   "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+  ],
+  "member_notice": {
+   "note": "the proof queried a wrong inbox path (404); the notice is read from the isolated store instead",
+   "rows": [
+    {
+     "kind": "security.change",
+     "params": {
+      "what": "push_revoked"
+     }
+    }
+   ]
+  },
+  "support": {
+   "section": true,
+   "button": 0
+  }
+ },
+ "screenshots": [
+  "a17-push-after-revoke-zh-hans.png",
+  "a17-push-detail-en.png",
+  "a17-push-detail-zh-hans.png",
+  "a17-push-support-zh-hans.png"
+ ],
+ "console_errors_note": "401 is the login page's session probe, 403 the strict re-authentication the dialog asks for; no script errors",
+ "not_done": [
+  "per-device push revocation by administration (the person removes single devices on their own account page; administration acts on all at once)",
+  "deployment (GitHub Actions billing block)"
+ ]
+}

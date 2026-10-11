@@ -888,9 +888,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         user = ident.get_user(uid)
         if not user:
             raise ServiceError(404, "no_user", "找不到该账户")
+        from synwevo_core.push import PushSubscriptions
         from .external import ExternalIdentities, load_providers
         from .mfa import Mfa
         held = actor["platform_permissions"]
+        pushes = PushSubscriptions(store)
+        active_push = {p["id"] for p in pushes.active_for(uid)}
         ts = clock()
         access = PlatformAccess(store)
         blocked = access.blocked_by(user)
@@ -946,6 +949,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                                             "client_parts", "ip", "persistent", "auth_provider")}
                          for s in sessions.list_for_user(uid)],
             "backoff": ident.login_backoff(uid),
+            # A17: browser push devices — never the endpoint (a capability URL) or its keys.
+            "push_subscriptions": [{"id": p["id"], "user_agent": p.get("user_agent"), "created_at": p["created_at"],
+                                    "last_sent_at": p.get("last_sent_at"), "fail_count": p.get("fail_count") or 0,
+                                    "active": p["id"] in active_push} for p in pushes.list_for(uid)],
             "deletion": deletion_state(store, user),
             "audit": {"permitted": timeline is not None, "limit": TIMELINE_LIMIT, "items": timeline or []},
         }
@@ -1170,6 +1177,27 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     @r.post("/workspaces/{wid}/unfreeze")
     def unfreeze(request: Request, wid: str, body: dict = Body(...)):
         return _freeze(request, wid, body, False)
+
+    @r.post("/users/{uid}/push-subscriptions/revoke")
+    def revoke_push_subscriptions(request: Request, uid: str, body: dict = Body(...)):
+        """A17: every browser push device of the account stops receiving notifications (a lost or
+        shared device the person cannot reach themselves). Idempotent — the count says what
+        changed; the person is told through their inbox and subscribes again from a device they
+        hold. Sessions and sign-in methods are untouched."""
+        actor = _admin(request, "platform.users.manage", dangerous=True)
+        reason = _reason(body)
+        _not_outranked(request, actor, uid)
+        from synwevo_core.push import PushSubscriptions
+        with _write(request, "platform.users.manage", object_kind="user", object_id=uid):
+            actor = _admin(request, "platform.users.manage", dangerous=True)
+            if not ident.get_user(uid):
+                raise ServiceError(404, "no_user", "找不到该账户")
+            _not_outranked(request, actor, uid)
+            n = PushSubscriptions(store).revoke_all_for_user(uid, "admin_revoked")
+            audit(request, "admin.user.push_revoke", actor_id=actor["id"], object_kind="user", object_id=uid,
+                  result="ok", meta={"reason": reason, "revoked": n})
+        notified = _security_notice(request, uid, "push_revoked") if n else False
+        return {"ok": True, "revoked": n, "notified": notified}
 
     @r.post("/users/{uid}/platform-role")
     def set_platform_role(request: Request, uid: str, body: dict = Body(...)):

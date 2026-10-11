@@ -333,3 +333,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：管理员不能代为取消注销——重发只把新链接寄到本人邮箱，页面上由本人确认；新链接 `expires_at` 等于原删除到期时间（绝不延长），旧未用链接同事务作废；响应与审计只含 mail_id/due_at，不含令牌；速率限制把本人申请时的那封也计入（一小时 3 次、间隔 1 分钟），所以申请后一分钟内重发会被拒（浏览器验收实测并留证）；重发走 `_write` 写锁 + 严格重认证 + 越级检查，与其他 support 动作一致；终结路由直接复用 Sweeper 的幂等 `finalize_deletions`（内部自带事务，故不嵌套 `_write`），不会让任何申请提前到期，失败以 503 `finalize_failed` 报告并审计 error；阻塞规则只读取不决定（`check_ownership_continuity` 在事务外调用仅作诊断，返回码不含成员信息）；详情块对旧服务端缺字段时不渲染。
 - 风险/未做：`deletion_counts.pending` 含逾期者（标签改为「待删除账户」以免误读）；逐账户终结未做；`_write` 把 4xx 状态拒绝（如 429）也记为 `admin.access.denied`，与既有路由一致；取消弃用/恢复宽限期等政策功能不在范围。
 - 验证：test_admin 相关 5 例通过（新增 1）；test_mail_catalogue + test_self_service 55 通过；权限矩阵 30 通过；identity 全量 1552 通过（21:04–21:07Z）；integration 全量 1355 通过（21:08–21:12Z）；account-web typecheck/167 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-11-admin-account-deletions。
+
+## CR-094 · Admin A17 推送设备：按账户列出、撤销全部推送订阅（2026-10-11，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：services/identity/synwevo_identity/admin_routes.py（A13 详情 `push_subscriptions`；`POST /users/{uid}/push-subscriptions/revoke`）；packages/core/synwevo_core/notifications.py `SECURITY_WHAT.push_revoked`（三语言）；account-web `governance/AccountDetail.tsx`（「推送设备」段、`pushDeviceText`、动作 kind `push`）、messages.ts 13 条；tests：test_admin.py 1 例、test_platform_access.py 矩阵 1 行、admin-account-detail.test.mjs；docs/platform/admin-coverage.md A17 行。
+- 审查要点：详情只给设备 UA、时间、失败次数与是否仍可接收（`active_for` 按创建会话是否存活判断），绝不返回端点（能力 URL）或密钥；撤销复用 `PushSubscriptions.revoke_all_for_user`，原因 `admin_revoked`，幂等（数量为 0 时不发通知）；不触碰会话与登录方式；`users.manage` + 严格重认证 + 理由 + 越级检查，与 A17 其他动作一致；本人收到 `security.change`（新键在目录中有三语言，旧 zh 句映射不受影响）。
+- 风险/未做：管理员不逐台撤销（本人账户页可逐台移除、发送测试）；设备 UA 解析与账户页同一规则（Chrome/Safari/… · OS），其余显示「浏览器」。
+- 验证：test_admin + 矩阵相关 15 例通过（新增 1 例 + 1 行）；push/notification 测试 58 通过；account-web typecheck/167 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-11-admin-push-devices（identity/integration 全量在推送前随批复跑）。

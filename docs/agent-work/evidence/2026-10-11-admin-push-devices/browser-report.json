@@ -1,0 +1,54 @@
+{
+ "base": "http://127.0.0.1:33934",
+ "engine": "chrome",
+ "steps": {
+  "before": {
+   "heading": true,
+   "rows": 2,
+   "devices": [
+    "Chrome · macOS\t2026/10/12 05:45\t未推送过\t可接收",
+    "Safari · iOS\t2026/10/12 05:45\t未推送过\t可接收"
+   ],
+   "button": 1,
+   "endpoint_leak": false
+  },
+  "after": {
+   "toast": 1,
+   "empty_sentence": true,
+   "button": 0,
+   "db_active": 0,
+   "db_revoked_reason": [
+    "admin_revoked"
+   ],
+   "audit": [
+    "admin.user.push_revoke"
+   ],
+   "timeline_mentions": [
+    "2026/10/12 05:45\tadmin.user.push_revoke\tadmin-fixture@example.test\tu_07aff4cd42af\t成功\t用户报告手机丢失，停止该账户全部推送（合成验收）"
+   ]
+  },
+  "en": {
+   "heading": true,
+   "empty": true
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+   "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+  ],
+  "member_notice": {
+   "note": "the proof queried a wrong inbox path (404); the notice is read from the isolated store instead",
+   "rows": [
+    {
+     "kind": "security.change",
+     "params": {
+      "what": "push_revoked"
+     }
+    }
+   ]
+  },
+  "support": {
+   "section": true,
+   "button": 0
+  }
+ }
+}
