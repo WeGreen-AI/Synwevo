@@ -892,3 +892,8 @@ through the pre-fix transport, which lacked explicit certificate verification.
 
 操作者：Claude Code 协调者会话 13b6809f。962b375 核验上线后推送 b5b9c56（路线续期文档）、7edda10（CR-084）、9bc5600（CR-085）、db77298（CR-086）与部署记录 e99212d8e9c379f43376335194cde3b8bd3f741c；推送前在实施树复跑五守卫、根 typecheck/build、identity 1549 与 integration 1352。Actions 38155466408 verify（16:26–17:23Z）与 deploy（17:23–17:25Z）成功。
 17:27Z 只读核验（`docs/agent-work/evidence/2026-10-11-agent-context-kinds/production-release.json`，CI 回执同目录 `ci-release.json`）：`/opt/synwevo/current.json` 镜像 `synwevo:e99212d…`、前镜像 962b375、备份 `/opt/synwevo/backups/20261011T172455Z`；accounts/docs/portal/messages 四容器 OCI revision 均 e99212d，含 gateway/clamav 六容器 healthy；portal 容器内被检查模块源码 sha256 与该提交一致；五域 `/readyz` ready 与根页 200。未调用生产模型或支付，未改任何配置。随该版本上线：Agent 个人文件读取 DOCX/XLSX（完整文字或拒绝，CR-084）；审批模板/请求、提取模板/任务、数据处理方案/运行进入 Agent 业务资料选择器（CR-086）；账户前端测试缓存隔离仅影响测试（CR-085）。
+
+## 2026-10-11 393b066 未部署（GitHub Actions 计费阻断）
+
+操作者：Claude Code 协调者会话 13b6809f。57bebb7（CR-087 + e99212d 部署记录）的 Actions 38159846815 在运行时验证因计时敏感的配额测试失败（见 BACKLOG 18:35Z），deploy 跳过；修复 393b066（配额测试前置改为显式 6/min 预算）与 86d74b0（CR-088 图片/扫描 PDF 本地文字识别附件）推送后，Actions 38164472254 verify 成功（18:35–19:34Z，全部套件通过），但 **deploy 作业未启动**：GitHub 注解「The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings」（作业 114556258462，0 个步骤）。
+19:35Z 只读核验：生产仍为 `synwevo:e99212d…`，四应用容器 revision 一致、六容器 healthy、五域 ready（`scratchpad/prod-after-failed-deploy.json`，未写入仓库）。未做手动部署（仅沿既有 CI/CD 发布）。**需要组织所有者处理**：WeGreen-AI 的 GitHub「Billing & plans」付款/支出上限；恢复后重跑该运行的 deploy 作业（`gh run rerun 38164472254 --job 114556258462`）或重新推送，部署后再做只读核验并记录。CR-087（Admin A13 账户详情）与 CR-088 均已通过验证，等待这次部署一起上线。

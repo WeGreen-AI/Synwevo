@@ -9,7 +9,7 @@
 ## 实际发布与CI
 
 - 生产当前为 `e99212d8e9c379f43376335194cde3b8bd3f741c`（Actions38155466408 verify/deploy成功，17:27Z只读核验：current/四应用revision/源码哈希一致，六容器healthy，五域ready；回执 `evidence/2026-10-11-agent-context-kinds/ci-release.json`、`production-release.json`）。随该版本上线 CR-084 Office 附件、CR-085、CR-086 业务资料类型扩展；此前 962b375（CR-079/082/083）与 e7c1f05（CR-078+CI修复）回执分别在 `evidence/2026-10-11-agent-budget-sources/`、`evidence/2026-10-11-ci-refusals/`。
-- 已上线至 e99212d（见上）。57bebb7（CR-087 Admin A13 账户详情 + e99212d 部署记录）的 Actions 38159846815 在运行时验证因计时敏感的配额测试失败（见 BACKLOG 18:35Z），deploy 跳过；测试修复与 CR-088（图片/扫描 PDF 本地文字识别附件，证据 `evidence/2026-10-11-agent-recognized-files/`）本地提交后一并推送，新 SHA 的 deploy 完成并核验前不写成已上线。
+- 已上线至 e99212d（见上）。**部署阻断（需用户处理）**：393b066（CR-087 Admin A13 + CR-088 图片/扫描 PDF 文字识别 + 配额测试修复）的 Actions 38164472254 verify 全部通过，但 deploy 作业因 GitHub 计费未启动（「recent account payments have failed or your spending limit needs to be increased」）。生产仍为 e99212d（19:35Z 只读核验 healthy）。恢复计费后重跑 deploy 作业（`gh run rerun 38164472254 --job 114556258462`）或重新推送；代理不做手动部署、不改计费设置。本地已提交待推送：dc480cc（WP8 浏览器验收证据）。
 
 ## 当前工作包与下一条动作
 
@@ -19,7 +19,7 @@
 - **CR-083 取消/恢复链路审查：代码完成、本地已验证、已提交**：重启时用户已停止的回答收为cancelled；取消立即收尾时返回cancelled；`turn.stopping`投影与Chat停止中反馈。apps/suite/tests全量与suite-web 205通过。
 - **CR-084 AG-ATTACH Office 文本文档：代码完成、本地与隔离浏览器已验证、已本地提交**：DOCX/XLSX 加入 Agent 完整上下文格式（全部文字或拒绝；图片→需 OCR，嵌入对象/图表/公式/宏/未缓存公式→不支持，加密→加密），前端来源标签与说明随之更新。证据 `evidence/2026-10-11-agent-office-files/`。
 - **CR-085 账户前端测试缓存隔离、CR-086 业务资料类型扩展（审批/提取/数据处理）：已本地提交并验证**（1130 后端、206 前端、隔离浏览器）。证据 `evidence/2026-10-11-agent-context-kinds/`。
-- 下一动作：跟踪 Actions 38164472254（393b066 = CR-088 + 配额测试修复）→部署后只读核验并写回执（CR-087/CR-088 随之上线）→继续 BACKLOG 余项（WP8 C3 同名澄清、Admin A11/A17、API/SDK 缺口；真实支付与真实模型仍受支出暂停约束）。WP8 C1/C2/C4 浏览器验收已完成（evidence/2026-10-11-agent-cross-workspace）。
+- 下一动作：等待用户恢复 GitHub Actions 计费→重跑 38164472254 的 deploy（或重新推送）→部署后只读核验并写回执→推送 dc480cc 等本地提交；期间继续本地可验证的工作（WP8 C3 同名澄清、Admin A11/A17、API/SDK 缺口），每个包在隔离实例验证并本地提交，推送在计费恢复后批量进行。
 
 ## 已核实的正式Agent与支付配置（不重复创建或发布）
 
