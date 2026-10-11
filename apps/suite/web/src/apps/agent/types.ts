@@ -3,7 +3,9 @@ export const CONTEXT_KINDS: ContextKind[] = ["form", "table", "approval_template
 export interface ContextItem { kind: ContextKind; workspace_id: string; resource_id: string; title: string }
 /** The exact reference returned by agent.context.resolve; no business content is sent by the browser. */
 export interface ContextReference { kind: ContextKind; workspace_id: string; resource_id: string; snapshot: string }
-export interface MessageContext { title: string; workspace_name: string | null; open_path: string | null; kind?: "file" }
+export interface MessageContext { title: string; workspace_name: string | null; open_path: string | null; kind?: "file";
+  /** a personal file the local engine read from pixels: recognized text, never verified text */
+  recognized?: boolean }
 export interface SelectedContext extends MessageContext { reference: ContextReference }
 export interface ContextPage { items: ContextItem[]; next_offset: number | null; limited: boolean }
 
@@ -55,13 +57,17 @@ export interface FileReference { file_id: string; snapshot: string }
 export interface SelectedFile { title: string; reference: FileReference }
 export interface FileCapabilities {
   configured: boolean; formats: string[]; max_bytes: number; max_files: number; max_storage_bytes: number;
-  max_context_chars: number; unattached_retention_seconds: number; scanner: Record<string, unknown> | null; ocr: false;
+  max_context_chars: number; unattached_retention_seconds: number; scanner: Record<string, unknown> | null;
+  /** The deployment recognizes PNG/JPEG images and scanned PDF pages with its local engine; recognized
+   *  lines are marked and carry a confidence, never presented as verified text. */
+  ocr: boolean; ocr_languages?: string[]; ocr_pages?: number | null;
 }
 export interface AgentFile {
   id: string; filename: string; size: number; created_at: number; updated_at: number; attempts: number;
   status: 'receiving' | 'queued' | 'parsing' | 'ready' | 'failed' | 'cancelled' | 'deleted';
   error_code: string | null; scan_status: string; reference: FileReference | null; download_path: string | null;
   extraction?: { lines: { text: string; source: Record<string, unknown> }[];
-    tables: { name: string; source: Record<string, unknown>; rows: unknown[][]; row_numbers?: number[] }[] } | null;
+    tables: { name: string; source: Record<string, unknown>; rows: unknown[][]; row_numbers?: number[] }[];
+    ocr?: { applied: boolean; engine?: string | null; pages?: number; words?: number; low_confidence_words?: number } } | null;
 }
 export interface FilePage { files: AgentFile[]; next_offset: number | null }

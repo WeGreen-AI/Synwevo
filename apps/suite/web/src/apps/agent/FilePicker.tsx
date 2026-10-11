@@ -46,6 +46,8 @@ export function FilePreview({ file }: { file: AgentFile }) {
   if (file.status !== 'ready' || !file.extraction) return null;
   return <section className="ag-file-preview" aria-label={f('preview')}>
     <h3>{file.filename}</h3><p>{f('preview')}</p>
+    {file.extraction.ocr?.applied && <p className="notice" role="note">{file.extraction.ocr.words
+      ? f('recognizedNotice', { words: file.extraction.ocr.words, low: file.extraction.ocr.low_confidence_words ?? 0 }) : f('recognizedNone')}</p>}
     {file.extraction.lines?.map((line, i) => <div key={i}>
       <small className="muted">{fileSourceLabel(line.source, f)}</small><pre>{line.text}</pre>
     </div>)}
@@ -183,7 +185,7 @@ export function FileDialog({ client, selected, businessCount, onChoose, onRemove
         <p className="muted small">{f('limits', { formats: caps.formats.join(', ') || '—', bytes: caps.max_bytes,
           count: caps.max_files, storage: caps.max_storage_bytes, chars: caps.max_context_chars })}</p>
         <p className="muted small">{f('retention', { hours: caps.unattached_retention_seconds / 3600 })}</p>
-        <p className="muted small">{f('encoding')}</p>{caps.formats.some((x) => ['docx', 'xlsx'].includes(x.toLowerCase())) && <p className="muted small">{f('office')}</p>}<p className="notice">{f('noOcr')}</p><p className="muted small">{f(scannerLabel(caps.scanner))}</p>
+        <p className="muted small">{f('encoding')}</p>{caps.formats.some((x) => ['docx', 'xlsx'].includes(x.toLowerCase())) && <p className="muted small">{f('office')}</p>}<p className="notice">{caps.ocr ? f('ocrOn', { pages: caps.ocr_pages ?? '—' }) : f('noOcr')}</p><p className="muted small">{f(scannerLabel(caps.scanner))}</p>
       </>}
       <label htmlFor={`${id}-file`}>{f('chooseUpload')}
         <input id={`${id}-file`} className="input" type="file" disabled={!caps?.configured || busy}

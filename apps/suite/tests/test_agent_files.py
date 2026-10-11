@@ -1,5 +1,6 @@
 """Personal attachment lifecycle on real Store/ACL/admission/ledger. The tiny reader and model
 are explicit TEST DOUBLES; real document formats are tested in Docs and integration tests."""
+import base64
 import json
 from concurrent.futures import ThreadPoolExecutor
 
@@ -25,6 +26,24 @@ class Reader:
     def extract_context(self, data, filename):
         return {'status': 'ready', 'format': 'txt', 'tables': [],
                 'lines': [{'text': data.decode('utf-8'), 'source': {'line': 1}}]}
+
+
+class RecognizingReader(Reader):
+    """TEST DOUBLE of a reader whose deployment recognizes images: it reports so and expects the
+    worker to ask for recognition explicitly (the real reader is synwevo_docs.ingest)."""
+    def describe(self):
+        return {'context_formats': ['txt', 'png'], 'context_ocr': True, 'context_ocr_languages': ['eng'],
+                'context_limits': {'ocr_pages': 5}, 'scanner': {'status': 'not_configured'}}
+
+    def extract_context(self, data, filename, ocr=False):
+        assert ocr is True, 'the worker must ask for recognition when the reader offers it'
+        return {'status': 'ready', 'format': 'png', 'tables': [],
+                'ocr': {'available': True, 'applied': True, 'engine': 'fixture', 'pages': 1, 'words': 2, 'low_confidence_words': 1},
+                'lines': [{'text': 'SYNTHETIC RECOGNIZED', 'source': {'page': 1, 'line': 1, 'recognized': True, 'confidence': 61}}]}
+
+
+#: a one-pixel PNG (test fixture bytes; the double above never reads them)
+PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==')
 
 
 def ready(files, uid, key='fixture-file', data=b'PRIVATE SYNTHETIC INPUT'):
@@ -261,3 +280,17 @@ def test_legacy_account_erase_and_rollback_still_clear_new_file_rows(governed):
         # agent_files cleanup. The DB must erase new rows without requiring a new worker.
         g.store.execute("UPDATE users SET status='deleted' WHERE id=?",(uid,))
     assert not g.store.all('SELECT * FROM agent_files WHERE user_id=?',(uid,))
+
+
+def test_recognized_files_are_asked_for_explicitly_and_marked_to_model_and_person(governed):
+    g=governed;uid=g.people.uid('alice');f=g.engine.files;f.reader=RecognizingReader()
+    caps=f.capabilities();assert caps['ocr'] is True and caps['ocr_pages']==5 and caps['ocr_languages']==['eng'] and 'png' in caps['formats']
+    item=f.upload(uid,'fixture.png',PNG,'fixture-image');assert item['status']=='queued'
+    f.tick();item=f.get(uid,item['id']);assert item['status']=='ready',item
+    assert item['extraction']['ocr']['applied'] is True and item['extraction']['lines'][0]['source']['recognized'] is True
+    g.model.steps=[say('SYNTHETIC ANSWER')];cid,t=turn(g,item['reference']);assert advance(g,t)['status']=='succeeded'
+    payload=json.loads(g.store.one("SELECT api_json FROM agent_messages WHERE role='user'")['api_json'])
+    assert payload['items'][0]['kind']=='file' and payload['items'][0]['recognized'] is True
+    assert shown(g,cid)['messages'][0]['contexts'][0]=={**shown(g,cid)['messages'][0]['contexts'][0],'kind':'file','recognized':True}
+    # A reader without the engine is never asked (it may not know the flag) and marks nothing.
+    plain=ready(f,uid,'fixture-text');assert f.capabilities()['ocr'] is False and plain['extraction'].get('ocr') is None

@@ -1,0 +1,128 @@
+{
+ "package": "CR-088 — images and scanned PDFs enter the personal Agent through local text recognition, marked as recognized text",
+ "date": "2026-10-11",
+ "tree": "worktree claude/agent-billing on 57bebb7, CR-088 changes uncommitted at verification time",
+ "contract": {
+  "reader": "synwevo_docs.ingest.extract_context(data, filename, ocr=True): PNG/JPG/JPEG and a PDF's scanned pages (no readable text layer) are recognized page by page with the local engine (tesseract via engine/ocr.py); recognized lines carry source {page, line, recognized: true, confidence} (lowest word confidence on the line) and the file-level ocr summary counts pages/words/low-confidence words (threshold 60); at most CONTEXT_LIMITS['ocr_pages']=5 pages per file; a page mixing a text layer with pictures or hidden text still refuses (context_needs_ocr); images without the engine refuse (context_ocr_unsupported); engine timeout/error refuses (context_ocr_failed); the flag changes nothing for text formats",
+  "capabilities": "describe(): context_ocr, context_ocr_languages, image formats listed only when the engine exists; Suite capabilities: ocr, ocr_languages, ocr_pages",
+  "worker": "apps/suite agent/files.py asks the reader for recognition explicitly (ocr=True) only when the reader reports it; a reader without the flag keeps its old call; recognized context items carry recognized: true to the model payload and to the message's visible contexts",
+  "wording": "files.messages.ts: ocrOn capability notice, recognizedNotice/recognizedNone in the preview, sourceRecognized per line, ocrFailed; needsOcr/ocrUnsupported reworded; context.messages.ts personalFileRecognized on message source chips"
+ },
+ "tests": {
+  "apps/docs/tests/test_ingest_context.py": "89 passed (new: images need both the flag and the engine; images/JPEG/scanned PDF recognized line by line with confidence; typed pages verbatim, mixed page refused, 6-page budget refused before any OCR, pixel limit) — whole Docs suite 1638 passed, 2 skipped (17:23–17:30Z)",
+  "apps/suite/tests/test_agent_files.py": "20 passed (new: recognized files are asked for explicitly and marked to model and person) — whole Suite suite 1131 passed",
+  "apps/docs/web/tests/refusals.test.ts": "16 passed with the two new reader sentences classified API_ONLY",
+  "apps/suite/web (npm test)": "206 passed (capabilities accept ocr boolean/languages/pages, reject malformed; sourceRecognized label; context_ocr_failed wording in three languages)",
+  "typecheck/build": "suite-web typecheck and build exit 0 (17:21Z, 17:26Z)",
+  "guards": "check_boundaries, check_brand, check_design, check_component_names, brand_assets --check all exit 0"
+ },
+ "browser": {
+  "server": "isolated synthetic Agent instance http://127.0.0.1:33895 (scratchpad cr079/isolated_ui.py recipe: real Store/auth/Docs reader/ledger/quotes, fixture model and payment transports, scratchpad data); local tesseract 5.5 with bundled chi_sim+eng",
+  "engine": "chrome",
+  "report": "browser-report.json",
+  "capabilities_seen": {
+   "configured": true,
+   "formats": [
+    "txt",
+    "md",
+    "csv",
+    "tsv",
+    "pdf",
+    "docx",
+    "xlsx",
+    "png",
+    "jpg",
+    "jpeg"
+   ],
+   "max_bytes": 8388608,
+   "max_files": 50,
+   "max_storage_bytes": 52428800,
+   "max_context_chars": 60000,
+   "unattached_retention_seconds": 86400,
+   "scanner": {
+    "status": "off",
+    "configured": false
+   },
+   "ocr": true,
+   "ocr_languages": [
+    "chi_sim",
+    "eng",
+    "osd"
+   ],
+   "ocr_pages": 5
+  },
+  "screenshots": [
+   "en-recognized-preview.png",
+   "zh-hans-message-with-recognized-source.png",
+   "zh-hans-mobile-390-recognized-preview.png",
+   "zh-hans-recognized-preview.png",
+   "zh-hans-scan-and-mixed.png",
+   "zh-hant-recognized-preview.png"
+  ],
+  "observed": {
+   "zh-hans": {
+    "ocr_notice": true,
+    "formats_listed": true,
+    "preview_marked": true,
+    "preview_source": true,
+    "preview_text_has_fixture": true,
+    "jpg_ready": true,
+    "scan_pages_1_and_2": true,
+    "mixed_refusal_wording": true,
+    "console_errors": [
+     "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    ]
+   },
+   "en": {
+    "ocr_notice": true,
+    "formats_listed": true,
+    "preview_marked": true,
+    "preview_source": true,
+    "preview_text_has_fixture": true,
+    "console_errors": [
+     "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    ]
+   },
+   "zh-hant": {
+    "ocr_notice": true,
+    "formats_listed": true,
+    "preview_marked": true,
+    "preview_source": true,
+    "preview_text_has_fixture": true,
+    "console_errors": [
+     "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    ]
+   },
+   "zh-hans-mobile-390": {
+    "ocr_notice": true,
+    "formats_listed": true,
+    "preview_marked": true,
+    "preview_source": true,
+    "preview_text_has_fixture": true,
+    "console_errors": [
+     "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    ]
+   }
+  },
+  "quote": {
+   "lists_recognized_file": true,
+   "run": "completed through the fixture transports (budget 0.01 test units, 2 calls): the answered message's source chip reads '个人文件 · 识别文字（未核对）' (zh-hans-message-with-recognized-source.png); settled 0.000042 FIXTURE-GATEWAY test units, no real model or payment"
+  },
+  "notes": [
+   "recognition of a 2700×720 PNG took under a second locally; the two-page scan under two seconds",
+   "the mixed PDF (typed text + picture) failed with the reworded needsOcr sentence; the row also shows the scanner-off notice of this fixture",
+   "each context logs one 401: /api/auth/me on /login before sign-in"
+  ],
+  "turn": {
+   "quote_lists_file": true,
+   "ran": true,
+   "chip_marked": true,
+   "sources_excerpt": "本条消息的参考资料\n\nsynthetic-sign-zh-hans.png\n个人文件 · 识别文字（未核对）"
+  }
+ },
+ "not_done": [
+  "no production verification yet: CR-088 is committed locally and not pushed at this point",
+  "TIFF/WEBP/BMP/GIF images, multi-frame images and PPTX/legacy Office remain unsupported by design",
+  "the quote dialog's source list says only 个人文件 (the recognized marker appears on the sent message's source chip)"
+ ]
+}

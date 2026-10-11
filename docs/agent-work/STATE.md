@@ -9,7 +9,7 @@
 ## 实际发布与CI
 
 - 生产当前为 `e99212d8e9c379f43376335194cde3b8bd3f741c`（Actions38155466408 verify/deploy成功，17:27Z只读核验：current/四应用revision/源码哈希一致，六容器healthy，五域ready；回执 `evidence/2026-10-11-agent-context-kinds/ci-release.json`、`production-release.json`）。随该版本上线 CR-084 Office 附件、CR-085、CR-086 业务资料类型扩展；此前 962b375（CR-079/082/083）与 e7c1f05（CR-078+CI修复）回执分别在 `evidence/2026-10-11-agent-budget-sources/`、`evidence/2026-10-11-ci-refusals/`。
-- 已上线至 e99212d（见上）。本地已提交待推送：CR-087 Admin A13 账户详情（1b40388，本地与隔离浏览器已验证，证据 `evidence/2026-10-11-admin-account-detail/`），随本次部署记录一起推送；CR-088 图片/扫描件文字识别附件契约实施中（未提交）。
+- 已上线至 e99212d（见上）。已推送待 CI：57bebb7（CR-087 Admin A13 账户详情 + e99212d 部署记录），Actions 38159846815 运行中，deploy 完成并核验前不写成已上线。本地已提交待推送：CR-088 图片/扫描 PDF 本地文字识别附件（本地与隔离浏览器已验证，证据 `evidence/2026-10-11-agent-recognized-files/`）。
 
 ## 当前工作包与下一条动作
 
@@ -19,7 +19,7 @@
 - **CR-083 取消/恢复链路审查：代码完成、本地已验证、已提交**：重启时用户已停止的回答收为cancelled；取消立即收尾时返回cancelled；`turn.stopping`投影与Chat停止中反馈。apps/suite/tests全量与suite-web 205通过。
 - **CR-084 AG-ATTACH Office 文本文档：代码完成、本地与隔离浏览器已验证、已本地提交**：DOCX/XLSX 加入 Agent 完整上下文格式（全部文字或拒绝；图片→需 OCR，嵌入对象/图表/公式/宏/未缓存公式→不支持，加密→加密），前端来源标签与说明随之更新。证据 `evidence/2026-10-11-agent-office-files/`。
 - **CR-085 账户前端测试缓存隔离、CR-086 业务资料类型扩展（审批/提取/数据处理）：已本地提交并验证**（1130 后端、206 前端、隔离浏览器）。证据 `evidence/2026-10-11-agent-context-kinds/`。
-- 下一动作：推送 CR-087+部署记录并跟踪其 Actions→部署后只读核验并写回执→完成 CR-088（图片/扫描 PDF 本地文字识别：Docs 读取器、Suite 工作进程、前端标记与三语言，浏览器验收）→继续 BACKLOG 余项（跨空间任务与个人自动化浏览器验收、真实支付、Admin A11/A17、API/SDK 缺口）。
+- 下一动作：跟踪 Actions 38159846815→部署后只读核验并写回执→推送 CR-088（新 SHA 再走完整 CI/CD）→继续 BACKLOG 余项（跨空间任务与个人自动化浏览器验收、真实支付、Admin A11/A17、API/SDK 缺口）。
 
 ## 已核实的正式Agent与支付配置（不重复创建或发布）
 

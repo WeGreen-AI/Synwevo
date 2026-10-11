@@ -254,3 +254,4 @@
 - 2026-10-11 16:16 UTC：**962b375 已发布并核验**（CR-079/CR-082 报价前来源审阅、CR-083 取消/恢复修复上线；回执 `evidence/2026-10-11-agent-budget-sources/`）。b5b9c56/7edda10/9bc5600/db77298 推送前门禁复跑中。Admin A13 账户详情：后端 `GET /api/admin/users/{uid}`（platform.users.view，仅元数据，名称与时间线随调用者权限）与 2 例测试+权限矩阵行完成，UI 对话框与前端测试进行中。
 - 2026-10-11 16:40 UTC：**CR-087 Admin A13 账户详情与安全时间线**本地与隔离浏览器验证完成（EVIDENCE/CODE_REVIEW/admin-coverage 已更新），本地提交，待 e99212d（Actions 38155466408）部署核验后随下一批推送。Admin 余项见 admin-coverage（A11 MFA 策略、A17 逐设备撤销/Passkey/外部身份管理等）。
 - 2026-10-11 17:27 UTC：**e99212d 已发布并核验**（CR-084/085/086 上线；回执 `evidence/2026-10-11-agent-context-kinds/`）。CR-087 随部署记录推送。CR-088（图片/扫描 PDF 本地文字识别进入个人文件）Docs 读取器、Suite 工作进程、前端与测试已在本地通过，浏览器验收进行中。
+- 2026-10-11 17:36 UTC：**CR-088 图片/扫描 PDF 本地文字识别附件**本地与隔离浏览器验证完成（EVIDENCE/CODE_REVIEW/agent-files.md 已更新），本地提交，待 57bebb7（Actions 38159846815）部署核验后推送。AG-ATTACH 余项：TIFF/WEBP/多帧图片、PPTX/旧二进制 Office 仍不支持（按契约拒绝）。

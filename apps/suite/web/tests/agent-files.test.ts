@@ -140,7 +140,9 @@ async function appFixture(billing = true, withConsent = false) {
 
 test('capabilities govern formats and size; incomplete records, unsafe downloads and malformed extraction fail closed', () => {
   assert.deepEqual(helpers.fileCapabilities(caps), caps);
-  for (const value of [{ ...caps, ocr: true }, { ...caps, max_bytes: 0 }, { ...caps, formats: ['../txt'] }]) assert.throws(() => helpers.fileCapabilities(value));
+  const recognizing = { ...caps, ocr: true, ocr_languages: ['chi_sim', 'eng'], ocr_pages: 5, formats: [...caps.formats, 'png', 'jpg', 'jpeg'] };
+  assert.deepEqual(helpers.fileCapabilities(recognizing), recognizing);
+  for (const value of [{ ...caps, ocr: 'yes' }, { ...recognizing, ocr_pages: 0 }, { ...recognizing, ocr_languages: 'eng' }, { ...caps, max_bytes: 0 }, { ...caps, formats: ['../txt'] }]) assert.throws(() => helpers.fileCapabilities(value));
   for (const name of ['Fixture.docx', 'Fixture.xlsx', 'Fixture.png']) assert.throws(() => helpers.checkUpload(new File(['fixture'], name), caps), /context_format_unsupported/);
   assert.throws(() => helpers.checkUpload(new File([], 'empty.txt'), caps), /agent_file_limit/);
   assert.throws(() => helpers.checkUpload(new File(['ab'], 'large.txt'), { ...caps, max_bytes: 1 }), /agent_file_limit/);
@@ -331,7 +333,7 @@ test('all file refusals translate in three languages; scanner absence never clai
   const codes = ['agent_file_expired', 'agent_file_not_found', 'agent_file_not_ready', 'agent_file_changed', 'agent_file_limit', 'agent_file_quota',
     'agent_file_busy', 'agent_file_not_configured', 'agent_file_retry_unavailable', 'context_format_unsupported', 'context_incomplete',
     'parse_timeout', 'parse_failed', 'parse_interrupted', 'parse_cancelled', 'upload_interrupted', 'context_limit_exceeded', 'context_parse_error',
-    'context_needs_ocr', 'context_ocr_unsupported', 'context_encrypted', 'scan_unavailable', 'scan_limit', 'unchecked_file', 'malware_detected'];
+    'context_needs_ocr', 'context_ocr_unsupported', 'context_ocr_failed', 'context_encrypted', 'scan_unavailable', 'scan_limit', 'unchecked_file', 'malware_detected'];
   for (const locale of ['zh-Hans', 'en', 'zh-Hant']) {
     for (const code of codes) {
       const key = helpers.fileErrorKey({ code }); assert.ok(key, code);
@@ -497,6 +499,8 @@ test('preview sources use real page/line/table/row labels in three languages and
     assert.equal(helpers.fileSourceLabel({ page: 2, line: 9 }, f), f('sourcePageLine', { page: 2, line: 9 }));
     assert.equal(helpers.fileSourceLabel({ line: 4 }, f), f('sourceLine', { line: 4 }));
     assert.equal(helpers.fileSourceLabel({ page: 3 }, f), f('sourcePage', { page: 3 }));
+    assert.equal(helpers.fileSourceLabel({ page: 2, line: 3, recognized: true, confidence: 87 }, f), f('sourceRecognized', { page: 2, line: 3, confidence: 87 }));
+    for (const bad of [{ page: 2, recognized: true, confidence: 87 }, { page: 2, line: 3, recognized: true, confidence: 101 }, { page: 2, line: 3, recognized: true }]) assert.equal(helpers.fileSourceLabel(bad, f), f('sourceUnavailable'));
     assert.equal(helpers.fileSourceLabel({ sheet: 'Fixture table' }, f), f('sourceTable', { name: 'Fixture table' }));
     assert.equal(helpers.fileSourceLabel({ sheet: 'Hidden', hidden: true }, f), f('sourceTableHidden', { name: 'Hidden' }));
     assert.equal(helpers.fileSourceLabel({ part: 'body', paragraph: 3 }, f), f('sourcePartParagraph', { part: f('partBody', { n: '' }), paragraph: 3 }));

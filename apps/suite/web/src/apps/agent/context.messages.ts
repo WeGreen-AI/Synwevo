@@ -2,6 +2,7 @@ import { registerMessages, type Messages } from '@synwevo/ui/i18n-core';
 
 export const contextCopy = {
   personalFile: ['个人文件', 'Personal files', '個人檔案'],
+  personalFileRecognized: ['个人文件 · 识别文字（未核对）', 'Personal file · recognized text (unverified)', '個人檔案 · 辨識文字（未核對）'],
   open: ['选择业务资料', 'Choose business context', '選擇業務資料'],
   intro: ['选择本次提问要参考的业务资料（表单、数据表、审批、提取、数据处理），与个人文件合计最多五项。浏览和选择不会调用模型。', 'Choose the business context for this question (forms, tables, approvals, extraction, data preparation), up to five items including personal files. Browsing and choosing do not call the model.', '選擇本次提問要參考的業務資料（表單、資料表、審批、提取、資料處理），與個人檔案合計最多五項。瀏覽和選擇不會呼叫模型。'],
   formHint: ['表单包含字段设置和已发布版本信息，不包含各版本的完整定义或填写结果。', 'Forms include field settings and published version details, without each version’s full definition or submitted responses.', '表單包含欄位設定和已發布版本資訊，不包含各版本的完整定義或填寫結果。'],

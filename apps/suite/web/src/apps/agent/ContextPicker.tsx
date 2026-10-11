@@ -34,7 +34,7 @@ export function ContextSources({ contexts, hidden = false }: { contexts?: Messag
         const path = source.kind === 'file' ? safeFileDownload(source.open_path) : safeContextPath(source.open_path);
         return <li key={i} className="ag-context-source">
           {path ? source.kind === 'file' ? <a href={path} download>{source.title}</a> : <Link to={path}>{source.title}</Link> : <span>{source.title}</span>}
-          <small className="muted">{source.kind === 'file' ? c('personalFile') : source.workspace_name}</small>
+          <small className="muted">{source.kind === 'file' ? c(source.recognized ? 'personalFileRecognized' : 'personalFile') : source.workspace_name}</small>
         </li>;
       })}
     </ul>

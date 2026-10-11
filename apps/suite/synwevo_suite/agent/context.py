@@ -236,9 +236,13 @@ class Contexts:
             seen.add(ref.file_id)
             row = self.agent.files.resolve(user_id, ref)
             clean_files.append(ref.model_dump())
+            parsed = json.loads(row["parsed_json"])
+            # Recognized text (an image or a scan read by the local engine) is said to be so,
+            # to the model and to the person: its lines carry confidences, never a claim.
+            recognized = bool(((parsed or {}).get("ocr") or {}).get("applied"))
             items.append({"kind": "file", "file_id": row["id"], "title": row["filename"],
                           "workspace_name": None, "open_path": "/api/suite/agent/files/"+row["id"]+"/download",
-                          "data": json.loads(row["parsed_json"])})
+                          **({"recognized": True} if recognized else {}), "data": parsed})
             # Null is genuinely no workspace. Pre-file engines conservatively hide an
             # unrecognized source with no read proof; they must never replay this as plain text.
             sources.append({"file_id": row["id"], "workspace_id": None, "snapshot_hash": row["snapshot_hash"]})
@@ -252,4 +256,5 @@ def visible_contexts(api):
     if not isinstance(api, dict) or api.get("type") != "business_context_v1":
         return []
     return [{**{k: item[k] for k in ("title", "workspace_name", "open_path")},
-             **({"kind": "file"} if item.get("kind") == "file" else {})} for item in api["items"]]
+             **({"kind": "file", **({"recognized": True} if item.get("recognized") else {})}
+                if item.get("kind") == "file" else {})} for item in api["items"]]

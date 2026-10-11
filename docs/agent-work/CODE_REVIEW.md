@@ -291,3 +291,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：权限走 `_admin(request, "platform.users.view")`（无平台权限 404、其他平台角色 403 并审计，与账户列表一致）；响应只有元数据——口令只给「是否已设置」，TOTP 只给开关与剩余恢复码数量，Passkey 只给名称/时间/同步标志，会话去掉 id（cookie 哈希）保留本人账户页同样的设备/方式/时间/地址；工作空间与组织名称随对应列表权限否则为 null，界面显式说明而不是隐藏整节；时间线只在持有 `platform.audit.view` 时返回（`actor_id=uid` 或 `object_kind='user' AND object_id=uid` 的最近 50 条，meta 只取 reason），否则 `permitted:false`——不成为审计日志的旁路；退避只读账户桶 `user:{email_key}`，不暴露地址桶；`outranks_caller` 与列表同一算法；查看不改状态、不审计（与模块内其他 GET 一致）。
 - 风险/未做：未在浏览器实测对话框（SSR 三语言渲染、空态与省略说明已测）；Agent 内容安全停用状态与 A17 单设备撤销未并入；「谁查看过谁」若需追溯要另加审计。
 - 验证：见 EVIDENCE「CR-087」与 evidence/2026-10-11-admin-account-detail/verification.json。
+
+## CR-088 · 图片与扫描 PDF 经本地文字识别进入个人文件（2026-10-11，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：apps/docs/synwevo_docs/ingest.py（`CONTEXT_IMAGE_FORMATS`、`ocr_pages=5`、`_recognize_page`、`_context_pdf(ocr=)` 先分类后读取、`context_ocr_unsupported`/`context_ocr_failed`、`describe()` 的 `context_ocr`/`context_ocr_languages`）；apps/suite/synwevo_suite/agent/files.py（能力 `ocr`/`ocr_languages`/`ocr_pages`、`_recognition()` 按读取器缓存、子进程入口 `_extract_context` 只在读取器声明时传 `ocr=True`）、agent/context.py（文件项与可见来源加 `recognized`）；前端 files.ts/types.ts/FilePicker.tsx/ContextPicker.tsx 与 files.messages.ts/context.messages.ts；apps/docs/web/tests/refusals.test.ts 分类；docs/platform/agent-files.md。
+- 审查要点：识别结果从不冒充已核对文字——每行来源 `recognized:true` 与最低词置信度、文件级汇总低置信度词数、界面「识别文字（未核对）」、模型负载 `recognized:true`；完整或拒绝不变：整份扫描 PDF 先分类再按预算拒绝（不先花时间识别再拒），文字层与图片混排页、含图片 DOCX 仍整份拒绝；没有引擎的部署图片直接 `context_ocr_unsupported`，文本格式不受 `ocr` 旗标影响；工作进程只在读取器声明能力时显式传旗标，旧读取器（测试替身/旧部署）调用形状不变；识别仍在既有 90 s/768 MiB 子进程内，像素上限沿用 Docs `LIMITS`，页面渲染沿用 `render_zoom`；引擎错误消息（页数、stderr、超时）不外泄，统一为无内容的 `context_ocr_failed`。
+- 风险/未做：报价对话框来源列表仍只写「个人文件」（发送后的消息来源条有识别标记，浏览器已截到）；低置信度只计数不拒绝，由人核对；识别语言取部署可用的 chi_sim+eng，不可按文件选择；TIFF/WEBP 等格式与多帧图片未开放。
+- 验证：见 EVIDENCE「CR-088」与 evidence/2026-10-11-agent-recognized-files/verification.json。

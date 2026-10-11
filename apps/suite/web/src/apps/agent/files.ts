@@ -11,7 +11,9 @@ const text = (value: unknown): value is string => typeof value === 'string' && !
 export function fileError(code: string): Error & { code: string } { return Object.assign(new Error(code), { code }); }
 function invalid(): never { throw fileError('invalid_file_response'); }
 export function fileCapabilities(value: unknown): FileCapabilities {
-  if (!object(value) || typeof value.configured !== 'boolean' || value.ocr !== false
+  if (!object(value) || typeof value.configured !== 'boolean' || typeof value.ocr !== 'boolean'
+    || !(value.ocr_languages === undefined || (Array.isArray(value.ocr_languages) && value.ocr_languages.every((l) => typeof l === 'string')))
+    || !(value.ocr_pages === undefined || value.ocr_pages === null || (integer(value.ocr_pages) && Number(value.ocr_pages) > 0))
     || !Array.isArray(value.formats) || !value.formats.every((f) => typeof f === 'string' && /^[a-z0-9]+$/i.test(f))
     || !['max_bytes', 'max_files', 'max_storage_bytes', 'max_context_chars', 'unattached_retention_seconds'].every((k) => integer(value[k]) && Number(value[k]) > 0)
     || !(value.scanner === null || object(value.scanner))) return invalid();
@@ -32,6 +34,7 @@ export function fileRecord(value: unknown, expected?: string): AgentFile {
     const extraction = value.extraction;
     if (value.status !== 'ready' || !object(extraction) || !Array.isArray(extraction.lines) || !Array.isArray(extraction.tables)
       || !extraction.lines.every((line) => object(line) && typeof line.text === 'string' && object(line.source))
+      || !(extraction.ocr === undefined || (object(extraction.ocr) && typeof extraction.ocr.applied === 'boolean'))
       || !extraction.tables.every((table) => object(table) && typeof table.name === 'string' && object(table.source)
         && Array.isArray(table.rows) && table.rows.every((row) => Array.isArray(row) && row.every((cell) => typeof cell === 'string'))
         && (table.row_numbers === undefined || (Array.isArray(table.row_numbers) && table.row_numbers.length === table.rows.length && table.row_numbers.every(integer))))) return invalid();
@@ -77,6 +80,11 @@ export function fileSourceLabel(source: unknown, f: (key: FileText, params?: Rec
   const positive = (value: unknown): value is number => integer(value) && value > 0;
   if ('page' in source) {
     if (!positive(source.page) || ('line' in source && !positive(source.line))) return f('sourceUnavailable');
+    if (source.recognized === true) {
+      // A line the local engine read from pixels: said so, with the lowest word confidence on it.
+      return positive(source.line) && integer(source.confidence) && source.confidence <= 100
+        ? f('sourceRecognized', { page: source.page, line: source.line, confidence: source.confidence }) : f('sourceUnavailable');
+    }
     return positive(source.line) ? f('sourcePageLine', { page: source.page, line: source.line }) : f('sourcePage', { page: source.page });
   }
   if (positive(source.line)) return f('sourceLine', { line: source.line });
@@ -116,7 +124,7 @@ export function fileErrorKey(error: unknown): FileText | null {
   return ({ agent_file_expired: 'expired', agent_file_not_found: 'notFound', agent_file_not_ready: 'notReady', agent_file_changed: 'changed', agent_file_limit: 'limit',
     agent_file_quota: 'quota', agent_file_busy: 'busy', agent_file_not_configured: 'notConfigured', agent_file_retry_unavailable: 'retryUnavailable',
     context_limit_exceeded: 'contextLimit', context_parse_error: 'contextParse', context_needs_ocr: 'needsOcr',
-    context_ocr_unsupported: 'ocrUnsupported', context_encrypted: 'scanEncrypted', context_format_unsupported: 'unsupported', context_incomplete: 'incomplete', parse_timeout: 'parseTimeout', parse_failed: 'parseFailed',
+    context_ocr_unsupported: 'ocrUnsupported', context_ocr_failed: 'ocrFailed', context_encrypted: 'scanEncrypted', context_format_unsupported: 'unsupported', context_incomplete: 'incomplete', parse_timeout: 'parseTimeout', parse_failed: 'parseFailed',
     parse_interrupted: 'parseInterrupted', parse_cancelled: 'parseInterrupted', upload_interrupted: 'uploadInterrupted', invalid_file_response: 'invalidResponse',
     malware_detected: 'scanInfected', file_quarantined: 'scanInfected', file_blocked: 'scanInfected', malware_scan_failed: 'scanFailed',
     scan_unavailable: 'scanDown', scan_limit: 'scanFailed', unchecked_file: 'scanFailed', file_too_large: 'limit',

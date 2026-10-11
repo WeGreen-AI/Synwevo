@@ -1,7 +1,8 @@
 """Complete Agent context, using real readers and entirely synthetic in-memory fixtures.
 
-No scanner, OCR, converter, store or network is involved. Test-only PDF fixtures are built
-with the same installed native library used by the Docs engine, not mocked parser output.
+No scanner, converter, store or network is involved; the recognition tests use the machine's
+own local engine and skip without one. Test-only PDF/PNG fixtures are built with the same
+installed native library used by the Docs engine, not mocked parser output.
 """
 from __future__ import annotations
 
@@ -15,7 +16,10 @@ import pytest
 
 from synwevo_core.errors import ServiceError
 from synwevo_docs.engine import pdf_engine as pe
+from synwevo_docs.engine.ocr import available_langs
 from synwevo_docs.ingest import CONTEXT_LIMITS, FORMATS, DocumentIngest
+
+HAS_ENGINE = bool(available_langs())
 
 
 @pytest.fixture(autouse=True)
@@ -27,12 +31,12 @@ def full_pdf_engine():
         pe.use_engine(previous)
 
 
-def extract(data, name="fixture.txt", **kwargs):
+def extract(data, name="fixture.txt", recognized=False, **kwargs):
     result = DocumentIngest().extract_context(data, name, **kwargs)
     assert result["status"] == "ready" and result["error"] is None
     assert result["lines_truncated"] is False
     assert all(table["truncated"] is False for table in result["tables"])
-    assert result["ocr"]["applied"] is False
+    assert result["ocr"]["applied"] is recognized
     assert len(json.dumps(result, ensure_ascii=False, separators=(",", ":"))) <= 60000
     return result
 
@@ -151,13 +155,84 @@ def test_limit_edges_and_large_complete_tail():
     assert "\n".join(line["text"] for line in result["lines"]) == text
 
 
-@pytest.mark.parametrize("name", ["fixture.docm", "fixture.xlsm", "fixture.pptx", "fixture.json", "fixture.html", "fixture.png", "fixture"])
+@pytest.mark.parametrize("name", ["fixture.docm", "fixture.xlsm", "fixture.pptx", "fixture.json", "fixture.html", "fixture.gif", "fixture"])
 def test_unverified_formats_are_explicitly_unsupported(name):
     refused(b"TEST FIXTURE", name, "context_format_unsupported")
 
 
-def test_ocr_flag_is_explicitly_unsupported():
-    refused(b"TEST FIXTURE", "fixture.txt", "context_ocr_unsupported", ocr=True)
+def scan_png(text, zoom=3):
+    """TEST FIXTURE: large typed words rendered to pixels, so recognition has something to read."""
+    with pymupdf.open() as document:
+        page = document.new_page(width=900, height=240)
+        page.insert_text((30, 150), text, fontsize=56)
+        return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom)).tobytes("png")
+
+
+def scanned_pdf(texts):
+    """A PDF whose every page is a picture of text and nothing else."""
+    with pymupdf.open() as document:
+        for text in texts:
+            page = document.new_page(width=900, height=240)
+            page.insert_image(page.rect, stream=scan_png(text, zoom=2))
+        return document.tobytes()
+
+
+def test_images_need_both_the_flag_and_the_engine(monkeypatch):
+    from synwevo_docs.engine import ocr as engine
+    extract(b"TEST FIXTURE", "fixture.txt", ocr=True)  # the flag changes nothing for text
+    refused(scan_png("FIXTURE"), "fixture.png", "context_ocr_unsupported")
+    monkeypatch.setattr(engine, "tesseract_path", lambda: None)
+    refused(scan_png("FIXTURE"), "fixture.png", "context_ocr_unsupported", ocr=True)
+    description = DocumentIngest().describe()
+    assert description["context_ocr"] is False and "png" not in description["context_formats"]
+    refused(scanned_pdf(["FIXTURE"]), "fixture.pdf", "context_needs_ocr", ocr=True)
+
+
+@pytest.mark.skipif(not HAS_ENGINE, reason="no local text recognition engine on this machine")
+def test_images_and_scanned_pdfs_are_recognized_line_by_line_with_confidence():
+    result = extract(scan_png("SYNTHETIC FIXTURE 4821"), "fixture.png", recognized=True, ocr=True)
+    assert result["family"] == "image" and result["pages"] == 1
+    text = " ".join(line["text"] for line in result["lines"]).upper()
+    assert "FIXTURE" in text and "4821" in text
+    for number, line in enumerate(result["lines"], 1):
+        source = line["source"]
+        assert source["page"] == 1 and source["line"] == number and source["recognized"] is True
+        assert isinstance(source["confidence"], int) and 0 <= source["confidence"] <= 100
+    summary = result["ocr"]
+    assert summary["applied"] is True and summary["pages"] == 1 and summary["words"] >= 3
+    assert summary["engine"].startswith("tesseract") and 0 <= summary["low_confidence_words"] <= summary["words"]
+    from PIL import Image  # JPEG goes through the same conversion
+    buffer = io.BytesIO()
+    Image.open(io.BytesIO(scan_png("JPEG FIXTURE 77"))).convert("RGB").save(buffer, "JPEG", quality=95)
+    jpeg = extract(buffer.getvalue(), "fixture.jpg", recognized=True, ocr=True)
+    assert "FIXTURE" in " ".join(line["text"] for line in jpeg["lines"]).upper()
+    # A fully scanned PDF: every page recognized, in page order, under the page budget.
+    result = extract(scanned_pdf(["PAGE ONE FIXTURE", "PAGE TWO FIXTURE"]), "fixture.pdf", recognized=True, ocr=True)
+    pages = [line["source"]["page"] for line in result["lines"]]
+    assert pages == sorted(pages) and set(pages) == {1, 2} and result["ocr"]["pages"] == 2
+    assert all(line["source"]["recognized"] is True for line in result["lines"])
+
+
+@pytest.mark.skipif(not HAS_ENGINE, reason="no local text recognition engine on this machine")
+def test_recognition_keeps_typed_pages_verbatim_refuses_mixed_pages_and_a_page_budget(monkeypatch):
+    with pymupdf.open() as document:  # a typed page then a scan: the typed page stays verbatim
+        document.new_page(width=900, height=240).insert_text((30, 100), "typed fixture line")
+        page = document.new_page(width=900, height=240)
+        page.insert_image(page.rect, stream=scan_png("SCANNED FIXTURE"))
+        data = document.tobytes()
+    result = extract(data, "fixture.pdf", recognized=True, ocr=True)
+    assert result["lines"][0] == {"text": "typed fixture line", "source": {"page": 1, "line": 1}}
+    assert result["lines"][1]["source"]["page"] == 2 and result["lines"][1]["source"]["recognized"] is True
+    with pymupdf.open() as document:  # a text layer mixed with a picture still refuses
+        page = document.new_page(width=900, height=240)
+        page.insert_text((30, 100), "typed")
+        page.insert_image(pymupdf.Rect(400, 20, 880, 220), stream=scan_png("MIXED"))
+        mixed = document.tobytes()
+    refused(mixed, "fixture.pdf", "context_needs_ocr", ocr=True)
+    refused(scanned_pdf([f"PAGE {n}" for n in range(6)]), "fixture.pdf", "context_limit_exceeded", limit="ocr_pages", ocr=True)
+    from synwevo_docs.engine import images
+    monkeypatch.setattr(images.LIMITS, "max_image_pixels", 1000)
+    refused(scan_png("TOO BIG"), "fixture.png", "context_limit_exceeded", ocr=True)
 
 
 def test_text_pdf_keeps_short_long_blank_and_final_page_sources():
@@ -288,12 +363,14 @@ def test_basic_pdf_engine_fails_closed_and_capabilities_preserve_old_fields(monk
     full = DocumentIngest().describe()
     assert full["formats"] == list(FORMATS)
     assert full["limits"] == {"text_pages": 200, "ocr_pages": 20, "table_rows": 2000}
-    assert full["context_formats"] == ["txt", "md", "csv", "tsv", "pdf", "docx", "xlsx"]
-    assert full["context_limits"] == CONTEXT_LIMITS and full["context_ocr"] is False
+    images = ["png", "jpg", "jpeg"] if HAS_ENGINE else []  # recognition is a deployment fact
+    assert full["context_formats"] == ["txt", "md", "csv", "tsv", "pdf", "docx", "xlsx"] + images
+    assert full["context_limits"] == CONTEXT_LIMITS and full["context_ocr"] is HAS_ENGINE
+    assert full["context_ocr_languages"] == available_langs()
     pe.use_engine("pdfium")
     refused(pdf_bytes([["body"]]), "fixture.pdf", "context_format_unsupported")
     basic = DocumentIngest().describe()
-    assert basic["context_formats"] == ["txt", "md", "csv", "tsv", "docx", "xlsx"]
+    assert basic["context_formats"] == ["txt", "md", "csv", "tsv", "docx", "xlsx"] + images
     assert basic["limits"] == full["limits"] and basic["formats"] == full["formats"]
 
 

@@ -733,3 +733,9 @@ Actions 38150240686（verify 15:11–16:10Z，deploy 16:10–16:12Z，success）
 ## 2026-10-11 e99212d 生产发布核验
 
 Actions 38155466408（verify 16:26–17:23Z，deploy 17:23–17:25Z，success）回执 `evidence/2026-10-11-agent-context-kinds/ci-release.json`；17:27Z 只读核验 `production-release.json`：current 镜像 e99212d、前镜像 962b375，四应用容器 revision 一致、六容器 healthy，portal 内四个模块源码 sha256 与提交一致，五域 `/readyz` ready。未调用模型/支付，未改配置。
+
+## 2026-10-11 CR-088 图片/扫描 PDF 本地文字识别附件（本地+隔离浏览器）
+
+Docs `extract_context(..., ocr=True)`：PNG/JPG/JPEG 与整份扫描 PDF 按页经本地引擎识别，逐行 `{page, line, recognized, confidence}`、文件级 `ocr` 汇总；每份最多 5 页；混排页/含图 DOCX 仍拒绝；无引擎 `context_ocr_unsupported`、引擎错误 `context_ocr_failed`。Suite 能力 `ocr/ocr_languages/ocr_pages`，工作进程显式请求识别，上下文项与可见来源带 `recognized`；前端能力说明、预览标记、来源行置信度、来源条标记三语言。
+测试：Docs test_ingest_context 89 通过（新增 4 例，含 6 页预算在识别前拒绝、像素上限）、Docs 全量 1638 通过 2 跳过；Suite test_agent_files 20 通过（新增 1 例）、Suite 全量 1131 通过；Docs refusals 门禁 16 通过；suite-web 206 通过；suite-web typecheck/build、五守卫通过。
+浏览器（隔离合成实例 127.0.0.1:33895，系统 Chrome，本机 tesseract 5.5 + 内置 chi_sim/eng）：zh-Hans/en/zh-Hant 1280×900 与 zh-Hans 390 宽均显示识别能力说明、上传 PNG 就绪、预览「识别文字（未核对）：共 3 个词…」与「第 1 页 · 识别第 1 行（置信度 89%）」及正文 SYNTHETIC FIXTURE 4821；zh-Hans 另验 JPG 就绪、两页扫描 PDF 分别识别为第 1/2 页（88%/95%）、混排 PDF 以新文案拒绝、报价对话框列出该文件；以测试预算运行一问（fixture 传输，结算 0.000042 测试单位）后，消息来源条显示「个人文件 · 识别文字（未核对）」。证据 `evidence/2026-10-11-agent-recognized-files/`（browser-report.json、verification.json、6 张截图）。

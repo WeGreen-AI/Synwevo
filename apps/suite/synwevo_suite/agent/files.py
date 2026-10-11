@@ -16,6 +16,12 @@ from synwevo_core.store import new_id, now
 from ..common.files import available_blob
 from ..common.process import TIMEOUT, run_bounded
 
+def _extract_context(reader, data, filename, recognition):
+    """In the bounded child. Recognition is asked for only when the reader reports it, and then
+    explicitly: a reader that never heard of the flag keeps its old call."""
+    return reader.extract_context(data, filename, ocr=True) if recognition else reader.extract_context(data, filename)
+
+
 MAX_BYTES = 8 * 1024 * 1024
 MAX_FILES = 50
 MAX_STORAGE = 50 * 1024 * 1024
@@ -84,7 +90,22 @@ class Files:
         return {'configured': supported, 'formats': description.get('context_formats', []),
                 'max_bytes': MAX_BYTES, 'max_files': MAX_FILES, 'max_storage_bytes': MAX_STORAGE,
                 'max_context_chars': MAX_CHARS, 'unattached_retention_seconds': RETENTION,
-                'scanner': description.get('scanner'), 'ocr': False}
+                'scanner': description.get('scanner'), 'ocr': bool(description.get('context_ocr')),
+                'ocr_languages': list(description.get('context_ocr_languages') or []),
+                'ocr_pages': (description.get('context_limits') or {}).get('ocr_pages')}
+
+    def _recognition(self):
+        """Whether the injected reader recognizes images and scans (its own probe of the local
+        engine), asked once per reader: the answer is a deployment fact, not a per-file choice."""
+        reader = self.reader
+        cached = getattr(self, '_recognition_cache', None)
+        if cached is None or cached[0] is not reader:
+            try:
+                enabled = bool(reader.describe().get('context_ocr')) if callable(getattr(reader, 'describe', None)) else False
+            except Exception:  # noqa: BLE001 - a reader that cannot describe itself recognizes nothing
+                enabled = False
+            self._recognition_cache = cached = (reader, enabled)
+        return cached[1]
 
     def row(self, uid, fid):
         self.auth(uid)
@@ -292,7 +313,7 @@ class Files:
             try:
                 check()
                 data = self._bytes(row)
-                parsed = run_bounded(self.reader.extract_context, (data,row['filename']), check)
+                parsed = run_bounded(_extract_context, (self.reader, data, row['filename'], self._recognition()), check)
                 raw = canonical(parsed)
                 if not isinstance(parsed,dict) or parsed.get('status')!='ready' or parsed.get('lines_truncated') or any(x.get('truncated') for x in parsed.get('tables',[])):
                     raise ServiceError(422,'context_incomplete','文件内容未完整读取')

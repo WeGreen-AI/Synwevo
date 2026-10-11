@@ -33,10 +33,17 @@ FORMATS = ("csv", "tsv", "xlsx", "xlsm", "xls", "ods", "json", "txt", "md", "htm
 # chars counts decoded text (including CSV syntax), or PDF text including line separators;
 # output_chars also bounds the ENTIRE compact, ensure_ascii=False JSON result, sources included.
 CONTEXT_FORMATS = ("txt", "md", "csv", "tsv", "pdf", "docx", "xlsx")
+#: Images (and a PDF's scanned pages) enter only through the local text recognition engine,
+#: when the caller asks for it (`ocr=True`) and the deployment has one: every recognized line
+#: says so (`recognized: True`) and carries the lowest word confidence on the line, so what
+#: the model and the person read is never presented as verified text (CR-088).
+CONTEXT_IMAGE_FORMATS = ("png", "jpg", "jpeg")
 CONTEXT_LIMITS = {"file_bytes": 20 * 1024 * 1024, "pages": 200, "lines": 5000,
                   "tables": 32, "rows": 2000, "columns": 100, "cells": 10000,
                   "line_chars": 10000, "cell_chars": 10000, "chars": 60000,
-                  "output_chars": 60000}
+                  "output_chars": 60000, "ocr_pages": 5}
+#: The Docs workbench's own threshold for a doubtful recognized word.
+LOW_CONFIDENCE = 60
 #: An OLE compound file: a password-protected Office file (holding EncryptedPackage), or a
 #: legacy binary document under a modern extension.
 OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
@@ -69,6 +76,15 @@ def _context_needs_ocr() -> None:
 
 def _context_encrypted() -> None:
     raise ServiceError(400, "context_encrypted", "加密文件不支持完整上下文解析，请先移除加密") from None
+
+
+def _context_ocr_unavailable() -> None:
+    raise ServiceError(400, "context_ocr_unsupported", "图片与扫描件需要文字识别，此部署未启用本地文字识别") from None
+
+
+def _context_ocr_failed() -> None:
+    # The engine's own message may name the page size, a timeout or stderr; none of it travels.
+    raise ServiceError(400, "context_ocr_failed", "文字识别未完成，请检查图片后重试") from None
 
 
 def _context_line(out: dict, text: str, source: dict) -> None:
@@ -108,11 +124,15 @@ class DocumentIngest:
             context_pdf = pdf_engine.ENGINE == "pymupdf"
         except ImportError:
             context_pdf = False
+        context_ocr = bool(langs)
         context_formats = [fmt for fmt in CONTEXT_FORMATS if fmt != "pdf" or context_pdf]
+        if context_ocr:
+            context_formats += list(CONTEXT_IMAGE_FORMATS)
         return {"engine": "docs", "formats": list(FORMATS), "ocr": bool(langs), "ocr_langs": langs,
                 "converter": converter, "scanner": M.health(M.policy()),
                 "limits": {"text_pages": MAX_TEXT_PAGES, "ocr_pages": MAX_OCR_PAGES, "table_rows": MAX_TABLE_ROWS},
-                "context_formats": context_formats, "context_limits": dict(CONTEXT_LIMITS), "context_ocr": False}
+                "context_formats": context_formats, "context_limits": dict(CONTEXT_LIMITS),
+                "context_ocr": context_ocr, "context_ocr_languages": list(langs)}
 
     def accept(self, filename: str, data: bytes) -> dict:
         return accept_upload(filename, data)
@@ -129,7 +149,14 @@ class DocumentIngest:
         PDF requires the existing full Docs engine's diagnostics. Only unencrypted, unrepaired
         text pages (and truly blank pages) are accepted: images, drawings, OCR/invisible text,
         annotations, forms, attachments and optional layers cannot be represented completely.
-        No OCR is attempted, even when requested.
+
+        With `ocr=True` and a local recognition engine, PNG/JPEG images and a PDF's scanned
+        pages (no readable text layer: pixels, drawings or an embedded invisible layer, which is
+        ignored rather than trusted) are recognized page by page, at most CONTEXT_LIMITS
+        ["ocr_pages"] per file. Recognized lines are marked `recognized` with the lowest word
+        confidence on the line and the file's `ocr` summary counts the doubtful words; a page
+        that mixes a text layer with pictures still refuses (`context_needs_ocr`). Without the
+        engine, images refuse with `context_ocr_unsupported`; the flag changes nothing for text.
 
         DOCX is read in full as text: body, headers, footers, footnotes, endnotes, comments and
         text boxes, tables as tab-separated rows, hyperlink targets after their text. Anything a
@@ -146,18 +173,26 @@ class DocumentIngest:
 
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         ext = {"markdown": "md", "text": "txt", "log": "txt"}.get(ext, ext)
-        if ext not in CONTEXT_FORMATS:
+        image = ext in CONTEXT_IMAGE_FORMATS
+        if ext not in CONTEXT_FORMATS and not image:
             _context_unsupported()
         if ocr:
-            raise ServiceError(400, "context_ocr_unsupported", "完整上下文解析暂不支持文字识别")
+            from .engine.ocr import available_langs
+            ocr = bool(available_langs())
+        if image and not ocr:
+            _context_ocr_unavailable()
         _context_limit("file_bytes", len(data))
         try:
             if len(data) > LIMITS.max_file_bytes:
                 _context_engine_limit()
-            out = empty_extraction("docs", ext, "pdf" if ext == "pdf" else
+            out = empty_extraction("docs", ext, "image" if image else "pdf" if ext == "pdf" else
                                    ("tabular" if ext in ("csv", "tsv", "xlsx") else "text"))
-            if ext == "pdf":
-                self._context_pdf(out, data)
+            if image:
+                from .engine.images import to_png
+                out["pages"] = 1
+                _context_limit("chars", self._recognize_page(out, to_png(data), 1))
+            elif ext == "pdf":
+                self._context_pdf(out, data, ocr=ocr)
             elif ext in ("docx", "xlsx"):
                 if data.startswith(OLE_MAGIC):
                     if "EncryptedPackage".encode("utf-16-le") in data:
@@ -215,7 +250,37 @@ class DocumentIngest:
                                   "row_numbers": list(range(1, len(rows) + 1)), "truncated": False})
 
     @staticmethod
-    def _context_pdf(out: dict, data: bytes) -> None:
+    @staticmethod
+    def _recognize_page(out: dict, png: bytes, page: int) -> int:
+        """Recognize one rendered page into lines in reading order; returns the characters added.
+
+        A line's confidence is the lowest word confidence on it (a lower bound, never a claim),
+        and the file's `ocr` summary counts pages, words and doubtful words. Recognition never
+        becomes an unmarked line."""
+        from .engine.ocr import OcrError, ocr_png
+        try:
+            result = ocr_png(png)
+        except OcrError:
+            _context_ocr_failed()
+        lines: dict[str, list[dict]] = {}
+        for word in result["words"]:
+            lines.setdefault(word["line"], []).append(word)
+        chars, number = 0, 0
+        for key in sorted(lines, key=lambda k: min(w["r"][1] for w in lines[k])):
+            words = sorted(lines[key], key=lambda w: w["r"][0])
+            text = _join([w["t"] for w in words])
+            confidence = max(0, min(100, int(round(min(w["conf"] for w in words)))))
+            number += 1
+            chars += len(text) + 1
+            _context_line(out, text, {"page": page, "line": number, "recognized": True, "confidence": confidence})
+        summary = out["ocr"]
+        summary.update({"available": True, "applied": True, "engine": result["engine"],
+                        "pages": summary.get("pages", 0) + 1, "words": summary.get("words", 0) + len(result["words"]),
+                        "low_confidence_words": summary.get("low_confidence_words", 0)
+                        + sum(1 for w in result["words"] if w["conf"] < LOW_CONFIDENCE)})
+        return chars
+
+    def _context_pdf(self, out: dict, data: bytes, *, ocr: bool = False) -> None:
         try:
             from .engine import pdf_engine as pe
         except ImportError:
@@ -257,14 +322,33 @@ class DocumentIngest:
             # Infinite clip and no media-box clipping prevent off-page text silently vanishing.
             flags = (pe.pymupdf.TEXTFLAGS_DICT & ~pe.pymupdf.TEXT_PRESERVE_IMAGES &
                      ~pe.pymupdf.TEXT_CID_FOR_UNKNOWN_UNICODE & ~pe.pymupdf.TEXT_MEDIABOX_CLIP)
+            # Classify every page before reading any: the recognition budget is refused before a
+            # single page is rendered, and the pages are then read in order whatever their kind.
+            scanned: set[int] = set()
             for page in doc:
                 if page.first_annot is not None or page.first_widget is not None or page.get_links():
                     _context_unsupported()
                 # A page_kind heuristic alone misses small scans and partly recognized pages.
-                if page.get_images(full=True) or page.get_image_info() or page.get_drawings():
-                    _context_needs_ocr()
-                if any(span.get("type") == 3 or span.get("opacity", 1) != 1 for span in page.get_texttrace()):
-                    _context_needs_ocr()
+                graphics = bool(page.get_images(full=True) or page.get_image_info() or page.get_drawings())
+                spans = page.get_texttrace()
+                hidden = sum(1 for span in spans if span.get("type") == 3 or span.get("opacity", 1) != 1)
+                if hidden < len(spans):
+                    if graphics or hidden:
+                        _context_needs_ocr()   # a text layer mixed with pictures or hidden text
+                elif graphics or hidden:
+                    # No readable text layer: a scan. Recognized from its pixels when allowed; an
+                    # embedded invisible layer is ignored rather than trusted.
+                    if not ocr:
+                        _context_needs_ocr()
+                    scanned.add(page.number)
+            _context_limit("ocr_pages", len(scanned))
+            for page in doc:
+                if page.number in scanned:
+                    zoom = pe.render_zoom(page.rect.width, page.rect.height, 300 / 72)
+                    png = page.get_pixmap(matrix=pe.pymupdf.Matrix(zoom, zoom), alpha=False).tobytes("png")
+                    total_chars += self._recognize_page(out, png, page.number + 1)
+                    _context_limit("chars", total_chars)
+                    continue
                 content = page.get_text("dict", flags=flags, clip=pe.pymupdf.INFINITE_RECT())
                 number = 0
                 for block in content["blocks"]:
