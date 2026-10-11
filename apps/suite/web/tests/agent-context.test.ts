@@ -3,10 +3,9 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { transformSync } from 'rolldown/utils';
-import { createServer } from 'vite';
+import { testServer } from './_vite.ts';
 import React from 'react';
 import * as jsxRuntime from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -16,9 +15,7 @@ globalThis.window ??= { location: new URL('http://127.0.0.1/agent/c/conv_fixture
   addEventListener() {}, removeEventListener() {}, setInterval: () => 0, clearInterval() {} } as any;
 let server: any, ui: any, core: any, helpers: any, picker: any, copy: any, budget: any, errors: any, client: any;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false, logLevel: 'error',
-    appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null },
-    plugins: [{ name: 'context-fixture-locale', enforce: 'pre', transform(code, id) {
+  server = await testServer({ plugins: [{ name: 'context-fixture-locale', enforce: 'pre', transform(code, id) {
       if (id.endsWith('/ui/src/i18n.tsx')) return code.replace("() => 'zh-Hans' as const", 'getLocale');
     } }],
   });

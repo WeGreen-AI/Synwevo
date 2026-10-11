@@ -1,8 +1,7 @@
 /** Real Settings components rendered with explicit policy/credential fixtures; no API/model calls. */
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
+import { testServer } from "./_vite.ts";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -12,9 +11,7 @@ globalThis.sessionStorage ??= { getItem: (k: string) => storage.get(k) ?? null, 
 globalThis.localStorage ??= globalThis.sessionStorage;
 let server: any, ui: any, settings: any, client: any, messages: any;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL("../", import.meta.url)), configFile: false,
-    logLevel: "error", appType: "custom", server: { middlewareMode: true, hmr: false, ws: false, watch: null },
-    plugins: [{ name: "settings-test-exports", enforce: "pre", transform(code, id) {
+  server = await testServer({ plugins: [{ name: "settings-test-exports", enforce: "pre", transform(code, id) {
       if (id.endsWith("/src/apps/agent/Settings.tsx")) return code + "\nexport { PolicyRow, AccessForm, ErrorNotice };";
       // The production SSR snapshot is always Simplified Chinese; exercise each client locale
       // against the real translation dictionaries without needing a browser or HTTP server.

@@ -10,15 +10,15 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { isValidElement, type ReactElement } from "react";
-import { createServer, type ViteDevServer } from "vite";
+import type { ViteDevServer } from "vite";
+import { testServer } from "./_vite.ts";
 
 const WEB = fileURLToPath(new URL("../", import.meta.url));
 let server: ViteDevServer;
 let mod: { app: any; client: any; catalog: any };
 
 before(async () => {
-  server = await createServer({ root: WEB, configFile: false, logLevel: "error", appType: "custom",
-                                server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  server = await testServer();
   mod = { app: await server.ssrLoadModule("/src/App.tsx"), client: await server.ssrLoadModule("@synwevo/auth-client"),
           catalog: await server.ssrLoadModule("/src/shared/catalog.tsx") };
 });

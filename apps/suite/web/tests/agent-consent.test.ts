@@ -1,8 +1,7 @@
 /** Explicit consent/accounting fixtures. No live model, billing service, funds or browser claims. */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
-import { createServer } from 'vite';
+import { testServer } from './_vite.ts';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Consent, ConsentInput } from '../src/apps/agent/consent.ts';
@@ -12,9 +11,7 @@ globalThis.window ??= { location: new URL('http://127.0.0.1/agent/c/conv_fixture
   addEventListener() {}, removeEventListener() {}, setInterval: () => 0, clearInterval() {} } as any;
 let server: any, model: any, controls: any, copy: any, ui: any, client: any, core: any;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
-    logLevel: 'error', appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null },
-    plugins: [{ name: 'consent-test-locale', enforce: 'pre', transform(code, id) {
+  server = await testServer({ plugins: [{ name: 'consent-test-locale', enforce: 'pre', transform(code, id) {
       if (id.endsWith('/ui/src/i18n.tsx')) return code.replace("() => 'zh-Hans' as const", 'getLocale');
     } }],
   });

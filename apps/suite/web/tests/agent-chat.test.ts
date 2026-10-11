@@ -7,7 +7,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { transformSync } from 'rolldown/utils';
-import { createServer } from 'vite';
+import { testServer } from './_vite.ts';
 import React from 'react';
 import * as jsxRuntime from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -18,9 +18,7 @@ globalThis.window ??= { location: new URL('http://127.0.0.1/agent/c/conv_fixture
 let server: any, cost: any, refusals: any, payers: any, composer: any, label: any, copy: any, parts: any, status: any,
   ui: any, core: any, errors: any;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
-    logLevel: 'error', appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null },
-    plugins: [{ name: 'chat-test-locale', enforce: 'pre', transform(code, id) {
+  server = await testServer({ plugins: [{ name: 'chat-test-locale', enforce: 'pre', transform(code, id) {
       if (id.endsWith('/ui/src/i18n.tsx')) return code.replace("() => 'zh-Hans' as const", 'getLocale');
     } }],
   });

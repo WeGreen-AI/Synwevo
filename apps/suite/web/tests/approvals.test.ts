@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
-import { createServer, type ViteDevServer } from "vite";
+import type { ViteDevServer } from "vite";
+import { testServer } from "./_vite.ts";
 import { translate } from "@synwevo/ui/i18n-core";
 import { approvals } from "../src/apps/approvals/messages.ts";
 import * as text from "../src/apps/approvals/text.ts";
@@ -16,8 +17,7 @@ import * as text from "../src/apps/approvals/text.ts";
 // locale: the server render does not read a saved language), without any API.
 let vite: ViteDevServer;
 before(async () => {
-  vite = await createServer({ root: join(import.meta.dirname, ".."), configFile: false, logLevel: "error", appType: "custom",
-    server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  vite = await testServer();
 });
 after(async () => { await vite?.close(); });
 async function render(module: string, name: string, props: object): Promise<string> {

@@ -297,7 +297,9 @@ class Files:
                 if not isinstance(parsed,dict) or parsed.get('status')!='ready' or parsed.get('lines_truncated') or any(x.get('truncated') for x in parsed.get('tables',[])):
                     raise ServiceError(422,'context_incomplete','文件内容未完整读取')
                 if len(raw)>MAX_CHARS:
-                    raise ServiceError(413,'context_too_large','文件文字过多，请拆分后重试')
+                    # The same refusal as the reader's own output cap: the picker words it as
+                    # contextLimit. (`context_too_large` is the business-context picker's code.)
+                    raise ServiceError(413,'context_limit_exceeded','文件上下文超过完整解析上限，请拆分文件后重试')
                 digest = fingerprint({'content_hash':row['content_hash'],'filename':row['filename'],'parsed':parsed})
                 with self.store.tx():
                     check()

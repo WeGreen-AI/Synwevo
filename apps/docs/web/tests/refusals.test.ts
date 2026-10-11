@@ -216,6 +216,12 @@ const API_ONLY: [string, string[]][] = [
   ["a template's format is checked when it is uploaded, so a stored template always has a supported one", [
     "不支持的模板格式：{}",
   ]],
+  ["ingest.extract_context is the personal Agent's complete-file reader (CR-078): no Docs route calls it, only the Agent's file worker in apps/suite, which keeps the code on the file record; the Agent's file picker words every code in three languages (apps/suite/web/src/apps/agent/files.ts fileErrorKey → files.messages.ts, held to that by apps/suite/web/tests/agent-files.test.ts)", [
+    "文件上下文超过完整解析上限，请拆分文件后重试", "文件超过文档解析引擎上限，请拆分文件后重试",
+    "该格式或文档内容暂不支持完整上下文解析", "文件损坏、不完整或无法完整读取，请重新导出后重试",
+    "文件含有图片、扫描或无法验证的文字内容，暂不支持完整上下文解析", "完整上下文解析暂不支持文字识别",
+    "加密文件不支持完整上下文解析，请先移除加密",
+  ]],
 ];
 
 /** Sentences whose meaning is what their code's `ERROR_SOURCE` sentence says, so the code map

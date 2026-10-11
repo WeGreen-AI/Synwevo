@@ -231,3 +231,19 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - Newton独立审查两项：24小时过期但清扫前可读取/挂接；旧账户服务终结删除不知道新表。修复即时过期检查（含worker/重试）与DB终结删除触发器，保留宽限期恢复；26项独立重跑及旧代码/旧连接/事务回滚/晚到结果脚本通过，无新finding。原始字节改为有界inline BLOB，在拥有事务内清除，避免共享blob孤儿；不声称SQLite/WAL/备份物理擦除。
 - 浏览器发现前端fileRecord把服务端小数秒时间戳当非法值；上传已成功，界面显示unknown。修复时间戳有限非负数校验，计数仍严格整数；夹具改为小数秒并新增非法值回归。刷新列表恢复同一文件，未重传或重放任务。
 - 最终248后端+21既有Agent/API三语契约、197前端、根类型/Suite构建/六守卫通过；既有断言保留。实际浏览器三语/桌面1280/手机390、真实上传/解析/完整长行/来源/下载哈希、报价取消、单次测试运行、刷新与删除依赖隐藏通过。生成源与日志指纹见agent-files/verification.json。模型/付款为隔离测试传输；未新测reduced-motion，不代替真实DeepSeek产物或付款验收。
+
+## CR-080 · extract_context拒绝未进入Docs三语言门禁（2026-10-11，CR-078引入，已修复·本地已验证）
+
+- 位置：apps/docs/synwevo_docs/ingest.py:42–60/132/136/145/158/160/216/219；门禁 apps/docs/web/tests/refusals.test.ts。影响：高（阻断发布）。证据：Actions38054090562 verify `not ok 20`，本地复现同11条。
+- 调用链实读：仅 apps/suite/synwevo_suite/agent/files.py 文件worker调用；code落 `agent_files.error_code`；apps/suite/web/src/apps/agent/files.ts `fileErrorKey` → files.messages.ts 三语言，agent-files.test.ts 逐码断言。Docs工作台无路由到达。
+- 处置：门禁新增一组API_ONLY决定（7句，含理由与Suite约束位置）；两处内部LimitError改为 `_context_engine_limit()` 直接抛 `context_limit_exceeded`（码/状态/原句不变，test_ingest_context 通过）。未删断言、未排除文件。
+- 顺带：worker自身字数上限 `context_too_large` 与业务资料选择器同码，agentErrorText先查文件码会把业务资料“过大”说成文件——改用 `context_limit_exceeded`（文案contextLimit语义一致）；`parse_cancelled`（worker停止时）原落到“无法读取个人文件”通用句，改映射parseInterrupted；测试清单补 parse_cancelled。
+- 验证：见 evidence/2026-10-11-ci-refusals/verification.json。待CI通过与部署后在生产只读复核。
+
+## CR-081 · Suite前端测试共享Vite缓存的并发竞争（2026-10-11，原有，已修复·本地已验证）
+
+- 位置：apps/suite/web/tests/*.test.ts（11处createServer）。影响：中（本地整套前端测试多例ENOTEMPTY，掩盖真实结果；CI未必复现）。证据：/private/tmp/synwevo-agent-budget-sources-frontend-20261010.log 与本树 `.vite/deps_temp_*` 残留。
+- 根因：Node `--test` 多进程并行，各进程Vite客户端依赖优化器写同一 `node_modules/.vite/deps`（临时目录→rename→rmdir），不是测试逻辑缺陷，也与CR-080无关。
+- 处置：`tests/_vite.ts testServer()`：独占mkdtemp cacheDir、`optimizeDeps.noDiscovery=true/include=[]`、close时删除自身目录；10个已提交测试与未提交的CR-079测试改用。不串行、不删测、不动全局。
+- 验证：suite-web 201×2通过、0 ENOTEMPTY、tmpdir无残留；导出树197通过。后续：services/identity/web/tests 同模式未改（未观察到失败）。
+

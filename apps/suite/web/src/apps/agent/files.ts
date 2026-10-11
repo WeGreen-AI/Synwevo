@@ -103,7 +103,7 @@ export function fileErrorKey(error: unknown): FileText | null {
     agent_file_quota: 'quota', agent_file_busy: 'busy', agent_file_not_configured: 'notConfigured', agent_file_retry_unavailable: 'retryUnavailable',
     context_limit_exceeded: 'contextLimit', context_parse_error: 'contextParse', context_needs_ocr: 'needsOcr',
     context_ocr_unsupported: 'ocrUnsupported', context_encrypted: 'scanEncrypted', context_format_unsupported: 'unsupported', context_incomplete: 'incomplete', parse_timeout: 'parseTimeout', parse_failed: 'parseFailed',
-    parse_interrupted: 'parseInterrupted', upload_interrupted: 'uploadInterrupted', invalid_file_response: 'invalidResponse',
+    parse_interrupted: 'parseInterrupted', parse_cancelled: 'parseInterrupted', upload_interrupted: 'uploadInterrupted', invalid_file_response: 'invalidResponse',
     malware_detected: 'scanInfected', file_quarantined: 'scanInfected', file_blocked: 'scanInfected', malware_scan_failed: 'scanFailed',
     scan_unavailable: 'scanDown', scan_limit: 'scanFailed', unchecked_file: 'scanFailed', file_too_large: 'limit',
     scanner_unavailable: 'scanDown', malware_scanner_unavailable: 'scanDown', scan_failed: 'scanFailed', file_unavailable: 'notFound',

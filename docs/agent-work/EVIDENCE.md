@@ -669,3 +669,16 @@ Newton独立审查发现过期清扫窗口、旧账户删除兼容两项并复�
 实际隔离浏览器：合成1305字节文本真实上传/读取，前导零和末行/超千字长行完整，简繁英、390×844/1280×720无横向溢出，Escape回到个人文件按钮，控制台无warn/error。原下载与输入字节哈希相同。报价取消保留草稿/文件，接受测试预算后1turn/1quote/1settled attempt/1settlement；刷新不重放。删除后inline字节/解析/用户文件快照清除，问答与引用隐藏、继续发送禁用。计数/截图在agent-files，源码/日志指纹同目录verification.json。模型付款为明确本机测试传输，外部派发禁止，不是新的真实DeepSeek或Stripe验收。
 
 浏览器文件选择/下载工具等待较长后复查Git/CI，源码未被其他任务修改。未新增真实推理/付款、未新测减少动画或生产解析性能。tab13关闭、viewport重置，PID3794已核实并终止，子任务全部关闭。下一SHA仍需原完整CI/CD，当前附件未发布。
+
+## 2026-10-11 Claude Code接管与f919d2f CI阻断修复
+
+接管核实：实施树HEAD与origin/main均f919d2f；Actions38054090562 completed/failure（verify失败于Docs `refusals.test.ts:338`，deploy未执行）；Codex持有者01a0f104最后活动2026-10-11T13:42:53Z为生成交接文件，两个子线程均为只读核对后task_complete，无codex实施进程；锁于14:02Z原子改写为本会话（旧锁副本 `.coordinator.lock.prev-01a0f104`）。五域readyz只读200。
+
+根因一：`ingest.extract_context`（CR-078）新增11处拒绝未进入Docs CI-86门禁。实读调用链：只有 `apps/suite/synwevo_suite/agent/files.py` 的文件worker经 `run_bounded` 调用它，`ServiceError.code` 写入 `agent_files.error_code`，前端 `files.ts fileErrorKey` 映射六个context_*码到 `files.messages.ts` 三语言文案（`agent-files.test.ts` 逐码断言三语言）；Docs工作台无任何路由到达。处置：门禁加一组API_ONLY决定并写明理由，而不是放宽断言或排除整文件；ingest内部 `LimitError("file size"/"text size")` 改为直接抛同一 `context_limit_exceeded`（码/状态/原句不变）。顺带发现worker自身 `context_too_large` 与业务资料选择器同码，而 `agentErrorText` 先查文件码——改worker用 `context_limit_exceeded`；`parse_cancelled` 原落到通用“无法读取个人文件”，改按“解析中断”呈现。
+
+根因二（独立）：Suite 11个前端测试文件各自 `createServer` 共用 `apps/suite/web/node_modules/.vite`，Node并行进程下Vite依赖优化器 `deps_temp_*`→rename→`rmdir(deps)` 竞争出ENOTEMPTY；本树残留5个deps_temp_*目录为证。处置 `tests/_vite.ts`：每个测试服务器独占 `os.tmpdir()` 下mkdtemp的cacheDir、`optimizeDeps {noDiscovery:true, include:[]}`（SSR加载不需要客户端预打包）、关闭时删除自己的目录；不串行化、不删断言。
+
+验证（本地，工作树）：Docs门禁16通过（修前第20例11条未分类，已复现）；`npm run test -w @synwevo/docs-web` 145通过；`-w @synwevo/suite-web` 两次各201通过、0 ENOTEMPTY，两次后tmpdir无残留；`pytest apps/docs/tests/test_ingest_context.py apps/suite/tests/test_agent_files.py` 98通过（PYTHONPATH指向本树，已用 `__file__` 确认）；根 `npm run typecheck`/`npm run build` 退出0；六守卫通过。导出已提交树（write-tree）：两工作区测试197+145通过；软链node_modules下tsc出现25条与本次无关文件的重复React类型错误，改用 `--preserveSymlinks` 复验见回执。未运行：完整三套pytest、infra unittest、容器验证、identity/messages/portal前端测试、浏览器。源码与日志SHA256在 `evidence/2026-10-11-ci-refusals/verification.json`。
+
+identity `services/identity/web/tests/*.mjs` 同样共用Vite缓存但本轮未观察到失败，记为后续项，不在本次提交内改动。
+

@@ -1,8 +1,7 @@
 /** Explicit budget/accounting fixtures. No live model, billing service, funds or browser claims. */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
-import { createServer } from 'vite';
+import { testServer } from './_vite.ts';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { PayerBudgetInput, PayerBudgetItem, PayerBudgets } from '../src/apps/agent/payer-budget.ts';
@@ -15,9 +14,7 @@ globalThis.sessionStorage ??= { getItem: (k: string) => storage.get(k) ?? null,
 globalThis.localStorage ??= globalThis.sessionStorage;
 let server: any, model: any, components: any, copy: any, ui: any, client: any, core: any;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
-    logLevel: 'error', appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null },
-    plugins: [{ name: 'payer-budget-test-exports', enforce: 'pre', transform(code, id) {
+  server = await testServer({ plugins: [{ name: 'payer-budget-test-exports', enforce: 'pre', transform(code, id) {
       if (id.endsWith('/src/apps/agent/PayerBudget.tsx')) return code + '\nexport { BudgetPanel, PayerBudgetSection, ErrorNotice };';
       if (id.endsWith('/ui/src/i18n.tsx')) return code.replace("() => 'zh-Hans' as const", 'getLocale');
     } }],

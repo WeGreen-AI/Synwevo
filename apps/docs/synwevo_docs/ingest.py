@@ -45,6 +45,12 @@ def _context_limit(kind: str, count: int) -> None:
                            {"limit": kind, "maximum": CONTEXT_LIMITS[kind]})
 
 
+def _context_engine_limit() -> None:
+    # The Docs engine's own caps (LIMITS) apply unchanged under the context caps above; the
+    # reader that hit one is not named, so no file content or path can travel with the refusal.
+    raise ServiceError(413, "context_limit_exceeded", "文件超过文档解析引擎上限，请拆分文件后重试") from None
+
+
 def _context_unsupported() -> None:
     raise ServiceError(400, "context_format_unsupported", "该格式或文档内容暂不支持完整上下文解析") from None
 
@@ -133,7 +139,7 @@ class DocumentIngest:
         _context_limit("file_bytes", len(data))
         try:
             if len(data) > LIMITS.max_file_bytes:
-                raise LimitError("file size")
+                _context_engine_limit()
             out = empty_extraction("docs", ext, "pdf" if ext == "pdf" else
                                    ("tabular" if ext in ("csv", "tsv") else "text"))
             if ext == "pdf":
@@ -142,7 +148,7 @@ class DocumentIngest:
                 text = data.decode("utf-8-sig", errors="strict")
                 _context_limit("chars", len(text))
                 if len(text) > LIMITS.max_text_chars:
-                    raise LimitError("text size")
+                    _context_engine_limit()
                 if any((ord(c) < 32 and c not in "\t\r\n") or ord(c) == 127 for c in text):
                     _context_invalid()
                 if ext in ("csv", "tsv"):
@@ -155,7 +161,7 @@ class DocumentIngest:
         except ServiceError:
             raise
         except LimitError:
-            raise ServiceError(413, "context_limit_exceeded", "文件超过文档解析引擎上限，请拆分文件后重试") from None
+            _context_engine_limit()
         except Exception:  # noqa: BLE001 - parser messages may contain file content or secrets
             raise ServiceError(400, "context_parse_error", "文件损坏、不完整或无法完整读取，请重新导出后重试") from None
 

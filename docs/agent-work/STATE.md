@@ -3,22 +3,21 @@
 ## 当前状态：持续执行，不暂停
 
 - 最新“不要暂停了”有效，goal active。正常提交/推送/原CI/CD已授权；个人付费验收、真实付款和既有管理员重认证仍遵循原边界。
-- 实施树 `.claude/worktrees/agent-billing`，分支 `claude/agent-billing`，origin `git@github.com:WeGreen-AI/Synwevo.git`；提交前HEAD `b1c8a0b02f725cc4f8ddbe527db18c56bf954b66`。主检出其他工作保留。
-- 协调锁：主树 `docs/agent-work/.coordinator.lock`，持有者 `01a0f104-e57f-7092-ab67-50359f43b547`；未建重复loop/调度。
+- 实施树 `.claude/worktrees/agent-billing`，分支 `claude/agent-billing`，origin `git@github.com:WeGreen-AI/Synwevo.git`；基线HEAD `f919d2fb7ced86daef32e5a914d673143076b9c3` = origin/main。主检出其他工作保留。
+- 协调锁：主树 `docs/agent-work/.coordinator.lock`，2026-10-11T14:02Z起持有者为Claude Code会话 `13b6809f-79a1-4e4a-a165-a3ad0a392642`（接自Codex `01a0f104`，其最后活动13:42Z为生成 `CLAUDE_CODE_HANDOFF_2026-10-11.txt`，无进行中的实施/推送/部署）；未建重复loop/调度。
 
 ## 实际发布与CI
 
-- 生产已独立核验 `b1c8a0b02f725cc4f8ddbe527db18c56bf954b66`（含CR-073至077）。Actions38019575923 verify/deploy成功；前一36104a0/Actions38016706596也已成功。旧失败提交被后续修复覆盖，不是当前发布阻塞。
-- 2026-10-10T11:25Z只读核验：current及四应用OCI revision同b1，六容器healthy，五个Agent/账本模块哈希匹配该Git提交；五域readyz/根页/JS200、匿名管理/充值401、OIDC303到账户源。Agent保持启用。备份 `/opt/synwevo/backups/20261010T045143Z`。
-- CR-077生产回执在 `evidence/2026-10-10-agent-context/{ci-release,production-release,public-release}.json`。此轮未调用生产模型/支付，不把健康检查写成真实业务产物验收。
+- 生产最近独立核验仍为 `b1c8a0b02f725cc4f8ddbe527db18c56bf954b66`（2026-10-10T11:25Z，含CR-073至077）。2026-10-11T14:00Z五域 `/readyz` 均200 ready（只读），未重新核对镜像/revision。
+- `f919d2f`（CR-078附件）Actions38054090562 **completed/failure**：verify在 `npm test --workspaces` 的Docs `refusals.test.ts:338` 失败（ingest.extract_context的11条拒绝未纳入三语言分类），deploy未执行。CR-078**未上线**。
+- 修复已在本树完成并本地验证（见下），待提交推送后由新SHA的完整CI/CD发布；在CI通过前不得写成已发布。
 
 ## 当前工作包与下一条动作
 
-- **CR-078 Agent个人附件本地验证完成，准备正常提交推送**：user归属、真实上传/严格Docs解析/预览/下载/选择，file_refs绑定报价/运行/持续授权；删除/隔离/过期重新鉴权、历史隐藏、停止后续步骤；有界内联文件存储与清理。
-- 本地248后端、197前端通过，根类型/Suite构建/六守卫通过；补充契约检查结果见最终verification.json。测试与源码指纹、三语截图、单次运行/结算和删除元数据在 `evidence/2026-10-10-agent-files/`。
-- 浏览器发现小数秒时间戳被前端误拒绝，已修复验证器、改真实形态夹具并补非法值回归。成功上传从列表恢复，未重复上传；单个文件/任务/已接受报价/attempt/结算。下载原字节一致；删除后源字节/解析/用户快照清除，相关问答隐藏、发送禁用。
-- 独立审查发现过期前清扫窗口及旧账户删除兼容两项，已修复并复验。Sagan/Anscombe/Newton均完成关闭；本任务tab13关闭、viewport重置，临时服务器PID3794已终止。验证环境 `/private/tmp/synwevo-recovery-venv312-20261010` 来自锁文件。
-- 下一动作：审查最终diff/证据→正常提交推送→跟踪该SHA完整CI/CD，期间核对Agent执行卡片/任务恢复剩余范围，不重做已验证上下文或已发生副作用。不要让当前附件还未发布却被标为上线。
+- **CI阻断修复（本次提交）**：Docs门禁把extract_context的7句拒绝记为仅经Agent个人文件路径到达、由Suite `files.ts`/`files.messages.ts` 三语言呈现（Suite测试已约束）；ingest内部两处LimitError改为直接抛同一context_limit_exceeded；Suite worker自身字数上限改用context_limit_exceeded（context_too_large是业务资料选择器的码，agentErrorText先查文件码会串词）；parse_cancelled改按“解析中断”呈现。另修前端测试缓存竞争：每个Vite测试服务器独占临时cacheDir并关闭时删除、关闭依赖优化器（`tests/_vite.ts`），不改任何断言。
+- 本地：Docs门禁16通过；docs-web 145、suite-web 201×2（0 ENOTEMPTY）、导出已提交树197+145通过；ingest+agent_files pytest 98通过；根typecheck/build、六守卫通过。回执 `evidence/2026-10-11-ci-refusals/verification.json`。未跑完整三套pytest与容器验证，交由CI。
+- **CR-079 报价前来源审阅（未提交，保留）**：`BudgetDialog.tsx`、`budget.messages.ts`、`budgetSources.ts`、`tests/agent-budget-sources.test.ts`（4例在本地通过）。尚未按F2要求完成：会话切换/关闭/刷新报价/迟到回调/AbortSignal审查、来源失效阻止进入报价的交互、浏览器三语/390px/键盘/减少动态验收。不与本次CI修复混提。
+- 下一动作：提交推送本修复→跟踪新SHA Actions verify/deploy→部署完成后只读核验current/revision/五域→写回STATE/EVIDENCE→继续CR-079完整验证，再按BACKLOG继续取消/恢复审查与剩余范围。
 
 ## 已核实的正式Agent与支付配置（不重复创建或发布）
 
@@ -36,17 +35,9 @@
 
 ## 证据与接续
 
-- 当前本地证据 `docs/agent-work/evidence/2026-10-09-scan-recovery/`，包括源码/日志指纹、真实浏览器、原CI失败、重启/恢复/刷新记录。
-- 准确发布回执 `evidence/2026-10-09-payment-readiness/{ci-release,production-release,public-release}.json`；CR-071同名回执在agent-history目录。
+- 本次证据 `docs/agent-work/evidence/2026-10-11-ci-refusals/verification.json`（源码/日志指纹、根因、未运行项）；CR-078本地证据仍在 `evidence/2026-10-10-agent-files/`。
+- 准确发布回执 `evidence/2026-10-10-agent-context/{ci-release,production-release,public-release}.json`（b1c8a0b）。f919d2f没有发布回执，因为它没有部署。
 - 历史调查及状态变更保留在EVIDENCE/BACKLOG，不将旧暂停或旧发布状态作为当前事实。
-- 接续在本实施树读取MASTER_PROMPT、STATE、BACKLOG、EVIDENCE，核对实际Git/CI/生产和锁，复用配置与副作用记录；不重建、不重放、不绕过门禁。
+- 接续在本实施树读取MASTER_PROMPT、STATE、BACKLOG、EVIDENCE、CODE_REVIEW，核对实际Git/CI/生产和锁，复用配置与副作用记录；不重建、不重放、不绕过门禁。交接快照 `CLAUDE_CODE_HANDOFF_2026-10-11.txt` 只在主检出、不是第二份状态真相。
 
-保存时间：2026-10-10T02:08:52.667407+00:00
-
-保存更新：2026-10-10T02:12:48.277540+00:00
-
-下一业务能力：AG-ATTACH。94b2591实读确认Agent尚无附件/资源上下文入口（不是仅缺浏览器验收）；详见BACKLOG最新切片，CR-076推送后持续实施。已有Forms/Extract文件链与Docs解析可复用，模型产物真实验收仍待单次付费授权。
-
-CR-076验收tab11/PID41460已清理，截图及源码日志哈希在evidence/2026-10-10-agent-send-state。更新 2026-10-10T02:21:28.416059+00:00。
-
-最近核验：2026-10-10T12:58:23.858127+00:00；持续执行。
+保存时间：2026-10-11T14:14:24.422428+00:00

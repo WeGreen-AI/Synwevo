@@ -1,0 +1,91 @@
+{
+  "recorded_at": "2026-10-11T14:12:55.530739+00:00",
+  "base_commit": "f919d2fb7ced86daef32e5a914d673143076b9c3",
+  "coordinator_session": "13b6809f-79a1-4e4a-a165-a3ad0a392642",
+  "failure": {
+    "actions_run": 38054090562,
+    "job": "verify",
+    "step": "Verify and build (npm test --workspaces)",
+    "test": "apps/docs/web/tests/refusals.test.ts:338 every refusal a person can meet is catalogued, templated, a pattern, code-mapped or API-only with a reason",
+    "unclassified": 11,
+    "source": "apps/docs/synwevo_docs/ingest.py extract_context (CR-078)",
+    "local_log_copy": {
+      "path": "/private/tmp/synwevo-ci-f919-failed.log",
+      "sha256": "5416031add31b70c58cb54536682d87a2334458c59fa05883bf81aa093fc271e"
+    },
+    "reproduced_locally": true
+  },
+  "root_cause": {
+    "docs_gate": "extract_context is the personal Agent's complete-file reader; no Docs route calls it. Its refusals travel as error_code on the Agent file record and are worded by apps/suite/web/src/apps/agent/files.ts fileErrorKey from files.messages.ts (three languages, held by apps/suite/web/tests/agent-files.test.ts). The Docs gate had no decision for them, and two internal LimitError raises inside extract_context were read as refusals.",
+    "frontend_cache_race": "11 Suite test files each start a Vite dev server with the workspace's shared node_modules/.vite cacheDir; Node runs test files in parallel processes and the client dependency optimizer writes deps via deps_temp_*/rename, racing on rmdir(deps) (ENOTEMPTY). Leftover deps_temp_14731c6d/1c473b5e/529441ff/84d03b51/ae2e43dd confirmed interrupted optimizer runs. Separate fault from the Docs gate; log /private/tmp/synwevo-agent-budget-sources-frontend-20261010.log sha256 ed43b2b1a2f66f90c04a1594498f25fded4d09b3efe1ba2b1c12c2da8f8c021e"
+  },
+  "changes": {
+    "apps/docs/web/tests/refusals.test.ts": "API_ONLY decision for the 7 extract_context sentences with the reason (Agent-only path, Suite wording, Suite test)",
+    "apps/docs/synwevo_docs/ingest.py": "engine caps raise the context_limit_exceeded refusal directly (_context_engine_limit) instead of an internal LimitError; same code/status/sentence",
+    "apps/suite/synwevo_suite/agent/files.py": "worker's own 60000-char cap now context_limit_exceeded (worded as contextLimit); context_too_large is the business-context picker's code and agentErrorText consults fileErrorKey first",
+    "apps/suite/web/src/apps/agent/files.ts": "parse_cancelled worded as parseInterrupted (was the generic loadFailed fallback)",
+    "apps/suite/web/tests/_vite.ts": "testServer(): private mkdtemp cacheDir in os.tmpdir, optimizeDeps {noDiscovery:true, include:[]}, cache removed on close; 10 committed tests + the uncommitted CR-079 test use it"
+  },
+  "source_sha256": {
+    "apps/docs/synwevo_docs/ingest.py": "7da8ddf79242bcdd4c1ffd7bc7e32d78973e118af5d04695fe65946b08b63b69",
+    "apps/docs/web/tests/refusals.test.ts": "31d744092a47238584a79468e480fe1003d23a36cd03dd60c065e817613cd63d",
+    "apps/suite/synwevo_suite/agent/files.py": "a6a6b69aad5919c884973a8e3ee8c6e040a158f7823339c744349a6c74f0d252",
+    "apps/suite/web/src/apps/agent/files.ts": "9869aa83a2d1df2a6226df8f59cceb1b5a4442312f56d8034c850a8883ab6799",
+    "apps/suite/web/tests/_vite.ts": "20ae914f65a6ca0079b5590e1e46f40e7946f3c815d13b2b10ef6e83dfb19e9c",
+    "apps/suite/web/tests/agent-chat.test.ts": "acd2022bdf0b41530293509956039d280f8cec6c27b4a0abce8d1e587bb57dd9",
+    "apps/suite/web/tests/agent-consent.test.ts": "362d66fd3acc3428dc5c0e11318d9f01dd688580646d5ad2e0eca49c9cdc667b",
+    "apps/suite/web/tests/agent-context.test.ts": "b276e2cca18388677cb612650fca891f6fc8f135068b4e875769ff6a727dde4e",
+    "apps/suite/web/tests/agent-files.test.ts": "a02e1dc771fcb468fb2d164f5c64ea2199bdc263c79e95c53a3e7f4ae216945d",
+    "apps/suite/web/tests/agent-memory-refusal.test.ts": "16b0536d0328ae0ac2645b97d157e2c7ea7c4ba8118df95fc6552c894c216990",
+    "apps/suite/web/tests/agent-provider-policy.test.ts": "41ab86537ec56a8de389c3e29350c8559f0c61b9c045c5f370f4f0f3bce7f928",
+    "apps/suite/web/tests/agent-upstream-unavailable.test.ts": "b447a7bb7cb8118424a213ea91d89a8472d2d66d58cc08b8506dbfebd561ae36",
+    "apps/suite/web/tests/approvals.test.ts": "975cff2a753d1331779861ea5c5e6d99cf325602bc6d394bbe880cf0694d372c",
+    "apps/suite/web/tests/payer-budget.test.ts": "6590e75f8e870b3fab5d23e244ad1b333bf9554ba3be3f4157e701de97f7672b",
+    "apps/suite/web/tests/public-pages.test.ts": "1de0032b03adc2d25cebada308dfa78b03257baa86ac8b05b97379ef5013669f"
+  },
+  "checks": {
+    "docs_refusals_gate": {
+      "result": "16 passed (node --test, TAP)",
+      "before": "test 20 not ok: 11 unclassified"
+    },
+    "docs_web": {
+      "log_sha256": "e1714a3e87629c21aa5cda9bbbb8d7d25c05f3b6764440801a87264058a8e832",
+      "result": "145 passed, 0 failed",
+      "command": "npm run test -w @synwevo/docs-web"
+    },
+    "suite_web_run1": {
+      "log_sha256": "fc395544fe11533b3d6bf327f2cd7e147b7c27612e5b9b7acdfa2553a950f905",
+      "result": "201 passed, 0 failed, 0 ENOTEMPTY (working tree incl. 4 CR-079 tests)"
+    },
+    "suite_web_run2": {
+      "log_sha256": "a1d1b62209a722db981ec94cb51773e5ea844405b4cb69bdb29999e834fc600f",
+      "result": "201 passed, 0 failed, 0 ENOTEMPTY"
+    },
+    "pytest_ingest_and_agent_files": {
+      "log_sha256": "0acfe5c5688ee0794351305a5e05d5296bdf3726de40ef202a525c180160c04d",
+      "result": "98 passed (apps/docs/tests/test_ingest_context.py, apps/suite/tests/test_agent_files.py), worktree PYTHONPATH confirmed"
+    },
+    "root_typecheck": {
+      "log_sha256": "2a4b215b7659f992e7dc91dc83a388ee54517e5aedaee1c78f8f7fc1a3f5990b",
+      "result": "exit 0"
+    },
+    "root_build": {
+      "log_sha256": "5d20aa49fe6b70cbefa2056d129b9ad1a1ed9f4a31039de89f567e91a932fb93",
+      "result": "exit 0"
+    },
+    "guards": "check_boundaries, check_brand, check_design, check_component_names, brand_assets --check, app_icon_assets --check: all ok",
+    "exported_committed_tree": {
+      "tree": "1c5c9a76e62a162c3dbdee8edf82111dbf593add",
+      "log_sha256": "cbf6dac210c284068fc006b7d03c567dee77f6737a36a7277c9bb12818ab88b1",
+      "result": "npm test -w suite-web -w docs-web: 197 + 145 passed, 0 ENOTEMPTY. tsc through symlinked node_modules reported 25 duplicate-React-typing errors in files this change does not touch; rerun with --preserveSymlinks: suite-web 0 errors, docs-web 0 errors (harness artifact, not a source defect)"
+    },
+    "not_run": [
+      "full three pytest suites",
+      "infra/production unittest",
+      "docker verify image",
+      "identity/messages/portal web tests (unchanged)",
+      "browser"
+    ],
+    "temp_cache_cleanup": "0 synwevo-suite-web-test-* left in os.tmpdir after both runs; stale deps_temp_* removed from this worktree's apps/suite/web/node_modules/.vite only"
+  }
+}

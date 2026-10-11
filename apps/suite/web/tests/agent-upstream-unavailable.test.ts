@@ -2,13 +2,11 @@
  * language. The operator's provider balance is never presented as the person's balance. */
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
+import { testServer } from "./_vite.ts";
 
 let server: any, errors: any, messages: any;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL("../", import.meta.url)), configFile: false,
-    logLevel: "error", appType: "custom", server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  server = await testServer();
   errors = await server.ssrLoadModule("/src/apps/agent/errors.tsx");
   messages = await server.ssrLoadModule("/src/apps/agent/messages.ts");
 });
