@@ -354,3 +354,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：详情只给管理员写下的理由与身份、关联举报 id，不含任何会话内容；恢复复用内容安全模块的路由与权限（`platform.users.manage`，无严格重认证——与该模块一致，ActionDialog 仅在服务端要求时才提示重认证）；暂停仍在内容安全页进行（带举报关联）；补审计理由后，账户时间线的「理由」列对 agent_safety 事件不再为空。
 - 风险/未做：详情不提供暂停入口；`created_by='journal'`（恢复回放）时操作者为空。
 - 验证：identity 相关 15 例 + 补审计后 4 例通过；account-web typecheck/167 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-11-admin-agent-suspension。
+
+## CR-097 · Admin A27 注册诊断 + 被限流注册写审计（2026-10-11，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：services/identity/synwevo_identity/registration.py `_throttled`（IP 与地址两种窗口拒绝都写 `auth.registration.throttled`，actor anonymous，object_kind registration，object_id 为规范化地址，meta 仅 scope/retry_after；对调用方的回答不变）；admin_routes.py `GET /diagnostics/registration`（`platform.users.view`；阶段表 validation/challenge/throttle/account/token/mail/activation，事件与人机验证随 audit.view、邮件随 mail.view，各自以 permitted 标明）；account-web `governance/RegistrationDiagnostics.tsx`（挂在账户页底部）、messages.ts 60 条；tests：test_admin.py 1 例、test_platform_access.py 矩阵行 + `RISK_STATE_REFUSALS`（无地址 400 `bad_email`）、admin-registration-diagnostics.test.mjs 3 例；docs/platform/admin-coverage.md A27 行。
+- 审查要点：令牌只给签发/到期/使用时间，绝不给值或哈希；邮件只给 `_mail_row` 元数据（无正文）；审计事件只带 scope/retry_after/mail_error 三个键；人机验证只能按来源地址与时间窗关联（挑战发生在账户存在之前），界面写明口径；限流状态直接读 `auth_attempts` 不计数；诊断本身不写审计（只读）；被限流的回答对调用方仍是同样的 202，避免借此确认地址存在。
+- 风险/未做：校验失败（400）不写审计，避免匿名刷量把日志填满；服务商回执以外的投递信息没有；人机验证关联是启发式（同地址 ±15 分钟）。
+- 验证：identity 相关 8 例 + 注册/挑战/账户安全 66 例通过；account-web typecheck/170 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-11-admin-registration-diagnostics。

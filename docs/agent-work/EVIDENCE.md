@@ -792,3 +792,9 @@ A13 详情新增 `push_subscriptions`（设备、开启时间、最近推送、�
 A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举报），「恢复 Agent 使用权限」从详情经理由确认后调用内容安全模块的 lift 路由；suspend/lift 审计补入理由。
 测试：test_admin 新增 1 例（暂停→详情显示理由与操作者→`AgentAccess.require` 拒绝→support 可见不可恢复→恢复→详情正常→两条理由进入时间线）；相关 15 例通过；account-web 167 通过（暂停段、按权限显示按钮、正常态）；typecheck/build、五守卫通过。
 浏览器（隔离合成实例 127.0.0.1:33936，系统 Chrome）：经内容安全路由暂停 Alice 后，详情显示「已暂停 Agent」徽标、理由与操作者邮箱、「恢复 Agent 使用权限」按钮；确认理由后提示「已恢复该账户的 Agent 使用权限。」，段落变为「正常：没有生效中的暂停。」，库中无生效暂停，时间线显示 suspend/lift 两条事件及各自理由；再次暂停后英文视图「Agent access / Agent suspended / Suspended since / Restore Agent access」；support 看到徽标但无按钮。证据 `evidence/2026-10-11-admin-agent-suspension/`（browser-report.json、verification.json、4 张截图）。
+
+## 2026-10-11 CR-097 Admin A27 注册诊断（本地+隔离浏览器）
+
+`GET /api/admin/diagnostics/registration?email=` 按地址给出七个阶段（地址校验、人机验证、频率限制、账户、验证链接、邮件、激活）各自的状态与时间；被限流的注册请求（IP 或地址窗口）现在写审计 `auth.registration.throttled`，调用方回答不变；账户页底部「注册诊断」卡片三语言。
+测试：test_admin 新增 1 例（无账户→注册→待激活/已签发/已排队→第 4 次被限流并记录 scope=email→真实链接激活→support 无事件有邮件→finance 403→空/非法地址 400）；矩阵新增 1 行；注册/挑战/账户安全既有 66 例通过；account-web 170 通过（新增 3 例）；typecheck/build、五守卫通过。
+浏览器（隔离合成实例 127.0.0.1:33937，开放注册、文件邮件无投递进程，系统 Chrome）：机构形式地址经公开 API 注册 4 次（均 202）→ 管理员在「注册诊断」输入地址：阶段表显示地址格式可接受 / 人机验证没有记录（未配置）/ 频率限制当前已限流（带时间）/ 账户待激活 / 验证链接已签发未使用 / 邮件已排队 / 尚未激活，事件含 auth.registration.throttled，文本不含令牌 → 从隔离发件箱取链接激活（200）后再诊断：账户正常、验证链接已使用、已激活并显示 auth.email.verified → 英文视图阶段表（Throttled now / Active / Used / Queued / Activated）→ support 看到阶段与邮件、事件段显示需要审计查看权限。带尾点地址被浏览器自带邮箱校验拦下（未发请求）。证据 `evidence/2026-10-11-admin-registration-diagnostics/`（browser-report.json、verification.json、4 张截图）。

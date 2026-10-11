@@ -1027,6 +1027,102 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
               meta={"reason": reason, "finalized": finalized, "before": before, "after": after})
         return {"ok": True, "finalized": finalized, "before": before, "after": after}
 
+    REGISTRATION_EVENTS = ("auth.registration", "auth.registration.existing_account", "auth.registration.throttled",
+                           "auth.email.verify_requested", "auth.email.verified", "auth.onboarding.personal")
+
+    @r.get("/diagnostics/registration")
+    def registration_diagnostics(request: Request, email: str = Query("", max_length=254)):
+        """A27: one address's registration, stage by stage — is the address acceptable here, was
+        a request throttled (and is it now), the account row, the verification tokens (never their
+        values), the mails to the address and what became of them, the activation — so support can
+        answer "I registered and nothing arrived" without reading logs. Metadata only. The audit
+        events (and the human-verification results near them) follow `platform.audit.view`, the
+        mail rows `platform.mail.view`, each explained when withheld; reading changes nothing."""
+        import hashlib
+        from synwevo_core.identity import normalise_email, registration_mode as current_mode, valid_email
+        actor = _admin(request, "platform.users.view")
+        raw = (email or "").strip()
+        if not raw or not valid_email(raw):
+            raise ServiceError(400, "bad_email", "邮箱格式不正确", {"field": "email"})
+        key = normalise_email(raw)
+        held = actor["platform_permissions"]
+        ts = now()
+        user = ident.by_email(raw)
+        uid = user["id"] if user else None
+        bucket = store.one("SELECT count,first_at,last_at,blocked_until FROM auth_attempts WHERE bucket=?",
+                           ("registration-email:" + hashlib.sha256(key.encode()).hexdigest(),))
+        throttle = None
+        if bucket:
+            in_window = ts - bucket["first_at"] <= 3600
+            blocked = bool(bucket["blocked_until"] and bucket["blocked_until"] > ts) or (in_window and bucket["count"] >= 3)
+            throttle = {"count": bucket["count"], "first_at": bucket["first_at"], "last_at": bucket["last_at"],
+                        "blocked": blocked, "blocked_until": bucket["blocked_until"] if blocked else None,
+                        "limit": 3, "window_s": 3600}
+        tokens = [{**t, "expired": bool(t["used_at"] is None and t["expires_at"] <= ts)} for t in store.all(
+            "SELECT kind,created_at,expires_at,used_at FROM email_tokens WHERE user_id=? AND kind='verify' "
+            "ORDER BY created_at DESC LIMIT 20", (uid or "",))]
+        events = challenges = None
+        if "platform.audit.view" in held:
+            marks = ",".join("?" * len(REGISTRATION_EVENTS))
+            events = []
+            for row in store.all(
+                    f"SELECT id,at,action,result,ip,meta FROM audit_events WHERE (actor_id=? AND action IN ({marks})) "
+                    "OR (object_kind='registration' AND object_id=?) ORDER BY at DESC LIMIT 100",
+                    (uid or "", *REGISTRATION_EVENTS, key)):
+                try:
+                    meta = json.loads(row.pop("meta") or "{}")
+                except ValueError:
+                    meta = {}
+                row["detail"] = {k: meta.get(k) for k in ("scope", "retry_after", "mail_error") if meta.get(k) is not None}
+                events.append(row)
+            challenges = []
+            ips = sorted({e["ip"] for e in events if e["ip"]})
+            if ips:
+                lo, hi = min(e["at"] for e in events) - 900, max(e["at"] for e in events) + 900
+                for row in store.all(
+                        f"SELECT id,at,result,ip,meta FROM audit_events WHERE action='auth.challenge' AND ip IN ({','.join('?' * len(ips))}) "
+                        "AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT 50", (*ips, lo, hi)):
+                    try:
+                        meta = json.loads(row.pop("meta") or "{}")
+                    except ValueError:
+                        meta = {}
+                    row["action"] = meta.get("action")
+                    row["reason"] = meta.get("reason")
+                    challenges.append(row)
+        mail = None
+        if "platform.mail.view" in held:
+            mail = [_mail_row(m) for m in store.all(
+                "SELECT id,to_addr,kind,ref_id,status,attempts,created_at,sent_at,next_attempt_at,last_error FROM mail_outbox "
+                "WHERE lower(to_addr)=? OR (?!='' AND ref_id=?) ORDER BY created_at DESC LIMIT 20", (key, uid or "", uid or ""))]
+        # The stages, each with the newest fact that decides it.
+        latest = {}
+        for e in events or []:
+            latest.setdefault(e["action"], e)
+        throttled = latest.get("auth.registration.throttled")
+        verify_token = tokens[0] if tokens else None
+        verify_mail = next((m for m in mail or [] if m["kind"] in ("verify", "account_exists")), None)
+        stages = [
+            {"stage": "validation", "state": "valid", "at": None},
+            {"stage": "challenge", "state": ("ok" if challenges and challenges[0]["result"] == "ok" else challenges[0]["result"] if challenges
+                                             else "none") if challenges is not None else "withheld",
+             "at": challenges[0]["at"] if challenges else None},
+            {"stage": "throttle", "state": "blocked" if throttle and throttle["blocked"] else "refused" if throttled else "clear",
+             "at": throttled["at"] if throttled else (throttle or {}).get("last_at")},
+            {"stage": "account", "state": user["status"] if user else "none", "at": user["created_at"] if user else None},
+            {"stage": "token", "state": "none" if not verify_token else "used" if verify_token["used_at"] else "expired" if verify_token["expired"] else "issued",
+             "at": verify_token["used_at"] or verify_token["created_at"] if verify_token else None},
+            {"stage": "mail", "state": "withheld" if mail is None else verify_mail["status"] if verify_mail else "none",
+             "at": (verify_mail["sent_at"] or verify_mail["created_at"]) if verify_mail else None},
+            {"stage": "activation", "state": "active" if user and user["email_verified_at"] else "pending" if user else "none",
+             "at": user["email_verified_at"] if user else None},
+        ]
+        return {"email": key, "valid": True, "registration_mode": current_mode(store),
+                "account": {k: user[k] for k in ("id", "status", "created_at", "email_verified_at", "locale")} if user else None,
+                "throttle": throttle, "tokens": tokens,
+                "audit": {"permitted": events is not None, "events": events or [], "challenges": challenges or []},
+                "mail": {"permitted": mail is not None, "items": mail or []},
+                "stages": stages}
+
     @r.post("/users/{uid}/status-preview")
     def preview_status(request: Request, uid: str, body: dict = Body(...)):
         from .admin_operations import AccountOperations

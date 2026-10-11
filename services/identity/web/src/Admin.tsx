@@ -32,6 +32,7 @@ import { ActionDialog } from "./governance/ActionDialog";
 import { AdminLayout } from "./admin/AdminLayout";
 import { RowMenu } from "./governance/RowMenu";
 import { AccountDetailDialog } from "./governance/AccountDetail";
+import { RegistrationDiagnostics } from "./governance/RegistrationDiagnostics";
 import { PageControls } from "./governance/ListControls";
 import { useDebounced } from "./lib/hooks";
 import { ACCOUNT_STATUS, WORKSPACE_KIND, WORKSPACE_STATUS, roleLabel } from "./governance/labels";
@@ -378,6 +379,7 @@ function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void
       {!loading && !err && !items.length && <tr className="empty-row"><td colSpan={6}>{tr("没有匹配的账户。")}</td></tr>}</tbody>
     </table></div>
     <PageControls offset={offset} total={data?.total || 0} busy={loading || !!err} onPage={setOffset} />
+    <RegistrationDiagnostics />
     {detail && <AccountDetailDialog user={detail} held={held} onClose={() => setDetail(null)} onChanged={reload} />}
     {action?.kind === "status" && u && <AccountStatusDialog user={u} onClose={() => setAction(null)} onDone={(out) => {
       setAction(null); reload(); setResultNotice(tr("操作 {id} 已完成，账户状态为「{status}」。", {

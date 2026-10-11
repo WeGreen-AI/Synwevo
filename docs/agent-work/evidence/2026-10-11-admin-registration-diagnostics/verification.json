@@ -1,0 +1,104 @@
+{
+ "package": "CR-097 · Admin A27 注册诊断（按地址逐阶段）+ 被限流的注册写审计",
+ "written_at": "2026-10-11T23:27:23+00:00",
+ "worktree": ".claude/worktrees/agent-billing (branch claude/agent-billing)",
+ "environment": "http://127.0.0.1:33937 — isolated synthetic instance (synwevo_server create_app role=all, start_jobs=False), SYNWEVO_REGISTRATION=open, MAIL_MODE=file without a worker (outbox rows only, so mail stays 'queued'), no human-verification provider configured; a random institutional-form address (1155NNNNNN@link.cuhk.edu.hk) registered through the public API; no production data, model, payment or outbound network; Playwright Chrome",
+ "backend_tests": {
+  "services/identity/tests/test_admin.py + test_platform_access.py -k 'registration_diagnostics or matrix'": "8 passed (new: test_registration_diagnostics_follow_one_address_through_every_stage; matrix row + state refusal)",
+  "services/identity/tests: test_registration_activation + test_independent_identity_review + test_challenge + test_account_security": "66 passed (throttled registrations now audited)"
+ },
+ "frontend": {
+  "account-web typecheck": "exit 0",
+  "account-web npm test": "170 passed (new admin-registration-diagnostics.test.mjs: 3)",
+  "account-web build": "ok"
+ },
+ "guards": "check_boundaries, check_brand, check_design, check_component_names, brand_assets --check: ok",
+ "browser_steps": {
+  "register": {
+   "address_form": "NNNNNNNNNN@link.cuhk.edu.hk",
+   "statuses": [
+    202,
+    202,
+    202,
+    202
+   ]
+  },
+  "pending": {
+   "stage_rows": [
+    "阶段\t状态\t时间",
+    "地址校验\t地址格式可接受\t—",
+    "人机验证\t没有记录\t—",
+    "频率限制\t当前已限流\t2026/10/12 07:26",
+    "账户\t待激活\t2026/10/12 07:26",
+    "验证链接\t已签发，未使用\t2026/10/12 07:26",
+    "邮件\t已排队\t2026/10/12 07:26",
+    "激活\t尚未激活\t—"
+   ],
+   "throttled_now": true,
+   "refused_event": true,
+   "pending": true,
+   "link_issued": true,
+   "mail_queued": true,
+   "token_leak": false
+  },
+  "activate": {
+   "status": 200
+  },
+  "activated": {
+   "stage_rows": [
+    "阶段\t状态\t时间",
+    "地址校验\t地址格式可接受\t—",
+    "人机验证\t没有记录\t—",
+    "频率限制\t当前已限流\t2026/10/12 07:26",
+    "账户\t正常\t2026/10/12 07:26",
+    "验证链接\t已使用\t2026/10/12 07:26",
+    "邮件\t已排队\t2026/10/12 07:26",
+    "激活\t已激活\t2026/10/12 07:26"
+   ],
+   "activated": true,
+   "link_used": true,
+   "account_normal": true,
+   "verified_event": true
+  },
+  "bad_address": {
+   "alert": null
+  },
+  "en": {
+   "stage_rows": [
+    "Stage\tStatus\tTime",
+    "Address validation\tAddress format accepted\t—",
+    "Human verification\tNo record\t—",
+    "Rate limit\tThrottled now\t10/12/2026, 07:26 AM",
+    "Account\tActive\t10/12/2026, 07:26 AM",
+    "Verification link\tUsed\t10/12/2026, 07:26 AM",
+    "Mail\tQueued\t10/12/2026, 07:26 AM",
+    "Activation\tActivated\t10/12/2026, 07:26 AM"
+   ],
+   "activated": true,
+   "throttled": true
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "support": {
+   "events_withheld": true,
+   "mail_shown": true,
+   "stages": true
+  }
+ },
+ "screenshots": [
+  "a27-diagnosis-activated-zh-hans.png",
+  "a27-diagnosis-en.png",
+  "a27-diagnosis-pending-zh-hans.png",
+  "a27-diagnosis-support-zh-hans.png"
+ ],
+ "notes": [
+  "the 'bad_address' step typed user@example.com. into the card's e-mail input: the browser's own e-mail validation refuses the trailing-dot address before any request, so no server refusal appears there; the server's bad_email answer is asserted by the backend test",
+  "the human-verification stage reads 'no record' because the isolated instance configures no provider; with a provider, auth.challenge events from the same source address within 15 minutes are listed",
+  "the console's single 'Failed to load resource' entry is the login page's session probe (401)"
+ ],
+ "not_done": [
+  "a provider's delivery receipt beyond the outbox state (the mail worker records status/attempts/error code; no external receipt exists)",
+  "deployment (GitHub Actions billing block)"
+ ]
+}

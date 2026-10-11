@@ -52,13 +52,24 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
             mailer.enqueue(user["email"], subject, body, kind="account_exists", ref_id=user["id"], html=html)
             audit(request, "auth.registration.existing_account", actor_id=user["id"], result="ok")
 
+    def _throttled(request: Request, email: str, scope: str, wait: float) -> None:
+        """The answer to the caller stays the same (a refusal must not confirm an address); the
+        refusal itself goes on record so support can see it when the person asks why nothing
+        arrived (admin coverage A27). The address is the object, never a token or password."""
+        audit(request, "auth.registration.throttled", actor_kind="anonymous", object_kind="registration",
+              object_id=normalise_email(email)[:254], result="denied",
+              meta={"scope": scope, "retry_after": max(1, int(wait or 0))})
+
     def _limited(request: Request, email: str):
         allowed, wait = ident.window_allows(f"registration:{client_ip(request)}", limit=10, window_s=900)
         if not allowed:
+            _throttled(request, email, "ip", wait)
             raise _too_many(wait)
         # Counts even nonexistent addresses, without storing their raw address in a limiter name.
         key = hashlib.sha256(normalise_email(email).encode()).hexdigest()
-        allowed, _ = ident.window_allows(f"registration-email:{key}", limit=3, window_s=3600)
+        allowed, wait = ident.window_allows(f"registration-email:{key}", limit=3, window_s=3600)
+        if not allowed:
+            _throttled(request, email, "email", wait)
         return allowed
 
     @router.post("/register", status_code=202)

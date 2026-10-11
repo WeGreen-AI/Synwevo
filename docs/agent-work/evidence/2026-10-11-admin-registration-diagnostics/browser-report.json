@@ -1,0 +1,77 @@
+{
+ "base": "http://127.0.0.1:33937",
+ "engine": "chrome",
+ "steps": {
+  "register": {
+   "address_form": "NNNNNNNNNN@link.cuhk.edu.hk",
+   "statuses": [
+    202,
+    202,
+    202,
+    202
+   ]
+  },
+  "pending": {
+   "stage_rows": [
+    "阶段\t状态\t时间",
+    "地址校验\t地址格式可接受\t—",
+    "人机验证\t没有记录\t—",
+    "频率限制\t当前已限流\t2026/10/12 07:26",
+    "账户\t待激活\t2026/10/12 07:26",
+    "验证链接\t已签发，未使用\t2026/10/12 07:26",
+    "邮件\t已排队\t2026/10/12 07:26",
+    "激活\t尚未激活\t—"
+   ],
+   "throttled_now": true,
+   "refused_event": true,
+   "pending": true,
+   "link_issued": true,
+   "mail_queued": true,
+   "token_leak": false
+  },
+  "activate": {
+   "status": 200
+  },
+  "activated": {
+   "stage_rows": [
+    "阶段\t状态\t时间",
+    "地址校验\t地址格式可接受\t—",
+    "人机验证\t没有记录\t—",
+    "频率限制\t当前已限流\t2026/10/12 07:26",
+    "账户\t正常\t2026/10/12 07:26",
+    "验证链接\t已使用\t2026/10/12 07:26",
+    "邮件\t已排队\t2026/10/12 07:26",
+    "激活\t已激活\t2026/10/12 07:26"
+   ],
+   "activated": true,
+   "link_used": true,
+   "account_normal": true,
+   "verified_event": true
+  },
+  "bad_address": {
+   "alert": null
+  },
+  "en": {
+   "stage_rows": [
+    "Stage\tStatus\tTime",
+    "Address validation\tAddress format accepted\t—",
+    "Human verification\tNo record\t—",
+    "Rate limit\tThrottled now\t10/12/2026, 07:26 AM",
+    "Account\tActive\t10/12/2026, 07:26 AM",
+    "Verification link\tUsed\t10/12/2026, 07:26 AM",
+    "Mail\tQueued\t10/12/2026, 07:26 AM",
+    "Activation\tActivated\t10/12/2026, 07:26 AM"
+   ],
+   "activated": true,
+   "throttled": true
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "support": {
+   "events_withheld": true,
+   "mail_shown": true,
+   "stages": true
+  }
+ }
+}

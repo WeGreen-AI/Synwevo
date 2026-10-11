@@ -777,3 +777,65 @@ def test_the_account_detail_shows_an_agent_suspension_and_an_administrator_lifts
     timeline = c.get(f"/api/admin/users/{alice['id']}").json()["audit"]["items"]
     reasons = {e["action"]: e["reason"] for e in timeline if e["action"].startswith("admin.agent_safety.")}
     assert reasons == {"admin.agent_safety.suspend": "合成测试：举报核实前暂停", "admin.agent_safety.lift": "举报已核实为误报，恢复使用"}
+
+
+def test_registration_diagnostics_follow_one_address_through_every_stage(env, monkeypatch, tmp_path):
+    """A27: a support reader follows an institutional-form address from validation to activation —
+    the account row, the throttle (with the refusal now on record), the verification token (never
+    its value), the mail, the activation — with the audit events and mail rows only for the roles
+    that may read those pages."""
+    import json
+    import re
+    monkeypatch.setenv("SYNWEVO_REGISTRATION", "open")
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
+    monkeypatch.setenv("SYNWEVO_MAIL_DIR", str(tmp_path / "fixture-mail"))
+    monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "http://testserver")
+    c, store, ident, api = env["c"], env["store"], env["ident"], env["api"]
+    address = "1155123456@link.cuhk.edu.hk"
+    path = "/api/admin/diagnostics/registration"
+    assert c.get(path).json()["error"] == "bad_email" and c.get(path + "?email=not-an-address").status_code == 400
+    nothing = c.get(path + "?email=" + address).json()
+    assert nothing["account"] is None and nothing["throttle"] is None and nothing["tokens"] == []
+    assert [s["state"] for s in nothing["stages"]] == ["valid", "none", "clear", "none", "none", "none", "none"]
+    anonymous = TestClient(api)
+    register = lambda: anonymous.post("/api/auth/register", json={"email": address, "password": "a long institutional passphrase 2026", "locale": "zh-Hans"})  # noqa: E731
+    assert register().status_code == 202
+    d = c.get(path + "?email=" + address).json()
+    assert d["account"]["status"] == "pending" and d["account"]["created_at"] and d["registration_mode"] == "open"
+    assert len(d["tokens"]) == 1 and d["tokens"][0]["used_at"] is None and not d["tokens"][0]["expired"]
+    assert d["mail"]["permitted"] is True and d["mail"]["items"][0]["kind"] == "verify" and d["mail"]["items"][0]["status"] == "queued"
+    assert d["audit"]["permitted"] is True and [e["action"] for e in d["audit"]["events"]] == ["auth.email.verify_requested", "auth.registration"]
+    assert [s["state"] for s in d["stages"]] == ["valid", "none", "clear", "pending", "issued", "queued", "pending"]
+    assert all(s["at"] for s in d["stages"] if s["stage"] in ("account", "token", "mail"))
+    assert "token" not in json.dumps(d["tokens"]) and not re.search(r"[A-Za-z0-9_-]{30,}", json.dumps(d["tokens"]))
+    # Three requests an hour per address: the fourth is answered like the others and refused on record.
+    for _ in range(3):
+        assert register().status_code == 202
+    d = c.get(path + "?email=" + address).json()
+    assert d["throttle"]["blocked"] is True and d["throttle"]["count"] >= 3
+    refused = [e for e in d["audit"]["events"] if e["action"] == "auth.registration.throttled"]
+    assert refused and refused[0]["result"] == "denied" and refused[0]["detail"]["scope"] == "email" and refused[0]["detail"]["retry_after"] >= 1
+    assert d["stages"][2]["state"] == "blocked" and d["stages"][2]["at"]
+    # Activation through the real link (the token read from the outbox, as the mailbox owner would).
+    body = store.one("SELECT body FROM mail_outbox WHERE kind='verify' ORDER BY created_at DESC LIMIT 1")["body"]
+    token = re.search(r"[#?]token=([A-Za-z0-9_-]+)", body)[1]
+    from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
+    r = anonymous.post("/api/auth/email/verify", json={"token": token, "new_password": "the mailbox owner picks a passphrase 2026"},
+                       headers={CSRF_HEADER: anonymous.cookies.get(CSRF_COOKIE) or ""})
+    assert r.status_code == 200, r.text
+    d = c.get(path + "?email=" + address).json()
+    assert d["account"]["status"] == "active" and d["stages"][-1] == {"stage": "activation", "state": "active", "at": d["account"]["email_verified_at"]}
+    assert d["stages"][4]["state"] == "used" and "auth.email.verified" in [e["action"] for e in d["audit"]["events"]]
+    # Support: the stages, the account and the mail rows, not the audit events.
+    make_platform_admin(store, ident.create_user("support@example.com", PW, status="active"), role="support")
+    s = TestClient(api)
+    assert post(s, "/api/auth/login", {"email": "support@example.com", "password": PW}).status_code == 200
+    d = s.get(path + "?email=" + address).json()
+    assert d["account"]["status"] == "active" and d["audit"] == {"permitted": False, "events": [], "challenges": []}
+    # support reads the outbox page, so the mail rows are theirs too (metadata, never a body)
+    assert d["mail"]["permitted"] is True and d["mail"]["items"][0]["kind"] == "verify" and "body" not in d["mail"]["items"][0]
+    assert d["stages"][5]["state"] in ("queued", "sent") and d["stages"][1]["state"] == "withheld"
+    make_platform_admin(store, ident.create_user("finance@example.com", PW, status="active"), role="finance")
+    f = TestClient(api)
+    assert post(f, "/api/auth/login", {"email": "finance@example.com", "password": PW}).status_code == 200
+    assert f.get(path + "?email=" + address).status_code == 403
