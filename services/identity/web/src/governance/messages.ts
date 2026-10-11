@@ -1700,5 +1700,13 @@ export const governanceMessages = {
   "浏览器": { en: "Browser", "zh-Hant": "瀏覽器" },
   "{email}：该账户所有浏览器的推送订阅将被撤销，这些设备不再收到系统通知；登录与登录方式不变。本人会收到安全通知，可在自己的设备上重新开启。": { en: "{email}: every browser push subscription of this account is revoked and those devices stop receiving system notifications; sessions and sign-in methods are unchanged. The person gets a security notice and can enable push again on a device they hold.", "zh-Hant": "{email}：該帳戶所有瀏覽器的推播訂閱將被撤銷，這些裝置不再收到系統通知；登入與登入方式不變。本人會收到安全通知，可在自己的裝置上重新開啟。" },
   "已撤销全部推送订阅。": { en: "All push subscriptions revoked.", "zh-Hant": "已撤銷全部推播訂閱。" },
+  // A13: the Agent content-safety suspension in the account detail
+  "Agent 使用权限": { en: "Agent access", "zh-Hant": "Agent 使用權限" },
+  "自 {time} 起暂停；理由：{reason}": { en: "Suspended since {time}; reason: {reason}", "zh-Hant": "自 {time} 起暫停；理由：{reason}" },
+  "操作者：{email}": { en: "By: {email}", "zh-Hant": "操作者：{email}" },
+  "关联举报 {id}": { en: "Linked report {id}", "zh-Hant": "關聯舉報 {id}" },
+  "正常：没有生效中的暂停。": { en: "Normal: no suspension in force.", "zh-Hant": "正常：沒有生效中的暫停。" },
+  "{email}：该账户将可以再次使用个人 Agent；理由会记录在审计中。": { en: "{email}: this account can use the personal Agent again; the reason is recorded in the audit log.", "zh-Hant": "{email}：該帳戶將可以再次使用個人 Agent；理由會記錄在稽核中。" },
+  "已恢复该账户的 Agent 使用权限。": { en: "Agent access restored for this account.", "zh-Hant": "已恢復該帳戶的 Agent 使用權限。" },
 };
 registerMessages(governanceMessages);

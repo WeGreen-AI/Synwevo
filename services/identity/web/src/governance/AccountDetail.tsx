@@ -41,6 +41,8 @@ export type AccountDetail = {
   sessions: { id: string; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string;
     client_parts?: { browser: string | null; platform: string | null }; ip: string | null; persistent: boolean; auth_provider: string | null }[];
   backoff: { failures: number; first_failure_at: number; last_failure_at: number; retry_after: number } | null;
+  /** The personal Agent's content-safety suspension (admin coverage A13): the administrator's reason, never a conversation. */
+  agent_access?: { suspended: boolean; suspension: { id: string; reason: string; report_id: string | null; created_at: number; created_by_email: string | null } | null };
   /** A17: browser push devices, never their endpoints; `active` means a live session still backs the device. */
   push_subscriptions?: { id: string; user_agent: string | null; created_at: number; last_sent_at: number | null; fail_count: number; active: boolean }[];
   /** A20: the deletion request, or the rules that would refuse one today (profile.deletion_state). */
@@ -93,7 +95,7 @@ export function pushDeviceText(ua: string | null | undefined): string {
 }
 
 /** One of the per-object actions (A17); the dialog confirms it with a reason and re-authentication. */
-export type AccountAction = { kind: "session" | "passkey" | "external" | "push"; id: string; label: string };
+export type AccountAction = { kind: "session" | "passkey" | "external" | "push" | "agent_lift"; id: string; label: string };
 
 export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountDetail; held?: Held; onAct?: (action: AccountAction) => void }) {
   useI18n();
@@ -121,6 +123,15 @@ export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountD
             : platformRoleLabel(g.role)).join("、")
           : tr("无平台权限")}</dd>
       </dl></section>
+
+    {d.agent_access && <section className="col gap8"><h3 className="secttl">{tr("Agent 使用权限")}</h3>
+      {d.agent_access.suspension ? <>
+        <p><span className="badge warn">{tr("已暂停 Agent")}</span> {tr("自 {time} 起暂停；理由：{reason}", { time: fmtTime(d.agent_access.suspension.created_at), reason: d.agent_access.suspension.reason })}
+          {d.agent_access.suspension.created_by_email ? ` · ${tr("操作者：{email}", { email: d.agent_access.suspension.created_by_email })}` : ""}
+          {d.agent_access.suspension.report_id ? ` · ${tr("关联举报 {id}", { id: d.agent_access.suspension.report_id })}` : ""}</p>
+        {mayAct && <div>{act({ kind: "agent_lift", id: d.agent_access.suspension.id, label: tr("恢复 Agent 使用权限") })}</div>}
+      </> : <p className="muted small">{tr("正常：没有生效中的暂停。")}</p>}
+    </section>}
 
     {d.deletion && <section className="col gap8"><h3 className="secttl">{tr("注销申请")}</h3>
       {d.deletion.pending ? <>
@@ -219,15 +230,18 @@ const ACTION_PATH: Record<AccountAction["kind"], (uid: string, id: string) => st
   passkey: (uid, id) => `/api/admin/users/${encodeURIComponent(uid)}/passkeys/${encodeURIComponent(id)}/remove`,
   external: (uid, id) => `/api/admin/users/${encodeURIComponent(uid)}/external-identities/${encodeURIComponent(id)}/unlink`,
   push: (uid) => `/api/admin/users/${encodeURIComponent(uid)}/push-subscriptions/revoke`,
+  agent_lift: (uid) => `/api/admin/agent-safety/users/${encodeURIComponent(uid)}/lift`,
 };
 const ACTION_IMPACT: Record<AccountAction["kind"], string> = {
   session: "{email}：该设备的登录与它签发的应用访问将立即结束；其他设备不受影响。本人会收到安全通知。",
   passkey: "{email}：该安全密钥将不能再用于登录；若它是账户唯一的登录方式，服务器会拒绝。本人会收到安全通知。",
   external: "{email}：该外部账户的下一次登录将不再进入此账户；若它是唯一的登录方式，服务器会拒绝。本人会收到安全通知。",
   push: "{email}：该账户所有浏览器的推送订阅将被撤销，这些设备不再收到系统通知；登录与登录方式不变。本人会收到安全通知，可在自己的设备上重新开启。",
+  agent_lift: "{email}：该账户将可以再次使用个人 Agent；理由会记录在审计中。",
 };
 const ACTION_DONE: Record<AccountAction["kind"], string> = {
   session: "已结束该设备的登录。", passkey: "已移除该安全密钥。", external: "已解除该外部身份。", push: "已撤销全部推送订阅。",
+  agent_lift: "已恢复该账户的 Agent 使用权限。",
 };
 
 export function AccountDetailDialog({ user, held, onClose, onChanged }: {

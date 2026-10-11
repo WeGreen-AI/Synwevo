@@ -786,3 +786,9 @@ A13 详情新增 `push_subscriptions`（设备、开启时间、最近推送、�
 
 `oauth_tokens.last_used_at` 由 `Grants.load_access` 每令牌每分钟至多写一次；`/api/auth/connected-apps` 每条授权带 `last_used_at`，账户页「已授权的应用」显示「最近使用 {date}」或「尚未用它访问过」。
 测试：test_oauth_consent（首次使用 ≥ 最近签发；分钟内第二次使用不重写；回拨 120 秒后再次使用会更新）、test_suite_machine_flow（真实 `/api/suite/v1/ops/*` 调用后授权的 `last_used_at` 非空且 ≥ 签发时间）；identity 相关 173、integration 相关 59、Docs 相关 14 通过；account-web 167/typecheck/build、五守卫通过。未做浏览器验收（一行文案）。
+
+## 2026-10-11 CR-096 Admin A13 Agent 暂停状态（本地+隔离浏览器）
+
+A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举报），「恢复 Agent 使用权限」从详情经理由确认后调用内容安全模块的 lift 路由；suspend/lift 审计补入理由。
+测试：test_admin 新增 1 例（暂停→详情显示理由与操作者→`AgentAccess.require` 拒绝→support 可见不可恢复→恢复→详情正常→两条理由进入时间线）；相关 15 例通过；account-web 167 通过（暂停段、按权限显示按钮、正常态）；typecheck/build、五守卫通过。
+浏览器（隔离合成实例 127.0.0.1:33936，系统 Chrome）：经内容安全路由暂停 Alice 后，详情显示「已暂停 Agent」徽标、理由与操作者邮箱、「恢复 Agent 使用权限」按钮；确认理由后提示「已恢复该账户的 Agent 使用权限。」，段落变为「正常：没有生效中的暂停。」，库中无生效暂停，时间线显示 suspend/lift 两条事件及各自理由；再次暂停后英文视图「Agent access / Agent suspended / Suspended since / Restore Agent access」；support 看到徽标但无按钮。证据 `evidence/2026-10-11-admin-agent-suspension/`（browser-report.json、verification.json、4 张截图）。

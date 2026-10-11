@@ -347,3 +347,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：写入发生在校验路径（Docs/目录/业务应用三条机器入口与 userinfo 都经 `load_access`），每令牌每分钟至多一次 UPDATE，不改变任何授权判断；只读列表聚合不暴露令牌；回滚时旧代码忽略新列；控制台不列委托令牌（属于本人，不是空间凭据），按客户端的委托调用仍可在调用记录按 client_id 查询。
 - 风险/未做：刷新换发的新令牌 `last_used_at` 为空，列表按 MAX 聚合不受影响；浏览器验收未做（仅账户页一行文案，API 与集成测试覆盖）。
 - 验证：identity `-k "oidc or api_platform or machine or consent or token or connected"` 173 通过；integration `-k "machine or oauth or consent or delegated or token"` 59 通过；Docs `-k "machine or delegated or oauth or bearer"` 14 通过；account-web typecheck/167 测试/build 通过；五守卫通过。
+
+## CR-096 · Admin A13 详情并入 Agent 内容安全暂停状态（2026-10-11，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：services/identity/synwevo_identity/admin_routes.py（A13 详情 `agent_access`：是否暂停、理由、操作者邮箱、关联举报、时间）；admin_agent_safety.py 的 suspend/lift 审计 meta 补入 `reason`；account-web `governance/AccountDetail.tsx`「Agent 使用权限」段与动作 kind `agent_lift`（复用 `/api/admin/agent-safety/users/{uid}/lift`）、messages.ts 7 条；tests：test_admin.py 1 例、admin-account-detail.test.mjs；docs/platform/admin-coverage.md A13 行。
+- 审查要点：详情只给管理员写下的理由与身份、关联举报 id，不含任何会话内容；恢复复用内容安全模块的路由与权限（`platform.users.manage`，无严格重认证——与该模块一致，ActionDialog 仅在服务端要求时才提示重认证）；暂停仍在内容安全页进行（带举报关联）；补审计理由后，账户时间线的「理由」列对 agent_safety 事件不再为空。
+- 风险/未做：详情不提供暂停入口；`created_by='journal'`（恢复回放）时操作者为空。
+- 验证：identity 相关 15 例 + 补审计后 4 例通过；account-web typecheck/167 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-11-admin-agent-suspension。

@@ -47,6 +47,7 @@ const FIXTURE = {
       client_parts: { browser: "Safari", platform: "iPhone" }, ip: null, persistent: false, auth_provider: "google" },
   ],
   backoff: { failures: 4, first_failure_at: T - 60, last_failure_at: T, retry_after: 2 },
+  agent_access: { suspended: true, suspension: { id: "asp_fixture", reason: "Fixture: pending report review", report_id: "arp_000000000001", created_at: T, created_by_email: "admin-fixture@example.test" } },
   push_subscriptions: [
     { id: "ps_fixture_1", user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/128.0 Safari/537.36", created_at: T, last_sent_at: T, fail_count: 0, active: true },
     { id: "ps_fixture_2", user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Version/17.0 Mobile/15E148 Safari/604.1", created_at: T - 60, last_sent_at: null, fail_count: 3, active: false },
@@ -73,7 +74,7 @@ test("the body states the account's facts in the reader's language and shows not
     "Fixture workspace", "Name hidden: your role cannot view the organization list", "Synced across devices",
     "4 consecutive failures", "the next attempt must wait", "bad_password", "Security timeline", "(expires",
     "Deletion requested by the person on", "The cancellation link is still valid",
-    "Push devices (2)", "Chrome · macOS", "Safari · iOS", "Never pushed", "Last 3 pushes failed", "Session ended; no longer receiving", "Receiving"]) {
+    "Agent suspended", "Suspended since", "Fixture: pending report review", "Linked report arp_000000000001", "Push devices (2)", "Chrome · macOS", "Safari · iOS", "Never pushed", "Last 3 pushes failed", "Session ended; no longer receiving", "Receiving"]) {
     assert.ok(html.includes(expected), `missing in English: ${expected}\n${html}`);
   }
   assert.ok(!HAN.test(html.replace(FIXTURE_TEXT, "")), `untranslated text in English:\n${html}`);
@@ -85,8 +86,8 @@ test("the body states the account's facts in the reader's language and shows not
 test("what the server withholds is explained, and the quiet states are sentences", () => {
   const quiet = render("en", { ...FIXTURE, outranks_caller: true, application_identity: true,
     audit: { permitted: false, limit: 50, items: [] }, backoff: null, workspaces: [], organizations: [], sessions: [],
-    push_subscriptions: [], sign_in: { ...FIXTURE.sign_in, totp: false, passkeys: [], external_identities: [] } });
-  for (const expected of ["Showing the timeline needs the audit view permission", "No failed sign-ins on record.", "No device has push enabled.",
+    agent_access: { suspended: false, suspension: null }, push_subscriptions: [], sign_in: { ...FIXTURE.sign_in, totp: false, passkeys: [], external_identities: [] } });
+  for (const expected of ["Showing the timeline needs the audit view permission", "No failed sign-ins on record.", "No device has push enabled.", "Normal: no suspension in force.",
     "Not a member of any workspace.", "Not a member of any organization.", "No active sessions right now.",
     "This account's platform permissions outrank yours", "Application identity: managed by its application", "Off"]) {
     assert.ok(quiet.includes(expected), `missing: ${expected}\n${quiet}`);
@@ -110,10 +111,10 @@ test("what the server withholds is explained, and the quiet states are sentences
 test("the per-object actions follow the caller's permission and never show on an account that outranks them", () => {
   const manage = new Set(["platform.users.view", "platform.users.manage"]);
   const acting = render("en", FIXTURE, manage, () => {});
-  for (const label of ["Sign this device out", "Remove this passkey", "Unlink this external identity", "Revoke all push subscriptions"]) assert.ok(acting.includes(label), label);
+  for (const label of ["Sign this device out", "Remove this passkey", "Unlink this external identity", "Revoke all push subscriptions", "Restore Agent access"]) assert.ok(acting.includes(label), label);
   assert.equal((acting.match(/Sign this device out/g) || []).length, 2, "one per session");
   const viewing = render("en", FIXTURE, new Set(["platform.users.view"]), () => {});
-  assert.ok(!viewing.includes("Sign this device out") && !viewing.includes("Revoke all push subscriptions") && viewing.includes("Your platform role can view this, not act on it."), viewing);
+  assert.ok(!viewing.includes("Sign this device out") && !viewing.includes("Revoke all push subscriptions") && !viewing.includes("Restore Agent access") && viewing.includes("Your platform role can view this, not act on it."), viewing);
   assert.ok(!render("en", { ...FIXTURE, push_subscriptions: [] }, manage, () => {}).includes("Revoke all push subscriptions"), "nothing to revoke, no button");
   const outranked = render("en", { ...FIXTURE, outranks_caller: true }, manage, () => {});
   assert.ok(!outranked.includes("Remove this passkey") && outranked.includes("outrank yours"), outranked);

@@ -1,0 +1,44 @@
+{
+ "base": "http://127.0.0.1:33936",
+ "engine": "chrome",
+ "steps": {
+  "suspend": {
+   "status": 200,
+   "id": "asp_47aa23f405d7"
+  },
+  "detail_suspended": {
+   "badge": true,
+   "reason": true,
+   "actor": true,
+   "button": 1
+  },
+  "lifted": {
+   "toast": 1,
+   "normal": true,
+   "button": 0,
+   "db_active": 0,
+   "audit": [
+    "admin.agent_safety.suspend",
+    "admin.agent_safety.lift"
+   ],
+   "timeline": [
+    "2026/10/12 06:48\tadmin.agent_safety.lift\tadmin-fixture@example.test\tu_8324457150cd\t成功\t举报已核实为误报，恢复使用（合成验收）",
+    "2026/10/12 06:48\tadmin.agent_safety.suspend\tadmin-fixture@example.test\tu_8324457150cd\t成功\t合成验收：举报核实前暂停"
+   ]
+  },
+  "suspend_again": 200,
+  "en": {
+   "heading": true,
+   "badge": true,
+   "since": true,
+   "button": 1
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "support": {
+   "badge": true,
+   "button": 0
+  }
+ }
+}

@@ -1,0 +1,66 @@
+{
+ "package": "CR-096 · Admin A13 详情并入 Agent 内容安全暂停状态（含从详情恢复）",
+ "written_at": "2026-10-11T22:49:29+00:00",
+ "worktree": ".claude/worktrees/agent-billing (branch claude/agent-billing)",
+ "environment": "http://127.0.0.1:33936 — isolated synthetic instance (synwevo_server create_app role=all, start_jobs=False) in the session scratchpad; SYNWEVO_TEST_INSTANCE=1; synthetic accounts; no production data, model, payment or outbound network; Playwright Chrome",
+ "backend_tests": {
+  "services/identity/tests -k 'agent_suspension or account_detail or push_device or deletions_are_visible or agent_safety or matrix'": "15 passed (new: test_the_account_detail_shows_an_agent_suspension_and_an_administrator_lifts_it_from_there)",
+  "services/identity/tests -k 'agent_suspension or agent_safety' (after auditing the reasons)": "4 passed"
+ },
+ "frontend": {
+  "account-web typecheck": "exit 0",
+  "account-web npm test": "167 passed (admin-account-detail: suspension section, button by permission, normal state)",
+  "account-web build": "ok"
+ },
+ "browser_steps": {
+  "suspend": {
+   "status": 200,
+   "id": "asp_47aa23f405d7"
+  },
+  "detail_suspended": {
+   "badge": true,
+   "reason": true,
+   "actor": true,
+   "button": 1
+  },
+  "lifted": {
+   "toast": 1,
+   "normal": true,
+   "button": 0,
+   "db_active": 0,
+   "audit": [
+    "admin.agent_safety.suspend",
+    "admin.agent_safety.lift"
+   ],
+   "timeline": [
+    "2026/10/12 06:48\tadmin.agent_safety.lift\tadmin-fixture@example.test\tu_8324457150cd\t成功\t举报已核实为误报，恢复使用（合成验收）",
+    "2026/10/12 06:48\tadmin.agent_safety.suspend\tadmin-fixture@example.test\tu_8324457150cd\t成功\t合成验收：举报核实前暂停"
+   ]
+  },
+  "suspend_again": 200,
+  "en": {
+   "heading": true,
+   "badge": true,
+   "since": true,
+   "button": 1
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "support": {
+   "badge": true,
+   "button": 0
+  }
+ },
+ "screenshots": [
+  "a13-agent-lifted-zh-hans.png",
+  "a13-agent-support-zh-hans.png",
+  "a13-agent-suspended-en.png",
+  "a13-agent-suspended-zh-hans.png"
+ ],
+ "console_errors_note": "the single 'Failed to load resource' entry is the login page's session probe (401); no script errors",
+ "not_done": [
+  "suspending from the detail (the safety page keeps that form, with the report link)",
+  "deployment (GitHub Actions billing block)"
+ ]
+}

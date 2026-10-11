@@ -746,3 +746,34 @@ def test_an_administrator_revokes_every_push_device_of_an_account(env):
     assert post(s, "/api/auth/login", {"email": "support@example.com", "password": PW}).status_code == 200
     _reauth(s)
     assert post(s, path, {"reason": "支持角色不能撤销推送设备"}).json()["error"] == "platform_permission_denied"
+
+
+def test_the_account_detail_shows_an_agent_suspension_and_an_administrator_lifts_it_from_there(env):
+    """A13 remainder: the personal Agent's content-safety suspension is part of the account's facts
+    (reason, who, when, the linked report) and is lifted through the same route the safety page
+    uses; support reads it, cannot lift it."""
+    from synwevo_core.agent_safety import AgentAccess
+    from synwevo_core.errors import ServiceError
+    c, store, ident, alice, api = env["c"], env["store"], env["ident"], env["alice"], env["api"]
+    assert c.get(f"/api/admin/users/{alice['id']}").json()["agent_access"] == {"suspended": False, "suspension": None}
+    r = post(c, f"/api/admin/agent-safety/users/{alice['id']}/suspend", {"reason": "合成测试：举报核实前暂停"})
+    assert r.status_code == 200, r.text
+    a = c.get(f"/api/admin/users/{alice['id']}").json()["agent_access"]
+    assert a["suspended"] is True and a["suspension"]["reason"] == "合成测试：举报核实前暂停"
+    assert a["suspension"]["created_by_email"] == "admin@example.com" and a["suspension"]["report_id"] is None
+    with pytest.raises(ServiceError) as refused:
+        AgentAccess(store).require(alice["id"])
+    assert refused.value.code == "agent_access_suspended"
+    make_platform_admin(store, ident.create_user("support@example.com", PW, status="active"), role="support")
+    s = TestClient(api)
+    assert post(s, "/api/auth/login", {"email": "support@example.com", "password": PW}).status_code == 200
+    assert s.get(f"/api/admin/users/{alice['id']}").json()["agent_access"]["suspended"] is True
+    assert post(s, f"/api/admin/agent-safety/users/{alice['id']}/lift", {"reason": "支持角色不能恢复"}).json()["error"] == "platform_permission_denied"
+    r = post(c, f"/api/admin/agent-safety/users/{alice['id']}/lift", {"reason": "举报已核实为误报，恢复使用"})
+    assert r.status_code == 200 and r.json()["lifted_at"], r.text
+    assert c.get(f"/api/admin/users/{alice['id']}").json()["agent_access"] == {"suspended": False, "suspension": None}
+    AgentAccess(store).require(alice["id"])
+    # Both reasons reach the account's timeline, the way every other administration action's does.
+    timeline = c.get(f"/api/admin/users/{alice['id']}").json()["audit"]["items"]
+    reasons = {e["action"]: e["reason"] for e in timeline if e["action"].startswith("admin.agent_safety.")}
+    assert reasons == {"admin.agent_safety.suspend": "合成测试：举报核实前暂停", "admin.agent_safety.lift": "举报已核实为误报，恢复使用"}

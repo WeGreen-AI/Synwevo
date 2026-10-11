@@ -888,10 +888,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         user = ident.get_user(uid)
         if not user:
             raise ServiceError(404, "no_user", "找不到该账户")
+        from synwevo_core.agent_safety import AgentAccess
         from synwevo_core.push import PushSubscriptions
         from .external import ExternalIdentities, load_providers
         from .mfa import Mfa
         held = actor["platform_permissions"]
+        suspension = AgentAccess(store).active(uid)
         pushes = PushSubscriptions(store)
         active_push = {p["id"] for p in pushes.active_for(uid)}
         ts = clock()
@@ -954,6 +956,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                                     "last_sent_at": p.get("last_sent_at"), "fail_count": p.get("fail_count") or 0,
                                     "active": p["id"] in active_push} for p in pushes.list_for(uid)],
             "deletion": deletion_state(store, user),
+            # The personal Agent's content-safety suspension (admin_agent_safety): the administrator's
+            # reason and identity, never a conversation; lifted from here through that module's route.
+            "agent_access": {"suspended": suspension is not None, "suspension": None if not suspension else {
+                "id": suspension["id"], "reason": suspension["reason"], "report_id": suspension.get("report_id"),
+                "created_at": suspension["created_at"],
+                "created_by_email": (store.one("SELECT email FROM users WHERE id=?", (suspension["created_by"],)) or {}).get("email")}},
             "audit": {"permitted": timeline is not None, "limit": TIMELINE_LIMIT, "items": timeline or []},
         }
 
