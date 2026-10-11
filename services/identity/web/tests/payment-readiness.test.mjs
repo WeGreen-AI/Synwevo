@@ -4,7 +4,7 @@
 import { before, after, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { createServer } from 'vite';
+import { testServer } from './_vite.mjs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -54,7 +54,7 @@ export function useEffect(run, deps) {
 
 let server, support, fixture, readiness, payments, ui, client, labels, access;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
+  server = await testServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
     logLevel: 'error', server: { middlewareMode: true, hmr: false, ws: false, watch: null },
     plugins: [{ name: 'payment-readiness-fixtures', enforce: 'pre',
       resolveId(id) { if (id === fixtureModule) return '\0' + fixtureModule; },

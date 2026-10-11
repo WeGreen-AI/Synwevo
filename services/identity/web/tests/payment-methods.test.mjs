@@ -3,13 +3,13 @@ import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { createServer } from 'vite';
+import { testServer } from './_vite.mjs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 let server, methods, payments, wallet, ui;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
+  server = await testServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
     logLevel: 'error', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   methods = await server.ssrLoadModule('/src/lib/paymentMethods.ts');
   payments = await server.ssrLoadModule('/src/governance/PaymentsTab.tsx');

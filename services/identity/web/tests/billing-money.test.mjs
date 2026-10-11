@@ -3,12 +3,12 @@
  *  beyond it is. Fixtures only; run from the package: `npm test`. */
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'vite';
+import { testServer } from './_vite.mjs';
 import { fileURLToPath } from 'node:url';
 
 let server, money;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
+  server = await testServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
     logLevel: 'error', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   money = await server.ssrLoadModule('/src/governance/billing-money.ts');
 });

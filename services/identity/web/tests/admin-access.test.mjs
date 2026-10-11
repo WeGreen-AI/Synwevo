@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
+import { testServer } from "./_vite.mjs";
 
 const WEB = fileURLToPath(new URL("../", import.meta.url));
 const ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -37,7 +37,7 @@ globalThis.sessionStorage ??= { getItem: (k) => storage.get(k) ?? null, setItem:
 
 let server, ui, access, dialog;
 before(async () => {
-  server = await createServer({ root: WEB, configFile: false, logLevel: "error", appType: "custom",
+  server = await testServer({ root: WEB, configFile: false, logLevel: "error", appType: "custom",
     server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   ui = await server.ssrLoadModule("@synwevo/ui");
   access = await server.ssrLoadModule("/src/governance/access.ts");

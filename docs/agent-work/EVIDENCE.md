@@ -710,3 +710,7 @@ Docs `extract_context` 新增 DOCX/XLSX 严格读取：DOCX 正文/页眉页脚/
 
 隔离真实服务（127.0.0.1:33881/33883，scratchpad 数据，真实上传路由与 Docs 解析）Playwright Chrome 1280×900：能力说明列出 docx/xlsx 与 Office 注记；完整 DOCX 与工作簿解析就绪，含图 DOCX 以 OCR 文案失败，公式 XLSX 以“格式或文件内容…未保存计算结果的公式”文案失败（重建外壳后第二遍）；DOCX 预览显示“正文 第 n 段 / 正文 表格 1 第 r 行 / 页眉 1 第 1 段 / 页脚 1 第 1 段 / 批注 第 1 段”；XLSX 预览显示“表格“Main””各行与“表格“Hidden”（隐藏工作表）”；控制台仅登录前 401。截图、browser-report.json、fixture 与指纹在 `evidence/2026-10-11-agent-office-files/`。未声称 OCR/图片附件、旧二进制格式、pptx，亦未进行付费运行。
 
+## 2026-10-11 CR-085 账户前端测试缓存隔离
+
+services/identity/web 的 12 个 Vite SSR 测试改用 `tests/_vite.mjs`（私有 cacheDir、优化器关闭、关闭即清理，与 Suite `_vite.ts` 同契约）；清理本树残留的 5 个 `deps_temp_*`。account-web 两次全量 163 通过、0 ENOTEMPTY。
+

@@ -2,11 +2,11 @@
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { createServer } from 'vite';
+import { testServer } from './_vite.mjs';
 
 let server, topup, ApiError, ui;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
+  server = await testServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
     logLevel: 'error', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   topup = await server.ssrLoadModule('/src/pages/account/TopupDialog.tsx');
   ({ ApiError } = await server.ssrLoadModule('@synwevo/auth-client'));

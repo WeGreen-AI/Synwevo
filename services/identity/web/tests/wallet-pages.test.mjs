@@ -4,7 +4,7 @@
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createServer } from 'vite';
+import { testServer } from './_vite.mjs';
 import { fileURLToPath } from 'node:url';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -16,7 +16,7 @@ globalThis.window ??= { location: new URL('http://127.0.0.1/'), history: { state
 globalThis.sessionStorage ??= { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) };
 let server, ui, model, wallet, topup, status, usage, chart, receipt, topbar, gate;
 before(async () => {
-  server = await createServer({ root: WEB, configFile: false, logLevel: 'error', appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
+  server = await testServer({ root: WEB, configFile: false, logLevel: 'error', appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   ui = await server.ssrLoadModule('@synwevo/ui');
   model = await server.ssrLoadModule('/src/pages/account/walletModel.ts');
   wallet = await server.ssrLoadModule('/src/pages/account/Wallet.tsx');

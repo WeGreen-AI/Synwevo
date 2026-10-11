@@ -9,7 +9,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
+import { testServer } from "./_vite.mjs";
 
 const WEB = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(WEB + "package.json");
@@ -34,7 +34,7 @@ export function useAdminPage() {
 
 let server, ui, client, admin;
 before(async () => {
-  server = await createServer({
+  server = await testServer({
     root: WEB, configFile: false, logLevel: "error", appType: "custom",
     server: { middlewareMode: true, hmr: false, ws: false, watch: null },
     plugins: [{

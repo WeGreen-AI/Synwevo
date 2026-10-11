@@ -1,11 +1,11 @@
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'vite';
+import { testServer } from './_vite.mjs';
 import { fileURLToPath } from 'node:url';
 
 let server, amount;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
+  server = await testServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
     logLevel: 'error', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   amount = (await server.ssrLoadModule('/src/pages/account/money.ts')).walletAmount;
 });

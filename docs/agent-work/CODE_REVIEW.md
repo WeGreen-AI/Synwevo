@@ -273,3 +273,9 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：`para_segments` 的对象占位符不进入文本；AlternateContent 只读 Choice 分支避免文本框重复；嵌套文本框不重复计数；`tabular.read_xlsx` 的内置公式计算结果不被采信（有未缓存公式即拒绝）；member-import 的 `extract()` 路径未改。
 - 验证：见 evidence/2026-10-11-agent-office-files/verification.json 与 browser-report.json（真实上传/解析/预览标签/拒绝文案）。未声称 OCR/图片、旧二进制格式、pptx。
 
+## CR-085 · 账户前端测试共享 Vite 缓存的同类竞争（2026-10-11，原有，已修复·本地两次全量验证）
+
+- 位置：services/identity/web/tests/*.test.mjs（12 处 createServer）。证据：本树 `services/identity/web/node_modules/.vite` 残留 5 个 `deps_temp_*`，与 CR-081 Suite 同一机制（并行进程共用依赖优化器输出目录）。
+- 处置：`tests/_vite.mjs testServer(config)`：独占 mkdtemp cacheDir、关闭客户端依赖优化器、close 时删除自身目录，其余配置原样透传；12 个测试改用。`payment-methods.browser.mjs`（手动真实端口服务，不在测试 glob 内）未改。不删测、不串行、不改断言。
+- 验证：`npm run test -w @synwevo/account-web` 两次均 163 通过、0 ENOTEMPTY，tmpdir 无残留（log sha256 5ca7dfd2bb9a4ece…/1e7bbaaf088775be…）。
+

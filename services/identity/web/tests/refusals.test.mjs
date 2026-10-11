@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
+import { testServer } from "./_vite.mjs";
 
 const WEB = fileURLToPath(new URL("../", import.meta.url));
 const ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -356,7 +356,7 @@ globalThis.sessionStorage ??= { getItem: (k) => storage.get(k) ?? null, setItem:
 const pages = {};
 before(async () => {
   for (const [name, surface] of Object.entries(SURFACES)) {
-    const server = await createServer({ root: WEB, configFile: false, logLevel: "error", appType: "custom",
+    const server = await testServer({ root: WEB, configFile: false, logLevel: "error", appType: "custom",
       server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
     const load = (id) => server.ssrLoadModule(id);
     const ui = await load("@synwevo/ui");

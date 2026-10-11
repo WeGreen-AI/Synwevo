@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createServer } from "vite";
+import { testServer } from "./_vite.mjs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
@@ -52,7 +52,7 @@ const engineTuple = (name) => {
 
 let server, ui, nav, access, runs, tab, admin, dialog, lists, data;
 before(async () => {
-  server = await createServer({ root: WEB, configFile: false, logLevel: "error", appType: "custom",
+  server = await testServer({ root: WEB, configFile: false, logLevel: "error", appType: "custom",
     server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   ui = await server.ssrLoadModule("@synwevo/ui");
   nav = await server.ssrLoadModule("/src/admin/navigation.ts");

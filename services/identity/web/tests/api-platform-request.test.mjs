@@ -4,7 +4,7 @@
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { createServer } from 'vite';
+import { testServer } from './_vite.mjs';
 
 const storage = new Map();
 globalThis.window = { location: new URL('http://127.0.0.1/'), history: { state: null, replaceState() {} }, addEventListener() {}, removeEventListener() {} };
@@ -12,7 +12,7 @@ globalThis.sessionStorage = { getItem: k => storage.get(k) ?? null, setItem: (k,
 const originalFetch = globalThis.fetch;
 let server, requestMachine, ApiError;
 before(async () => {
-  server = await createServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
+  server = await testServer({ root: fileURLToPath(new URL('../', import.meta.url)), configFile: false,
     logLevel: 'error', appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   ({ requestMachine } = await server.ssrLoadModule('/src/pages/apiplatform/common.tsx'));
   ({ ApiError } = await server.ssrLoadModule('@synwevo/auth-client'));
