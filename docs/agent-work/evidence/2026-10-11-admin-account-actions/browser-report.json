@@ -1,0 +1,42 @@
+{
+ "base": "http://127.0.0.1:33921",
+ "engine": "chrome",
+ "steps": {
+  "before": {
+   "sessions_rows": 2,
+   "buttons": 4,
+   "has_passkey": true,
+   "has_external": true
+  },
+  "device": {
+   "sessions_rows_after": 1,
+   "device_me_status": [
+    200,
+    401
+   ]
+  },
+  "passkey": {
+   "passkey_gone": true
+  },
+  "external": {
+   "external_gone": true,
+   "timeline_mentions": [
+    "2026/10/12 03:44\tadmin.user.external_unlink\tadmin-fixture@example.test\tu_d86dcbd7aa2a\t成功\t用户确认不再使用该外部账户（合成验收）",
+    "2026/10/12 03:44\tadmin.user.passkey_remove\tadmin-fixture@example.test\tu_d86dcbd7aa2a\t成功\t用户报告该安全密钥已遗失（合成验收）",
+    "2026/10/12 03:43\tadmin.user.revoke_session\tadmin-fixture@example.test\tu_d86dcbd7aa2a\t成功\t怀疑该设备已丢失，结束其登录（合成验收）"
+   ]
+  },
+  "en": {
+   "button": 1,
+   "excerpt": "Account details: alice-fixture@example.test\n✕\nProfile\nEmail\nalice-fixture@example.test\nName\nSynthetic member\nStatus\nActive\nEmail verification\nVerified (10/12/2026, 03:43 AM)\nCreated\n10/12/2026, 03:43 AM\nLast updated\n10/12/2026, 03:43 AM\nPlatform role\nAudit viewer (expires 10/19/2026, 03:43 AM)\nSign-"
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+   "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+  ],
+  "support": {
+   "buttons": 0,
+   "note": true
+  }
+ }
+}

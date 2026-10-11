@@ -33,17 +33,17 @@ const FIXTURE = {
   application_identity: false, blocked_by: [], outranks_caller: false,
   sign_in: {
     password_set: true, totp: true, recovery_remaining: 7,
-    passkeys: [{ name: "Fixture key", created_at: T, last_used_at: null, backed_up: true, uv_capable: true }],
-    external_identities: [{ provider: "google", label: "Google", available: false, email: "detail-fixture@example.test",
+    passkeys: [{ id: "pk_fixture", name: "Fixture key", created_at: T, last_used_at: null, backed_up: true, uv_capable: true }],
+    external_identities: [{ id: "xi_fixture", provider: "google", label: "Google", available: false, email: "detail-fixture@example.test",
       email_verified: true, created_at: T, last_used_at: T }],
   },
   platform_roles: ["support"], platform_grants: [{ role: "support", granted_at: T, expires_at: T + 86400 }],
   workspaces: [{ id: "ws_fixture", name: "Fixture workspace", kind: "org", status: "active", role: "editor", can_export: true, joined_at: T }],
   organizations: [{ id: "org_fixture", name: null, status: "active", role: "member", joined_at: T }],
   sessions: [
-    { created_at: T, last_seen_at: T, expires_at: T + 3600, amr: "password+totp", client: "macOS 上的 Chrome",
+    { id: "s_fixture_1", created_at: T, last_seen_at: T, expires_at: T + 3600, amr: "password+totp", client: "macOS 上的 Chrome",
       client_parts: { browser: "Chrome", platform: "macOS" }, ip: "203.0.113.9", persistent: true, auth_provider: null },
-    { created_at: T, last_seen_at: T, expires_at: T + 3600, amr: "idp:google+totp", client: "iPhone 上的 Safari",
+    { id: "s_fixture_2", created_at: T, last_seen_at: T, expires_at: T + 3600, amr: "idp:google+totp", client: "iPhone 上的 Safari",
       client_parts: { browser: "Safari", platform: "iPhone" }, ip: null, persistent: false, auth_provider: "google" },
   ],
   backoff: { failures: 4, first_failure_at: T - 60, last_failure_at: T, retry_after: 2 },
@@ -54,10 +54,10 @@ const HAN = /[㐀-鿿]/;
 const FIXTURE_TEXT = /detail-fixture@example\.test|Fixture (workspace|Person|key)|u_fixture_detail/g;
 
 /** Static markup with the entities React escapes in text turned back into characters. */
-function render(locale, d) {
+function render(locale, d, held, onAct) {
   ui.setLocale(locale);
   try {
-    return renderToStaticMarkup(React.createElement(detail.AccountDetailBody, { detail: d }))
+    return renderToStaticMarkup(React.createElement(detail.AccountDetailBody, { detail: d, held, onAct }))
       .replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
   } finally { ui.setLocale("zh-Hans"); }
 }
@@ -89,10 +89,25 @@ test("what the server withholds is explained, and the quiet states are sentences
   assert.ok(cleared.includes("a new attempt is allowed now"), cleared);
 });
 
+test("the per-object actions follow the caller's permission and never show on an account that outranks them", () => {
+  const manage = new Set(["platform.users.view", "platform.users.manage"]);
+  const acting = render("en", FIXTURE, manage, () => {});
+  for (const label of ["Sign this device out", "Remove this passkey", "Unlink this external identity"]) assert.ok(acting.includes(label), label);
+  assert.equal((acting.match(/Sign this device out/g) || []).length, 2, "one per session");
+  const viewing = render("en", FIXTURE, new Set(["platform.users.view"]), () => {});
+  assert.ok(!viewing.includes("Sign this device out") && viewing.includes("Your platform role can view this, not act on it."), viewing);
+  const outranked = render("en", { ...FIXTURE, outranks_caller: true }, manage, () => {});
+  assert.ok(!outranked.includes("Remove this passkey") && outranked.includes("outrank yours"), outranked);
+  const application = render("en", { ...FIXTURE, application_identity: true }, manage, () => {});
+  assert.ok(!application.includes("Unlink this external identity"));
+  assert.ok(!render("en", FIXTURE, manage).includes("Sign this device out"), "no handler, no buttons");
+});
+
 test("every sentence of the dialog is catalogued in English and Traditional Chinese", () => {
   const src = readFileSync(new URL("../src/governance/AccountDetail.tsx", import.meta.url), "utf8");
   const sentences = new Set([...src.matchAll(/\btr\("([^"]+)"/g)].map((m) => m[1]));
   for (const map of [detail.AMR_LABELS, detail.FACTOR_SUFFIX_LABELS, detail.ORG_ROLE_LABELS]) for (const text of Object.values(map)) sentences.add(text);
+  for (const text of detail.ACCOUNT_ACTION_SENTENCES) sentences.add(text);
   sentences.add("查看详情"); // the row-menu item in Admin.tsx that opens the dialog
   assert.ok(sentences.size > 40, `expected the dialog's sentences, found ${sentences.size}`);
   const missing = [], untranslated = [];

@@ -843,7 +843,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         blocked = access.blocked_by(user)
         grants = access.live_grants(uid, at=ts)
         factors = Mfa(store).factors(uid)
-        passkeys = store.all("SELECT name,created_at,last_used_at,backed_up,uv_capable FROM passkeys "
+        passkeys = store.all("SELECT id,name,created_at,last_used_at,backed_up,uv_capable FROM passkeys "
                              "WHERE user_id=? AND deleted_at IS NULL ORDER BY created_at, id", (uid,))
         external = ExternalIdentities(store, load_providers()).list_for_user(uid)
         see_workspaces, see_orgs = "platform.workspaces.view" in held, "platform.orgs.view" in held
@@ -880,7 +880,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                 "password_set": bool(store.one("SELECT 1 AS n FROM user_passwords WHERE user_id=?", (uid,))),
                 "totp": bool(factors["totp"]), "recovery_remaining": factors["recovery_remaining"],
                 "passkeys": [{**k, "backed_up": bool(k["backed_up"]), "uv_capable": bool(k["uv_capable"])} for k in passkeys],
-                "external_identities": [{k: row[k] for k in ("provider", "label", "available", "email",
+                "external_identities": [{k: row[k] for k in ("id", "provider", "label", "available", "email",
                                                              "email_verified", "created_at", "last_used_at")}
                                         for row in external]},
             "platform_roles": sorted_roles({g["role"] for g in grants}),
@@ -889,7 +889,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             "workspaces": [{**w, "can_export": bool(w["can_export"]), "name": w["name"] if see_workspaces else None}
                            for w in workspaces],
             "organizations": [{**o, "name": o["name"] if see_orgs else None} for o in organizations],
-            "sessions": [{k: s[k] for k in ("created_at", "last_seen_at", "expires_at", "amr", "client",
+            "sessions": [{k: s[k] for k in ("id", "created_at", "last_seen_at", "expires_at", "amr", "client",
                                             "client_parts", "ip", "persistent", "auth_provider")}
                          for s in sessions.list_for_user(uid)],
             "backoff": ident.login_backoff(uid),
@@ -930,6 +930,94 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             except (OSError, ValueError):
                 raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
         return {"ok": True, "sessions_revoked": n, "tokens_revoked": tokens, "journaled": True}
+
+    def _security_notice(request: Request, uid: str, what: str) -> bool:
+        """The inbox item the person gets about a sign-in method or device the platform acted on
+        (`security.change`, in their language), best effort: the change holds whether or not the
+        row lands."""
+        notifier = getattr(request.app.state, "notifier", None)
+        if notifier is None:
+            return False
+        try:
+            notifier.security_change(uid, what)
+            return True
+        except Exception as e:  # noqa: BLE001
+            print(f"[synwevo] notification not recorded (security.change): {type(e).__name__}", flush=True)
+            return False
+
+    @r.post("/users/{uid}/sessions/{sid}/revoke")
+    def revoke_session(request: Request, uid: str, sid: str, body: dict = Body(...)):
+        """End one device's sign-in and what it minted (admin coverage A17): `{"reason"}` with
+        strict re-authentication; the other devices stay signed in. The person is told as for a
+        device they signed out themselves. Unlike the whole-account revocation this is not
+        journalled: a restore from an older backup could revive this one device until its own
+        expiry, as it could a device the person signed out."""
+        actor = _admin(request, "platform.users.manage", dangerous=True)
+        reason = _reason(body)
+        _not_outranked(request, actor, uid)
+        with _write(request, "platform.users.manage", object_kind="user", object_id=uid):
+            actor = _admin(request, "platform.users.manage", dangerous=True)
+            if not ident.get_user(uid):
+                raise ServiceError(404, "no_user", "找不到该账户")
+            _not_outranked(request, actor, uid)
+            ts = now()
+            if not store.one("SELECT 1 AS n FROM sessions WHERE id=? AND user_id=? AND revoked_at IS NULL "
+                             "AND idle_expires_at>? AND absolute_expires_at>?", (sid, uid, ts, ts)):
+                raise ServiceError(404, "no_session", "找不到该账户的这个在线会话")
+            out = sessions.revoke_device(sid, "admin_revoked")
+            audit(request, "admin.user.revoke_session", actor_id=actor["id"], object_kind="user",
+                  object_id=uid, workspace_given=True, result="ok",
+                  meta={"reason": reason, "sessions": out["sessions_revoked"], "tokens": out["tokens_revoked"]})
+        notified = _security_notice(request, uid, "sessions_revoked")
+        return {"ok": True, **out, "notified": notified}
+
+    @r.post("/users/{uid}/passkeys/{pid}/remove")
+    def remove_passkey(request: Request, uid: str, pid: str, body: dict = Body(...)):
+        """Remove one of the account's passkeys (A17): `{"reason"}` with strict re-authentication.
+        The person's own rules hold — never their only way in (`last_factor`), never the last
+        usable super administrator's identity confirmation — so an administrator who means to
+        lock an account out suspends it instead."""
+        from .passkeys import Passkeys
+        actor = _admin(request, "platform.users.manage", dangerous=True)
+        reason = _reason(body)
+        _not_outranked(request, actor, uid)
+        with _write(request, "platform.users.manage", object_kind="user", object_id=uid):
+            actor = _admin(request, "platform.users.manage", dangerous=True)
+            if not ident.get_user(uid):
+                raise ServiceError(404, "no_user", "找不到该账户")
+            _not_outranked(request, actor, uid)
+            Passkeys(store).remove(uid, pid)
+            audit(request, "admin.user.passkey_remove", actor_id=actor["id"], object_kind="user",
+                  object_id=uid, workspace_given=True, result="ok", meta={"reason": reason, "passkey_id": pid})
+        notified = _security_notice(request, uid, "passkey_removed")
+        return {"ok": True, "notified": notified}
+
+    @r.post("/users/{uid}/external-identities/{iid}/unlink")
+    def unlink_external_identity(request: Request, uid: str, iid: str, body: dict = Body(...)):
+        """Detach one external identity from the account (A17): `{"reason"}` with strict
+        re-authentication; refused when it is the account's only way in (`last_sign_in_method`),
+        as the person's own unlink is. The provider's next sign-in no longer reaches this account."""
+        from .external import ExternalIdentities, load_providers, other_sign_in_methods
+        actor = _admin(request, "platform.users.manage", dangerous=True)
+        reason = _reason(body)
+        _not_outranked(request, actor, uid)
+        with _write(request, "platform.users.manage", object_kind="user", object_id=uid):
+            actor = _admin(request, "platform.users.manage", dangerous=True)
+            if not ident.get_user(uid):
+                raise ServiceError(404, "no_user", "找不到该账户")
+            _not_outranked(request, actor, uid)
+            row = store.one("SELECT id,provider FROM external_identities WHERE id=? AND user_id=?", (iid, uid))
+            if not row:
+                raise ServiceError(404, "no_external_identity", "找不到该账户的这个外部身份")
+            if other_sign_in_methods(store, uid, except_identity=iid) == 0:
+                raise ServiceError(409, "last_sign_in_method", "这是该账户唯一的登录方式，不能解除关联；需要停止访问请停用账户")
+            store.execute("DELETE FROM external_identities WHERE id=? AND user_id=?", (iid, uid))
+            audit(request, "admin.user.external_unlink", actor_id=actor["id"], object_kind="user",
+                  object_id=uid, workspace_given=True, result="ok", meta={"reason": reason, "provider": row["provider"]})
+        providers = ExternalIdentities(store, load_providers()).providers
+        label = providers[row["provider"]].label if row["provider"] in providers else row["provider"]
+        notified = _security_notice(request, uid, f"解除了外部登录方式（{label}）")
+        return {"ok": True, "notified": notified}
 
     # ------------------------------------------------------------------ freezing a workspace
     def _freeze(request: Request, wid: str, body: dict, frozen: bool) -> dict:

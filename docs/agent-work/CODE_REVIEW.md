@@ -298,3 +298,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：识别结果从不冒充已核对文字——每行来源 `recognized:true` 与最低词置信度、文件级汇总低置信度词数、界面「识别文字（未核对）」、模型负载 `recognized:true`；完整或拒绝不变：整份扫描 PDF 先分类再按预算拒绝（不先花时间识别再拒），文字层与图片混排页、含图片 DOCX 仍整份拒绝；没有引擎的部署图片直接 `context_ocr_unsupported`，文本格式不受 `ocr` 旗标影响；工作进程只在读取器声明能力时显式传旗标，旧读取器（测试替身/旧部署）调用形状不变；识别仍在既有 90 s/768 MiB 子进程内，像素上限沿用 Docs `LIMITS`，页面渲染沿用 `render_zoom`；引擎错误消息（页数、stderr、超时）不外泄，统一为无内容的 `context_ocr_failed`。
 - 风险/未做：报价对话框来源列表仍只写「个人文件」（发送后的消息来源条有识别标记，浏览器已截到）；低置信度只计数不拒绝，由人核对；识别语言取部署可用的 chi_sim+eng，不可按文件选择；TIFF/WEBP 等格式与多帧图片未开放。
 - 验证：见 EVIDENCE「CR-088」与 evidence/2026-10-11-agent-recognized-files/verification.json。
+
+## CR-089 · Admin A17 账户单项动作：结束单设备登录、移除 Passkey、解除外部身份（2026-10-11，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：services/identity/synwevo_identity/admin_routes.py（三条 `POST /users/{uid}/...` 路由、`_security_notice`；A13 详情补回 sessions/passkeys/external_identities 的 id）；web/src/governance/AccountDetail.tsx（`AccountAction`、按钮、ActionDialog 叠加）、Admin.tsx 传入 `held`/`onChanged`、labels.ts 五个拒绝码措辞、messages.ts；tests/test_admin.py、test_platform_access.py 三行矩阵、web/tests/admin-account-detail.test.mjs；docs/platform/admin-coverage.md A17。
+- 审查要点：与 A14/A16 同一护栏——`platform.users.manage`、`dangerous=True` 严格重认证、`_reason` 8–500 字、`_not_outranked` 在事务外与写锁内各复核一次、审计 meta 只含理由与计数/标识；复用本人路径的原语（`Sessions.revoke_device` 只结束该设备与它签发的令牌和依赖方会话；`Passkeys.remove` 自带 last_factor/last_super_admin 拒绝；解绑复用 `other_sign_in_methods`），管理员不能借此把人锁在门外——只能停用账户；通知走 `security.change`（设备用既有 `sessions_revoked` 文案，本人在其他设备看到「结束了其他设备的登录」）；前端按钮只在服务器会放行的条件下出现（持有 manage、未被越级、非应用身份），最终仍由服务器判定；单设备撤销不写安全日志并在路由文档说明原因。
+- 风险/未做：推送订阅撤销无调用方未做；`last_factor` 原句含「你」在管理员视角不妥，前端 labels.ts 已改为管理员措辞；查看详情仍不审计。
+- 验证：见 EVIDENCE「CR-089」与 evidence/2026-10-11-admin-account-actions/verification.json。

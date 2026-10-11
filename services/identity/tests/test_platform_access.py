@@ -47,6 +47,9 @@ ROUTES = [
     ("POST", "/api/admin/users/{uid}/status", "platform.users.manage", True),
     ("POST", "/api/admin/users/{uid}/recovery", "platform.users.support", True),
     ("POST", "/api/admin/users/{uid}/revoke-sessions", "platform.users.support", True),
+    ("POST", "/api/admin/users/{uid}/sessions/{sid}/revoke", "platform.users.manage", True),
+    ("POST", "/api/admin/users/{uid}/passkeys/{pid}/remove", "platform.users.manage", True),
+    ("POST", "/api/admin/users/{uid}/external-identities/{iid}/unlink", "platform.users.manage", True),
     ("GET", "/api/admin/workspaces", "platform.workspaces.view", False),
     ("GET", "/api/admin/workspaces/{wid}/members", "platform.workspaces.view", False),
     ("POST", "/api/admin/workspaces/{wid}/claim", "platform.workspaces.claim", True),
@@ -254,7 +257,8 @@ def _path(template, w, *, legacy: str | None = None):
                            oid="org_fixture_missing", action="freeze", gid="pg_fixture_missing",
                            freeze_id="freeze_fixture_missing",
                            suspension_id="rsus_fixture_missing", entry_id="rallow_fixture_missing",
-                           report_id=w.get("report_id", "arp_fixture_missing"), user_id=w["plain"]["id"])
+                           report_id=w.get("report_id", "arp_fixture_missing"), user_id=w["plain"]["id"],
+                           sid="s_fixture_missing", pid="pk_fixture_missing", iid="xi_fixture_missing")
 
 
 #: Risk changes the matrix reaches with valid bodies but no matching state: past the permission

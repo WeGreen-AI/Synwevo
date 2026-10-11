@@ -1,0 +1,79 @@
+{
+ "package": "CR-089 / admin-coverage A17 — per-object account actions by administrators: end one device, remove a passkey, unlink an external identity",
+ "date": "2026-10-11",
+ "tree": "worktree claude/agent-billing on 9fbd03a, CR-089 changes uncommitted at verification time",
+ "backend": {
+  "routes": [
+   "POST /api/admin/users/{uid}/sessions/{sid}/revoke",
+   "POST /api/admin/users/{uid}/passkeys/{pid}/remove",
+   "POST /api/admin/users/{uid}/external-identities/{iid}/unlink"
+  ],
+  "rules": "platform.users.manage + strict re-authentication + written reason (8–500) + outranking check + writer lock; the person's own lockout rules hold (last_factor, last_super_admin, last_sign_in_method); audit admin.user.revoke_session / passkey_remove / external_unlink with content-free meta; the person gets a security.change notice (sessions_revoked / passkey_removed / external_unlinked); the account detail now carries the ids to act on",
+  "tests": {
+   "services/identity/tests/test_admin.py": "new test_an_administrator_ends_one_device_removes_a_passkey_and_unlinks_an_identity passes (two devices → one signed out and one kept; audit meta; passkey removal and 404 on repeat; unlink; refusal of the only sign-in method; support 403; access_admin outranked 403); 3 account tests pass together",
+   "services/identity/tests/test_platform_access.py": "29 passed with the three new dangerous rows (permission then reauth_required for every role)",
+   "services/identity/tests (whole suite)": "1550 passed (19:42–19:46Z)"
+  }
+ },
+ "frontend": {
+  "component": "governance/AccountDetail.tsx: buttons per session/passkey/external identity when the caller holds platform.users.manage and the account neither outranks them nor is an application identity; ActionDialog (reason + re-authentication) on top of the detail; reload and toast afterwards; labels.ts words no_session/no_external_identity/no_passkey/last_sign_in_method/last_factor for the administrator",
+  "tests": "admin-account-detail.test.mjs 4 passed (new: actions follow the permission, hidden for outranked/application identities and without a handler); refusals.test.mjs 10 passed; npm test -w @synwevo/account-web 167 passed; typecheck exit 0; build exit 0"
+ },
+ "browser": {
+  "server": "isolated synthetic admin instance http://127.0.0.1:33921 (scratchpad a13/isolated_admin.py with A17 fixture rows: a passkey with public material only and a linked external identity of a provider this instance does not configure)",
+  "engine": "chrome",
+  "report": "browser-report.json",
+  "screenshots": [
+   "a17-after-all-actions-zh-hans.png",
+   "a17-after-device-signout-zh-hans.png",
+   "a17-detail-en.png",
+   "a17-detail-with-actions-zh-hans.png",
+   "a17-support-no-actions-zh-hans.png"
+  ],
+  "observed": {
+   "before": {
+    "sessions_rows": 2,
+    "buttons": 4,
+    "has_passkey": true,
+    "has_external": true
+   },
+   "device": {
+    "sessions_rows_after": 1,
+    "device_me_status": [
+     200,
+     401
+    ]
+   },
+   "passkey": {
+    "passkey_gone": true
+   },
+   "external": {
+    "external_gone": true,
+    "timeline_mentions": [
+     "2026/10/12 03:44\tadmin.user.external_unlink\tadmin-fixture@example.test\tu_d86dcbd7aa2a\t成功\t用户确认不再使用该外部账户（合成验收）",
+     "2026/10/12 03:44\tadmin.user.passkey_remove\tadmin-fixture@example.test\tu_d86dcbd7aa2a\t成功\t用户报告该安全密钥已遗失（合成验收）",
+     "2026/10/12 03:43\tadmin.user.revoke_session\tadmin-fixture@example.test\tu_d86dcbd7aa2a\t成功\t怀疑该设备已丢失，结束其登录（合成验收）"
+    ]
+   },
+   "en": {
+    "button": 1,
+    "excerpt": "Account details: alice-fixture@example.test\n✕\nProfile\nEmail\nalice-fixture@example.test\nName\nSynthetic member\nStatus\nActive\nEmail verification\nVerified (10/12/2026, 03:43 AM)\nCreated\n10/12/2026, 03:43 AM\nLast updated\n10/12/2026, 03:43 AM\nPlatform role\nAudit viewer (expires 10/19/2026, 03:43 AM)\nSign-"
+   },
+   "support": {
+    "buttons": 0,
+    "note": true
+   }
+  },
+  "notes": [
+   "the member signed in on two devices before the proof; after 结束此设备的登录 one row remained and the two devices answered 200 and 401 to /api/auth/me",
+   "each action went through the confirmation dialog: reason, then the strict re-authentication the server asked for (the 403 in the console is that reauth_required answer), then the toast and the reloaded detail",
+   "the audit timeline in the detail shows admin.user.revoke_session / passkey_remove / external_unlink with the reasons",
+   "a support reader sees the detail with no action buttons and the note that their role can view, not act"
+  ]
+ },
+ "not_done": [
+  "push subscriptions (core/push.py revoke all) — no caller and no UI, left out",
+  "journalling of a single-device revocation — deliberately not (documented on the route)",
+  "no production verification: deployment is blocked by GitHub billing at this point"
+ ]
+}

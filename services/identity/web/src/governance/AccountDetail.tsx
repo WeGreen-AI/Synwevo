@@ -1,6 +1,9 @@
-import { get } from "@synwevo/auth-client";
-import { fmtTime, Modal, t as tr, useI18n } from "@synwevo/ui";
+import { useState } from "react";
+import { get, post } from "@synwevo/auth-client";
+import { fmtTime, Modal, t as tr, useI18n, useToast } from "@synwevo/ui";
 import { useLoad } from "../lib/hooks";
+import type { Held } from "./access";
+import { ActionDialog } from "./ActionDialog";
 import { ACCOUNT_STATUS, WORKSPACE_KIND, WORKSPACE_STATUS, errText, fmtDuration, roleLabel } from "./labels";
 import { platformRoleLabel } from "./PlatformAccess";
 import "./messages";
@@ -13,8 +16,9 @@ import "./platform.messages";
  * recovery code, token or document. The server decides what the caller may see (workspace and
  * organization names follow the list permissions, the timeline the audit permission); this
  * dialog explains an omission rather than hiding the section, so a support reader knows what a
- * wider role would show. It changes nothing: every action stays in the row menu, with its own
- * reason and re-authentication.
+ * wider role would show. The per-object actions (A17: end one device, remove a passkey, unlink an
+ * external identity) open the same confirmation as every dangerous action — reason, strict
+ * re-authentication — and the server keeps the person's own lockout rules.
  */
 export type AccountDetail = {
   user: { id: string; email: string; display_name: string | null; status: string; platform_role: string;
@@ -24,8 +28,8 @@ export type AccountDetail = {
   outranks_caller: boolean;
   sign_in: {
     password_set: boolean; totp: boolean; recovery_remaining: number;
-    passkeys: { name: string | null; created_at: number; last_used_at: number | null; backed_up: boolean; uv_capable: boolean }[];
-    external_identities: { provider: string; label: string; available: boolean; email: string | null; email_verified: boolean;
+    passkeys: { id: string; name: string | null; created_at: number; last_used_at: number | null; backed_up: boolean; uv_capable: boolean }[];
+    external_identities: { id: string; provider: string; label: string; available: boolean; email: string | null; email_verified: boolean;
       created_at: number; last_used_at: number | null }[];
   };
   platform_roles: string[];
@@ -34,7 +38,7 @@ export type AccountDetail = {
   workspaces: { id: string; name: string | null; kind: string; status: string; role: string; can_export: boolean; joined_at: number }[];
   /** `name` is null when the caller may not list organizations (platform.orgs.view). */
   organizations: { id: string; name: string | null; status: string; role: string; joined_at: number }[];
-  sessions: { created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string;
+  sessions: { id: string; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string;
     client_parts?: { browser: string | null; platform: string | null }; ip: string | null; persistent: boolean; auth_provider: string | null }[];
   backoff: { failures: number; first_failure_at: number; last_failure_at: number; retry_after: number } | null;
   audit: { permitted: boolean; limit: number; items: { id: string; at: number; action: string; actor_kind: string;
@@ -70,13 +74,20 @@ export function deviceText(s: { client: string; client_parts?: { browser: string
 
 const DASH = "—";
 
-export function AccountDetailBody({ detail: d }: { detail: AccountDetail }) {
+/** One of the per-object actions (A17); the dialog confirms it with a reason and re-authentication. */
+export type AccountAction = { kind: "session" | "passkey" | "external"; id: string; label: string };
+
+export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountDetail; held?: Held; onAct?: (action: AccountAction) => void }) {
   useI18n();
   const u = d.user;
   const b = d.backoff;
+  // The server decides again on every action; the buttons only follow what it would allow.
+  const mayAct = !!onAct && !!held?.has("platform.users.manage") && !d.outranks_caller && !d.application_identity;
+  const act = (action: AccountAction) => <button type="button" className="btn sm" onClick={() => onAct?.(action)}>{action.label}</button>;
   return <div className="col gap16">
     {d.application_identity && <p className="notice" role="note">{tr("应用身份：由它所属的应用管理，不是一个人。")}</p>}
     {d.outranks_caller && <p className="notice" role="note">{tr("该账户的平台权限高于你的：可以查看，不能对它执行管理操作。")}</p>}
+    {!!held && !held.has("platform.users.manage") && <p className="muted small">{tr("你的平台角色可以查看这些信息，但不能对其执行操作。")}</p>}
 
     <section className="col gap8"><h3 className="secttl">{tr("资料")}</h3>
       <dl className="facts">
@@ -97,11 +108,13 @@ export function AccountDetailBody({ detail: d }: { detail: AccountDetail }) {
       <dl className="facts">
         <dt>{tr("口令")}</dt><dd>{d.sign_in.password_set ? tr("已设置") : tr("未设置")}</dd>
         <dt>{tr("两步验证")}</dt><dd>{d.sign_in.totp ? tr("已开启，剩余恢复码 {count} 个", { count: d.sign_in.recovery_remaining }) : tr("未开启")}</dd>
-        <dt>{tr("安全密钥")}</dt><dd>{d.sign_in.passkeys.length ? <ul>{d.sign_in.passkeys.map((k, i) => <li key={i}>
+        <dt>{tr("安全密钥")}</dt><dd>{d.sign_in.passkeys.length ? <ul>{d.sign_in.passkeys.map((k) => <li key={k.id}>
           {k.name || tr("未命名")} · {tr("登记于 {time}", { time: fmtTime(k.created_at) })} · {k.last_used_at ? tr("最近使用：{time}", { time: fmtTime(k.last_used_at) }) : tr("未使用过")}{k.backed_up ? ` · ${tr("已同步到多台设备")}` : ""}
+          {mayAct && <> {act({ kind: "passkey", id: k.id, label: tr("移除此安全密钥") })}</>}
         </li>)}</ul> : tr("无")}</dd>
-        <dt>{tr("外部身份")}</dt><dd>{d.sign_in.external_identities.length ? <ul>{d.sign_in.external_identities.map((x, i) => <li key={i}>
+        <dt>{tr("外部身份")}</dt><dd>{d.sign_in.external_identities.length ? <ul>{d.sign_in.external_identities.map((x) => <li key={x.id}>
           {x.label}{x.email ? ` · ${x.email}` : ""} · {x.last_used_at ? tr("最近使用：{time}", { time: fmtTime(x.last_used_at) }) : tr("未使用过")}{x.available ? "" : ` · ${tr("提供商已停用")}`}
+          {mayAct && <> {act({ kind: "external", id: x.id, label: tr("解除此外部身份") })}</>}
         </li>)}</ul> : tr("无")}</dd>
       </dl></section>
 
@@ -128,10 +141,11 @@ export function AccountDetailBody({ detail: d }: { detail: AccountDetail }) {
 
     <section className="col gap8"><h3 className="secttl">{tr("在线会话（{count} 个）", { count: d.sessions.length })}</h3>
       {d.sessions.length ? <div className="list-wrap"><table className="gov" aria-label={tr("在线会话")}>
-        <thead><tr><th scope="col">{tr("设备")}</th><th scope="col">{tr("登录方式")}</th><th scope="col">{tr("最近活动")}</th><th scope="col">{tr("到期")}</th><th scope="col">{tr("地址")}</th></tr></thead>
-        <tbody>{d.sessions.map((s, i) => <tr key={i}>
+        <thead><tr><th scope="col">{tr("设备")}</th><th scope="col">{tr("登录方式")}</th><th scope="col">{tr("最近活动")}</th><th scope="col">{tr("到期")}</th><th scope="col">{tr("地址")}</th>{mayAct && <th scope="col" className="act">{tr("操作")}</th>}</tr></thead>
+        <tbody>{d.sessions.map((s) => <tr key={s.id}>
           <th scope="row">{deviceText(s)}</th><td>{amrText(s.amr)}{s.persistent ? ` · ${tr("保持登录")}` : ""}</td>
           <td>{fmtTime(s.last_seen_at)}</td><td>{fmtTime(s.expires_at)}</td><td>{s.ip || DASH}</td>
+          {mayAct && <td className="act">{act({ kind: "session", id: s.id, label: tr("结束此设备的登录") })}</td>}
         </tr>)}</tbody></table></div>
         : <p className="muted small">{tr("当前没有在线会话。")}</p>}
       <p className="muted small">{tr("地址是登录时记录的来源地址，不推断位置；撤销会话在账户行的菜单里。")}</p>
@@ -159,14 +173,39 @@ export function AccountDetailBody({ detail: d }: { detail: AccountDetail }) {
   </div>;
 }
 
-export function AccountDetailDialog({ user, onClose }: { user: { id: string; email: string }; onClose: () => void }) {
+const ACTION_PATH: Record<AccountAction["kind"], (uid: string, id: string) => string> = {
+  session: (uid, id) => `/api/admin/users/${encodeURIComponent(uid)}/sessions/${encodeURIComponent(id)}/revoke`,
+  passkey: (uid, id) => `/api/admin/users/${encodeURIComponent(uid)}/passkeys/${encodeURIComponent(id)}/remove`,
+  external: (uid, id) => `/api/admin/users/${encodeURIComponent(uid)}/external-identities/${encodeURIComponent(id)}/unlink`,
+};
+const ACTION_IMPACT: Record<AccountAction["kind"], string> = {
+  session: "{email}：该设备的登录与它签发的应用访问将立即结束；其他设备不受影响。本人会收到安全通知。",
+  passkey: "{email}：该安全密钥将不能再用于登录；若它是账户唯一的登录方式，服务器会拒绝。本人会收到安全通知。",
+  external: "{email}：该外部账户的下一次登录将不再进入此账户；若它是唯一的登录方式，服务器会拒绝。本人会收到安全通知。",
+};
+const ACTION_DONE: Record<AccountAction["kind"], string> = {
+  session: "已结束该设备的登录。", passkey: "已移除该安全密钥。", external: "已解除该外部身份。",
+};
+
+export function AccountDetailDialog({ user, held, onClose, onChanged }: {
+  user: { id: string; email: string }; held?: Held; onClose: () => void; onChanged?: () => void;
+}) {
   useI18n();
+  const toast = useToast();
   const path = `/api/admin/users/${encodeURIComponent(user.id)}`;
   const load = useLoad<AccountDetail>(path, (signal) => get<AccountDetail>(path, signal));
-  return <Modal title={tr("账户详情：{email}", { email: user.email })} onClose={onClose} size="wide"
+  const [action, setAction] = useState<AccountAction | null>(null);
+  // The confirmation opens on top of the detail (the modal stack keeps Escape and focus to the
+  // top one); the detail reloads afterwards, so the list shows what is left.
+  const confirm = action && <ActionDialog title={action.label} confirmLabel={action.label} reason="required" danger
+    impact={tr(ACTION_IMPACT[action.kind], { email: user.email })}
+    run={(reason) => post(ACTION_PATH[action.kind](user.id, action.id), { reason })}
+    onClose={() => setAction(null)} onDone={() => { setAction(null); load.reload(); onChanged?.(); toast(tr(ACTION_DONE[action.kind]), "ok"); }} />;
+  return <><Modal title={tr("账户详情：{email}", { email: user.email })} onClose={onClose} size="wide"
     footer={<><span className="spacer" /><button type="button" className="btn" onClick={onClose}>{tr("关闭")}</button></>}>
     {load.loading && <p role="status">{tr("正在加载账户详情…")}</p>}
     {!!load.error && <div className="notice err" role="alert">{errText(load.error)} <button className="btn sm" onClick={load.reload}>{tr("重试")}</button></div>}
-    {load.data && <AccountDetailBody detail={load.data} />}
-  </Modal>;
+    {load.data && <AccountDetailBody detail={load.data} held={held} onAct={setAction} />}
+  </Modal>{confirm}</>;
 }
+export const ACCOUNT_ACTION_SENTENCES = [...Object.values(ACTION_IMPACT), ...Object.values(ACTION_DONE)];

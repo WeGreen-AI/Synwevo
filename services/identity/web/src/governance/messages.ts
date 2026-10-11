@@ -1626,5 +1626,22 @@ export const governanceMessages = {
   "邮箱验证码与恢复码": { en: "Email code and recovery code", "zh-Hant": "電子郵件驗證碼與復原碼" },
   "{method}与动态验证码": { en: "{method} and authenticator code", "zh-Hant": "{method}與動態驗證碼" },
   "{method}与恢复码": { en: "{method} and recovery code", "zh-Hant": "{method}與復原碼" },
+  // Account detail per-object actions (admin coverage A17).
+  "结束此设备的登录": { en: "Sign this device out", "zh-Hant": "結束此裝置的登入" },
+  "移除此安全密钥": { en: "Remove this passkey", "zh-Hant": "移除此安全金鑰" },
+  "解除此外部身份": { en: "Unlink this external identity", "zh-Hant": "解除此外部身分" },
+  "你的平台角色可以查看这些信息，但不能对其执行操作。": { en: "Your platform role can view this, not act on it.", "zh-Hant": "你的平台角色可以檢視這些資訊，但不能對其執行操作。" },
+  "{email}：该设备的登录与它签发的应用访问将立即结束；其他设备不受影响。本人会收到安全通知。": { en: "{email}: this device's sign-in and the application access it minted end immediately; other devices are unaffected. The person gets a security notice.", "zh-Hant": "{email}：該裝置的登入與它簽發的應用程式存取將立即結束；其他裝置不受影響。本人會收到安全通知。" },
+  "{email}：该安全密钥将不能再用于登录；若它是账户唯一的登录方式，服务器会拒绝。本人会收到安全通知。": { en: "{email}: this passkey can no longer sign in; if it is the account's only way in, the server refuses. The person gets a security notice.", "zh-Hant": "{email}：該安全金鑰將不能再用於登入；若它是帳戶唯一的登入方式，伺服器會拒絕。本人會收到安全通知。" },
+  "{email}：该外部账户的下一次登录将不再进入此账户；若它是唯一的登录方式，服务器会拒绝。本人会收到安全通知。": { en: "{email}: the next sign-in with this external account no longer reaches this account; if it is the only way in, the server refuses. The person gets a security notice.", "zh-Hant": "{email}：該外部帳戶的下一次登入將不再進入此帳戶；若它是唯一的登入方式，伺服器會拒絕。本人會收到安全通知。" },
+  "已结束该设备的登录。": { en: "The device has been signed out.", "zh-Hant": "已結束該裝置的登入。" },
+  "已移除该安全密钥。": { en: "The passkey has been removed.", "zh-Hant": "已移除該安全金鑰。" },
+  "已解除该外部身份。": { en: "The external identity has been unlinked.", "zh-Hant": "已解除該外部身分。" },
+  // Refusals of the account detail's per-object actions, worded for the administrator.
+  "找不到该账户的这个在线会话，可能已经结束。": { en: "This session of the account was not found; it may have ended already.", "zh-Hant": "找不到該帳戶的這個線上工作階段，可能已經結束。" },
+  "找不到该账户的这个外部身份，可能已经解除。": { en: "This external identity of the account was not found; it may have been unlinked already.", "zh-Hant": "找不到該帳戶的這個外部身分，可能已經解除。" },
+  "找不到该账户的这个安全密钥，可能已经移除。": { en: "This passkey of the account was not found; it may have been removed already.", "zh-Hant": "找不到該帳戶的這個安全金鑰，可能已經移除。" },
+  "这是该账户唯一的登录方式，不能解除关联；需要停止访问请停用账户。": { en: "This is the account's only way to sign in, so it cannot be unlinked; to stop access, suspend the account.", "zh-Hant": "這是該帳戶唯一的登入方式，不能解除關聯；需要停止存取請停用帳戶。" },
+  "这是该账户唯一的登录方式，不能移除；需要停止访问请停用账户。": { en: "This is the account's only way to sign in, so it cannot be removed; to stop access, suspend the account.", "zh-Hant": "這是該帳戶唯一的登入方式，不能移除；需要停止存取請停用帳戶。" },
 };
 registerMessages(governanceMessages);

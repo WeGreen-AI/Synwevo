@@ -536,7 +536,7 @@ def test_account_detail_is_metadata_without_secrets(env):
     assert d["sign_in"]["password_set"] is True and d["sign_in"]["totp"] is False
     assert d["sign_in"]["passkeys"] == [] and d["sign_in"]["external_identities"] == []
     assert [w["role"] for w in d["workspaces"]] == ["owner", "editor"] and d["workspaces"][1]["name"] == "Detail fixture"
-    assert d["sessions"] and all("id" not in s for s in d["sessions"]) and d["sessions"][0]["amr"] == "password"
+    assert d["sessions"] and all(s["id"] for s in d["sessions"]) and d["sessions"][0]["amr"] == "password"
     assert d["backoff"]["failures"] == 3 and isinstance(d["backoff"]["retry_after"], int)
     assert d["audit"]["permitted"] is True
     denied = [e for e in d["audit"]["items"] if e["action"] == "auth.login" and e["result"] == "denied"]
@@ -578,3 +578,52 @@ def test_account_detail_names_only_what_the_caller_may_list_and_refuses_unknown_
     store.execute("UPDATE users SET deleted_at=? WHERE id=?", (now(), gone["id"]))
     assert c.get(f"/api/admin/users/{gone['id']}").status_code == 404
     assert support["id"] != finance["id"]
+
+
+def test_an_administrator_ends_one_device_removes_a_passkey_and_unlinks_an_identity(env):
+    """A17: per-object actions with a reason and strict re-authentication; the person's own
+    lockout rules hold, the person is told, and the other devices keep working."""
+    c, store, ident, alice, api = env["c"], env["store"], env["ident"], env["alice"], env["api"]
+    other = TestClient(api)
+    assert post(other, "/api/auth/login", {"email": "alice@example.com", "password": PW}).status_code == 200
+    detail = c.get(f"/api/admin/users/{alice['id']}").json()
+    assert len(detail["sessions"]) == 2 and all(s["id"] for s in detail["sessions"])
+    _reauth(c)
+    r = post(c, f"/api/admin/users/{alice['id']}/sessions/{detail['sessions'][0]['id']}/revoke", {"reason": "怀疑该设备已丢失，结束其登录"})
+    assert r.status_code == 200 and r.json()["sessions_revoked"] >= 1 and r.json()["notified"] is True
+    assert sorted(client.get("/api/auth/me").status_code for client in (env["plain"], other)) == [200, 401]
+    assert post(c, f"/api/admin/users/{alice['id']}/sessions/{detail['sessions'][0]['id']}/revoke", {"reason": "再次结束同一设备的登录"}).status_code == 404
+    audit_row = store.one("SELECT meta FROM audit_events WHERE action='admin.user.revoke_session'")
+    assert audit_row and "怀疑该设备已丢失" in audit_row["meta"]
+    # TEST FIXTURE: a passkey row with public material only (no authenticator is involved).
+    store.execute("INSERT INTO passkeys (id,user_id,credential_id,public_key,rp_id,uv_capable,name,created_at) "
+                  "VALUES ('pk_fixture',?,'fixture-credential','fixture-public-key','localhost',1,'Fixture key',?)", (alice["id"], now()))
+    assert any(k["id"] == "pk_fixture" for k in c.get(f"/api/admin/users/{alice['id']}").json()["sign_in"]["passkeys"])
+    r = post(c, f"/api/admin/users/{alice['id']}/passkeys/pk_fixture/remove", {"reason": "用户报告该安全密钥已遗失"})
+    assert r.status_code == 200 and store.one("SELECT deleted_at FROM passkeys WHERE id='pk_fixture'")["deleted_at"]
+    assert post(c, f"/api/admin/users/{alice['id']}/passkeys/pk_fixture/remove", {"reason": "重复移除同一安全密钥"}).status_code == 404
+    # TEST FIXTURE: an external identity row (no provider is configured in this instance).
+    store.execute("INSERT INTO external_identities (id,user_id,provider,subject,issuer,email,email_verified,created_at) "
+                  "VALUES ('xi_fixture',?,'google','fixture-subject','https://accounts.google.com',?,1,?)", (alice["id"], alice["email"], now()))
+    r = post(c, f"/api/admin/users/{alice['id']}/external-identities/xi_fixture/unlink", {"reason": "用户确认不再使用该外部账户"})
+    assert r.status_code == 200 and not store.one("SELECT 1 FROM external_identities WHERE id='xi_fixture'")
+    kinds = [row["kind"] for row in store.all("SELECT kind FROM notifications WHERE user_id=? ORDER BY rowid", (alice["id"],))]
+    assert kinds.count("security.change") >= 3
+    # Never the only way in: an account that signs in only through an external identity keeps it.
+    sso = ident.create_user("sso@example.com", None, status="active")
+    store.execute("INSERT INTO external_identities (id,user_id,provider,subject,issuer,email,email_verified,created_at) "
+                  "VALUES ('xi_only',?,'google','fixture-subject-2','https://accounts.google.com',?,1,?)", (sso["id"], sso["email"], now()))
+    r = post(c, f"/api/admin/users/{sso['id']}/external-identities/xi_only/unlink", {"reason": "尝试解除唯一登录方式"})
+    assert r.status_code == 409 and r.json()["error"] == "last_sign_in_method"
+    assert store.one("SELECT 1 FROM external_identities WHERE id='xi_only'")
+    # Support reads the detail but may not act; an access administrator may not act on a higher one.
+    support = make_platform_admin(store, ident.create_user("support2@example.com", PW, status="active"), role="support")
+    s = TestClient(api); post(s, "/api/auth/login", {"email": "support2@example.com", "password": PW})
+    assert s.get(f"/api/admin/users/{alice['id']}").status_code == 200
+    assert post(s, f"/api/admin/users/{alice['id']}/passkeys/pk_fixture/remove", {"reason": "支持角色尝试移除安全密钥"}).json()["error"] == "platform_permission_denied"
+    access_admin = make_platform_admin(store, ident.create_user("access2@example.com", PW, status="active"), role="access_admin")
+    a = TestClient(api); post(a, "/api/auth/login", {"email": "access2@example.com", "password": PW}); _reauth(a)
+    admin_session = c.get(f"/api/admin/users/{env['admin']['id']}").json()["sessions"][0]["id"]
+    r = post(a, f"/api/admin/users/{env['admin']['id']}/sessions/{admin_session}/revoke", {"reason": "较低管理员尝试结束最高管理员的设备"})
+    assert r.status_code == 403 and r.json()["error"] == "target_outranks_actor"
+    assert support["id"] != access_admin["id"]

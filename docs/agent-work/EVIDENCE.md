@@ -747,3 +747,9 @@ C1「比较并保存」：读 A、读 B 成功；写入 A 失败 `transfer_expor
 Oscar 在 Agent 设置里把 Workspace B 的数据流政策从「仅限已有阅读者」改为「转移人可写的任何空间」（确认对话框、已明确设置、更改已保存）；Alice 获导出权后 C2「复制 B 名册到 A」：卡片等待确认，目标 Workspace A，列出来源 Workspace B（zh-Hans/en/zh-Hant 三语截图）；确认后已完成，A 的表单多出「From B roster」。
 再次复制得到待确认卡片后，Oscar 改回「仅限已有阅读者」，Alice 确认 → 失败 `transfer_audience_denied`（原句「目标工作空间有不在来源工作空间的成员…」），A 未新增。C4 后效：移除 Alice 的 B 成员资格后刷新，会话 `sealed=access_changed`，依赖 B 的消息与卡片显示「内容因权限变化已隐藏」，横幅「访问权限已改变，相关内容已隐藏。请新建会话继续」，A 的记录保留。
 未做：C3 同名澄清、真实模型（支出暂停）、C8 个人自动化（沿用 2026-09-30 证据）。证据 `evidence/2026-10-11-agent-cross-workspace/`（browser-report.json、verification.json、9 张截图）。夹具发现：测试模块的 SSE 片段重复同一上游 id，账本按 (environment, provider, request_id) 结算去重，第二次调用会让回合崩溃——仅夹具问题，脚本化传输改为唯一 id 后正常。
+
+## 2026-10-11 CR-089 Admin A17 账户单项动作（本地+隔离浏览器）
+
+三条管理路由（结束单设备登录 / 移除 Passkey / 解除外部身份）：`platform.users.manage` + 严格重认证 + 理由 + 越级检查，复用本人路径原语与锁死保护（last_factor、last_super_admin、last_sign_in_method），审计 `admin.user.revoke_session|passkey_remove|external_unlink`，本人收到 `security.change` 通知；A13 详情补回可操作 id，对话框内逐项按钮经 ActionDialog 确认。
+测试：test_admin 新增 1 例通过（两台设备留一台：/api/auth/me 分别 200/401；审计含理由；重复移除 404；唯一登录方式 409；support 403；access_admin 越级 403）；权限矩阵 29 通过（新增 3 行危险路由）；account-web 167 通过（详情测试 4 例、refusals 门禁 10 例含五个新措辞）；typecheck/build、五守卫通过；identity 全量 1550 通过（19:42–19:46Z）。
+浏览器（隔离合成实例 127.0.0.1:33921，系统 Chrome）：详情显示 2 个在线会话、安全密钥与外部身份各带按钮；结束一台设备后剩 1 行且两台设备 /api/auth/me 为 200/401；移除安全密钥、解除外部身份后详情不再列出；时间线显示三条 admin.user.* 事件与理由；英文视图按钮「Sign this device out」；support 账户无任何按钮并看到说明。证据 `evidence/2026-10-11-admin-account-actions/`（browser-report.json、verification.json、5 张截图）。
