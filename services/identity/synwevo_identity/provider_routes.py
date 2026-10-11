@@ -218,7 +218,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         return {"items": [{"id": c["id"], "client": {"id": c["client_id"], "name": c["client_name"], "app_id": c["app_id"]},
                            "workspace": {"id": c["workspace_id"], "name": c["workspace_name"]} if c["workspace_id"] else None,
                            "scopes": c["scopes"], "source": c["source"], "granted_at": c["granted_at"],
-                           "last_issued_at": c["last_issued_at"]} for c in consents.list_for_user(user["id"])]}
+                           "last_issued_at": c["last_issued_at"], "last_used_at": c["last_used_at"]}
+                          for c in consents.list_for_user(user["id"])]}
 
     @r.post("/api/auth/connected-apps/{consent_id}/revoke")
     def connected_app_revoke(request: Request, consent_id: str):

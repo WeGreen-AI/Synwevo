@@ -688,6 +688,12 @@ class Grants:
         r = self.store.one("SELECT * FROM oauth_tokens WHERE access_hash=?", (_sha(raw),))
         if not r or r.get("revoked_at") or (r["access_expires_at"] or 0) <= now():
             return None
+        # Last use, written at most once a minute (the api_keys rule): enough to answer "when did
+        # this application last act for me" on the connected-apps page, cheap enough for every call.
+        ts = now()
+        if (r.get("last_used_at") or 0) < ts - 60:
+            self.store.execute("UPDATE oauth_tokens SET last_used_at=? WHERE id=?", (ts, r["id"]))
+            r["last_used_at"] = ts
         return r
 
     def revoke_token(self, raw: str, reason: str = "client_revoked", *, client_id: str | None = None) -> bool:

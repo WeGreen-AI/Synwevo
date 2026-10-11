@@ -124,6 +124,7 @@ def test_consent_token_audience_sdk_rotation_and_withdrawal(env):
     assert machine.post("/api/suite/v1/ops/tables.table.list", json={"input": {}}, headers=auth).status_code == 200
     apps = browser.get("/api/auth/connected-apps").json()["items"]
     mine = next(a for a in apps if a["client"]["id"] == "crm-sync")
+    assert mine["last_used_at"] is not None and mine["last_used_at"] >= mine["last_issued_at"], "the operation call just made is the consent's last use"
     assert "tables.read" in mine["scopes"] and mine["workspace"]["id"] == env["ws"]
     gone = browser.post(f"/api/auth/connected-apps/{mine['id']}/revoke",
                         headers={CSRF_HEADER: browser.cookies.get(CSRF_COOKIE) or ""})

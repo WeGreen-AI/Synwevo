@@ -790,6 +790,8 @@ registerMessages({
   "未指定": { en: "Not specified", "zh-Hant": "未指定" },
   "授权于 {date}": { en: "Granted {date}", "zh-Hant": "授權於 {date}" },
   "最近一次取得令牌 {date}": { en: "Last token issued {date}", "zh-Hant": "最近一次取得權杖 {date}" },
+  "最近使用 {date}": { en: "Last used {date}", "zh-Hant": "最近使用 {date}" },
+  "尚未用它访问过": { en: "Not used to access anything yet", "zh-Hant": "尚未用它存取過" },
   "撤回授权": { en: "Withdraw access", "zh-Hant": "撤回授權" },
   "撤回「{name}」的授权": { en: "Withdraw access for “{name}”", "zh-Hant": "撤回「{name}」的授權" },
   "它的访问令牌立即失效，之后再使用需要你重新同意。已经交给它的数据无法收回。": { en: "Its access tokens stop working at once and it will need your consent again. Data it already received cannot be recalled.", "zh-Hant": "它的存取權杖立即失效，之後再使用需要你重新同意。已經交給它的資料無法收回。" },

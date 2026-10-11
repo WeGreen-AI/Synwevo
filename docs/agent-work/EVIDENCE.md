@@ -781,3 +781,8 @@ Oscar 在 Agent 设置里把 Workspace B 的数据流政策从「仅限已有阅
 A13 详情新增 `push_subscriptions`（设备、开启时间、最近推送、失败次数、是否仍可接收；无端点），`POST /users/{uid}/push-subscriptions/revoke`（users.manage，撤销该账户全部浏览器推送订阅，幂等，审计 `admin.user.push_revoke`，本人 `security.change` `push_revoked`）。
 测试：test_admin 新增 1 例（两台合成设备→详情列出且无端点→重认证→撤销 2、再次 0→详情为空、`has_active` 假→审计/通知→本人会话未受影响→support 403）；权限矩阵新增 1 行；push/notification 模块 58 通过；account-web 167 通过（推送段、按权限显示按钮、空态）；typecheck/build、五守卫通过。
 浏览器（隔离合成实例 127.0.0.1:33934，系统 Chrome）：详情「推送设备（2 个）」列出 Chrome · macOS / Safari · iOS（未推送过、可接收），文本不含合成端点；「撤销全部推送订阅」经理由+重认证后提示「已撤销全部推送订阅。」，段落变为「没有开启推送的设备。」，库中 2 行 revoked_reason=admin_revoked、审计 `admin.user.push_revoke` 出现在时间线；英文视图「Push devices (0)」「No device has push enabled.」；本人通知库中 `security.change {what: push_revoked}`（脚本误用了收件箱路径得 404，改以隔离库读取）；support 看到段落但无按钮。证据 `evidence/2026-10-11-admin-push-devices/`（browser-report.json、verification.json、4 张截图）。
+
+## 2026-10-11 CR-095 委托令牌最近使用（本地）
+
+`oauth_tokens.last_used_at` 由 `Grants.load_access` 每令牌每分钟至多写一次；`/api/auth/connected-apps` 每条授权带 `last_used_at`，账户页「已授权的应用」显示「最近使用 {date}」或「尚未用它访问过」。
+测试：test_oauth_consent（首次使用 ≥ 最近签发；分钟内第二次使用不重写；回拨 120 秒后再次使用会更新）、test_suite_machine_flow（真实 `/api/suite/v1/ops/*` 调用后授权的 `last_used_at` 非空且 ≥ 签发时间）；identity 相关 173、integration 相关 59、Docs 相关 14 通过；account-web 167/typecheck/build、五守卫通过。未做浏览器验收（一行文案）。

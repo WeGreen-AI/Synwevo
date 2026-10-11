@@ -149,6 +149,15 @@ def test_withdrawing_a_connected_app_revokes_its_tokens_at_once(env):
     listed = env["c"].get("/api/auth/connected-apps").json()["items"]
     assert len(listed) == 1 and listed[0]["client"]["name"] == "Quarterly report bot"
     assert listed[0]["scopes"] == ["docweave.read", "offline_access"] and listed[0]["source"] == "consent"
+    # The token's use just above is the consent's last use; a second use within the minute is not
+    # rewritten (api_keys rule), a later one is.
+    first_use = listed[0]["last_used_at"]
+    assert first_use is not None and first_use >= listed[0]["last_issued_at"]
+    assert grants.load_access(tok["access_token"]) is not None
+    assert env["c"].get("/api/auth/connected-apps").json()["items"][0]["last_used_at"] == first_use
+    env["store"].execute("UPDATE oauth_tokens SET last_used_at=last_used_at-120 WHERE user_id=?", (env["user"]["id"],))
+    assert grants.load_access(tok["access_token"]) is not None
+    assert env["c"].get("/api/auth/connected-apps").json()["items"][0]["last_used_at"] >= first_use
     r = env["c"].post(f"/api/auth/connected-apps/{listed[0]['id']}/revoke",
                       headers={CSRF_HEADER: env["c"].cookies.get(CSRF_COOKIE) or ""})
     assert r.status_code == 200 and r.json()["tokens_revoked"] >= 1

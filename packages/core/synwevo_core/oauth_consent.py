@@ -126,7 +126,9 @@ class Consents:
         rows = self.store.all(
             "SELECT c.*, o.name AS client_name, o.app_id, w.name AS workspace_name, "
             "(SELECT MAX(issued_at) FROM oauth_tokens t WHERE t.user_id=c.user_id AND t.client_id=c.client_id "
-            " AND COALESCE(t.workspace_id,'')=c.workspace_id) AS last_issued_at "
+            " AND COALESCE(t.workspace_id,'')=c.workspace_id) AS last_issued_at, "
+            "(SELECT MAX(last_used_at) FROM oauth_tokens t WHERE t.user_id=c.user_id AND t.client_id=c.client_id "
+            " AND COALESCE(t.workspace_id,'')=c.workspace_id) AS last_used_at "
             "FROM oauth_consents c LEFT JOIN oauth_clients o ON o.client_id=c.client_id "
             "LEFT JOIN workspaces w ON w.id=c.workspace_id WHERE c.user_id=? AND c.revoked_at IS NULL "
             "ORDER BY c.updated_at DESC", (user_id,))

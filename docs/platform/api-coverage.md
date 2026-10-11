@@ -21,7 +21,7 @@ Python 与 TypeScript 的独立 `WorkspaceClient` 均实现并实跑 8/8。方�
 | 所有者审批 → 管理员签发 → 每次调用复核审批（范围、到期、审批人仍是所有者） | 已验证 | `api_platform.py` `Approvals`/`enforce_principal`；`test_api_platform*.py`（39 项） | 依赖**具体审批人**：该所有者降级即全部失效（其他所有者仍在）；无职责分离检查 |
 | 秘密只显示一次、服务端只存哈希 | 已验证 | `auth.py`、`oidc.py`（SHA-256）；`Secret` 对话框 `no-store` | 无 pepper；无末四位展示 |
 | 轮换重叠期（≤24 h）、撤销、停用/启用（服务账户） | 已验证 | `auth.rotate_key`、`oidc.rotate_secret`；**API-1**：控制台可选 0/10 分钟/1 小时/24 小时重叠（此前固定 0） | 访问密钥无「暂停」（停用 = 永久撤销）；审批到期后无续期，只能新审批 |
-| 最近使用 | 部分 | **API-1**：凭据列表显示密钥 `last_used_at`、服务账户最近调用时间（30 天调用记录） | 委托令牌无 |
+| 最近使用 | 已做 | **API-1**：凭据列表显示密钥 `last_used_at`、服务账户最近调用时间（30 天调用记录）；委托令牌：`oauth_tokens.last_used_at`（每次校验最多每分钟写一次），本人「已授权的应用」每条授权显示最近使用（`/api/auth/connected-apps` `last_used_at`；`test_oauth_consent.py`、`test_suite_machine_flow.py`） | 控制台不列委托令牌（它们属于本人而非空间凭据）；按客户端的委托调用可在调用记录按 client_id 查 |
 | 撤权传播 | 已验证 | 每次请求查库（无缓存）；延后工作经 `authority.check` 复核 | 无跨进程事件总线（目前不需要：无缓存） |
 | OAuth 授权码 + PKCE（S256 强制）、刷新轮换与重放检测、RFC 7009 撤销、精确回调 | 已验证 | `provider_routes.py`、`oidc.py` | — |
 | 第三方客户端同意页、已连接应用管理 | 已验证 | **API-4** 同意暂存与决定、「已授权的应用」撤回即撤令牌、撤回写安全日志、旧委托记为旧授权；`test_oauth_consent.py`（10）；隔离实例浏览器实跑（同意页 → 批准 → 令牌 200 → 撤回 → 401） | 组织层面的管理员代同意不做（同意属于本人） |

@@ -340,3 +340,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：详情只给设备 UA、时间、失败次数与是否仍可接收（`active_for` 按创建会话是否存活判断），绝不返回端点（能力 URL）或密钥；撤销复用 `PushSubscriptions.revoke_all_for_user`，原因 `admin_revoked`，幂等（数量为 0 时不发通知）；不触碰会话与登录方式；`users.manage` + 严格重认证 + 理由 + 越级检查，与 A17 其他动作一致；本人收到 `security.change`（新键在目录中有三语言，旧 zh 句映射不受影响）。
 - 风险/未做：管理员不逐台撤销（本人账户页可逐台移除、发送测试）；设备 UA 解析与账户页同一规则（Chrome/Safari/… · OS），其余显示「浏览器」。
 - 验证：test_admin + 矩阵相关 15 例通过（新增 1 例 + 1 行）；push/notification 测试 58 通过；account-web typecheck/167 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-11-admin-push-devices（identity/integration 全量在推送前随批复跑）。
+
+## CR-095 · 委托令牌最近使用（API-1「最近使用」缺口，2026-10-11，本轮新增，本地已验证）
+
+- 位置：packages/core/synwevo_core/store.py `OAUTH_TOKEN_COLUMNS`（`oauth_tokens.last_used_at`，加入列迁移循环）；oidc.py `Grants.load_access` 成功加载后最多每分钟写一次 `last_used_at`（与 api_keys 规则一致）；oauth_consent.py `Consents.list_for_user` 每条授权带同一 (user, client, workspace) 令牌的 `MAX(last_used_at)`；provider_routes.py `/api/auth/connected-apps` 返回 `last_used_at`；account-web `ConnectedAppsSection.tsx` 显示「最近使用 {date}」/「尚未用它访问过」（account.messages 三语言）；tests：test_oauth_consent.py（首次使用、分钟内不重写、回拨后再写）、tests/integration/test_suite_machine_flow.py（真实业务操作调用后授权显示最近使用）；docs/platform/api-coverage.md「最近使用」行改为已做。
+- 审查要点：写入发生在校验路径（Docs/目录/业务应用三条机器入口与 userinfo 都经 `load_access`），每令牌每分钟至多一次 UPDATE，不改变任何授权判断；只读列表聚合不暴露令牌；回滚时旧代码忽略新列；控制台不列委托令牌（属于本人，不是空间凭据），按客户端的委托调用仍可在调用记录按 client_id 查询。
+- 风险/未做：刷新换发的新令牌 `last_used_at` 为空，列表按 MAX 聚合不受影响；浏览器验收未做（仅账户页一行文案，API 与集成测试覆盖）。
+- 验证：identity `-k "oidc or api_platform or machine or consent or token or connected"` 173 通过；integration `-k "machine or oauth or consent or delegated or token"` 59 通过；Docs `-k "machine or delegated or oauth or bearer"` 14 通过；account-web typecheck/167 测试/build 通过；五守卫通过。

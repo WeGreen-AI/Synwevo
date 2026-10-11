@@ -632,6 +632,10 @@ V17_COLUMNS = [
 # v19: mails carry an HTML alternative next to the plain text (same content, one layout).
 V19_COLUMNS = [("mail_outbox", "html", "TEXT")]
 
+# Delegated access tokens remember their last use (written at most once a minute, the api_keys
+# rule), so a person's connected-apps page can say when an application last acted for them (API-1).
+OAUTH_TOKEN_COLUMNS = [("oauth_tokens", "last_used_at", "REAL")]
+
 V6_COLUMNS = [
     ("rp_auth_requests", "workspace_id", "TEXT"),
     ("users", "locale", "TEXT NOT NULL DEFAULT 'zh-Hans'"),
@@ -927,7 +931,7 @@ class Store:
         from .suite_schema import apply as apply_suite_schema
         apply_suite_schema(c)
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS + API_RATE_STATE_COLUMNS + PLATFORM_SETTINGS_DELIVERY_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + OAUTH_TOKEN_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS + API_RATE_STATE_COLUMNS + PLATFORM_SETTINGS_DELIVERY_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")

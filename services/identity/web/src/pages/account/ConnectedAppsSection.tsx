@@ -6,7 +6,7 @@ import { ErrorNotice, errorText, timeText } from './common';
 
 type Connected = { id: string; client: { id: string; name: string | null; app_id: string | null };
   workspace: { id: string; name: string | null } | null; scopes: string[]; source: 'consent' | 'legacy';
-  granted_at: number; last_issued_at: number | null };
+  granted_at: number; last_issued_at: number | null; last_used_at?: number | null };
 
 /** Integrations this person let act for them (API-4): what each may do, where, since when — and a
  *  way to take it back that revokes the integration's tokens at once. */
@@ -44,7 +44,8 @@ export default function ConnectedAppsSection({ timezone }: { timezone: string })
         {row.source === 'legacy' && <span className="chip" title={t('这个授权早于同意页面，当时没有单独询问你。')}>{t('旧授权')}</span>}</div>
       <span className="tiny muted">{t('工作空间')} · {row.workspace?.name || row.workspace?.id || t('未指定')}
         {' · '}{t('授权于 {date}', { date: timeText(row.granted_at, locale, timezone) })}
-        {row.last_issued_at ? <>{' · '}{t('最近一次取得令牌 {date}', { date: timeText(row.last_issued_at, locale, timezone) })}</> : null}</span>
+        {row.last_issued_at ? <>{' · '}{t('最近一次取得令牌 {date}', { date: timeText(row.last_issued_at, locale, timezone) })}</> : null}
+        {' · '}{row.last_used_at ? t('最近使用 {date}', { date: timeText(row.last_used_at, locale, timezone) }) : t('尚未用它访问过')}</span>
       <ul className="col gap4">{row.scopes.map(scope => <li key={scope}>{SCOPE_TEXT[scope] ? t(SCOPE_TEXT[scope]) : scope} <code className="tiny">{scope}</code></li>)}</ul>
       <div><button className="btn danger" disabled={busy === row.id} onClick={() => void revoke(row)}>{busy === row.id ? t('处理中…') : t('撤回授权')}</button></div>
     </article>)}
