@@ -167,6 +167,20 @@ MIN_EXPIRY_S = 5 * 60
 #: One denied-attempt audit row per actor and permission in this window, so probing cannot flood.
 DENIED_AUDIT_WINDOW_S = 60
 
+#: `PlatformAccess.step_up(uid)["second_factor"]` and "`PlatformAccess.live_grants(uid)` is not
+#: empty" as SQL, for a listing that must not run two queries per row (the platform's orphan
+#: list, A37). `{u}` is the id of the users row being judged (e.g. ``"u.id"``); each fragment
+#: takes one positional parameter, in textual order: `SECOND_FACTOR_EXISTS` the current RP ID
+#: (`current_rp_id()`), `LIVE_GRANT_EXISTS` the time (`clock()`). They must agree with the two
+#: methods — test_admin_ownership_recovery pins the agreement over fixture accounts. `passkeys`
+#: is referenced unconditionally: Store creates it with the rest of the schema on every open
+#: (store.py SCHEMA_V4); `step_up`'s OperationalError guard predates that.
+SECOND_FACTOR_EXISTS = ("(EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id={u} AND t.confirmed_at IS NOT NULL) "
+                        "OR EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id={u} AND p.uv_capable=1 "
+                        "AND p.deleted_at IS NULL AND p.rp_id=?))")
+LIVE_GRANT_EXISTS = ("EXISTS (SELECT 1 FROM platform_role_grants g WHERE g.user_id={u} AND g.revoked_at IS NULL "
+                     "AND (g.expires_at IS NULL OR g.expires_at>?))")
+
 REASON_MIN, REASON_MAX = 8, 500
 
 #: Reasons the service writes itself (host grants, reconciliation, deletion). Fixed sentences,
@@ -354,6 +368,12 @@ class PlatformAccess:
                 # a second factor the admin second-factor policy accepts (A11): a TOTP app or a
                 # user-verifying passkey; the password alone is one factor however often re-entered
                 "second_factor": totp or passkey}
+
+    def has_second_factor(self, uid: str) -> bool:
+        """The product's one rule for "this account has a second factor": `step_up()["second_factor"]`
+        — a confirmed TOTP authenticator or a user-verifying passkey bound to the current RP ID, what
+        the administrator second-factor policy (A11) accepts and what an owner's step-up can use."""
+        return self.step_up(uid)["second_factor"]
 
     def usable_super_admins(self, *, excluding: str | None = None) -> list[dict]:
         """Currently capable highest administrators; offer-linked grants must also be ready.

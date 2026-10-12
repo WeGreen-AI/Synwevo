@@ -914,3 +914,10 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 测试：账户服务目录 3 项 + 集成比对 2 项 + 两应用源码扫描 3 项通过（17:36Z）；账户前端 typecheck 与 node 测试通过；根 typecheck/build 通过，六个前端工作区 615 项 node 测试通过（17:37Z）。
 
 推送前完整根套件（WP7–WP11 树 221a59b6，三个套件一次运行）：**5848 通过、0 失败、2 跳过**（17:45Z–18:07Z，`scratchpad/a13/g26wp7to11-full.log`）；五守卫 + 图标检查通过（17:45Z）。
+
+## 2026-10-12 CR-120 A37 平台受控所有权恢复（本地）
+
+测试：`services/identity/tests/test_admin_ownership_recovery.py` 34 项 + 相关 161 项（test_admin_ownership / test_admin / test_org_roles / test_admin_governance / test_org_audit / test_organizations）= 195 通过（后端子代理，18:05Z 前后）；账户前端 `npm test` 183 项通过（含新 `admin-ownership.test.mjs` 5 项与 refusals 放置表）、根 typecheck/build 通过（18:15Z）；五守卫 + 图标检查通过（18:16Z）。
+账户服务 + 集成套件（`services/identity/tests tests/integration`，18:14Z–18:23Z）：2999 通过 / 1 失败——`test_platform_access.py::test_every_admin_route_is_in_the_matrix` 要求新路由写明权限，已把三条路由加入矩阵（清单 `platform.workspaces.view`、两条交接各自对象的 manage 权限 + 严格重认证），该文件重跑 48 项通过（18:25Z）。
+
+对抗性审查（只读子代理，18:14Z–18:27Z，8 个探针）：SQL 资格与 D11 一致、事务/竞态/审计同事务、授权与步进、错误契约、测试非同义反复、前端门控与样式类、目录均无缺陷；发现并已修正——(1) 第二因素判定改为与 A11 同一的 `PlatformAccess.has_second_factor`（TOTP 或可验证用户的安全密钥，原实现仅 TOTP）；(2) 候选人列表无界 N+1 → 每个孤儿一条查询（`platform_access.SECOND_FACTOR_EXISTS` / `LIVE_GRANT_EXISTS` 片段 + 一致性测试）、封顶 100 位、`candidates_total`；(3) 补工作空间路径审计失败回滚测试；(4) 组织路由前置 `not_recoverable` 检查与工作空间路由同序；(6) 结果提示二次翻译、审计页组织范围快捷项。修正后定向 225 项通过（新文件 38 项，18:33Z）；账户前端 183 项、根 typecheck/build、六个前端工作区 620 项 node 测试、五守卫 + 图标检查通过（18:37Z）。完整根套件（最终树，三个套件一次运行，18:37Z–19:00Z，`scratchpad/a13/a37-full.log`）：**5886 通过、0 失败、2 跳过**。

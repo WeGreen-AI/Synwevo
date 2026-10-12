@@ -13,6 +13,7 @@ SCOPES: dict[str, dict[str, str]] = {
     "access": {"zh-Hans": "被拒绝的管理请求", "zh-Hant": "被拒絕的管理請求", "en": "Refused administration requests"},
     "user": {"zh-Hans": "账户管理", "zh-Hant": "帳戶管理", "en": "Account administration"},
     "workspace": {"zh-Hans": "工作空间管理", "zh-Hant": "工作空間管理", "en": "Workspace administration"},
+    "organization": {"zh-Hans": "组织管理", "zh-Hant": "組織管理", "en": "Organization administration"},
     "platform": {"zh-Hans": "平台权限", "zh-Hant": "平台權限", "en": "Platform permissions"},
     "config": {"zh-Hans": "平台配置与安全策略", "zh-Hant": "平台設定與安全策略", "en": "Platform settings and security policy"},
     "mail": {"zh-Hans": "邮件与通知", "zh-Hant": "郵件與通知", "en": "Mail and notifications"},
@@ -52,6 +53,7 @@ ADMIN_ACTIONS: dict[str, dict] = {
     "admin.model_risk.suspension_lift": _a("model", "解除付费风险暂停", "解除付費風險暫停", "Lift a billing-risk suspension"),
     "admin.model_risk.upstream_topup": _a("model", "记录上游充值", "記錄上游儲值", "Record an upstream top-up"),
     "admin.notification.recover_enqueue": _a("mail", "补发通知邮件", "補發通知郵件", "Re-enqueue a notification mail"),
+    "admin.organization.recover_owner": _a("organization", "恢复组织所有者", "恢復組織所有者", "Recover an organization's owner"),
     "admin.platform.grant": _a("platform", "授予平台角色", "授予平台角色", "Grant a platform role"),
     "admin.platform.operator_cleared": _a("platform", "清除已停用的运维角色", "清除已停用的運維角色", "Clear the retired operator role"),
     "admin.platform.revoke": _a("platform", "撤销平台角色", "撤銷平台角色", "Revoke a platform role"),
@@ -72,6 +74,7 @@ ADMIN_ACTIONS: dict[str, dict] = {
     "admin.user.status": _a("user", "停用或恢复账户", "停用或恢復帳戶", "Suspend or restore an account"),
     "admin.workspace.claim": _a("workspace", "指派历史数据", "指派歷史資料", "Assign the historical data"),
     "admin.workspace.freeze": _a("workspace", "冻结工作空间", "凍結工作空間", "Freeze a workspace"),
+    "admin.workspace.recover_owner": _a("workspace", "恢复工作空间所有者", "恢復工作空間所有者", "Recover a workspace's owner"),
     "admin.workspace.unclaim": _a("workspace", "撤销历史数据指派", "撤銷歷史資料指派", "Undo the historical-data assignment"),
     "admin.workspace.unfreeze": _a("workspace", "解冻工作空间", "解凍工作空間", "Unfreeze a workspace"),
 }

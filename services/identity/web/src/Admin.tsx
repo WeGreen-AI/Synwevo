@@ -9,6 +9,7 @@ import { SettingsTab } from "./governance/SettingsTab";
 import { AppRunsTab, FlowRunsTab } from "./governance/RunsTab";
 import { SuperAdminOffersAdmin, SuperAdminReadiness } from "./governance/SuperAdminHandover";
 import { MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
+import { OwnershipRecovery } from "./governance/OwnershipRecovery";
 import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
 import { auditChanges } from "./governance/audit";
 import { PlatformAccessDialog, PlatformAdminsTab, platformRoleLabel, platformRolesText, ROLE_ORDER, systemReasonText } from "./governance/PlatformAccess";
@@ -424,7 +425,7 @@ function WorkspacesTab({ onDenied, held }: { onDenied: () => void; held: Held })
   const { me } = useSession();
   const manage = permitted(held, "platform.workspaces.manage");
   const items = loading || err ? [] : data?.items || [];
-  return <section className="card card-b col gap12">
+  return <><section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{tr("工作空间")}</h2><input className="input" type="search" aria-label={tr("搜索工作空间")} value={q} maxLength={100} onChange={(e) => setQ(e.target.value)} />
       <button className="btn sm" disabled={loading} onClick={reload}>{tr("刷新工作空间")}</button></div>
     <p className="muted small">{tr("只显示数量，不显示内容；平台管理权限不包含读取文档或管理工作空间成员。")}</p>
@@ -446,7 +447,9 @@ function WorkspacesTab({ onDenied, held }: { onDenied: () => void; held: Held })
       impact={<>「{action.name}」：{action.status === "active" ? tr("成员将立即失去应用访问，当前会话将移出这个工作空间。成员关系和内容保留。") : tr("工作空间将恢复可用，成员仍按原有资格访问。此前结束的登录不会恢复。")}</>}
       run={(reason) => post<{ restore_note?: string; status: string }>(`/api/admin/workspaces/${encodeURIComponent(action.id)}/${action.status === "active" ? "freeze" : "unfreeze"}`, { reason })}
       onClose={() => setAction(null)} onDone={(r) => { setAction(null); reload(); setNotice(r.status === "frozen" ? tr("工作空间已冻结。") : tr("工作空间已解冻。若之后恢复更早的备份，冻结可能重新生效，需要再次解冻。")); }} />}
-  </section>;
+  </section>
+  {/* A37: the workspaces without a usable owner, and the handover to one of their members */}
+  <OwnershipRecovery kind="workspace" held={held} onDenied={onDenied} onChanged={reload} /></>;
 }
 
 type CatalogueItem = { code: string; scope: string; label: Record<string, string> };

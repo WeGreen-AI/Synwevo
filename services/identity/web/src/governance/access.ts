@@ -64,7 +64,7 @@ export function userOffers(held: Held, user: UserRow, meId: string | undefined) 
 /** The audit log's action scopes: a prefix and its label. `admin.platform.` and `admin.access.`
  *  are the platform-access records (grants, revocations, denied attempts). */
 export const AUDIT_SCOPES: [string, string][] = [
-  ["", "全部操作"], ["admin.user.", "账户管理"], ["admin.workspace.", "工作空间管理"],
+  ["", "全部操作"], ["admin.user.", "账户管理"], ["admin.workspace.", "工作空间管理"], ["admin.organization.", "组织管理"],
   ["admin.platform.", "平台权限"], ["admin.access.", "被拒绝的管理请求"],
   ["auth.", "登录与账户安全"], ["member.", "成员管理"], ["invite.", "邀请"], ["mfa.", "两步验证"],
   // The applications' own rows (G26, D7 §9): every Synwevo Docs change, every workplace-application

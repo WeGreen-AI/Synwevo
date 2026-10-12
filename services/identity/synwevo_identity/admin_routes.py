@@ -55,7 +55,11 @@ TIMELINE_LIMIT = 50
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, mailer=None) -> APIRouter:
     r = APIRouter(prefix="/api/admin", tags=["admin"])
     from .admin_notification_recovery import build_router as build_notification_recovery_router
+    from .admin_ownership import build_router as build_ownership_recovery_router
     r.include_router(build_notification_recovery_router(store, audit))
+    # Before this router's own routes: its `/organizations/{oid}/recover-owner` must be matched
+    # ahead of the generic `/organizations/{oid}/{action}` declared below (A37).
+    r.include_router(build_ownership_recovery_router(store, ident, audit))
 
     def _admin(request: Request, permission=_UNNAMED, *, dangerous: bool = False,
                step_up: bool = True) -> dict:

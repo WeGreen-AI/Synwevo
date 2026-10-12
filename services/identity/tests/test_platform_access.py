@@ -64,8 +64,13 @@ ROUTES = [
     ("POST", "/api/admin/workspaces/{wid}/unclaim", "platform.workspaces.claim", True),
     ("POST", "/api/admin/workspaces/{wid}/freeze", "platform.workspaces.manage", True),
     ("POST", "/api/admin/workspaces/{wid}/unfreeze", "platform.workspaces.manage", True),
+    # A37: the orphan list reads with both view permissions (checked in this order); the handovers
+    # are the object's manage permission and the strict re-authentication (admin_ownership.py).
+    ("GET", "/api/admin/ownership/orphans", "platform.workspaces.view", False),
+    ("POST", "/api/admin/workspaces/{wid}/recover-owner", "platform.workspaces.manage", True),
     ("GET", "/api/admin/organizations", "platform.orgs.view", False),
     ("POST", "/api/admin/organizations/{oid}/{action}", "platform.orgs.manage", True),
+    ("POST", "/api/admin/organizations/{oid}/recover-owner", "platform.orgs.manage", True),
     ("GET", "/api/admin/super-admin-offers", "platform.roles.assign_super", False),
     ("POST", "/api/admin/super-admin-offers/preview", "platform.roles.assign_super", False),
     ("POST", "/api/admin/super-admin-offers", "platform.roles.assign_super", True),

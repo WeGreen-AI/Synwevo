@@ -5,6 +5,7 @@ import { refusalText } from "../lib/refusals";
 import "./messages";
 import "./platform.messages";
 import "./account-operations.messages";
+import "./ownership.messages";
 export { ROLES, ROLE_RANK, canExport, isAbort } from "../lib/labels";
 export type { Role } from "../lib/labels";
 // Read translations at render time; imported enum labels must not freeze the initial locale.
@@ -75,6 +76,16 @@ const errors: Record<string, string> = {
   already_invited: "已有待接受的邀请。", invite_not_pending: "邀请已接受或已撤销，请刷新。",
   self_change: "不能修改自己的权限，请使用退出工作空间或移交所有权",
   cannot_manage: "不能管理同级或更高角色的成员", not_claimable: "该工作空间已被认领或不能认领，请刷新。",
+  // A37: the platform-controlled ownership handover (…/recover-owner), by code; the server's own
+  // catalogued sentence is preferred where it has one (lib/refusals.ts).
+  owner_present: "这里已经有有效的拥有者，不需要指定；请刷新清单。",
+  not_recoverable: "这里当前不能由平台指定拥有者：待认领、已删除，或是只剩本人的个人空间。",
+  target_unavailable: "所选账户不是这里的成员，或账户已停用、已删除；请刷新后重新选择。",
+  not_organization_member: "所选账户已不在这个工作空间所属的组织，不能成为拥有者。",
+  successor_second_factor_required: "所选账户尚未启用第二因素，不能成为拥有者。",
+  self_assignment: "不能指定自己，请由另一位管理员操作。",
+  target_is_platform_admin: "所选账户持有平台权限：平台管理与业务数据须由不同账户持有。",
+  missing_user: "请选择一位成员。",
 };
 /** One item of a batch the server refused: its sentence when catalogued, else this page's wording
  *  for its code (lib/refusals.ts) — a mixed batch answers 200, so the item carries no status. */

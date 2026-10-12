@@ -19,6 +19,10 @@ from .store import Store, new_id, now
 
 ROLES = ("member", "admin", "owner")
 RECOVERY_SECONDS = 7 * 24 * 3600
+#: An organization owner who can act (`_keep_owner`'s rule, shared with the platform's orphan list
+#: and `recover_owner`): the membership's role is owner and the account is active and undeleted.
+#: Written against the aliases `m` (organization_memberships) and `u` (users).
+USABLE_OWNER_CONDITION = "m.role='owner' AND u.status='active' AND u.deleted_at IS NULL"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS organizations (
@@ -473,6 +477,56 @@ class Organizations:
                                "WHERE organization_id=? AND user_id=?", (now(), oid, actor_id))
             self._revoke_invites(oid, actor_id)
             return self.get(oid, actor_id)
+
+    def usable_owners(self, oid):
+        """The owners of `oid` who can act (USABLE_OWNER_CONDITION): `{user_id, email, status}` rows,
+        empty for an orphaned organization. Joins an enclosing `store.tx()`."""
+        return self.store.all(
+            "SELECT m.user_id, u.email, u.status FROM organization_memberships m JOIN users u ON u.id=m.user_id "
+            f"WHERE m.organization_id=? AND {USABLE_OWNER_CONDITION} ORDER BY m.created_at, m.user_id", (oid,))
+
+    def recover_owner(self, oid, uid, *, actor_id, reason):
+        """Name an existing member owner of an organization that has no usable owner (A37).
+
+        `transfer` is an owner's act; this is the platform's, run by `actor_id` (a platform
+        administrator who is not a member and gains no membership, workspace access or
+        entitlement here). Frozen and recoverable organizations still need stewards; one deleted
+        past `recover_until` is out of scope. In one transaction, in this order: 404
+        `no_organization`, 409 `not_recoverable`, 409 `owner_present` (checked here under the
+        write lock, so two concurrent recoveries end with one owner), 409 `target_unavailable`
+        (not a member, or the account is not active or is deleted), 409
+        `successor_second_factor_required` (`PlatformAccess.has_second_factor`: a confirmed TOTP
+        authenticator or a user-verifying passkey bound to the current RP ID — the product's
+        second-factor rule, the same the workspace recovery applies). Then the organization's
+        own audit record (`organization.owner.recover`,
+        as `transfer` records itself) and the role write. Returns
+        `{"organization_id", "to", "previous_role", "unusable_owners"}`.
+        """
+        reason = audit_reason(reason)
+        with self.store.tx():
+            org = self.store.one("SELECT id,status,recover_until FROM organizations WHERE id=?", (oid,))
+            if not org:
+                raise ServiceError(404, "no_organization", "找不到该组织")
+            if org["status"] == "deleted" and (org["recover_until"] is None or org["recover_until"] <= now()):
+                raise ServiceError(409, "not_recoverable", "该组织已删除且恢复期限已过")
+            if self.usable_owners(oid):
+                raise ServiceError(409, "owner_present", "该组织已有可用的所有者，无需平台恢复")
+            unusable = self.store.one("SELECT COUNT(*) AS n FROM organization_memberships "
+                                      "WHERE organization_id=? AND role='owner'", (oid,))["n"]
+            target = self.store.one(
+                "SELECT m.role, u.status, u.deleted_at FROM organization_memberships m JOIN users u ON u.id=m.user_id "
+                "WHERE m.organization_id=? AND m.user_id=?", (oid, uid))
+            if not target or target["status"] != "active" or target["deleted_at"]:
+                raise ServiceError(409, "target_unavailable", "接收人必须是这个组织里账户状态正常的成员")
+            from .platform_access import PlatformAccess
+            if not PlatformAccess(self.store).has_second_factor(uid):
+                raise ServiceError(409, "successor_second_factor_required",
+                                   "接收人需要先登记第二因素（动态验证码或安全密钥），所有者的操作需要它来确认身份")
+            self._record(actor_id, oid, "organization.owner.recover",
+                         {"user_id": uid, "before": target["role"], "after": "owner", "reason": reason})
+            self.store.execute("UPDATE organization_memberships SET role='owner',updated_at=? "
+                               "WHERE organization_id=? AND user_id=?", (now(), oid, uid))
+            return {"organization_id": oid, "to": uid, "previous_role": target["role"], "unusable_owners": unusable}
 
     def _revoke_workspace_authority(self, oid, uid=None):
         ts = now()

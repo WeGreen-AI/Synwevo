@@ -5,6 +5,7 @@ import { useDebounced } from "../lib/hooks";
 import { useAdminData, useAdminPage } from "./data";
 import { ActionDialog } from "./ActionDialog";
 import { NotificationRecovery } from "./NotificationRecovery";
+import { OwnershipRecovery } from "./OwnershipRecovery";
 import { PageControls } from "./ListControls";
 import { MAIL_STATE, fmtDuration } from "./labels";
 import { permitted, type Held } from "./access";
@@ -154,7 +155,7 @@ export function OrganizationsTab({ onDenied, held }: Props) {
   const toast = useToast();
   const names: Record<string, string> = { active: t("正常"), frozen: t("已冻结"), deleted: t("已删除") };
   const actions: Record<string, string> = { freeze: t("冻结组织"), unfreeze: t("解冻组织"), delete: t("删除组织"), recover: t("恢复组织") };
-  return <section className="card card-b col gap12">
+  return <><section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{t("组织治理")}</h2><button className="btn sm" onClick={load.reload} disabled={load.loading}>{t("刷新")}</button></div>
     <p className="muted">{t("平台管理员可查看组织元数据与数量。只有组织所有者可执行生命周期操作；平台管理不会授予成员身份或业务文档访问权。")}</p>
     {manage.hint && <p className="notice" role="note">{t("你的平台角色可以查看组织，但不能在管理后台执行组织的生命周期操作。")}</p>}
@@ -172,7 +173,9 @@ export function OrganizationsTab({ onDenied, held }: Props) {
       impact={<><b>{action.org.name}</b><p>{action.kind === "delete" ? t("组织将停止使用，并保留七天恢复期限。所属工作空间的访问会被收回，内容不会因此提供给管理员。") : action.kind === "freeze" ? t("组织及其工作空间将停止应用访问，已有会话和令牌会被撤销。") : t("组织将按原有成员关系恢复可用。已撤销的会话和令牌不会恢复；删除前已冻结的组织恢复后仍为冻结状态。")}</p></>}
       run={reason => post(`/api/admin/organizations/${encodeURIComponent(action.org.id)}/${action.kind}`, { reason })}
       onClose={() => setAction(null)} onDone={() => { setAction(null); load.reload(); toast(t("组织状态已更新"), "ok"); }} />}
-  </section>;
+  </section>
+  {/* A37: the organizations without a usable owner, and the handover to one of their members */}
+  <OwnershipRecovery kind="organization" held={held} onDenied={onDenied} onChanged={load.reload} /></>;
 }
 
 /** Admin coverage G19: the throttles the server holds (`auth_attempts`), and their release. */

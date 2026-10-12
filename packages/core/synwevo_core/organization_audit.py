@@ -33,7 +33,7 @@ CATEGORIES = {
     "organization": ("organization.create", "organization.update", "organization.transfer", "organization.freeze",
                      "organization.unfreeze", "organization.delete", "organization.recover", "organization.avatar.",
                      "organization.workspace."),
-    "members": ("organization.member.", "member.", "workspace.ownership.", "workspace.owner."),
+    "members": ("organization.member.", "organization.owner.", "member.", "workspace.ownership.", "workspace.owner."),
     "invitations": ("invite.",),
     "roles": ("organization.role.", "organization.roles_assigned"),
     "imports": ("organization.member_import.",),

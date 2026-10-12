@@ -19,6 +19,8 @@ type Category = "" | "organization" | "members" | "invitations" | "roles" | "imp
 const CATEGORY_LABEL: Record<Category, string> = { "": "全部", organization: "组织本身", members: "成员变动", invitations: "邀请记录", roles: "角色", imports: "批量导入", approvals: "审批" };
 const ACTION_LABEL: Record<string, string> = {
   "organization.create": "创建了组织", "organization.update": "修改了组织设置", "organization.transfer": "交接了组织所有权",
+  // A37: a platform administrator named an existing member owner because no owner could act
+  "organization.owner.recover": "由平台指定了组织所有者",
   "organization.freeze": "冻结了组织", "organization.unfreeze": "解冻了组织", "organization.delete": "删除了组织", "organization.recover": "恢复了组织",
   "organization.avatar.update": "更换了组织头像", "organization.avatar.remove": "移除了组织头像",
   "organization.workspace.create": "创建了工作空间", "organization.workspace.adopt": "把工作空间纳入组织",

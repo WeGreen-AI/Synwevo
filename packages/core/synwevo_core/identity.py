@@ -44,6 +44,17 @@ ATTEMPT_IDLE_S = 24 * 3600
 ATTEMPT_SWEEP_EVERY_S = 60
 _LAST_ATTEMPT_SWEEP = float("-inf")
 
+#: A workspace owner who can actually act — the governance-continuity rule (D11) as one SQL
+#: condition, so the strand check, the orphan list and the recovery's own `owner_present` check
+#: cannot drift apart: the membership's role is owner, the account is active and undeleted and,
+#: for a workspace attached to an organization, a current organization membership exists. Written
+#: against the aliases `m` (memberships), `u` (users) and `w` (workspaces); a caller's outer query
+#: may supply `w` (`Identity.usable_owners` joins it itself).
+USABLE_OWNER_CONDITION = (
+    "m.role='owner' AND u.status='active' AND u.deleted_at IS NULL "
+    "AND (w.organization_id IS NULL OR EXISTS (SELECT 1 FROM organization_memberships om "
+    "WHERE om.organization_id=w.organization_id AND om.user_id=m.user_id))")
+
 
 def throttle_id(bucket: str) -> str:
     """The opaque handle administration acts on: a bucket name may carry a source address or
@@ -671,6 +682,75 @@ class Identity:
                           (demote_self_to, 0 if demote_self_to == "viewer" else 1, ts, wid, from_uid))
         return {"from": from_uid, "to": to_uid, "target_previous_role": target["role"],
                 "self_role": demote_self_to or "owner"}
+
+    def usable_owners(self, wid: str) -> list[dict]:
+        """The owners of `wid` who can act (USABLE_OWNER_CONDITION): `{user_id, email, status}` rows.
+
+        Empty for an orphaned workspace. Reads through `store.all`, which joins an enclosing
+        `store.tx()`: the platform's orphan list and `recover_ownership`'s in-transaction
+        `owner_present` check are this one query.
+        """
+        return self.store.all(
+            "SELECT m.user_id, u.email, u.status FROM memberships m JOIN users u ON u.id=m.user_id "
+            f"JOIN workspaces w ON w.id=m.workspace_id WHERE m.workspace_id=? AND {USABLE_OWNER_CONDITION} "
+            "ORDER BY m.created_at, m.user_id", (wid,))
+
+    def recover_ownership(self, wid: str, to_uid: str) -> dict:
+        """Name an existing member owner of a workspace that has no usable owner (A37).
+
+        `transfer_ownership` is an owner's act. This is the platform's, for the workspaces where
+        nobody can act any more — the only owner suspended before the strand check existed, an
+        owner who left the organization, operator data — and it is the same write: role owner,
+        can_export 1, nothing else. No membership, entitlement or token is created for anyone,
+        least of all for the administrator who ran it: the caller (the platform route) decides
+        recoverability, step-up, reason and audit; this method holds the invariants that must be
+        true at the moment of the write, inside one transaction, in this order:
+
+        * `owner_present` — a usable owner exists (`usable_owners`). Checked here, under the write
+          lock, however old the list the administrator chose from: two concurrent recoveries
+          naming two members end with one owner, not two.
+        * `target_unavailable` — not a member of this workspace, or the account is not active
+          or is deleted (`transfer_ownership`'s rule: ownership handed to someone who cannot sign
+          in is the same as no owner).
+        * `not_organization_member` — the workspace is attached to an organization and the
+          target is not a current member of it (the membership would be an owner row that the
+          organization gate refuses, exactly the orphan this repairs).
+        * `successor_second_factor_required` — the target has no second factor. The predicate is
+          the product's own, `PlatformAccess.has_second_factor` (`step_up()["second_factor"]`): a
+          confirmed TOTP authenticator or a user-verifying passkey bound to the current RP ID —
+          what the administrator second-factor policy (A11) accepts, and what an owner's
+          step-up can be completed with. (Not `Identity.has_second_factor`, which is the
+          password sign-in's TOTP-only question.)
+
+        Returns `{"workspace_id", "to", "previous_role", "unusable_owners"}` — the last is the
+        count of owner rows that could not act, for the caller's audit record.
+        """
+        ts = now()
+        with self.store.tx() as t:
+            ws = t.execute("SELECT id, organization_id FROM workspaces WHERE id=? AND deleted_at IS NULL",
+                           (wid,)).fetchone()
+            if not ws:
+                raise ServiceError(404, "no_workspace", "找不到该工作空间")
+            if self.usable_owners(wid):
+                raise ServiceError(409, "owner_present", "该工作空间已有可用的所有者，无需平台恢复")
+            unusable = t.execute("SELECT COUNT(*) AS n FROM memberships WHERE workspace_id=? AND role='owner'",
+                                 (wid,)).fetchone()["n"]
+            target = t.execute(
+                "SELECT m.role, u.status, u.deleted_at FROM memberships m JOIN users u ON u.id=m.user_id "
+                "WHERE m.workspace_id=? AND m.user_id=?", (wid, to_uid)).fetchone()
+            if not target or target["status"] != "active" or target["deleted_at"]:
+                raise ServiceError(409, "target_unavailable", "接收人必须是这个空间里账户状态正常的成员")
+            if ws["organization_id"] and not t.execute(
+                    "SELECT 1 FROM organization_memberships WHERE organization_id=? AND user_id=?",
+                    (ws["organization_id"], to_uid)).fetchone():
+                raise ServiceError(409, "not_organization_member", "接收人必须是该工作空间所属组织的现任成员")
+            from .platform_access import PlatformAccess
+            if not PlatformAccess(self.store).has_second_factor(to_uid):
+                raise ServiceError(409, "successor_second_factor_required",
+                                   "接收人需要先登记第二因素（动态验证码或安全密钥），所有者的操作需要它来确认身份")
+            t.execute("UPDATE memberships SET role='owner', can_export=1, updated_at=? "
+                      "WHERE workspace_id=? AND user_id=?", (ts, wid, to_uid))
+        return {"workspace_id": wid, "to": to_uid, "previous_role": target["role"], "unusable_owners": unusable}
 
     def list_members(self, wid: str, *, q: str = "", role: str | None = None, status: str | None = None,
                      app_id: str = "docweave", entitlement: str | None = None,

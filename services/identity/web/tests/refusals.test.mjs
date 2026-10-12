@@ -50,6 +50,8 @@ const SERVER = [
   { file: ID + "admin_routes.py", surfaces: ["admin"] },
   { file: ID + "admin_operations.py", surfaces: ["admin"] },
   { file: ID + "admin_notification_recovery.py", surfaces: ["admin"] },
+  // A37: the orphan list and the platform-controlled ownership handover (governance/OwnershipRecovery.tsx)
+  { file: ID + "admin_ownership.py", surfaces: ["admin"] },
   { file: ID + "ownership.py", surfaces: ["account", "admin"] },
   { file: ID + "admin_settings.py", surfaces: ["admin"] },
   { file: ID + "admin_model_prices.py", surfaces: ["admin"] },
@@ -121,9 +123,12 @@ const SERVER = [
   { file: CORE + "identity.py", fns: ["add_member"], surfaces: ["signin", "admin"] },
   { file: CORE + "identity.py", fns: ["set_status", "set_workspace_frozen"], surfaces: ["admin"] },
   { file: CORE + "identity.py", fns: ["create_workspace"], surfaces: ["org"] },
+  // A37: the platform-controlled ownership handover is reached from the administration page only
+  { file: CORE + "identity.py", fns: ["recover_ownership", "usable_owners"], surfaces: ["admin"] },
   { file: CORE + "identity.py", surfaces: ["members"] },
   { file: CORE + "organizations.py", fns: ["accept_workspace_invitation"], surfaces: ["signin"] },
   { file: CORE + "organizations.py", fns: ["require_invitation_permission"], surfaces: ["members", "org"] },
+  { file: CORE + "organizations.py", fns: ["recover_owner", "usable_owners"], surfaces: ["admin"] },
   { file: CORE + "organizations.py", surfaces: ["org"] },
   { file: CORE + "org_roles.py", surfaces: ["org"] },
   { file: CORE + "data_flow.py", surfaces: [], why: "transfer refusals are met in the business applications (Agent, Forms, flows), which word them; the organization page reaches only the cap setter, after Organizations.update has refused an invalid value in its own words" },
