@@ -400,8 +400,10 @@ class App:
         t = now()
         scanning = self.scanner is not None
         # The row, its place in the order, the representative choice and the audit row commit
-        # together (G26 / D7); the scan or parse starts once they are committed, so a worker
-        # never looks for a row its own connection cannot see yet.
+        # together (G26 / D7). The parse or scan is submitted as soon as this block ends, as
+        # before: the worker itself waits for the creator's commit or rollback (an enclosing
+        # idempotency transaction may still be open — test_idempotency_durability), so it must
+        # not be deferred to an after-commit hook that a rolled-back creator would never run.
         with self.store.tx():
             mx = self.store.one("SELECT MAX(ord) AS m FROM source_files WHERE project_id=?", (pid,))["m"] or 0
             self.store.insert("source_files", {"id": sid, "project_id": pid, "filename": filename, "ord": mx + 1, "blob": blob,
@@ -415,7 +417,7 @@ class App:
             self.store.bump_project(pid)
             self.audit("source.add", "source", sid, project_id=pid, size=len(data), ord=mx + 1, representative=not has_rep,
                        scan="pending" if scanning else "not_configured")
-            self.store.after_commit(lambda: self.parse_pool.submit(self._scan_then_parse if scanning else self._parse_source, sid))
+        self.parse_pool.submit(self._scan_then_parse if scanning else self._parse_source, sid)
         self._project_changed(pid, "source.add", {"source_id": sid, "name": filename})
         return self.get_source(sid)
 
