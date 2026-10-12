@@ -839,3 +839,8 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 `GET /api/admin/users/{uid}/platform-access/simulate` 算出一次假想授予/撤销前后的角色与权限、新增/失去项与调用者可行性；权限对话框「模拟一次变化」。
 测试：test_platform_access 新增 1 例（授予审计查看：新增其全部权限、可行；对自己授予/撤销最高管理员：self_assignment；撤销未持有角色：not_held；邮箱未验证：不计入、无新增；审计员可读但不可行 platform_permission_denied；授予表未变）；矩阵新增 1 行；account-web 175 通过（新增 2 例）；typecheck/build、五守卫通过。
 浏览器（隔离合成实例 127.0.0.1:33947，系统 Chrome）：Alice 的平台权限对话框 → 「模拟一次变化」授予「审计查看」→ 「你现在可以执行这一变化」与九项将新增权限、不会失去权限 → 撤销「支持」→ 「该账户并未持有这个角色」且无变化 → 英文视图「If “Audit viewer” were granted · You could make this change now.」→ 授予表行数前后相同（2）。证据 `evidence/2026-10-12-admin-permission-simulation/`（browser-report.json、verification.json、2 张截图）。
+
+## 2026-10-12 CR-105 Admin G24 写入与审计同事务（本地）
+
+`account-deletions/finalize` 的扫描与审计改为同一事务；新增故障注入测试：审计行写入失败时 8 条管理写入路由各自返回 ≥500、状态原样、无审计行、故障原文不外泄且带 request_id。源码扫描：直接写审计的 11 条路由与 claim/unclaim 均在事务内。
+测试：test_admin 相关 9 例通过；identity `-k admin` 子集 666 通过；五守卫通过。无界面变化，未做浏览器验收。

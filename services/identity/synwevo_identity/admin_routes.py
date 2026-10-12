@@ -1139,15 +1139,18 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         from .profile import finalize_deletions
         before = deletion_counts(store)
         try:
-            finalized = finalize_deletions(store)
+            # One transaction for the sweep and its audit (G24): a failed audit undoes the sweep,
+            # which the next hourly pass then repeats — never a deletion without its record.
+            with store.tx():
+                finalized = finalize_deletions(store)
+                after = deletion_counts(store)
+                audit(request, "admin.accounts.finalize_deletions", actor_id=actor["id"], object_kind="platform",
+                      object_id="account_deletions", result="ok",
+                      meta={"reason": reason, "finalized": finalized, "before": before, "after": after})
         except Exception as e:  # noqa: BLE001 - the sweep's failure is what this route reports
             audit(request, "admin.accounts.finalize_deletions", actor_id=actor["id"], object_kind="platform",
                   object_id="account_deletions", result="error", meta={"reason": reason, "code": type(e).__name__})
             raise ServiceError(503, "finalize_failed", "到期删除未能完成，已记录失败；请查看服务日志后重试") from e
-        after = deletion_counts(store)
-        audit(request, "admin.accounts.finalize_deletions", actor_id=actor["id"], object_kind="platform",
-              object_id="account_deletions", result="ok",
-              meta={"reason": reason, "finalized": finalized, "before": before, "after": after})
         return {"ok": True, "finalized": finalized, "before": before, "after": after}
 
     ACCESS_GATES = ("account", "application", "membership", "workspace", "organization", "workspace_app", "entitlement")

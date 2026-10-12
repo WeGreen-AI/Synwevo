@@ -990,3 +990,83 @@ def test_every_admin_audit_action_is_catalogued_in_three_languages(env):
     assert [i["code"] for i in body["items"]] == sorted(ADMIN_ACTIONS) and {s["id"] for s in body["scopes"]} == set(SCOPES)
     assert next(i for i in body["items"] if i["code"] == "admin.workspace.claim")["label"]["en"] == "Assign the historical data"
     assert env["plain"].get("/api/admin/audit/actions").status_code == 404
+
+
+def _audit_insert_fails(monkeypatch, action):
+    """The audit row of `action` cannot be written (a disk or lock failure at that moment): the
+    administration write it belongs to must not survive on its own (G24)."""
+    from synwevo_core.store import Store
+    original = Store.execute
+
+    def failing(store, sql, args=()):
+        if sql.startswith("INSERT INTO audit_events") and action in args and "ok" in args:
+            raise OSError("fixture: audit storage unavailable")
+        return original(store, sql, args)
+    monkeypatch.setattr(Store, "execute", failing)
+    return lambda: monkeypatch.setattr(Store, "execute", original)
+
+
+@pytest.mark.parametrize("route", ["revoke_sessions", "throttle_lift", "second_factor", "registration", "push_revoke",
+                                   "cancellation_mail", "finalize_deletions", "claim"])
+def test_an_administration_write_is_undone_when_its_audit_cannot_be_written(env, monkeypatch, tmp_path, route):
+    """G24: the write and its audit commit together. With the audit insert failing, each route
+    answers an error, leaves the state exactly as it was, and records nothing."""
+    import json
+    import pyotp
+    from synwevo_core.push import PushSubscriptions
+    c, store, ident, alice, api = env["c"], env["store"], env["ident"], env["alice"], env["api"]
+    monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "http://testserver")
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
+    monkeypatch.setenv("SYNWEVO_MAIL_DIR", str(tmp_path / "fixture-mail"))
+    monkeypatch.setenv("SYNWEVO_REGISTRATION", "invite")
+    _reauth(c)
+    if route == "revoke_sessions":
+        action, path, body = "admin.user.revoke_sessions", f"/api/admin/users/{alice['id']}/revoke-sessions", {"reason": "审计不可用时撤销会话不得生效"}
+        state = lambda: env["plain"].get("/api/auth/me").status_code  # noqa: E731
+    elif route == "throttle_lift":
+        stranger = TestClient(api)
+        for _ in range(3):
+            post(stranger, "/api/auth/login", {"email": "alice@example.com", "password": "not-the-passphrase"})
+        handle = c.get(f"/api/admin/users/{alice['id']}").json()["backoff"]["throttle_id"]
+        action, path, body = "admin.security.throttle_lift", "/api/admin/security/throttles/lift", {"id": handle, "reason": "审计不可用时解除限流不得生效"}
+        state = lambda: store.one("SELECT count FROM auth_attempts WHERE bucket=?", ("user:" + ident.get_user(alice["id"])["email_key"],))  # noqa: E731
+    elif route == "second_factor":
+        assert post(c, "/api/auth/mfa/reauth", {"password": PW}).status_code == 200
+        secret = post(c, "/api/auth/mfa/totp/begin").json()["secret"]
+        assert post(c, "/api/auth/mfa/totp/confirm", {"code": pyotp.TOTP(secret).now()}).status_code == 200
+        _reauth(c)
+        action, path, body = "admin.security.second_factor", "/api/admin/security/second-factor", {"mode": "required", "expected_mode": "off", "reason": "审计不可用时策略不得改变"}
+        state = lambda: c.get("/api/admin/security/second-factor").json()["mode"]  # noqa: E731
+    elif route == "registration":
+        action, path, body = "admin.registration.update", "/api/admin/registration", {"mode": "open", "expected_mode": "invite", "reason": "审计不可用时注册策略不得改变"}
+        state = lambda: c.get("/api/admin/registration").json()["mode"]  # noqa: E731
+    elif route == "push_revoke":
+        import base64
+        b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()  # noqa: E731
+        PushSubscriptions(store).add(alice["id"], None, {"endpoint": "https://push.example.test/fixture-g24", "keys": {"p256dh": b64(b"\x04" + b"\x01" * 64), "auth": b64(b"\x02" * 16)}})
+        action, path, body = "admin.user.push_revoke", f"/api/admin/users/{alice['id']}/push-subscriptions/revoke", {"reason": "审计不可用时推送撤销不得生效"}
+        state = lambda: len(PushSubscriptions(store).list_for(alice["id"]))  # noqa: E731
+    elif route in ("cancellation_mail", "finalize_deletions"):
+        assert post(env["plain"], "/api/auth/deletion", {"password": PW}).status_code == 200
+        store.execute("UPDATE account_recoveries SET created_at=created_at-120 WHERE user_id=?", (alice["id"],))
+        if route == "cancellation_mail":
+            action, path, body = "admin.user.deletion_cancellation_mail", f"/api/admin/users/{alice['id']}/deletion/cancellation-mail", {"reason": "审计不可用时不得发出新链接"}
+            state = lambda: (store.one("SELECT COUNT(*) AS n FROM mail_outbox WHERE kind='account_recovery'")["n"],  # noqa: E731
+                             store.one("SELECT COUNT(*) AS n FROM account_recoveries WHERE used_at IS NULL")["n"])
+        else:
+            store.execute("UPDATE users SET deletion_due_at=? WHERE id=?", (now() - 1, alice["id"]))
+            action, path, body = "admin.accounts.finalize_deletions", "/api/admin/account-deletions/finalize", {"reason": "审计不可用时不得终结删除"}
+            state = lambda: store.one("SELECT status FROM users WHERE id=?", (alice["id"],))["status"]  # noqa: E731
+    else:
+        action, path, body = "admin.workspace.claim", "/api/admin/workspaces/default/claim", {"user_id": alice["id"], "reason": REASON}
+        state = lambda: (ident.get_workspace("default")["status"], store.one("SELECT COUNT(*) AS n FROM memberships WHERE workspace_id='default'")["n"])  # noqa: E731
+    before_state = state()
+    audits_before = store.one("SELECT COUNT(*) AS n FROM audit_events WHERE action=? AND result='ok'", (action,))["n"]
+    restore = _audit_insert_fails(monkeypatch, action)
+    r = post(c, path, body)
+    restore()
+    assert r.status_code >= 500, (route, r.status_code, r.text[:200])
+    assert state() == before_state, route
+    assert store.one("SELECT COUNT(*) AS n FROM audit_events WHERE action=? AND result='ok'", (action,))["n"] == audits_before, route
+    assert "fixture: audit storage unavailable" not in r.text, "the failure's wording never reaches the caller"
+    assert json.loads(r.text).get("request_id"), "the caller gets a request id to quote"

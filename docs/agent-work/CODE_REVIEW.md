@@ -410,3 +410,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：模拟只读：由 `explain()` 的现状、`ROLES` 目录与计入规则（账户被阻、邮箱未验证则新授予不计入）算出前后集合，不写任何表（测试断言授予表行数不变）；可行性复用 `_assign_refusal`（与真实授予/撤销同一拒绝顺序：自我授予规则先于 already_held），再补 already_held / not_held；按设计不模拟业务操作，也不列出无权对象。
 - 风险/未做：`last_super_admin` 分支在正常调用路径里不可达（可用最高管理员对他人模拟时自己就是另一位），保留为防御；业务操作模拟不在范围。
 - 验证：identity 相关 10 例通过；account-web typecheck/175 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-12-admin-permission-simulation。
+
+## CR-105 · Admin G24 写入与审计同事务（2026-10-12，本轮新增，本地已验证）
+
+- 位置：services/identity/synwevo_identity/admin_routes.py `finalize_account_deletions`（扫描与审计放入同一 `store.tx()`，Store 事务可重入；审计失败则回滚终结，由下一轮扫描重做）；services/identity/tests/test_admin.py `_audit_insert_fails` + 参数化测试（8 条路由）。
+- 审查要点：故障注入只针对该动作 result=ok 的审计 INSERT（`Store.execute` 包装，与既有 model provider 测试同法），其余 SQL 照常；断言三件事——响应 ≥500、状态与注入前完全相同（会话仍有效/限流桶仍在/策略不变/订阅仍在/无新邮件且旧链接仍未用/账户仍 pending_delete/空间仍 pending_claim 且无成员）、该动作无新的 ok 审计行；并断言故障原文不进响应、响应含 request_id。源码扫描确认直接写审计的 11 条路由与 claim/unclaim 均在事务内。
+- 风险/未做：统一前后值仍由各路由自定；API 控制台（`api_platform.py`）的事务/审计关系未纳入本测试（其 `mutation()` 有自己的边界测试）；Docs/Suite 的管理写入不在本包。
+- 验证：test_admin 相关 9 例通过；identity `-k admin` 子集 666 通过；五守卫通过。无界面变化，未做浏览器验收。
