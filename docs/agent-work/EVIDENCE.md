@@ -888,3 +888,7 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 ## 2026-10-12 CR-114 G26 WP6 任务审计（本地）
 
 任务 create/cancel/retry 在插入分支内审计，重放与无变化取消零行。测试：`apps/docs/tests/test_audit_jobs.py`（5 例，17 项含既有幂等/授权测试通过）；既有 28 项任务授权/幂等/重试/验收/链接测试通过（13:08Z）。
+
+## 2026-10-12 WP4–WP6 推送前完整根套件（本地）
+
+6b0d550d 树上 `pytest`（根，三套件）：5821 通过、2 失败、2 跳过（16:21–16:45Z，日志 scratchpad/a13/g26wp456-full.log，未入库）。两例失败均为 `test_idempotency_durability.py::test_source_parser_waits_for_creator_commit_or_rollback`：WP4 把来源解析/扫描改为 `after_commit` 启动，而既有设计是解析器自行等待创建者提交或回滚（外层幂等事务下 after_commit 不会在回滚时运行、也不会在提交前启动）。cb157e83 恢复原语义（事务块结束后立即提交解析），定向重跑 111 项（耐久性、文件事件、来源操作、WP4 两面覆盖）通过；推送前再跑 Docs 套件：cb157e83 树上 `apps/docs/tests` 1655 通过、2 跳过（16:45–16:52Z）。前端未改动，typecheck/build/npm test 沿用 2066a035 推送前的结果。。
