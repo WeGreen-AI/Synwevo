@@ -49,6 +49,9 @@ type Overview = {
   unclaimed: Workspace | null;
   /** A20: deletion requests in their grace period, past due, or owing a withdrawal record. */
   account_deletions?: { pending: number; overdue: number; withdrawals_pending: number };
+  /** A32: second-factor adoption over live person accounts (aggregates only). */
+  second_factor?: { accounts: number; totp: number; passkeys: number; passkeys_uv: number; any: number; totp_without_recovery: number;
+    super_admins: { usable: number; enrolled: number } };
 };
 type Workspace = {
   id: string; name: string; kind: string; status: string;
@@ -156,6 +159,18 @@ function OverviewTab({ onDenied, held }: { onDenied: () => void; held: Held }) {
         </div>
       </section>
       <AccountDeletionsCard counts={data.account_deletions} held={held} onDone={changed} />
+      {data.second_factor && <section className="card card-b col gap12" aria-labelledby="second-factor-adoption">
+        <h2 id="second-factor-adoption">{tr("第二因素普及")}</h2>
+        <div className="row gap12 wrap">
+          <Stat label={tr("正常账户")} value={data.second_factor.accounts} />
+          <Stat label={tr("已登记任一第二因素")} value={data.second_factor.any} />
+          <Stat label={tr("动态验证码")} value={data.second_factor.totp} />
+          <Stat label={tr("安全密钥")} value={data.second_factor.passkeys} />
+          <Stat label={tr("其中可验证身份")} value={data.second_factor.passkeys_uv} />
+          <Stat label={tr("恢复码已用尽")} value={data.second_factor.totp_without_recovery} />
+        </div>
+        <p className="muted small">{tr("可用最高管理员 {total} 人，其中 {enrolled} 人已登记第二因素。只统计正常的个人账户，不含应用身份；这里只有数量，没有任何密钥或验证码。", { total: data.second_factor.super_admins.usable, enrolled: data.second_factor.super_admins.enrolled })}</p>
+      </section>}
 
       {legacy?.status === "pending_claim" && (
         <section className="card card-b col gap12" aria-labelledby="legacy-unclaimed">

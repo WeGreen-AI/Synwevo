@@ -445,10 +445,30 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             "unclaimed": None,
             # A20: deletion requests in their grace period, past due, or owing a withdrawal record.
             "account_deletions": deletion_counts(store),
+            # A32: how many live person accounts hold a second factor — aggregates only, never a code.
+            "second_factor": _second_factor_adoption(),
         }
         if legacy:
             out["unclaimed"] = _workspace_row(legacy)
         return out
+
+    def _second_factor_adoption() -> dict:
+        """Counts over live person accounts (active, not an application identity): a confirmed
+        authenticator, a passkey (and one that verifies the user), either, and the accounts whose
+        authenticator has no unused recovery code left. The platform administrators' own count
+        comes from the same step-up rule the second-factor policy uses."""
+        live = "users u WHERE u.status='active' AND u.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM app_accounts a WHERE a.user_id=u.id)"
+        totp = "EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id=u.id AND t.confirmed_at IS NOT NULL)"
+        passkey = "EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id=u.id AND p.deleted_at IS NULL)"
+        passkey_uv = "EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id=u.id AND p.deleted_at IS NULL AND p.uv_capable=1)"
+        no_recovery = "NOT EXISTS (SELECT 1 FROM recovery_codes r WHERE r.user_id=u.id AND r.used_at IS NULL)"
+        count = lambda where="1": store.one(f"SELECT COUNT(*) AS n FROM {live} AND ({where})")["n"]  # noqa: E731
+        access = PlatformAccess(store)
+        supers = access.usable_super_admins()
+        return {"accounts": count(), "totp": count(totp), "passkeys": count(passkey), "passkeys_uv": count(passkey_uv),
+                "any": count(f"{totp} OR {passkey}"), "totp_without_recovery": count(f"{totp} AND {no_recovery}"),
+                "super_admins": {"usable": len(supers),
+                                 "enrolled": sum(1 for s in supers if access.step_up(s["id"])["second_factor"])}}
 
     def _workspace_row(w: dict) -> dict:
         """A workspace as administration sees it: counts, never contents.

@@ -254,7 +254,7 @@
 | A29 登录方式 | 外部身份提供方配置（`SYNWEVO_IDP_*`） | 启用、修改、轮换密钥、停用 | 启动时读环境（`external.py:113-150`；半配置会拒绝启动） | 无（标签页写明不能在此设置） | 仅主机 | 修改需要主机环境 + 重建账户服务 + 在服务商控制台登记；没有漂移或轮换健康视图 | 主机 | 全局 | 高 | 账户服务进程启动时读取 | 重启后 `/api/auth/external/providers` 恰好列出已配置项，并能对服务商或测试替身完成登录 | 已上线（值待核实） |
 | A30 登录方式 | 邮件验证码登录 | 开关、限额 | `ac/email_login.py:34-43` 常量；路由总是挂载（`ac/app.py:122-124`） | 无 | 缺后端 | 没有开关和策略；管理员看不到它是否开启 | 目标 `platform.security.manage` | 全局 | 中 | email_login 路由 | 关闭后 `POST /api/auth/login/email/start` 被拒，登录页隐藏入口 | 未实现 |
 | A31 登录方式 | Passkey RP（`SYNWEVO_RP_ID`、`RP_ORIGINS`）；口令策略与 Argon2id 参数；服务端根密钥（`SYNWEVO_SECRET`，用于封存 TOTP 种子和 webhook 密钥） | 只读展示；根密钥换钥 | `ac/passkeys.py:45-70`；`core/passwords.py:40-53,192-196`；`ac/cli.py:439-557`（`secret status`、`secret rekey`、`info`）；`core/auth.py:231-265`（KCV 不符拒绝启动） | 无 | 仅命令行 | 需要只读展示：RP ID 与源站、绑定在别处的 Passkey 数；口令下限（单因素 15 位，有 MFA 8 位）；根密钥来源、KCV 是否匹配、封存行数（不显示值）。换钥保持为主机步骤 | 主机 | 全局 | 高 | 各角色环境 + meta.server_secret/root_kcv | 显示值等于 `passwords.parameters()` 和 `cli secret status` 的输出；换钥后 TOTP 与 webhook 签名仍验证通过 | 已上线（值待核实） |
-| A32 登录方式 | 第二因素普及情况 | 统计 TOTP、Passkey、剩余恢复码 | 无 | 无 | 缺后端 | 在概览和管理员名册上显示聚合数，不含逐码数据 | PA | 全局 | 低 | totp_secrets、passkeys、recovery_codes | 与隔离实例上实际注册的数量一致 | 未实现 |
+| A32 登录方式 | 第二因素普及情况 | 统计 TOTP、Passkey、剩余恢复码 | **CR-100** `GET /api/admin/overview` 的 `second_factor`（正常个人账户数、已确认动态验证码数、安全密钥数与其中可验证身份数、任一第二因素数、动态验证码但恢复码已用尽数、可用最高管理员总数与已登记数；只数行，不读任何密钥或验证码）；管理员名册每人 `second_factor` 已由 CR-090 提供 | 概览「第二因素普及」卡片（六个数字 + 最高管理员说明） | 已接入（本地） | 无按组织/空间细分 | `platform.overview.view` | 全局 | 低 | 只读 | `test_admin.py` 概览断言 + 新增 1 例（真实登记动态验证码两人、安全密钥行一人：各数字随之变化；恢复码用尽计数；响应不含密钥/验证码）；浏览器：隔离实例成员真实登记后卡片 0→1，英文视图（evidence/2026-10-12-admin-second-factor-adoption） | 仅本地，未部署 |
 
 #### 组织、工作空间与成员
 

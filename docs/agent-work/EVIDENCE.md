@@ -810,3 +810,9 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 `GET /api/admin/users/{uid}/access?workspace_id=&app_id=` 按七道闸门解释某人能否在某空间打开某应用，裁决来自真实 `Apps.check_access` 并标明一致性；A13 详情工作空间行「解释访问」打开对话框（应用选择、裁决、闸门表）。
 测试：test_admin 新增 1 例（全通过→撤销资格→非成员→停用空间应用→冻结空间，各闸门与裁决一致且读取不改变状态；auditor 可读、support 403；缺参 400、未知 404）；矩阵新增 1 行；account-web 173 通过（新增 1 例；门禁补入两条拒绝句）；typecheck/build、五守卫通过。
 浏览器（隔离合成实例 127.0.0.1:33941，系统 Chrome）：Alice 详情 → 共享空间行「解释访问」→ 「可以打开：Synwevo Docs（…）」且七道闸门全部通过（成员资格「编辑者 · 可导出」、使用资格「无单独记录 · 成员即可使用」）→ 经真实冻结路由（理由+重认证）冻结该空间后再解释：空间状态「未通过 · 已冻结」、裁决「不能打开：…」→ 解冻 → 英文视图「Can open: …」与七道闸门英文 → support 详情无按钮、API 403。证据 `evidence/2026-10-12-admin-effective-access/`（browser-report.json、verification.json、3 张截图）。
+
+## 2026-10-12 CR-100 Admin A32 第二因素普及（本地+隔离浏览器）
+
+概览 `second_factor` 聚合（正常账户、任一第二因素、动态验证码、安全密钥/其中可验证身份、恢复码已用尽、可用最高管理员总数/已登记）与概览卡片。
+测试：test_admin 概览断言（全零基线）+ 新增 1 例（两人真实登记动态验证码、一人安全密钥行：数字随之变化；恢复码用尽计数；响应不含密钥）；account-web 173 通过；typecheck/build、五守卫通过。
+浏览器（隔离合成实例 127.0.0.1:33942，系统 Chrome）：卡片基线 5 个正常账户、全部 0 → 成员经真实自助路径登记动态验证码（200）→ 卡片「已登记任一第二因素 1 / 动态验证码 1」，文本不含密钥 → 英文视图「Second-factor adoption … With any second factor 1」。证据 `evidence/2026-10-12-admin-second-factor-adoption/`（browser-report.json、verification.json、3 张截图）。

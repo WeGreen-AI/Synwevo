@@ -375,3 +375,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：解释不以该用户身份行事，只读；闸门的成员资格以 `workspaces_for` 为准（与真实闸门同源，包含组织成员要求）；最终裁决直接调用真实 `check_access`，并以 `consistent` 暴露任何偏差而不是掩盖；按应用种类（个人/组织/门户）跳过不适用的闸门，与 `_check_platform` 一致；邮箱与空间名随 users.view / workspaces.view；权限用 `platform.roles.view`（审计员可读、支持不可读），与 A5 一致。
 - 风险/未做：不解释机器凭据；冻结空间时真实句子是通用句（闸门表点名）；组织冻结场景仅后端测试覆盖。
 - 验证：identity 相关 11 例通过；account-web typecheck/173 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-12-admin-effective-access。
+
+## CR-100 · Admin A32 第二因素普及统计（2026-10-12，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：services/identity/synwevo_identity/admin_routes.py `_second_factor_adoption`（概览 `second_factor`）；account-web Admin.tsx 概览卡片、messages.ts 7 条；tests：test_admin.py 概览断言 + 1 例。
+- 审查要点：只对正常个人账户计数（排除应用身份、停用/待删/已删），动态验证码只算已确认的，安全密钥只算未删除的，恢复码只看是否还有未用的——全部是 COUNT，不读 `secret_enc`/`code_hash`；最高管理员一栏复用 `PlatformAccess.usable_super_admins` 与 `step_up()["second_factor"]`，与 A11 策略卡口径一致。
+- 风险/未做：无按组织/空间细分；概览请求多了七次计数查询（索引齐全，账户规模内可忽略）。
+- 验证：test_admin 相关 2 例通过；account-web typecheck/173 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-12-admin-second-factor-adoption。

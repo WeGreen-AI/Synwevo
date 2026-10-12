@@ -1843,5 +1843,13 @@ export const governanceMessages = {
   "该工作空间没有启用任何应用。": { en: "This workspace has no application enabled.", "zh-Hant": "該工作空間沒有啟用任何應用程式。" },
   "请指定要解释的工作空间与应用。": { en: "Choose the workspace and application to explain.", "zh-Hant": "請指定要解釋的工作空間與應用程式。" },
   "找不到该应用。": { en: "That application was not found.", "zh-Hant": "找不到該應用程式。" },
+  // A32: second-factor adoption
+  "第二因素普及": { en: "Second-factor adoption", "zh-Hant": "第二因素普及" },
+  "正常账户": { en: "Active accounts", "zh-Hant": "正常帳戶" },
+  "已登记任一第二因素": { en: "With any second factor", "zh-Hant": "已登記任一第二因素" },
+  "动态验证码": { en: "Authenticator codes", "zh-Hant": "動態驗證碼" },
+  "其中可验证身份": { en: "Of which user-verifying", "zh-Hant": "其中可驗證身分" },
+  "恢复码已用尽": { en: "Recovery codes exhausted", "zh-Hant": "復原碼已用盡" },
+  "可用最高管理员 {total} 人，其中 {enrolled} 人已登记第二因素。只统计正常的个人账户，不含应用身份；这里只有数量，没有任何密钥或验证码。": { en: "{total} usable super administrators, {enrolled} of them with a second factor. Only active person accounts are counted, not application identities; these are counts only, never a key or a code.", "zh-Hant": "可用最高管理員 {total} 人，其中 {enrolled} 人已登記第二因素。只統計正常的個人帳戶，不含應用身分；這裡只有數量，沒有任何金鑰或驗證碼。" },
 };
 registerMessages(governanceMessages);

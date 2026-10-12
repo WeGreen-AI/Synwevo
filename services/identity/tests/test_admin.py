@@ -108,6 +108,9 @@ def test_signed_out_is_401(env):
 def test_the_overview_counts_the_unclaimed_data_without_naming_it(env):
     body = env["c"].get("/api/admin/overview").json()
     assert body["users"] == 2 and body["admins"] == 1
+    # A32: nobody holds a second factor yet; the counts are aggregates over live person accounts.
+    assert body["second_factor"] == {"accounts": 2, "totp": 0, "passkeys": 0, "passkeys_uv": 0, "any": 0, "totp_without_recovery": 0,
+                                     "super_admins": {"usable": 1, "enrolled": 0}}
     unclaimed = body["unclaimed"]
     assert unclaimed["id"] == "default" and unclaimed["members"] == 0 and unclaimed["projects"] == 3
     blob = str(body)
@@ -937,3 +940,30 @@ def test_effective_access_is_explained_gate_by_gate_from_the_real_check(env):
     s = TestClient(api)
     assert post(s, "/api/auth/login", {"email": "support@example.com", "password": PW}).status_code == 200
     assert s.get(f"{path}?workspace_id={ws['id']}&app_id={DOCS_APP_ID}").status_code == 403
+
+
+def test_second_factor_adoption_counts_real_enrolments_without_any_code(env):
+    """A32: the overview's second-factor numbers follow real enrolments — an authenticator confirmed
+    through the real path, a passkey row — and never carry a seed, a code or a credential."""
+    import json
+    import pyotp
+    c, store, alice, plain = env["c"], env["store"], env["alice"], env["plain"]
+    assert post(plain, "/api/auth/mfa/reauth", {"password": PW}).status_code == 200
+    secret = post(plain, "/api/auth/mfa/totp/begin").json()["secret"]
+    assert post(plain, "/api/auth/mfa/totp/confirm", {"code": pyotp.TOTP(secret).now()}).status_code == 200
+    # The administrator enrols an authenticator the same real way; a verifying passkey row for the
+    # member is a fixture (public material only) that the aggregates count by table alone.
+    assert post(c, "/api/auth/mfa/reauth", {"password": PW}).status_code == 200
+    admin_secret = post(c, "/api/auth/mfa/totp/begin").json()["secret"]
+    assert post(c, "/api/auth/mfa/totp/confirm", {"code": pyotp.TOTP(admin_secret).now()}).status_code == 200
+    store.execute("INSERT INTO passkeys (id,user_id,credential_id,public_key,rp_id,uv_capable,name,created_at) VALUES "
+                  "('pk_fixture_a32',?,'fixture-credential-a32','fixture-public-key','testserver',1,'Fixture key',?)", (alice["id"], now()))
+    r = c.get("/api/admin/overview")
+    body = r.json()
+    assert body["second_factor"]["totp"] == 2 and body["second_factor"]["passkeys"] == 1 and body["second_factor"]["passkeys_uv"] == 1
+    assert body["second_factor"]["any"] == 2 and body["second_factor"]["accounts"] == 2
+    assert body["second_factor"]["super_admins"] == {"usable": 1, "enrolled": 1}
+    assert body["second_factor"]["totp_without_recovery"] == 0, "enrolment hands out recovery codes"
+    store.execute("UPDATE recovery_codes SET used_at=? WHERE user_id=?", (now(), alice["id"]))
+    assert c.get("/api/admin/overview").json()["second_factor"]["totp_without_recovery"] == 1
+    assert secret not in r.text and admin_secret not in r.text and "secret" not in json.dumps(body["second_factor"]) and "code" not in json.dumps(body["second_factor"])
