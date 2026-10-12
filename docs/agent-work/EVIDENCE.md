@@ -816,3 +816,8 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 概览 `second_factor` 聚合（正常账户、任一第二因素、动态验证码、安全密钥/其中可验证身份、恢复码已用尽、可用最高管理员总数/已登记）与概览卡片。
 测试：test_admin 概览断言（全零基线）+ 新增 1 例（两人真实登记动态验证码、一人安全密钥行：数字随之变化；恢复码用尽计数；响应不含密钥）；account-web 173 通过；typecheck/build、五守卫通过。
 浏览器（隔离合成实例 127.0.0.1:33942，系统 Chrome）：卡片基线 5 个正常账户、全部 0 → 成员经真实自助路径登记动态验证码（200）→ 卡片「已登记任一第二因素 1 / 动态验证码 1」，文本不含密钥 → 英文视图「Second-factor adoption … With any second factor 1」。证据 `evidence/2026-10-12-admin-second-factor-adoption/`（browser-report.json、verification.json、3 张截图）。
+
+## 2026-10-12 CR-101 API traceparent 进调用记录（本地）
+
+网关解析 W3C `traceparent`，trace-id 记入 `api_platform_calls.trace_id`（追加列），控制台 `/calls?trace_id=` 可筛选并在行内显示；非法值忽略。
+测试：tests/integration/test_api_platform.py 新增 1 例（合法 traceparent → 记录 trace_id 并可按大写查询；garbage/全零 trace/版本 ff/全零 parent 四种非法值 → 请求 200 且 trace_id 为空；未知 trace 查询为空）；integration 相关子集 355、Docs API 子集 71 通过；account-web 173/typecheck/build、五守卫通过。未做浏览器验收。

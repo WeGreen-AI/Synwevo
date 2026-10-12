@@ -35,7 +35,7 @@ Python 与 TypeScript 的独立 `WorkspaceClient` 均实现并实跑 8/8。方�
 | Docs 与目录各自从实际路由导出 OpenAPI 3.1，管理台组合两份契约 | 已验证（本地） | [Docs 契约](../integration/openapi.yaml)、[目录契约](../integration/workspace-openapi.json)；`synwevo_docs.cli openapi`、`synwevo_identity.cli workspace-openapi`；`test_api_docs.py`、`test_workspace_contract.py`。复制 6 操作与目录 8 操作有显式请求/响应模型，任务生命周期 9 操作及断点上传 5 操作补齐响应模型；保留历史 null、缺省字段和不同产物清单形状。上传冲突/过期/超限/范围缺口的 409/410/413/416 已登记，两种错误媒体格式均按实际响应验证。来源未就绪/隔离/内容缺失、预览冲突和签名下载失效已补齐契约；专项观测 222 个错误响应、77 组操作/状态均符合 schema。目录导出不打开数据库，独立账户服务不依赖 Docs；组合仅保留业务路径与可达 schema | Docs 当前仍有 **59 条 2xx JSON 响应 schema 未约束**（全量扫描当前导出），不能称全部响应已类型化；管理 API 不在对外业务契约里 |
 | 版本与弃用规则 | 部分（本地） | [版本说明与弃用清单](../integration/api.md#deprecations) 区分 HTTP、契约、事件、SDK 与部署版本；记录现有任务正文幂等别名、替代请求头、优先级、Deprecation 头及未设 Sunset 的事实 | 管理台兼容差异视图、按客户端统计旧字段使用仍未实现 |
 | 错误信封 + 可选 RFC 9457（`Accept: application/problem+json`） | 已验证 | `http.py`；`test_gate_api_errors.py` | 类型 URN 不可解引用 |
-| `X-Request-ID` 全链路回显、调用记录 | 部分 | `http.py` 网关；**API-1**：调用记录带错误代码与客户端，可按请求编号/凭据/接口/状态/错误代码查询；网关拒绝的请求记在接口模板下 | **API-2**：提交任务的请求编号记在任务 `request_id` 与 `job.created`（`test_request_trace.py`）；无 traceparent |
+| `X-Request-ID` 全链路回显、调用记录 | 部分 | `http.py` 网关；**API-1**：调用记录带错误代码与客户端，可按请求编号/凭据/接口/状态/错误代码查询；网关拒绝的请求记在接口模板下 | **API-2**：提交任务的请求编号记在任务 `request_id` 与 `job.created`（`test_request_trace.py`）；**CR-101** 调用记录带 `trace_id`（W3C `traceparent` 的 trace-id，非法值忽略；`/calls?trace_id=`；`test_api_platform.py`）；任务与事件仍只带 `request_id` |
 | 分页：offset 与资源列表游标 | 已验证（本地） | Docs 8 类资源列表使用 24 小时签名游标，绑定空间、列表、对象/筛选和组织；每次仍重新鉴权，当前有效的后继凭据可续读，独立进程可读同一游标。`test_api_contract_pagination.py`、`test_org_templates_v1.py`；已安装 SDK 的任务分页实跑通过 | 移动视图，不承诺冻结快照；升级/回滚时旧格式需从头同步。`/events` 与 Webhook 投递游标仍是各自既有格式，本批未更改其长期消费语义 |
 
 ## 3. 流量、配额与用量

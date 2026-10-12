@@ -69,7 +69,9 @@ CREATE INDEX IF NOT EXISTS api_platform_calls_request ON api_platform_calls(requ
 # Added to api_platform_calls after it first shipped (API-1): the refusal's error code, so a diagnosis
 # by request ID says *why* ("rate_limited", "queue_full"), and the OAuth client behind a delegated
 # call, which has no credential binding of its own. Rollback: older code ignores both columns.
-CALL_COLUMNS = [("api_platform_calls", "error_code", "TEXT"), ("api_platform_calls", "client_id", "TEXT")]
+CALL_COLUMNS = [("api_platform_calls", "error_code", "TEXT"), ("api_platform_calls", "client_id", "TEXT"),
+                # The trace-id of the caller's W3C traceparent, when it sent one (API-1).
+                ("api_platform_calls", "trace_id", "TEXT")]
 
 
 class ControlPlaneAdapter(Protocol):
@@ -289,7 +291,8 @@ def approval_failure(store: Store, desc: dict, *, need: str = "write") -> str | 
 
 
 def record_call(store: Store, principal: dict | None, method: str, route: str, status: int,
-                duration_ms: float, request_id: str | None, error_code: str | None = None) -> None:
+                duration_ms: float, request_id: str | None, error_code: str | None = None,
+                trace_id: str | None = None) -> None:
     """Persist metadata only. Caller passes the matched template, NEVER the request URL.
 
     Unmatched paths are collapsed, so user-controlled paths cannot store document names,
@@ -305,6 +308,8 @@ def record_call(store: Store, principal: dict | None, method: str, route: str, s
             "method": method[:10], "route": route,
             "status": status, "duration_ms": max(0, round(duration_ms, 3)),
             "request_id": request_id[:128] if request_id else None,
+            # Already validated as 32 hex characters by the gate; never a raw header value.
+            "trace_id": trace_id if isinstance(trace_id, str) and len(trace_id) == 32 else None,
             # A stable machine code from the error contract, never a message or a payload.
             "error_code": error_code[:64] if isinstance(error_code, str) and status >= 400 else None})
         # Bounded retention; aggregate statistics explicitly describe this retained window.

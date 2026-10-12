@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import os
+import re
 import secrets
 import sys
 import threading
@@ -282,6 +283,19 @@ def json_pointer(field) -> str:
     """`#/a/b` for a field name (dotted for nesting) or a validation location tuple (RFC 6901)."""
     segs = [str(s) for s in field] if isinstance(field, (list, tuple)) else str(field).split(".")
     return "#/" + "/".join(s.replace("~", "~0").replace("/", "~1") for s in segs if s != "")
+
+
+_TRACEPARENT = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
+
+
+def trace_id_of(traceparent: str | None) -> str | None:
+    """The trace-id of a W3C `traceparent` header (version-trace_id-parent_id-flags), or None for
+    an absent or malformed value: a bad header never fails a request, it is simply not recorded.
+    The id goes into the call record beside the platform's own request id (API coverage, API-1)."""
+    m = _TRACEPARENT.match((traceparent or "").strip().lower())
+    if not m or m.group(1) == "ff" or set(m.group(2)) == {"0"} or set(m.group(3)) == {"0"}:
+        return None
+    return m.group(2)
 
 
 def problem_body(request_id: str, status: int, code: str, message: str, detail: dict | None) -> dict:
@@ -1088,6 +1102,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         started = time.perf_counter()
         rid = (request.headers.get("X-Request-ID") or "")[:64] or secrets.token_hex(8)
         request.state.request_id = "".join(ch for ch in rid if ch.isalnum() or ch in "-_") or secrets.token_hex(8)
+        request.state.trace_id = trace_id_of(request.headers.get("traceparent"))
         request.state.ratelimit = None
         request.state.error_code = None
         path = request.url.path
@@ -1118,7 +1133,8 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                     await run_in_threadpool(record_call, store, getattr(request.state, "principal", None),
                                             request.method, template, resp.status_code,
                                             (time.perf_counter() - started) * 1000, request.state.request_id,
-                                            request.state.error_code if resp.status_code >= 400 else None)
+                                            request.state.error_code if resp.status_code >= 400 else None,
+                                            getattr(request.state, "trace_id", None))
                 except Exception:
                     # Never change a completed business response or expose payloads in telemetry.
                     import logging

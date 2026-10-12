@@ -200,7 +200,7 @@ SDK 使用同一包的独立 `WorkspaceClient`，账户 Base URL 默认 `https:/
 | 429 | 限流 |
 | 500 | 未预期错误（响应含 `request_id`，服务端日志打印同一个 id） |
 
-每个响应都带 `X-Request-ID`；客户端也可自带该头以串联日志。提交任务的那次请求的编号记在任务的 `request_id` 与 `job.created` 事件的 `data.request_id` 里（网页提交同样记录），因此从调用记录、任务到 Webhook 可以沿同一个编号追查。业务校验失败一律用上述状态码，不会伪装成 200。
+每个响应都带 `X-Request-ID`；客户端也可自带该头以串联日志。提交任务的那次请求的编号记在任务的 `request_id` 与 `job.created` 事件的 `data.request_id` 里（网页提交同样记录），因此从调用记录、任务到 Webhook 可以沿同一个编号追查。客户端若带 W3C `traceparent`（`version-trace_id-parent_id-flags`），其 trace-id 记在调用记录的 `trace_id` 里，控制台的调用记录可按它筛选；格式不合法则忽略，不影响请求，也不写入任务或事件。业务校验失败一律用上述状态码，不会伪装成 200。
 每个响应还带同一组安全头（`synwevo_core.http.apply_security_headers`，OWASP ASVS 4.0.3 V14.4）：`X-Content-Type-Options: nosniff`、
 `Content-Security-Policy`（默认 `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;
 font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self';

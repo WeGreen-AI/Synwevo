@@ -345,6 +345,7 @@ def build_router(store: Store, ident, sessions, audit,
     @r.get(PREFIX + "/calls")
     def calls(request: Request, workspace_id: str = Query("", max_length=100),
               errors_only: bool = False, request_id: str = Query("", max_length=128),
+              trace_id: str = Query("", max_length=32),
               credential_id: str = Query("", max_length=200), route: str = Query("", max_length=200),
               status: str = Query("", pattern="^(|2xx|3xx|4xx|5xx|429)$"),
               error_code: str = Query("", max_length=64),
@@ -356,10 +357,10 @@ def build_router(store: Store, ident, sessions, audit,
         lo, hi = {"2xx": (200, 299), "3xx": (300, 399), "4xx": (400, 499), "5xx": (500, 599),
                   "429": (429, 429)}.get(status, (0, 999))
         return page("api_platform_calls WHERE at>=? AND (?='' OR workspace_id=?) AND (?=0 OR status>=400) "
-                    "AND (?='' OR request_id=?) AND (?='' OR credential_id=? OR client_id=?) AND (?='' OR route=?) "
+                    "AND (?='' OR request_id=?) AND (?='' OR trace_id=?) AND (?='' OR credential_id=? OR client_id=?) AND (?='' OR route=?) "
                     "AND status BETWEEN ? AND ? AND (?='' OR error_code=?)",
                     "*", (now() - 30 * 86400, workspace_id, workspace_id, int(errors_only),
-                          request_id, request_id, credential_id, credential_id, credential_id, route, route,
+                          request_id, request_id, trace_id.lower(), trace_id.lower(), credential_id, credential_id, credential_id, route, route,
                           lo, hi, error_code, error_code),
                     limit=limit, offset=offset, order="at DESC,id DESC")
 

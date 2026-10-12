@@ -382,3 +382,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：只对正常个人账户计数（排除应用身份、停用/待删/已删），动态验证码只算已确认的，安全密钥只算未删除的，恢复码只看是否还有未用的——全部是 COUNT，不读 `secret_enc`/`code_hash`；最高管理员一栏复用 `PlatformAccess.usable_super_admins` 与 `step_up()["second_factor"]`，与 A11 策略卡口径一致。
 - 风险/未做：无按组织/空间细分；概览请求多了七次计数查询（索引齐全，账户规模内可忽略）。
 - 验证：test_admin 相关 2 例通过；account-web typecheck/173 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-12-admin-second-factor-adoption。
+
+## CR-101 · API 调用记录接受并记录 W3C traceparent（API-1「全链路回显」缺口，2026-10-12，本轮新增，本地已验证）
+
+- 位置：packages/core/synwevo_core/http.py（`trace_id_of`：校验 `version-trace_id-parent_id-flags`，版本 ff、全零 trace/parent 视为无；网关把 `request.state.trace_id` 交给 `record_call`）；api_platform.py（`CALL_COLUMNS` 新增 `trace_id`，`record_call(..., trace_id)` 只接受 32 位十六进制）；services/identity/synwevo_identity/api_platform.py `/calls?trace_id=`（精确匹配，小写化）；控制台调用记录页「追踪编号（traceparent）」筛选与行内显示（api-platform.messages 2 条）；docs/integration/api.md 请求编号段落、docs/platform/api-coverage.md 行 38；tests/integration/test_api_platform.py 新增 1 例。
+- 审查要点：非法 traceparent 不改变请求结果也不落库（只影响元数据）；trace_id 与平台自己的 `X-Request-ID` 并存、互不替代；列为回滚安全的追加列；筛选仍是对存储元数据的精确匹配，不对用户输入做 LIKE；任务与事件仍只带 `request_id`（文档写明）。
+- 风险/未做：不回传 `traceresponse`；任务/事件不带 trace_id；无浏览器验收（控制台只多一个筛选框与一行小字，类型检查与前端测试覆盖）。
+- 验证：integration 相关子集 355 通过（含新例）；Docs API 子集 71 通过；account-web typecheck/173 测试/build 通过；五守卫通过。

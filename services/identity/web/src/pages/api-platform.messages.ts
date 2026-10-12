@@ -23,6 +23,8 @@ const entries: [string, string, string][] = [
   ['事件类型（逗号分隔）', 'Event types (comma separated)', '事件類型（逗號分隔）'],
   ['仅保留最近 30 天的调用元数据，不记录请求内容、令牌或文档数据。', 'Only call metadata from the last 30 days is retained. Request contents, tokens and document data are never logged.', '僅保留最近 30 天的呼叫中繼資料，不記錄請求內容、權杖或文件資料。'],
   ['仅显示失败调用', 'Show failed calls only', '僅顯示失敗呼叫'],
+  ['追踪编号（traceparent）', 'Trace id (traceparent)', '追蹤編號（traceparent）'],
+  ['追踪 {id}', 'trace {id}', '追蹤 {id}'],
   ['你批准的权限将允许管理员签发绑定此工作空间的机器凭据。', 'Your approval allows an administrator to issue a machine credential bound to this workspace.', '你批准的權限將允許管理員簽發綁定此工作空間的機器憑證。'],
   ['你的口令', 'Your password', '你的密碼'], ['保存修改', 'Save changes', '儲存修改'],
   ['修改订阅', 'Edit subscription', '修改訂閱'], ['停用凭据', 'Disable credential', '停用憑證'],

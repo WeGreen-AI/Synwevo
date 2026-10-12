@@ -425,3 +425,24 @@ def test_accounts_private_adapter_does_not_mount_a_public_data_surface(tmp_path,
     assert c.get(BASE + "/overview").json()["adapter_available"] is True
     assert c.get(BASE + "/openapi").status_code == 200
     assert c.get("/api/v1/projects").status_code == 404
+
+
+def test_a_w3c_traceparent_is_recorded_beside_the_request_id_and_a_bad_one_is_ignored(plane):
+    """API-1: a caller's trace-id lands in the call record and can be searched; a malformed
+    traceparent neither fails the request nor leaves a value behind."""
+    e = plane
+    token, key = Auth(e["store"]).create_key("trace fixture", e["ws"], ("read",))
+    trace = "4bf92f3577b34da6a3ce929d0e0e4736"
+    headers = {"Authorization": f"Bearer {token}", "traceparent": f"00-{trace}-00f067aa0ba902b7-01"}
+    r = TestClient(e["api"]).get(f"/api/v1/projects/{e['project']['id']}", headers=headers)
+    assert r.status_code == 200
+    row = e["store"].one("SELECT trace_id, request_id FROM api_platform_calls WHERE request_id=?", (r.headers["x-request-id"],))
+    assert row["trace_id"] == trace and row["request_id"] != trace
+    found = e["admin"].get(BASE + "/calls", params={"trace_id": trace.upper()}).json()
+    assert [c["request_id"] for c in found["items"]] == [r.headers["x-request-id"]]
+    for bad in ("garbage", "00-00000000000000000000000000000000-00f067aa0ba902b7-01", "ff-" + trace + "-00f067aa0ba902b7-01", "00-" + trace + "-0000000000000000-01"):
+        r = TestClient(e["api"]).get(f"/api/v1/projects/{e['project']['id']}", headers={"Authorization": f"Bearer {token}", "traceparent": bad})
+        assert r.status_code == 200, bad
+        assert e["store"].one("SELECT trace_id FROM api_platform_calls WHERE request_id=?", (r.headers["x-request-id"],))["trace_id"] is None, bad
+    assert e["admin"].get(BASE + "/calls", params={"trace_id": "nope"}).json()["items"] == []
+    assert key["id"]
