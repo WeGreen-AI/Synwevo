@@ -9,7 +9,9 @@ import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
+from synwevo_core import auth as _auth
 from synwevo_core import quarantine as Q
+from synwevo_core.audit_change import change as audit_change
 from synwevo_core.context import tenant as current_tenant
 from synwevo_core.errors import ServiceError, not_found
 from synwevo_core.store import Store, new_id, now
@@ -104,17 +106,36 @@ class App:
         # silently throw other people's work away (9.13: never overwrite unsynced content unasked).
         self.live_template_state = None
 
+    # ================================================================ audit
+    #: The project settings whose values an audit row shows before and after. They are
+    #: identifiers and counters; the name, the sample rule and the output settings are the
+    #: project's content and appear only by field name.
+    _PROJECT_AUDIT_KEYS = ("template_id", "template_version", "archived_at", "settings_rev")
+
+    def audit(self, action: str, object_kind: str, object_id: str, **meta) -> None:
+        """One audit row per change of a project or a source, written by the service inside the
+        transaction of the change (admin coverage G26, decision D7): a failed row undoes the
+        change, and no route or client can make the change without the row. The actor is the
+        request principal the gate put in the context — a person or a machine key — so the
+        browser routes, the v1 routes and the CLI need no new parameter; a direct caller
+        without one (a worker, a test) is recorded as the system. Identifiers and counts only:
+        never a project or file name, a rule, an output setting or a blob digest."""
+        _auth.audit_event(self.store, f"docs.{action}", workspace_id=current_tenant(),
+                          object_kind=object_kind, object_id=object_id, meta=meta)
+
     # ================================================================ projects
     def create_project(self, name: str, origin: str | None = None) -> dict:
         """``origin`` records who created this project ("ui", "api:<key id>", "test:<run id>").
         It is the only evidence a cleanup tool can act on — a name prefix is not proof."""
         pid = new_id("p")
         t = now()
-        self.store.insert("projects", {"id": pid, "name": (name or "未命名项目").strip()[:100], "created_at": t, "updated_at": t,
-                                       "tenant": current_tenant(), "origin": (origin or "ui")[:80],
-                                       "record_rule": {}, "output": {"naming": "{序号}", "formats": [], "error_policy": "block"},
-                                       "mapping_rev": 0, "rev": 1, "step": "sources"})
-        self.store.insert("mapping_revs", {"project_id": pid, "rev": 0, "parent_rev": None, "data": [], "note": "初始", "created_at": t})
+        with self.store.tx():
+            self.store.insert("projects", {"id": pid, "name": (name or "未命名项目").strip()[:100], "created_at": t, "updated_at": t,
+                                           "tenant": current_tenant(), "origin": (origin or "ui")[:80],
+                                           "record_rule": {}, "output": {"naming": "{序号}", "formats": [], "error_policy": "block"},
+                                           "mapping_rev": 0, "rev": 1, "step": "sources"})
+            self.store.insert("mapping_revs", {"project_id": pid, "rev": 0, "parent_rev": None, "data": [], "note": "初始", "created_at": t})
+            self.audit("project.create", "project", pid, origin=(origin or "ui")[:80])
         return self.get_project(pid)
 
     _PROJECT_COLS = "id, name, created_at, updated_at, template_id, record_rule, step, origin, archived_at, template_version, settings_rev"
@@ -222,43 +243,55 @@ class App:
         return p
 
     def update_project(self, pid: str, values: dict) -> dict:
-        p = self.get_project(pid)
-        # A caller that says which settings revision it edited is refused when someone else's
-        # edit landed first (409 stale_project, with the current revision so it can resync).
-        # Callers that say nothing keep the old behaviour; machine clients rarely edit settings.
-        base = values.get("base_settings_rev")
-        if base is not None:
-            try:
-                base = int(base)
-            except (TypeError, ValueError):
-                raise ServiceError(400, "bad_value", "base_settings_rev 必须是整数", {"field": "base_settings_rev"})
-            if base != int(p.get("settings_rev") or 0):
-                raise ServiceError(409, "stale_project", "项目设置已在其他窗口或被其他人修改，请刷新后再改",
-                                   {"settings_rev": int(p.get("settings_rev") or 0), "base_settings_rev": base})
-        allowed = {k: v for k, v in values.items() if k in ("name", "record_rule", "output", "template_id", "step")}
-        if "archived" in values:
-            # Archiving only hides a project from the default list; it stays fully usable and
-            # reversible.  Deleting is the separate, destructive `deleted` flag.
-            allowed["archived_at"] = now() if values["archived"] else None
-        if "record_rule" in allowed:
-            self._validate_rule(allowed["record_rule"])
-        if "output" in allowed:
-            allowed["output"] = self._validate_output(allowed["output"])
-        if "template_id" in allowed and allowed["template_id"]:
-            self.get_template(allowed["template_id"])
-        if "template_version" in values:
-            # Pinning used to be accepted and dropped here, so a caller who pinned version N got
-            # 200 and then jobs generated from whatever head the template had moved to.
-            allowed["template_version"] = self._validate_pin(values["template_version"],
-                                                             allowed.get("template_id") or p.get("template_id"))
-        elif "template_id" in allowed and allowed["template_id"] != p.get("template_id"):
-            allowed["template_version"] = None          # a pin belongs to the template it was made on
-        allowed["updated_at"] = now()
-        if set(allowed) & {"name", "record_rule", "output", "template_id", "template_version"}:
-            allowed["settings_rev"] = int(p.get("settings_rev") or 0) + 1
-        self.store.update("projects", {"id": pid}, allowed)
-        if set(allowed) - {"name", "step", "updated_at", "output", "settings_rev"}:
-            self.store.bump_project(pid)
+        # One write transaction from the revision check to the row and its audit row (G26 / D7).
+        # The browser route used to read the revision in autocommit, so two tabs editing from the
+        # same revision could both pass the check; the v1 route wrapped the call for that reason.
+        with self.store.tx():
+            p = self.get_project(pid)
+            # A caller that says which settings revision it edited is refused when someone else's
+            # edit landed first (409 stale_project, with the current revision so it can resync).
+            # Callers that say nothing keep the old behaviour; machine clients rarely edit settings.
+            base = values.get("base_settings_rev")
+            if base is not None:
+                try:
+                    base = int(base)
+                except (TypeError, ValueError):
+                    raise ServiceError(400, "bad_value", "base_settings_rev 必须是整数", {"field": "base_settings_rev"})
+                if base != int(p.get("settings_rev") or 0):
+                    raise ServiceError(409, "stale_project", "项目设置已在其他窗口或被其他人修改，请刷新后再改",
+                                       {"settings_rev": int(p.get("settings_rev") or 0), "base_settings_rev": base})
+            allowed = {k: v for k, v in values.items() if k in ("name", "record_rule", "output", "template_id", "step")}
+            if "archived" in values:
+                # Archiving only hides a project from the default list; it stays fully usable and
+                # reversible.  Deleting is the separate, destructive `deleted` flag.
+                allowed["archived_at"] = now() if values["archived"] else None
+            if "record_rule" in allowed:
+                self._validate_rule(allowed["record_rule"])
+            if "output" in allowed:
+                allowed["output"] = self._validate_output(allowed["output"])
+            if "template_id" in allowed and allowed["template_id"]:
+                self.get_template(allowed["template_id"])
+            if "template_version" in values:
+                # Pinning used to be accepted and dropped here, so a caller who pinned version N got
+                # 200 and then jobs generated from whatever head the template had moved to.
+                allowed["template_version"] = self._validate_pin(values["template_version"],
+                                                                 allowed.get("template_id") or p.get("template_id"))
+            elif "template_id" in allowed and allowed["template_id"] != p.get("template_id"):
+                allowed["template_version"] = None          # a pin belongs to the template it was made on
+            allowed["updated_at"] = now()
+            if set(allowed) & {"name", "record_rule", "output", "template_id", "template_version"}:
+                allowed["settings_rev"] = int(p.get("settings_rev") or 0) + 1
+            self.store.update("projects", {"id": pid}, allowed)
+            if set(allowed) - {"name", "step", "updated_at", "output", "settings_rev"}:
+                self.store.bump_project(pid)
+            fields = sorted(k for k in allowed if k not in ("updated_at", "settings_rev"))
+            if fields != ["step"]:
+                # Moving the workbench to another step is navigation, not a change of the project;
+                # everything else leaves one row naming the fields, with the identifier-valued
+                # settings before and after (the name, rule and output text are content).
+                ident = [k for k in self._PROJECT_AUDIT_KEYS if k in allowed]
+                self.audit("project.update", "project", pid, fields=fields,
+                           **audit_change({k: p.get(k) for k in ident}, {k: allowed[k] for k in ident}))
         # The activity feed shows the values before and after (9.13 D: a sample rule or output
         # setting change reads as what it was → what it is), for the settings that carry meaning.
         shown = [k for k in ("name", "record_rule", "output", "template_id", "template_version") if k in allowed and allowed[k] != p.get(k)]
@@ -303,8 +336,10 @@ class App:
         return out
 
     def delete_project(self, pid: str) -> None:
-        self.get_project(pid)
-        self.store.update("projects", {"id": pid}, {"deleted": 1, "updated_at": now()})
+        with self.store.tx():
+            self.get_project(pid)
+            self.store.update("projects", {"id": pid}, {"deleted": 1, "updated_at": now()})
+            self.audit("project.delete", "project", pid)
 
     @staticmethod
     def _validate_rule(rule: dict) -> None:
@@ -362,19 +397,25 @@ class App:
             raise earlier_malicious(filename)
         blob = self.store.put_blob(data)
         sid = new_id("s")
-        mx = self.store.one("SELECT MAX(ord) AS m FROM source_files WHERE project_id=?", (pid,))["m"] or 0
         t = now()
         scanning = self.scanner is not None
-        self.store.insert("source_files", {"id": sid, "project_id": pid, "filename": filename, "ord": mx + 1, "blob": blob,
-                                           "size": len(data), "status": "scanning" if scanning else "parsing", "notes": [], "structure": {},
-                                           "options": {}, "version": 1, "created_at": t, "updated_at": t, "created_by": actor,
-                                           "ocr": {}, "corrections": {},
-                                           "scan": {"status": "pending"} if scanning else {"status": "not_configured"}})
-        has_rep = self.store.one("SELECT 1 AS x FROM source_files WHERE project_id=? AND representative=1 AND removed=0", (pid,))
-        if not has_rep:
-            self.store.update("source_files", {"id": sid}, {"representative": 1})
-        self.store.bump_project(pid)
-        self.parse_pool.submit(self._scan_then_parse if scanning else self._parse_source, sid)
+        # The row, its place in the order, the representative choice and the audit row commit
+        # together (G26 / D7); the scan or parse starts once they are committed, so a worker
+        # never looks for a row its own connection cannot see yet.
+        with self.store.tx():
+            mx = self.store.one("SELECT MAX(ord) AS m FROM source_files WHERE project_id=?", (pid,))["m"] or 0
+            self.store.insert("source_files", {"id": sid, "project_id": pid, "filename": filename, "ord": mx + 1, "blob": blob,
+                                               "size": len(data), "status": "scanning" if scanning else "parsing", "notes": [], "structure": {},
+                                               "options": {}, "version": 1, "created_at": t, "updated_at": t, "created_by": actor,
+                                               "ocr": {}, "corrections": {},
+                                               "scan": {"status": "pending"} if scanning else {"status": "not_configured"}})
+            has_rep = self.store.one("SELECT 1 AS x FROM source_files WHERE project_id=? AND representative=1 AND removed=0", (pid,))
+            if not has_rep:
+                self.store.update("source_files", {"id": sid}, {"representative": 1})
+            self.store.bump_project(pid)
+            self.audit("source.add", "source", sid, project_id=pid, size=len(data), ord=mx + 1, representative=not has_rep,
+                       scan="pending" if scanning else "not_configured")
+            self.store.after_commit(lambda: self.parse_pool.submit(self._scan_then_parse if scanning else self._parse_source, sid))
         self._project_changed(pid, "source.add", {"source_id": sid, "name": filename})
         return self.get_source(sid)
 
@@ -780,28 +821,43 @@ class App:
         return r if raw else self._source_out(r)
 
     def remove_source(self, sid: str) -> None:
-        r = self.get_source(sid, raw=True)
-        self.store.update("source_files", {"id": sid}, {"removed": 1, "representative": 0, "updated_at": now()})
-        if r["representative"]:
-            nxt = self.store.one("SELECT id FROM source_files WHERE project_id=? AND removed=0 ORDER BY ord LIMIT 1", (r["project_id"],))
-            if nxt:
-                self.store.update("source_files", {"id": nxt["id"]}, {"representative": 1})
-        self.store.bump_project(r["project_id"])
+        with self.store.tx():
+            r = self.get_source(sid, raw=True)
+            self.store.update("source_files", {"id": sid}, {"removed": 1, "representative": 0, "updated_at": now()})
+            nxt = None
+            if r["representative"]:
+                nxt = self.store.one("SELECT id FROM source_files WHERE project_id=? AND removed=0 ORDER BY ord LIMIT 1", (r["project_id"],))
+                if nxt:
+                    self.store.update("source_files", {"id": nxt["id"]}, {"representative": 1})
+            self.store.bump_project(r["project_id"])
+            self.audit("source.remove", "source", sid, project_id=r["project_id"],
+                       **audit_change({"representative": sid if r["representative"] else None},
+                                      {"representative": nxt["id"] if nxt else None}))
         self._project_changed(r["project_id"], "source.remove", {"source_id": sid, "name": r.get("name") or r.get("filename")})
 
+    def _live_order(self, pid: str) -> list[str]:
+        return [r["id"] for r in self.store.all("SELECT id FROM source_files WHERE project_id=? AND removed=0 ORDER BY ord, id", (pid,))]
+
     def reorder_sources(self, pid: str, ids: list[str]) -> list[dict]:
-        self.get_project(pid)      # the per-row WHERE pins the project but never checked it is ours
-        for i, sid in enumerate(ids):
-            self.store.execute("UPDATE source_files SET ord=? WHERE id=? AND project_id=?", (i + 1, sid, pid))
-        self.store.bump_project(pid)
+        with self.store.tx():
+            self.get_project(pid)      # the per-row WHERE pins the project but never checked it is ours
+            before = self._live_order(pid)
+            for i, sid in enumerate(ids):
+                self.store.execute("UPDATE source_files SET ord=? WHERE id=? AND project_id=?", (i + 1, sid, pid))
+            self.store.bump_project(pid)
+            self.audit("source.reorder", "project", pid, **audit_change({"order": before}, {"order": self._live_order(pid)}))
         self._project_changed(pid, "source.order", {})
         return self.list_sources(pid)
 
     def set_representative(self, sid: str) -> dict:
-        r = self.get_source(sid, raw=True)
-        self.store.execute("UPDATE source_files SET representative=0 WHERE project_id=?", (r["project_id"],))
-        self.store.update("source_files", {"id": sid}, {"representative": 1})
-        self._project_changed(self.get_source(sid, raw=True)["project_id"], "source.representative", {"source_id": sid})
+        with self.store.tx():
+            r = self.get_source(sid, raw=True)
+            prev = self.store.one("SELECT id FROM source_files WHERE project_id=? AND representative=1 AND removed=0", (r["project_id"],))
+            self.store.execute("UPDATE source_files SET representative=0 WHERE project_id=?", (r["project_id"],))
+            self.store.update("source_files", {"id": sid}, {"representative": 1})
+            self.audit("source.representative", "source", sid, project_id=r["project_id"],
+                       **audit_change({"representative": prev["id"] if prev else None}, {"representative": sid}))
+        self._project_changed(r["project_id"], "source.representative", {"source_id": sid})
         return self.get_source(sid)
 
     def set_source_options(self, sid: str, options: dict) -> dict:
@@ -815,6 +871,10 @@ class App:
             self.store.update("source_files", {"id": sid}, {"options": opts, "status": "parsing", "version": r["version"] + 1,
                                                             "updated_at": now()})
             self.store.bump_project(r["project_id"])
+            # The option names say what was set; their values describe how the file is read and
+            # are not needed to review who reparsed what.
+            self.audit("source.options", "source", sid, project_id=r["project_id"], keys=sorted(options or {}),
+                       **audit_change({"version": r["version"]}, {"version": r["version"] + 1}))
         self._parse_source(sid)
         self._project_changed(r["project_id"], "source.options", {"source_id": sid})
         return self.get_source(sid)
@@ -882,6 +942,14 @@ class App:
             if body.get("add_to_project"):
                 item["source_id"] = self.add_source(pid, name, data)["id"]
             out.append(item)
+        # One row for the batch (counts and the ids of copies added to the project; the words,
+        # patterns and column choices are content). The batch keeps its per-file partial-result
+        # contract, so this row reports the outcome rather than guarding it; each copy added to
+        # the project has its own source.add row written in that copy's transaction.
+        with self.store.tx():
+            self.audit("source.desensitize", "project", pid, requested=len(ids), produced=len(out), skipped=len(skipped),
+                       added_to_project=bool(body.get("add_to_project")),
+                       sources=[i["source_id"] for i in out if "source_id" in i])
         # the random seed is deliberately not returned: with it, replaced digits could be brute-forced back
         return {"files": out, "skipped": skipped, "counts": sess.counts, "mapping_size": len(sess.map)}
 
@@ -1220,10 +1288,16 @@ class App:
         hook = self.on_project_change
         if hook is None:
             return
-        try:
-            hook(pid, kind, detail or {})
-        except Exception:                                    # noqa: BLE001 — the change is saved; the feed catches up on reload
-            logging.getLogger("synwevo.docs").exception("project change hook failed for %s (%s)", pid, kind)
+
+        def run():
+            try:
+                hook(pid, kind, detail or {})
+            except Exception:                                # noqa: BLE001 — the change is saved; the feed catches up on reload
+                logging.getLogger("synwevo.docs").exception("project change hook failed for %s (%s)", pid, kind)
+        # After the outermost transaction commits, or at once when there is none (decision D7):
+        # the feed never announces a change that is then rolled back, and the hook's own writes
+        # and room pushes never run under the store's write lock (see _template_changed).
+        self.store.after_commit(run)
 
     def _bump_projects_using(self, tid: str) -> None:
         for p in self.store.all("SELECT id FROM projects WHERE template_id=? AND deleted=0", (tid,)):

@@ -876,3 +876,7 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 ## 2026-10-12 CR-111 G26 WP3 共享模板/评论/复制申请审计（本地）
 
 组织共享模板五种操作与评论五种操作改由服务在写入事务内审计（两种调用面各一行，正文与名称不入 meta），复制申请/自批/撤回的路由审计并入事务。测试：`test_audit_sharing_templates.py`（五操作各一行、不含名称与备注文本；审计失败回滚 use 的模板复制与 use_count）、`test_audit_sharing_comments.py`（五操作各一行、管理员代删标记、正文不入记录；审计失败回滚删除）共 4 例通过；既有 99 项相关测试通过；五守卫通过。全套件：Docs 与集成两套件 3004 通过、2 跳过（12:40–12:57Z，日志 scratchpad/a13/g26wp3-suites.log，未入库）；完整根套件在 WP4 推送前再跑一次。
+
+## 2026-10-12 CR-112 G26 WP4 Docs 项目与来源审计（本地）
+
+项目与来源的 11 种写操作改由服务在写入事务内审计（浏览器与 v1 两面各一行，前后值只含 template_id/template_version/archived_at/settings_rev/代表文件/顺序/版本/状态等标识符），`_project_changed` 改为提交后触发。测试：`tests/integration/test_audit_coverage_projects.py`（4 例：11 条路由各一行并校验 `authz.ROUTE_POLICY` 分类、步骤导航零行、审计失败回滚且无活动行、查看者拒绝零行）、`apps/docs/tests/test_audit_projects_v1.py`（4 例：10 条 v1 路由各一行、幂等重放不加行、陈旧 PATCH 无行、OCR 行无文字）通过；既有 135 项相关测试通过（`test_project_collab`、`test_services_views`、`test_api_source_operations`、`test_file_events`、`test_refusal_details`、`test_gate_roles`、`test_project_copy`）；五守卫 + `app_icon_assets --check` 通过（13:01Z）。完整根套件在 WP5 后、推送前跑一次。

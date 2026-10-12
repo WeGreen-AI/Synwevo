@@ -8,6 +8,7 @@ import time
 import json
 import threading
 
+from synwevo_core.audit_change import change as audit_change
 from synwevo_core.context import tenant as current_tenant
 from synwevo_core.errors import ServiceError, not_found
 
@@ -239,20 +240,29 @@ class Views:
             status = "ready" if cur["status"] == "needs_ocr" else cur["status"]
             c.execute("UPDATE source_files SET ocr=?, status=?, version=? WHERE id=?",
                       (json.dumps(results, ensure_ascii=False), status, cur["version"] + 1, sid))
-        self.store.bump_project(r["project_id"])
+            self.store.bump_project(r["project_id"])
+            # Page counts, never the recognised words (G26 / D7).
+            self.app.audit("source.ocr", "source", sid, project_id=r["project_id"], pages=len(done), pages_total=len(results),
+                           **audit_change({"status": cur["status"], "version": cur["version"]},
+                                          {"status": status, "version": cur["version"] + 1}))
         return {"pages": sorted(int(k) for k in results), "words": sum(len(v["words"]) for v in results.values()),
                 "low_conf": sum(1 for v in results.values() for w in v["words"] if w["conf"] < 60),
                 "recognized": sorted(int(k) for k in done), "status": status, "version": cur["version"] + 1}
 
     def set_correction(self, sid: str, mapping_id: str, value: str | None, confirmed: bool = True) -> dict:
-        r = self.app.get_source(sid, raw=True)
-        corr = dict(r.get("corrections") or {})
-        if value is None:
-            corr.pop(mapping_id, None)
-        else:
-            corr[mapping_id] = {"value": value, "confirmed": confirmed}
-        self.store.update("source_files", {"id": sid}, {"corrections": corr, "version": r["version"] + 1})
-        self.store.bump_project(r["project_id"])
+        with self.store.tx():
+            r = self.app.get_source(sid, raw=True)
+            corr = dict(r.get("corrections") or {})
+            if value is None:
+                corr.pop(mapping_id, None)
+            else:
+                corr[mapping_id] = {"value": value, "confirmed": confirmed}
+            self.store.update("source_files", {"id": sid}, {"corrections": corr, "version": r["version"] + 1})
+            self.store.bump_project(r["project_id"])
+            # Which mapping was corrected or cleared, never the corrected text (G26 / D7).
+            self.app.audit("source.correction", "source", sid, project_id=r["project_id"], mapping_id=mapping_id,
+                           cleared=value is None, confirmed=bool(confirmed) if value is not None else None,
+                           **audit_change({"version": r["version"]}, {"version": r["version"] + 1}))
         return corr
 
     # ================================================================ templates
