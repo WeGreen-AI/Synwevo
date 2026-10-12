@@ -45,6 +45,13 @@ ATTEMPT_SWEEP_EVERY_S = 60
 _LAST_ATTEMPT_SWEEP = float("-inf")
 
 
+def throttle_id(bucket: str) -> str:
+    """The opaque handle administration acts on: a bucket name may carry a source address or
+    an e-mail key, which never leave the server (G19 lists addresses hashed)."""
+    import hashlib
+    return hashlib.sha256(bucket.encode()).hexdigest()[:24]
+
+
 def normalise_email(email: str) -> str:
     """The key uniqueness and lookup use. Casefold + NFKC, and nothing clever.
 
@@ -259,7 +266,24 @@ class Identity:
             return None
         name = f"user:{user['email_key']}"
         return {"failures": int(b["count"]), "first_failure_at": b["first_at"], "last_failure_at": b["last_at"],
-                "retry_after": int(math.ceil(self._backoff_remaining(name)))}
+                "retry_after": int(math.ceil(self._backoff_remaining(name))), "throttle_id": throttle_id(name)}
+
+    def throttle_state(self, bucket: str) -> dict | None:
+        """Read-only: one bucket as administration sees it (admin coverage G19). Slow-backoff
+        buckets (an account's or a session's failed proofs) wait by their count; fixed-window
+        buckets are blocked while `blocked_until` lies ahead. Never consumes an attempt."""
+        b = self._bucket(bucket)
+        if not b:
+            return None
+        slow = bucket.startswith(("user:", "reauth:"))
+        wait = self._backoff_remaining(bucket) if slow else max(0.0, (b.get("blocked_until") or 0) - now())
+        return {"count": int(b["count"]), "first_at": b["first_at"], "last_at": b["last_at"],
+                "blocked_until": b.get("blocked_until"), "retry_after": int(math.ceil(wait)), "slow": slow}
+
+    def lift_throttle(self, bucket: str) -> bool:
+        """An administrator's release of one bucket (with a reason, audited by the caller): the
+        next attempt starts from zero, as a successful sign-in would have left it."""
+        return self.store.execute("DELETE FROM auth_attempts WHERE bucket=?", (bucket,)) > 0
 
     def _blocked_for(self, name: str) -> int:
         b = self._bucket(name) or {}

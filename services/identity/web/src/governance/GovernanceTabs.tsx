@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { post, qs } from "@synwevo/auth-client";
-import { fmtTime, useI18n, useToast } from "@synwevo/ui";
+import { fmtTime, t as tr, useI18n, useToast } from "@synwevo/ui";
 import { useDebounced } from "../lib/hooks";
 import { useAdminData, useAdminPage } from "./data";
 import { ActionDialog } from "./ActionDialog";
 import { NotificationRecovery } from "./NotificationRecovery";
 import { PageControls } from "./ListControls";
-import { MAIL_STATE } from "./labels";
+import { MAIL_STATE, fmtDuration } from "./labels";
 import { permitted, type Held } from "./access";
 import "./messages";
 import "./platform.messages";
@@ -151,5 +151,50 @@ export function OrganizationsTab({ onDenied, held }: Props) {
       impact={<><b>{action.org.name}</b><p>{action.kind === "delete" ? t("组织将停止使用，并保留七天恢复期限。所属工作空间的访问会被收回，内容不会因此提供给管理员。") : action.kind === "freeze" ? t("组织及其工作空间将停止应用访问，已有会话和令牌会被撤销。") : t("组织将按原有成员关系恢复可用。已撤销的会话和令牌不会恢复；删除前已冻结的组织恢复后仍为冻结状态。")}</p></>}
       run={reason => post(`/api/admin/organizations/${encodeURIComponent(action.org.id)}/${action.kind}`, { reason })}
       onClose={() => setAction(null)} onDone={() => { setAction(null); load.reload(); toast(t("组织状态已更新"), "ok"); }} />}
+  </section>;
+}
+
+/** Admin coverage G19: the throttles the server holds (`auth_attempts`), and their release. */
+export type Throttle = { id: string; kind: string; subject: string | null; user_id: string | null; count: number; first_at: number; last_at: number;
+  blocked_until: number | null; retry_after: number; active: boolean };
+export const THROTTLE_KIND_LABELS: Record<string, string> = {
+  account_login: "账户登录退避", address_login: "来源地址登录窗口", session_reauth: "会话重认证失败", registration_address: "注册（按地址）",
+  registration_source: "注册（按来源地址）", login_code_address: "邮箱验证码登录（按地址）", login_code_source: "邮箱验证码登录（按来源地址）",
+  recovery_source: "找回口令（按来源地址）", bootstrap_source: "初始化（按来源地址）", passkey_source: "安全密钥登录（按来源地址）",
+  passkey_reauth: "安全密钥重认证", account_action: "账户敏感操作", push: "推送订阅", other: "其他",
+};
+export function ThrottleTable({ items, mayLift, onLift }: { items: Throttle[]; mayLift: boolean; onLift?: (row: Throttle) => void }) {
+  useI18n();
+  const t = tr;
+  if (!items.length) return <p className="muted">{t("没有生效中的限流记录。")}</p>;
+  return <div className="list-wrap"><table className="gov" aria-label={t("限流记录")}>
+    <thead><tr><th scope="col">{t("类型")}</th><th scope="col">{t("对象")}</th><th scope="col">{t("次数")}</th><th scope="col">{t("首次")}</th><th scope="col">{t("最近")}</th><th scope="col">{t("状态")}</th>{mayLift && <th scope="col" className="act">{t("操作")}</th>}</tr></thead>
+    <tbody>{items.map(r => <tr key={r.id}>
+      <td>{t(THROTTLE_KIND_LABELS[r.kind] || r.kind)}</td>
+      <td>{r.subject ?? <span className="muted">{t("不可见")}</span>}</td>
+      <td>{r.count}</td><td>{fmtTime(r.first_at)}</td><td>{fmtTime(r.last_at)}</td>
+      <td>{r.active ? (r.blocked_until ? t("已限流，至 {time}", { time: fmtTime(r.blocked_until) }) : t("等待 {wait}", { wait: fmtDuration(r.retry_after) })) : t("未生效（下次失败将延长等待）")}</td>
+      {mayLift && <td className="act"><button type="button" className="btn sm" onClick={() => onLift?.(r)}>{t("解除")}</button></td>}
+    </tr>)}</tbody></table></div>;
+}
+export function ThrottlesTab({ onDenied, held }: Props) {
+  const { t } = useI18n();
+  const manage = permitted(held, "platform.config.manage");
+  const [activeOnly, setActiveOnly] = useState(true);
+  const load = useAdminData<{ items: Throttle[] }>(`/api/admin/security/throttles${activeOnly ? "?active=true" : ""}`, onDenied);
+  const [lift, setLift] = useState<Throttle | null>(null);
+  const toast = useToast();
+  return <section className="card card-b col gap12" aria-labelledby="throttles-heading">
+    <h2 id="throttles-heading">{t("限流状态")}</h2>
+    <p className="muted">{t("登录退避、来源地址窗口、注册与找回窗口等由服务器持有的限流记录。来源地址只以哈希显示；账户只对能查看账户的角色显示。解除需要理由与重新验证身份，只让下一次尝试从零开始。")}</p>
+    <div className="row gap12 wrap"><label className="check"><input type="checkbox" checked={activeOnly} onChange={e => setActiveOnly(e.target.checked)} />{t("仅显示生效中")}</label>
+      <button className="btn sm" disabled={load.loading} onClick={load.reload}>{t("刷新")}</button></div>
+    {load.err && <p className="notice err" role="alert">{load.err}</p>}
+    {load.loading ? <p role="status">{t("加载中…")}</p> : load.data && <ThrottleTable items={load.data.items} mayLift={!manage.disabled} onLift={setLift} />}
+    {manage.hint && <p className="notice" role="note">{t("你的平台角色可以查看限流记录，但不能解除。")}</p>}
+    {lift && <ActionDialog title={t("解除限流")} confirmLabel={t("解除限流")} reason="required" danger
+      impact={t("将解除「{kind}」的这条限流记录（对象：{subject}）。下一次尝试从零开始；不改变口令、会话或任何权限。", { kind: t(THROTTLE_KIND_LABELS[lift.kind] || lift.kind), subject: lift.subject ?? t("不可见") })}
+      run={reason => post("/api/admin/security/throttles/lift", { id: lift.id, reason })}
+      onClose={() => setLift(null)} onDone={() => { setLift(null); load.reload(); toast(t("限流已解除"), "ok"); }} />}
   </section>;
 }

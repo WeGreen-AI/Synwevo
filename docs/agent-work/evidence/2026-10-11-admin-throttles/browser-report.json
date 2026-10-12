@@ -1,0 +1,62 @@
+{
+ "base": "http://127.0.0.1:33940",
+ "engine": "chrome",
+ "steps": {
+  "lockout": {
+   "wrong_password_statuses": [
+    401,
+    401,
+    401,
+    401,
+    401,
+    401,
+    401,
+    401
+   ],
+   "right_password_while_backed_off": 429,
+   "retry_after": 59
+  },
+  "card": {
+   "rows": [
+    "类型\t对象\t次数\t首次\t最近\t状态\t操作",
+    "账户登录退避\talice-fixture@example.test\t8\t2026/10/12 08:10\t2026/10/12 08:11\t等待 59 秒\t解除"
+   ],
+   "names_account": true,
+   "no_raw_ip": true,
+   "kinds": [
+    "账户登录退避"
+   ]
+  },
+  "lift": {
+   "toast": 1,
+   "account_row_gone": true,
+   "sign_in_after": 200
+  },
+  "detail": {
+   "backoff_line": [
+    "连续失败 3 次，最近一次 2026/10/12 08:11；现在可以重试，成功登录后计数清零。"
+   ],
+   "button": 1
+  },
+  "detail_lift": {
+   "cleared": true,
+   "button": 0,
+   "timeline": [
+    "2026/10/12 08:11\tadmin.security.throttle_lift\tadmin-fixture@example.test\tu_ec7c865013cc\t成功\t第二次锁定也来自他人猜测口令（合成验收）",
+    "2026/10/12 08:11\tadmin.security.throttle_lift\tadmin-fixture@example.test\tu_ec7c865013cc\t成功\t用户来电：是他人猜测口令导致的锁定（合成验收）"
+   ]
+  },
+  "en": {
+   "heading": true,
+   "excerpt": "Throttles\n\nThe throttles the server holds: sign-in backoff, source-address windows, registration and recovery windows. Source addresses appear hashed only; accounts only to roles that can view account"
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+   "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+  ],
+  "support": {
+   "list_status": 403,
+   "error": "platform_permission_denied"
+  }
+ }
+}

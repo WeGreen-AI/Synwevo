@@ -839,3 +839,52 @@ def test_registration_diagnostics_follow_one_address_through_every_stage(env, mo
     f = TestClient(api)
     assert post(f, "/api/auth/login", {"email": "finance@example.com", "password": PW}).status_code == 200
     assert f.get(path + "?email=" + address).status_code == 403
+
+
+def test_throttles_are_listed_without_addresses_and_lifted_with_a_reason(env):
+    """G19: the platform's sign-in and request throttles, each with its count and remaining wait,
+    addresses hashed and accounts named only for a reader of accounts; one confirmed release
+    with a reason lets the person sign in at once, and is audited against the account."""
+    import json
+    c, store, ident, alice, api = env["c"], env["store"], env["ident"], env["alice"], env["api"]
+    stranger = TestClient(api)
+    for _ in range(5):
+        assert post(stranger, "/api/auth/login", {"email": "alice@example.com", "password": "not-the-passphrase"}).status_code in (401, 429)
+    # A registration window for an address nobody registered (the bucket keeps a hash, not the address).
+    for _ in range(4):
+        ident.window_allows("registration-email:" + "ab" * 32, limit=3, window_s=3600)
+    listed = c.get("/api/admin/security/throttles").json()
+    kinds = {row["kind"]: row for row in listed["items"]}
+    account = kinds["account_login"]
+    # After three failures the account bucket waits a second; later guesses are refused before
+    # they count, so the count holds at the backoff's threshold while the wait runs.
+    assert account["subject"] == "alice@example.com" and account["user_id"] == alice["id"] and account["count"] >= 3
+    assert len(account["id"]) == 24 and account["retry_after"] >= 0
+    assert kinds["address_login"]["subject"] and "." not in kinds["address_login"]["subject"] and kinds["address_login"]["user_id"] is None
+    window = kinds["registration_address"]
+    assert window["active"] is True and window["blocked_until"] and window["subject"] and "@" not in window["subject"]
+    assert "ip:" not in json.dumps(listed) and "127.0.0.1" not in json.dumps(listed) and "testclient" not in json.dumps(listed)
+    assert window["id"] in {row["id"] for row in c.get("/api/admin/security/throttles?active=true").json()["items"]}
+    assert c.get(f"/api/admin/users/{alice['id']}").json()["backoff"]["throttle_id"] == account["id"]
+    # Release: strict re-authentication, a reason, a known handle.
+    path = "/api/admin/security/throttles/lift"
+    assert post(c, path, {"id": account["id"], "reason": "用户来电：是他人猜测口令导致的锁定"}).json()["error"] == "reauth_required"
+    _reauth(c)
+    assert post(c, path, {"id": "zz", "reason": "格式错误的记录标识应被拒绝"}).json()["error"] == "bad_throttle"
+    r = post(c, path, {"id": account["id"], "reason": "用户来电：是他人猜测口令导致的锁定"})
+    assert r.status_code == 200 and r.json() == {"ok": True, "kind": "account_login", "lifted": True}, r.text
+    assert ident.login_backoff(alice["id"]) is None
+    assert c.get(f"/api/admin/users/{alice['id']}").json()["backoff"] is None
+    assert post(stranger, "/api/auth/login", {"email": "alice@example.com", "password": PW}).status_code == 200, "signs in at once"
+    assert post(c, path, {"id": account["id"], "reason": "再次解除同一记录应当找不到"}).json()["error"] == "no_throttle"
+    row = store.one("SELECT object_kind,object_id,meta FROM audit_events WHERE action='admin.security.throttle_lift' ORDER BY at LIMIT 1")
+    assert row["object_kind"] == "user" and row["object_id"] == alice["id"] and json.loads(row["meta"])["kind"] == "account_login"
+    assert post(c, path, {"id": window["id"], "reason": "共享出口地址触发了注册窗口"}).status_code == 200
+    assert ident.window_allows("registration-email:" + "ab" * 32, limit=3, window_s=3600) == (True, 0)
+    # Support reads accounts but not platform configuration: no list, no release.
+    make_platform_admin(store, ident.create_user("support@example.com", PW, status="active"), role="support")
+    s = TestClient(api)
+    assert post(s, "/api/auth/login", {"email": "support@example.com", "password": PW}).status_code == 200
+    assert s.get("/api/admin/security/throttles").status_code == 403
+    _reauth(s)
+    assert post(s, path, {"id": account["id"], "reason": "支持角色不能解除限流"}).json()["error"] == "platform_permission_denied"

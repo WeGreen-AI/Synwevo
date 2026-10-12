@@ -121,6 +121,8 @@ ROUTES = [
     ("POST", "/api/admin/registration", "platform.config.manage", True),
     ("GET", "/api/admin/security/second-factor", "platform.config.view", False),
     ("POST", "/api/admin/security/second-factor", "platform.config.manage", True),
+    ("GET", "/api/admin/security/throttles", "platform.config.view", False),
+    ("POST", "/api/admin/security/throttles/lift", "platform.config.manage", True),
     ("GET", "/api/admin/identity-providers", "platform.config.view", False),
     ("GET", "/api/admin/mail", "platform.mail.view", False),
     ("POST", "/api/admin/mail/{mid}/retry", "platform.mail.manage", True),

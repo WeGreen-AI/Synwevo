@@ -40,7 +40,8 @@ export type AccountDetail = {
   organizations: { id: string; name: string | null; status: string; role: string; joined_at: number }[];
   sessions: { id: string; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string;
     client_parts?: { browser: string | null; platform: string | null }; ip: string | null; persistent: boolean; auth_provider: string | null }[];
-  backoff: { failures: number; first_failure_at: number; last_failure_at: number; retry_after: number } | null;
+  /** `throttle_id`: the handle the platform-configuration page releases this backoff by (G19). */
+  backoff: { failures: number; first_failure_at: number; last_failure_at: number; retry_after: number; throttle_id?: string } | null;
   /** The personal Agent's content-safety suspension (admin coverage A13): the administrator's reason, never a conversation. */
   agent_access?: { suspended: boolean; suspension: { id: string; reason: string; report_id: string | null; created_at: number; created_by_email: string | null } | null };
   /** A17: browser push devices, never their endpoints; `active` means a live session still backs the device. */
@@ -95,7 +96,7 @@ export function pushDeviceText(ua: string | null | undefined): string {
 }
 
 /** One of the per-object actions (A17); the dialog confirms it with a reason and re-authentication. */
-export type AccountAction = { kind: "session" | "passkey" | "external" | "push" | "agent_lift"; id: string; label: string };
+export type AccountAction = { kind: "session" | "passkey" | "external" | "push" | "agent_lift" | "backoff_lift"; id: string; label: string };
 
 export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountDetail; held?: Held; onAct?: (action: AccountAction) => void }) {
   useI18n();
@@ -103,6 +104,8 @@ export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountD
   const b = d.backoff;
   // The server decides again on every action; the buttons only follow what it would allow.
   const mayAct = !!onAct && !!held?.has("platform.users.manage") && !d.outranks_caller && !d.application_identity;
+  // Releasing the sign-in backoff is platform configuration (the throttle card's permission), not account management.
+  const mayLift = !!onAct && !!held?.has("platform.config.manage") && !d.outranks_caller;
   const act = (action: AccountAction) => <button type="button" className="btn sm" onClick={() => onAct?.(action)}>{action.label}</button>;
   return <div className="col gap16">
     {d.application_identity && <p className="notice" role="note">{tr("应用身份：由它所属的应用管理，不是一个人。")}</p>}
@@ -208,6 +211,7 @@ export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountD
         ? tr("连续失败 {count} 次，最近一次 {time}；下次尝试需等待 {wait}。", { count: b.failures, time: fmtTime(b.last_failure_at), wait: fmtDuration(b.retry_after) })
         : tr("连续失败 {count} 次，最近一次 {time}；现在可以重试，成功登录后计数清零。", { count: b.failures, time: fmtTime(b.last_failure_at) })}</p>
         : <p className="muted small">{tr("没有失败的登录记录。")}</p>}
+      {b?.throttle_id && mayLift && <div>{act({ kind: "backoff_lift", id: b.throttle_id, label: tr("解除登录退避") })}</div>}
     </section>
 
     <section className="col gap8"><h3 className="secttl">{tr("安全时间线")}</h3>
@@ -231,6 +235,7 @@ const ACTION_PATH: Record<AccountAction["kind"], (uid: string, id: string) => st
   external: (uid, id) => `/api/admin/users/${encodeURIComponent(uid)}/external-identities/${encodeURIComponent(id)}/unlink`,
   push: (uid) => `/api/admin/users/${encodeURIComponent(uid)}/push-subscriptions/revoke`,
   agent_lift: (uid) => `/api/admin/agent-safety/users/${encodeURIComponent(uid)}/lift`,
+  backoff_lift: () => "/api/admin/security/throttles/lift",
 };
 const ACTION_IMPACT: Record<AccountAction["kind"], string> = {
   session: "{email}：该设备的登录与它签发的应用访问将立即结束；其他设备不受影响。本人会收到安全通知。",
@@ -238,10 +243,11 @@ const ACTION_IMPACT: Record<AccountAction["kind"], string> = {
   external: "{email}：该外部账户的下一次登录将不再进入此账户；若它是唯一的登录方式，服务器会拒绝。本人会收到安全通知。",
   push: "{email}：该账户所有浏览器的推送订阅将被撤销，这些设备不再收到系统通知；登录与登录方式不变。本人会收到安全通知，可在自己的设备上重新开启。",
   agent_lift: "{email}：该账户将可以再次使用个人 Agent；理由会记录在审计中。",
+  backoff_lift: "{email}：该账户的登录退避将被解除，下一次登录尝试从零开始；口令、会话与权限不变。",
 };
 const ACTION_DONE: Record<AccountAction["kind"], string> = {
   session: "已结束该设备的登录。", passkey: "已移除该安全密钥。", external: "已解除该外部身份。", push: "已撤销全部推送订阅。",
-  agent_lift: "已恢复该账户的 Agent 使用权限。",
+  agent_lift: "已恢复该账户的 Agent 使用权限。", backoff_lift: "已解除该账户的登录退避。",
 };
 
 export function AccountDetailDialog({ user, held, onClose, onChanged }: {
@@ -256,7 +262,7 @@ export function AccountDetailDialog({ user, held, onClose, onChanged }: {
   // top one); the detail reloads afterwards, so the list shows what is left.
   const confirm = action && <ActionDialog title={action.label} confirmLabel={action.label} reason="required" danger
     impact={tr(ACTION_IMPACT[action.kind], { email: user.email })}
-    run={(reason) => post(ACTION_PATH[action.kind](user.id, action.id), { reason })}
+    run={(reason) => post(ACTION_PATH[action.kind](user.id, action.id), action.kind === "backoff_lift" ? { id: action.id, reason } : { reason })}
     onClose={() => setAction(null)} onDone={() => { setAction(null); load.reload(); onChanged?.(); toast(tr(ACTION_DONE[action.kind]), "ok"); }} />;
   return <><Modal title={tr("账户详情：{email}", { email: user.email })} onClose={onClose} size="wide"
     footer={<><span className="spacer" /><button type="button" className="btn" onClick={onClose}>{tr("关闭")}</button></>}>

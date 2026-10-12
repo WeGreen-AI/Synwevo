@@ -228,6 +228,90 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                                      "created_at", "sent_at", "next_attempt_at")} | {
             "error_code": code, "retryable": retryable}
 
+    # ------------------------------------------------------------------ throttles (G19)
+    THROTTLE_KINDS = (("user:", "account_login"), ("ip:", "address_login"), ("reauth:", "session_reauth"),
+                      ("registration-email:", "registration_address"), ("registration:", "registration_source"),
+                      ("login-code-email:", "login_code_address"), ("login-code:", "login_code_source"),
+                      ("forgot:", "recovery_source"), ("bootstrap:", "bootstrap_source"), ("pkbegin:", "passkey_source"),
+                      ("pkreauth:", "passkey_reauth"), ("account:", "account_action"), ("push-", "push"))
+
+    def _throttle_subject(name: str, kind: str, held) -> tuple[str | None, str | None]:
+        """What the row is about, as administration may see it: an account's address only for a
+        reader of accounts, a session or bucket by its first characters, a source address never
+        (the handle already hashes it). Returns (subject, user_id)."""
+        from synwevo_core.identity import throttle_id
+        if kind == "account_login":
+            key = name[len("user:"):]
+            user = store.one("SELECT id,email FROM users WHERE email_key=? AND deleted_at IS NULL", (key,))
+            if not user:
+                return None, None
+            return (user["email"] if "platform.users.view" in held else None), user["id"]
+        if kind in ("account_action", "push"):
+            uid = name.rsplit(":", 1)[-1]
+            user = store.one("SELECT id,email FROM users WHERE id=? AND deleted_at IS NULL", (uid,))
+            if not user:
+                return None, None
+            return (user["email"] if "platform.users.view" in held else None), user["id"]
+        if kind == "session_reauth":
+            return name[len("reauth:"):][:8], None
+        return throttle_id(name)[:12], None
+
+    def _throttle_row(b: dict, held) -> dict | None:
+        from synwevo_core.identity import throttle_id
+        name = b["bucket"]
+        kind = next((k for prefix, k in THROTTLE_KINDS if name.startswith(prefix)), "other")
+        state = ident.throttle_state(name)
+        if not state:
+            return None
+        subject, uid = _throttle_subject(name, kind, held)
+        return {"id": throttle_id(name), "kind": kind, "subject": subject, "user_id": uid,
+                "count": state["count"], "first_at": state["first_at"], "last_at": state["last_at"],
+                "blocked_until": state["blocked_until"] if state["retry_after"] else None,
+                "retry_after": state["retry_after"], "active": state["retry_after"] > 0}
+
+    @r.get("/security/throttles")
+    def list_throttles(request: Request, active: bool = Query(False)):
+        """G19: the sign-in and request throttles the platform is holding (`auth_attempts`): an
+        account's failed proofs, a source address's, a registration or recovery window — each
+        with its count, window and remaining wait. Addresses never appear (the handle hashes
+        them); an account is named only for a reader of accounts. Read-only."""
+        actor = _admin(request, "platform.config.view")
+        held = actor["platform_permissions"]
+        rows = [row for row in (_throttle_row(b, held) for b in store.all(
+            "SELECT bucket,count,first_at,last_at,blocked_until FROM auth_attempts ORDER BY last_at DESC LIMIT 500")) if row]
+        if active:
+            rows = [row for row in rows if row["active"]]
+        return {"items": rows, "kinds": [k for _, k in THROTTLE_KINDS]}
+
+    @r.post("/security/throttles/lift")
+    def lift_throttle(request: Request, body: dict = Body(...)):
+        """G19: release one throttle (a person locked out of their own account by an attacker's
+        guesses, a shared address that tripped a window) with a written reason and strict
+        re-authentication. The next attempt starts from zero; nothing else changes."""
+        actor = _admin(request, "platform.config.manage", dangerous=True)
+        reason = _reason(body)
+        handle = body.get("id")
+        if not isinstance(handle, str) or not re.fullmatch(r"[0-9a-f]{24}", handle):
+            raise ServiceError(400, "bad_throttle", "请选择要解除的限流记录")
+        from synwevo_core.identity import throttle_id
+        with _write(request, "platform.config.manage", object_kind="throttle", object_id=handle):
+            actor = _admin(request, "platform.config.manage", dangerous=True)
+            held = actor["platform_permissions"]
+            match = next((b for b in store.all("SELECT bucket,count,first_at,last_at,blocked_until FROM auth_attempts")
+                          if throttle_id(b["bucket"]) == handle), None)
+            if not match:
+                raise ServiceError(404, "no_throttle", "找不到该限流记录，可能已经过期或被解除")
+            row = _throttle_row(match, held)
+            if row and row["user_id"]:
+                _not_outranked(request, actor, row["user_id"])
+            ident.lift_throttle(match["bucket"])
+            audit(request, "admin.security.throttle_lift", actor_id=actor["id"],
+                  object_kind="user" if row and row["user_id"] else "throttle",
+                  object_id=(row["user_id"] if row and row["user_id"] else handle), result="ok",
+                  meta={"reason": reason, "kind": row["kind"] if row else "other", "count": match["count"],
+                        "was_active": bool(row and row["active"])})
+        return {"ok": True, "kind": row["kind"] if row else "other", "lifted": True}
+
     @r.get("/mail")
     def outbox(request: Request, q: str = Query("", max_length=100),
                status: str = Query("", pattern="^(|queued|sent|failed)$"),

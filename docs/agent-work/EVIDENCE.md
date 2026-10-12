@@ -798,3 +798,9 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 `GET /api/admin/diagnostics/registration?email=` 按地址给出七个阶段（地址校验、人机验证、频率限制、账户、验证链接、邮件、激活）各自的状态与时间；被限流的注册请求（IP 或地址窗口）现在写审计 `auth.registration.throttled`，调用方回答不变；账户页底部「注册诊断」卡片三语言。
 测试：test_admin 新增 1 例（无账户→注册→待激活/已签发/已排队→第 4 次被限流并记录 scope=email→真实链接激活→support 无事件有邮件→finance 403→空/非法地址 400）；矩阵新增 1 行；注册/挑战/账户安全既有 66 例通过；account-web 170 通过（新增 3 例）；typecheck/build、五守卫通过。
 浏览器（隔离合成实例 127.0.0.1:33937，开放注册、文件邮件无投递进程，系统 Chrome）：机构形式地址经公开 API 注册 4 次（均 202）→ 管理员在「注册诊断」输入地址：阶段表显示地址格式可接受 / 人机验证没有记录（未配置）/ 频率限制当前已限流（带时间）/ 账户待激活 / 验证链接已签发未使用 / 邮件已排队 / 尚未激活，事件含 auth.registration.throttled，文本不含令牌 → 从隔离发件箱取链接激活（200）后再诊断：账户正常、验证链接已使用、已激活并显示 auth.email.verified → 英文视图阶段表（Throttled now / Active / Used / Queued / Activated）→ support 看到阶段与邮件、事件段显示需要审计查看权限。带尾点地址被浏览器自带邮箱校验拦下（未发请求）。证据 `evidence/2026-10-11-admin-registration-diagnostics/`（browser-report.json、verification.json、4 张截图）。
+
+## 2026-10-11 CR-098 Admin G19 限流状态（本地+隔离浏览器）
+
+`GET /api/admin/security/throttles` 列出 `auth_attempts` 的全部家族（账户登录退避、来源地址窗口、会话重认证、注册/验证码/找回/初始化/安全密钥窗口、账户敏感操作、推送），地址只以哈希句柄出现，账户邮箱随 users.view；`POST /security/throttles/lift`（config.manage + 严格重认证 + 理由）解除一条并审计；账户详情登录退避段可直接解除。
+测试：test_admin 新增 1 例（5 次错口令 + 注册窗口 → 列表/详情一致 → 重认证解除 → 退避清零、立即登录 → 重复 404、格式错 400、审计对象为用户、support 403）；矩阵新增 2 行；account-web 172 通过（新增 2 例；门禁补入两条拒绝句）；typecheck/build、五守卫通过。
+浏览器（隔离合成实例 127.0.0.1:33940，系统 Chrome）：按服务器退避节奏输错口令 8 次后正确口令被拒（429，retry_after 59）→ 平台配置页「限流状态」卡片显示「账户登录退避 · alice… · 8 次 · 等待 59 秒 · 解除」且无原始 IP → 解除（理由+重认证）后提示「限流已解除」、行消失、Alice 立即登录 200 → 再次 3 次错口令后账户详情显示「连续失败 3 次…」与「解除登录退避」，解除后显示「没有失败的登录记录」，时间线出现两条 admin.security.throttle_lift 及理由 → 英文视图「Throttles」→ support 列表 403。证据 `evidence/2026-10-11-admin-throttles/`（browser-report.json、verification.json、5 张截图）。

@@ -361,3 +361,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：令牌只给签发/到期/使用时间，绝不给值或哈希；邮件只给 `_mail_row` 元数据（无正文）；审计事件只带 scope/retry_after/mail_error 三个键；人机验证只能按来源地址与时间窗关联（挑战发生在账户存在之前），界面写明口径；限流状态直接读 `auth_attempts` 不计数；诊断本身不写审计（只读）；被限流的回答对调用方仍是同样的 202，避免借此确认地址存在。
 - 风险/未做：校验失败（400）不写审计，避免匿名刷量把日志填满；服务商回执以外的投递信息没有；人机验证关联是启发式（同地址 ±15 分钟）。
 - 验证：identity 相关 8 例 + 注册/挑战/账户安全 66 例通过；account-web typecheck/170 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-11-admin-registration-diagnostics。
+
+## CR-098 · Admin G19 限流状态：查看与带理由解除（2026-10-11，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：packages/core/synwevo_core/identity.py（`throttle_id`、`Identity.throttle_state`/`lift_throttle`、`login_backoff` 带 `throttle_id`）；services/identity/synwevo_identity/admin_routes.py（`THROTTLE_KINDS` 家族表、`GET /security/throttles`、`POST /security/throttles/lift`）；account-web `governance/GovernanceTabs.tsx`（`ThrottleTable`/`ThrottlesTab`，挂在平台配置页）、`AccountDetail.tsx`（登录退避段「解除登录退避」，动作 kind `backoff_lift`）、labels.ts 两个错误码、messages.ts 36 条；tests：test_admin.py 1 例、test_platform_access.py 矩阵 2 行、admin-throttles.test.mjs 2 例；docs/platform/admin-coverage.md G19 行（D10 行同步更正）。
+- 审查要点：桶名可能含来源地址或邮箱键，列表只给 sha256 前 24 位作为句柄，解除按句柄在服务端匹配，原始地址不出服务器；账户家族的邮箱只对持 users.view 者显示，审计以用户为对象；慢退避（user:/reauth:）按计数等待、固定窗口按 blocked_until，`throttle_state` 只读不计数；解除只删除该桶（下次尝试从零开始），不触碰口令/会话/权限；权限沿用 config.view/config.manage（与 A11 一致，不新增权限）；解除需严格重认证 + 理由 + 越级检查。
+- 风险/未做：无批量解除；地址家族的 ip 桶对攻击者的保护在解除后立即消失（这是解除的含义，界面已写明）；未新增 `platform.security.manage`。
+- 验证：identity 相关 11 例通过；account-web typecheck/172 测试/build 通过（含 refusals 门禁）；五守卫通过；浏览器验收见 evidence/2026-10-11-admin-throttles。
