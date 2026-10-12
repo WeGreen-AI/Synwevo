@@ -10,6 +10,7 @@ from typing import Literal
 from fastapi import APIRouter, Request, File, UploadFile, Form, Header
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
+from synwevo_core import auth as _auth
 from synwevo_core.errors import ServiceError
 from synwevo_core.capabilities import canonical
 from ..common.machine import acting
@@ -53,6 +54,9 @@ def router(ctx, service, prefix='/api/suite/dataprep'):
         with allowed(request, workspace_id, export=True) as who:
             check_sources(service, workspace_id, who.user['id'], dataset_id)
             data, mime = service.export(workspace_id, dataset_id, format)
+            # Exports are the one function for both surfaces (G26 / D7): the dataset and the format, never rows.
+            _auth.audit_event(ctx.store, 'suite.dataprep.export', workspace_id=workspace_id, object_kind='dataprep_dataset',
+                              object_id=dataset_id, meta={'format': format, 'via': who.via})
         return Response(data, media_type=mime, headers={'Content-Disposition': f'attachment; filename="{dataset_id}.{format}"',
                          'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 
@@ -65,6 +69,8 @@ def router(ctx, service, prefix='/api/suite/dataprep'):
                 check_sources(service, workspace_id, who.user['id'], ref['dataset_id'])
             from .service import decode
             rows = ctx.store.all('SELECT * FROM dataprep_run_issues WHERE run_id=? AND workspace_id=? ORDER BY seq', (run_id, workspace_id))
+            _auth.audit_event(ctx.store, 'suite.dataprep.export', workspace_id=workspace_id, object_kind='dataprep_run',
+                              object_id=run_id, meta={'kind': 'issues', 'count': len(rows), 'via': who.via})
         return Response(canonical(service.label_issues(workspace_id, [decode(r) for r in rows])), media_type='application/json',
                         headers={'Content-Disposition': f'attachment; filename="{run_id}-issues.json"', 'Cache-Control': 'no-store'})
     return api

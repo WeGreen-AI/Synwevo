@@ -11,6 +11,7 @@ import json
 import threading
 from pathlib import PurePath
 
+from synwevo_core import auth as _auth
 from synwevo_core.capabilities import canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
 from synwevo_core.member_import import accept_upload
@@ -181,6 +182,9 @@ class Extract:
                               "created_at": now(), "idempotency_key": key, "source_json": provenance})
             record_event(t, type_="extract.file.uploaded", app="extract", workspace_id=workspace_id,
                          object_kind="extract_file", object_id=fid, user_id=user_id, data={"file_id": fid})
+            # The upload's row (G26 / D7) in the same transaction; a replay returned above and left none.
+            _auth.audit_event(self.store, "suite.extract.upload", workspace_id=workspace_id, object_kind="extract_file", object_id=fid,
+                              meta={"size": len(data), "format": extension, "source": bool(source)})
         return self.file_json(self.row(workspace_id, "file", fid))
 
     @staticmethod
@@ -195,6 +199,8 @@ class Extract:
     def file_bytes(self, user_id, workspace_id, file_id):
         self.export_right(user_id, workspace_id)
         row = self.row(workspace_id, "file", file_id)
+        _auth.audit_event(self.store, "suite.extract.download", workspace_id=workspace_id, object_kind="extract_file", object_id=file_id,
+                          meta={"size": row["size"]})
         return row, read_blob(self.store, row["blob"])
 
     def export_right(self, user_id, workspace_id):

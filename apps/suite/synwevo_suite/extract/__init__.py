@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 from fastapi import Request, UploadFile, File, Header
 from fastapi.responses import Response
+from synwevo_core import auth as _auth
 from synwevo_core.capabilities import AppManifest, EventFeed, EventType, canonical
 from .ops import Revision
 
@@ -83,6 +84,11 @@ def install(ctx):
                 raise ServiceError(422, "invalid_input", "导出参数无效") from None
             result = ctx.capabilities.invoke("extract.task.result", args.model_dump(), user_id=who.user["id"],
                                             workspace_id=workspace_id, via=who.via, **who.invoke)
+            if who.via == "ui":
+                # A credential's export is audited by the operation it invokes (via != ui); a session's
+                # read operation is not, so the export itself is recorded here (G26 / D7).
+                _auth.audit_event(ctx.store, "suite.extract.export", workspace_id=workspace_id, object_kind="extract_task",
+                                  object_id=task_id, meta={"revision": revision, "via": who.via})
         return Response(canonical(result["output"]).encode(), media_type="application/json", headers={
             "Content-Disposition": f'attachment; filename="{task_id}-r{revision}.json"',
             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})

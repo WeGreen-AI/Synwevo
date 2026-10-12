@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from synwevo_core import auth as _auth
 from synwevo_core.capabilities import canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id, now
@@ -295,6 +296,10 @@ class Approvals:
             with self.store.tx() as t:
                 event = record_event(t,type_="approvals."+kind,app="approvals",workspace_id=r["workspace_id"],object_kind="approval_request",
                     object_id=r["id"],data=payload,correlation_id=r["correlation_id"])
+                # Outside a call this is the engine (expiry, escalation) or a named person (G26 / D7).
+                _auth.audit_event(self.store, "suite.approvals."+kind, workspace_id=r["workspace_id"], object_kind="approval_request",
+                                  object_id=r["id"], meta={"revision": r["revision"], "state_version": r["state_version"], "status": r["status"]},
+                                  **({"actor_kind": "user", "actor_id": actor} if actor else {"actor": {"kind": "operator", "label": "approvals-engine"}}))
                 self.store.after_commit(lambda: self.caps.announce([event]))
 
     def _bump(self,r,**changes):

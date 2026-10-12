@@ -14,6 +14,8 @@ import threading
 import time
 from typing import Any
 
+from synwevo_core.audit_change import change as _auth_change
+from synwevo_core import auth as _auth
 from synwevo_core import data_flow, env, sealed
 from synwevo_core.capabilities import Call, canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
@@ -71,6 +73,8 @@ class Forms:
         if not row or (submission_id is not None and row["submission_id"] != submission_id
                        and file_id not in self._files_used(self._submission(workspace_id, submission_id), row)):
             raise ServiceError(404, "file_not_found", "附件不存在或不属于该提交")
+        _auth.audit_event(self.store, "suite.forms.download", workspace_id=workspace_id, object_kind="form_file", object_id=file_id,
+                          meta={"submission_id": row["submission_id"], "request_id": row["request_id"], "size": row["size"]})
         return row, read_blob(self.store, row["blob"])
 
     def _files_used(self, s: dict, row: dict | None = None) -> set[str]:
@@ -531,6 +535,10 @@ class Forms:
                                       object_kind="form_request", object_id=row["id"],
                                       data={"request_id": row["id"], "form_id": row["form_id"]},
                                       correlation_id=row["correlation_id"])
+                    # The expiry is the system's, whoever's look triggered it (G26 / D7).
+                    _auth.audit_event(self.store, "suite.forms.request.expire", actor={"kind": "operator", "label": "forms-expiry"},
+                                      workspace_id=row["workspace_id"], object_kind="form_request", object_id=row["id"],
+                                      meta={"form_id": row["form_id"], **_auth_change({"status": row["status"]}, {"status": "expired"})})
             if n and self.caps:
                 self.caps.announce([ev])
             row = self.store.one("SELECT * FROM form_requests WHERE id=?", (row["id"],))

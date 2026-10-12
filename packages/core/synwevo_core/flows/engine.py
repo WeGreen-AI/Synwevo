@@ -258,6 +258,14 @@ class Flows(Triggers):
                        canonical(event) if event else None, ts + spec.timeout_s, ts, ts, ts))
             row = self.store.one("SELECT * FROM flow_runs WHERE id=?", (rid,))
             self._history(t, row, "started", "queued")
+            if trigger_id is not None:
+                # A start the trigger made (D7 §6): a system row naming the owner, the trigger and the
+                # event's id; a person's own start is audited by the operation that asked for it.
+                from ..auth import audit_event
+                audit_event(self.store, "suite.agent.flow.trigger", actor={"kind": "operator", "label": "automation"},
+                            object_kind="flow_run", object_id=rid,
+                            meta={"flow_id": flow_id, "version": version, "user_id": user_id, "trigger_id": trigger_id,
+                                  "event_id": (event or {}).get("id"), "depth": depth})
         return self._summary(row) | {"replayed": False}
 
     @staticmethod

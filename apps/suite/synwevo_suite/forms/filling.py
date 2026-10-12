@@ -26,6 +26,7 @@ from fastapi import APIRouter, File, Form, Header, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field as F
 
+from synwevo_core import auth as _auth
 from synwevo_core.capabilities import canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
 from synwevo_core.organizations import workspace_access_failure
@@ -236,6 +237,16 @@ class Filling:
         held = standing(self.store)
         return {r["id"]: r for r in rows if r["blob"] not in held}
 
+    def _audit(self, ctx: dict, action: str, object_kind: str, object_id: str, **meta) -> None:
+        """One row per change a filler makes (decision D7 §6): a signed-in filler is the person the
+        gate recorded; anyone else is `anonymous` with the filler key's hash prefix (a public link) or
+        the request they were sent (a personal link). Identifiers only, never the answers."""
+        req, filler, user = ctx["request"], ctx["filler"], ctx.get("user")
+        who = {} if user else {"actor_kind": "anonymous",
+                               "actor_id": filler[:24] if filler.startswith("pub:") else f"recipient:{req['id']}"}
+        _auth.audit_event(self.store, action, workspace_id=req["workspace_id"], object_kind=object_kind, object_id=object_id,
+                          meta={"request_id": req["id"], "form_id": req["form_id"], "kind": req["kind"], **meta}, **who)
+
     def upload(self, ctx: dict, field_id: str, filename: str, content_type: str | None, data: bytes) -> dict:
         req, filler = ctx["request"], ctx["filler"]
         refusal = self._state_refusal(req)
@@ -269,21 +280,25 @@ class Filling:
         blob = self.store.put_blob(data)
         fid = new_id("ffile")
         user = ctx.get("user")
-        self.store.execute(
-            "INSERT INTO form_files (id,workspace_id,request_id,field_id,filler_key,blob,filename,content_type,size,scan,"
-            "state,uploaded_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,'staged',?,?)",
-            (fid, req["workspace_id"], req["id"], field_id, filler, blob, name,
-             (content_type or "application/octet-stream")[:100], len(data), canonical(scan),
-             user["id"] if user else None, now()))
+        with self.store.tx():
+            self.store.execute(
+                "INSERT INTO form_files (id,workspace_id,request_id,field_id,filler_key,blob,filename,content_type,size,scan,"
+                "state,uploaded_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,'staged',?,?)",
+                (fid, req["workspace_id"], req["id"], field_id, filler, blob, name,
+                 (content_type or "application/octet-stream")[:100], len(data), canonical(scan),
+                 user["id"] if user else None, now()))
+            self._audit(ctx, "suite.forms.file.upload", "form_file", fid, field_id=field_id, size=len(data))
         return {"id": fid, "field_id": field_id, "filename": name, "size": len(data),
                 "scan": "clean" if scan.get("status") == "clean" else "not_configured"}
 
     def discard(self, ctx: dict, file_id: str) -> dict:
         req, filler = ctx["request"], ctx["filler"]
-        n = self.store.execute("UPDATE form_files SET state='discarded' WHERE id=? AND request_id=? AND filler_key=? "
-                               "AND state='staged'", (file_id, req["id"], filler))
-        if not n:
-            raise ServiceError(404, "file_not_found", "附件不存在，或已随提交保存不能再删除")
+        with self.store.tx():
+            n = self.store.execute("UPDATE form_files SET state='discarded' WHERE id=? AND request_id=? AND filler_key=? "
+                                   "AND state='staged'", (file_id, req["id"], filler))
+            if not n:
+                raise ServiceError(404, "file_not_found", "附件不存在，或已随提交保存不能再删除")
+            self._audit(ctx, "suite.forms.file.discard", "form_file", file_id)
         return {"id": file_id, "state": "discarded"}
 
     def file_bytes(self, ctx: dict, file_id: str) -> tuple[dict, bytes]:
@@ -357,6 +372,8 @@ class Filling:
                                     "form_id": req["form_id"], "version": v["version"],
                                     "revision": revision,
                                     "kind": req["kind"]})
+            self._audit(ctx, "suite.forms.submission.resubmit" if resubmission else "suite.forms.submission.create",
+                        "form_submission", sid, version=v["version"], revision=revision, files=len(used))
         capabilities.announce([ev])
         who = label or "—"
         # The request's creator is told only while they may still read Forms here (a removed

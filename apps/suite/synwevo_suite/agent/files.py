@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from synwevo_core import auth as _auth
 from synwevo_core.capabilities import canonical, fingerprint
 from synwevo_core.errors import ServiceError
 from synwevo_core.member_import import accept_upload
@@ -186,6 +187,9 @@ class Files:
             self.store.insert('agent_files', {'id': fid, 'user_id': uid, 'filename': filename, 'size': len(data),
                 'content_hash': digest, 'idempotency_key': key, 'status': 'receiving', 'created_at': ts,
                 'updated_at': ts, 'expires_at': ts+RETENTION, 'lease_until': ts+300})
+            # A personal file has no workspace; the row names the person through the request (G26 / D7).
+            _auth.audit_event(self.store, 'suite.agent.file.upload', actor_kind='user', actor_id=uid, object_kind='agent_file', object_id=fid,
+                              meta={'size': len(data)})
         try:
             scan = accept_upload(filename, data)
             with self.store.tx():
@@ -261,6 +265,8 @@ class Files:
     def download(self, uid, fid):
         row = self.row(uid, fid)
         self._available(row)
+        _auth.audit_event(self.store, 'suite.agent.file.download', actor_kind='user', actor_id=uid, object_kind='agent_file', object_id=fid,
+                          meta={'size': row['size']})
         return row, self._bytes(row)
 
     def _bytes(self, row):

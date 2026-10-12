@@ -20,6 +20,7 @@ from xml.etree.ElementTree import ParseError
 from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl import Workbook, load_workbook
 
+from synwevo_core import auth as _auth
 from synwevo_core.capabilities import canonical
 from synwevo_core.store import new_id, now
 from synwevo_core.errors import ServiceError
@@ -143,6 +144,9 @@ class Transfers:
         iid, ts = new_id('imp'), now()
         self.store.execute('INSERT INTO tb_imports (id,table_id,workspace_id,user_id,filename,format,columns_json,rows_json,row_count,status,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                            (stored_ticket(c, iid, 'import_not_found'), tid, c.workspace_id, c.user_id, filename.replace('\\', '/').rsplit('/', 1)[-1][:200], fmt, canonical(columns), canonical(data), len(data), 'ready', ts, ts+3600))
+        # The upload's row (G26 / D7), in the route's transaction with the ticket: ids and counts only.
+        _auth.audit_event(self.store, 'suite.tables.upload', workspace_id=c.workspace_id, object_kind='tables_import', object_id=iid,
+                          meta={'table_id': tid, 'format': fmt, 'row_count': len(data), 'via': getattr(c, 'via', 'ui')})
         return {'id': iid, 'columns': columns, 'rows': data[:20], 'row_count': len(data), 'expires_at': ts+3600}
 
     def import_row(self, c, tid, iid):
@@ -310,6 +314,8 @@ class Transfers:
             book.save(stream)
             content, mime = stream.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         self.store.execute('UPDATE tb_exports SET downloads=downloads+1 WHERE id=?', (row['id'],))
+        _auth.audit_event(self.store, 'suite.tables.download', workspace_id=c.workspace_id, object_kind='tables_export', object_id=row['id'],
+                          meta={'format': row['format'], 'via': getattr(c, 'via', 'ui')})
         return Response(content, media_type=mime, headers={'Content-Disposition': 'attachment; filename="tables.'+row['format']+'"',
                                                           'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 

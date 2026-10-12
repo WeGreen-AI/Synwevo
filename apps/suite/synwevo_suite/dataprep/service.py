@@ -9,6 +9,7 @@ import logging
 import threading
 import time
 
+from synwevo_core import auth as _auth
 from synwevo_core.capabilities import canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id, now
@@ -155,6 +156,9 @@ class DataPrep:
             self.store.insert('dataprep_files', {'id': fid, 'workspace_id': workspace, 'blob': blob,
                               'filename': name, 'format': ext, 'size': len(data), 'scan': scan,
                               'uploaded_by': user, 'created_at': now(), 'upload_key': key})
+            # The upload's row (G26 / D7) in the same transaction; a replay returned above and left none.
+            _auth.audit_event(self.store, 'suite.dataprep.upload', workspace_id=workspace, object_kind='dataprep_file', object_id=fid,
+                              meta={'size': len(data), 'format': ext})
         return {**decode(self.get('files', workspace, fid)), **info, 'scan_status': scan.get('status')}
 
     def label_issues(self, workspace, issues):
