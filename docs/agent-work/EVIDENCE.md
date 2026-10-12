@@ -868,3 +868,7 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 
 `synwevo_core.auth.audit_event` 成为平台与应用共用的唯一审计写入口（D7）：按 `authority.describe*` 描述符映射操作者（人 / 委托客户端后的人 / 机器凭据 / 系统），网关把当前主体放进 `context.principal()`，服务层写行时不必拿着 request 也能说清是谁、是哪次请求；`Platform.audit` 与 `Capabilities._audit` 都委托给它，行内容不变（meta 统一为规范 JSON）。
 测试：`tests/integration/test_audit_actor_mapping.py` 3 例（五种身份映射与无身份回落、上下文主体/请求 ID 与显式参数的优先级、与写入同事务回滚）；连同账户服务 test_admin/test_platform_access/test_admin_unclaim、集成 test_api_platform/test_credentials_keys、Docs 的 governance/rescan/scan_recovery、Suite 的 capabilities/machine_api/machine_webhooks/agent 系列共 527 通过；五守卫通过。全量：仓库根 `pytest` 全量 5794 通过、2 跳过（24 分钟，含新增 3 例）。
+
+## 2026-10-12 CR-110 G26 WP2 Docs webhook 审计（本地）
+
+八种订阅/投递操作各自在写入事务内留一行审计（`docs.webhook.*`），机器调用方记为 `api:<key id>`，meta 只含主机、事件、版本、投递与订阅标识；调度器放弃目标写系统行 `webhook-dispatcher`。测试：`test_webhook_audit.py` 3 例（八操作各一行且不含密钥/路径、更新行的 `changed`、重放不加行、审计失败回滚暂停与删除、自动停用系统行）；连同 redelivery/hardening/subscriptions/contract/CLI 测试 61 通过；五守卫通过。Docs 全套件：`apps/docs/tests` 全套件 + 审计映射测试 1644 通过、2 跳过（7 分钟）。

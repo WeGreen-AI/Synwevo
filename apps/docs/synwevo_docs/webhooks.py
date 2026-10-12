@@ -50,7 +50,11 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
+from urllib.parse import urlsplit
+
+from synwevo_core import auth as _auth
 from synwevo_core import authority, env, journal, sealed
+from synwevo_core.audit_change import change
 from synwevo_core import webhook_delivery as _delivery
 from synwevo_core.errors import ServiceError
 # Where a callback may go, how it is signed and when it is retried are the shared delivery layer's;
@@ -802,10 +806,16 @@ class WebhookDispatcher:
         older database cannot bring it back to life."""
         t = self.clock()
         with self.store.tx() as c:
+            sub = c.execute("SELECT tenant, url FROM webhook_subscriptions WHERE id=?", (sid,)).fetchone()
             n = c.execute("UPDATE webhook_subscriptions SET status='disabled', disabled_reason=?, updated_at=?, "
                           "version=version+1 WHERE id=? AND status!='disabled'", (reason, t, sid)).rowcount
-            c.execute("UPDATE webhook_deliveries SET status='dropped', last_error=?, next_attempt_at=NULL "
-                      "WHERE subscription_id=? AND status='pending'", (f"subscription_disabled:{reason}", sid))
+            dropped = c.execute("UPDATE webhook_deliveries SET status='dropped', last_error=?, next_attempt_at=NULL "
+                                "WHERE subscription_id=? AND status='pending'", (f"subscription_disabled:{reason}", sid)).rowcount
+            if n and sub:
+                # The platform's own decision (a destination given up on), on record like a person's.
+                _auth.audit_event(self.store, "docs.webhook.disable", actor={"kind": "operator", "label": "webhook-dispatcher"},
+                                  workspace_id=sub["tenant"], object_kind="webhook_subscription", object_id=sid,
+                                  meta={"reason": reason, "host": urlsplit(sub["url"]).hostname, "deliveries_dropped": dropped})
         if n:
             try:
                 journal.record(self.store, "webhook_disabled", subscription_id=sid)
@@ -1041,9 +1051,20 @@ class Subscriptions:
             c.execute("INSERT INTO webhook_subscriptions (id, tenant, url, description, events, status, secret_enc, "
                       "created_by, created_at, updated_at, version) VALUES (?,?,?,?,?,'active',?,?,?,?,1)",
                       (sid, tenant, url, desc, json.dumps(events), enc, authority.dumps(by), t, t))
+            self._audit("create", by, tenant, sid, host=urlsplit(url).hostname, events=events, version=1)
         out = self.get(tenant, sid)
         out["secret"] = plain
         return out
+
+    def _audit(self, action: str, by: dict | None, tenant: str, object_id: str, *, object_kind: str = "webhook_subscription",
+               **meta) -> None:
+        """One row per change to where a workspace's events go (admin coverage G26, decision D7),
+        in the transaction of the change: who (the authority descriptor; the request's principal
+        when a caller passes none), the destination's host — never the address's path, which may
+        carry a token — and identifiers. Never the secret."""
+        _auth.audit_event(self.store, f"docs.webhook.{action}", actor=by, workspace_id=tenant,
+                          object_kind=object_kind, object_id=object_id,
+                          meta={k: v for k, v in meta.items() if v is not None})
 
     def list(self, tenant: str | None) -> list[dict]:
         t = self.clock()
@@ -1092,14 +1113,20 @@ class Subscriptions:
             with self.store.tx() as c:
                 n = c.execute(f"UPDATE webhook_subscriptions SET {sets}, version=version+1 WHERE id=? AND version=? "
                               f"AND deleted_at IS NULL", tuple(values.values()) + (sid, row["version"])).rowcount
+                if n:
+                    self._audit("update", by, row["tenant"], sid, version=row["version"] + 1,
+                                description_changed="description" in values or None,
+                                **change({"host": urlsplit(row["url"]).hostname, "events": json.loads(row["events"])},
+                                         {"host": urlsplit(values.get("url", row["url"])).hostname,
+                                          "events": json.loads(values.get("events", row["events"]))}))
             if not n:
                 cur = self.store.one("SELECT version FROM webhook_subscriptions WHERE id=?", (sid,))
                 raise ServiceError(409, "version_conflict", "订阅已被同时修改；请重新读取后再提交",
                                    {"current_version": (cur or {}).get("version")})
         return self.get(tenant, sid)
 
-    def delete(self, tenant: str | None, sid: str) -> dict:
-        self._row(tenant, sid)
+    def delete(self, tenant: str | None, sid: str, by: dict | None = None) -> dict:
+        row = self._row(tenant, sid)
         # Journal first: a delete that cannot be recorded outside the database is not durable
         # against a restore, and the caller must hear that instead of a success.
         try:
@@ -1110,12 +1137,14 @@ class Subscriptions:
         with self.store.tx() as c:
             c.execute("UPDATE webhook_subscriptions SET status='disabled', disabled_reason='deleted', deleted_at=?, "
                       "updated_at=?, version=version+1 WHERE id=?", (t, t, sid))
-            c.execute("UPDATE webhook_deliveries SET status='dropped', last_error='subscription_deleted', next_attempt_at=NULL "
-                      "WHERE subscription_id=? AND status='pending'", (sid,))
+            dropped = c.execute("UPDATE webhook_deliveries SET status='dropped', last_error='subscription_deleted', next_attempt_at=NULL "
+                                "WHERE subscription_id=? AND status='pending'", (sid,)).rowcount
             c.execute("DELETE FROM meta WHERE key=?", (FAILING_SINCE_KEY + sid,))
+            self._audit("delete", by, row["tenant"], sid, host=urlsplit(row["url"]).hostname, version=row["version"] + 1,
+                        deliveries_dropped=dropped)
         return {"deleted": sid}
 
-    def pause(self, tenant: str | None, sid: str) -> dict:
+    def pause(self, tenant: str | None, sid: str, by: dict | None = None) -> dict:
         row = self._row(tenant, sid)
         if row["status"] == "disabled":
             raise ServiceError(409, "subscription_disabled", "订阅已停用；如需重新启用请调用 /resume")
@@ -1125,8 +1154,10 @@ class Subscriptions:
                 c.execute("UPDATE webhook_subscriptions SET status='paused', updated_at=?, version=version+1 WHERE id=?", (t, sid))
                 # Pausing stops what is already queued too: a paused destination must not keep
                 # receiving retries for days.
-                c.execute("UPDATE webhook_deliveries SET status='dropped', last_error='subscription_paused', next_attempt_at=NULL "
-                          "WHERE subscription_id=? AND status='pending'", (sid,))
+                dropped = c.execute("UPDATE webhook_deliveries SET status='dropped', last_error='subscription_paused', next_attempt_at=NULL "
+                                    "WHERE subscription_id=? AND status='pending'", (sid,)).rowcount
+                self._audit("pause", by, row["tenant"], sid, host=urlsplit(row["url"]).hostname, version=row["version"] + 1,
+                            deliveries_dropped=dropped)
         return self.get(tenant, sid)
 
     def resume(self, tenant: str | None, sid: str, by: dict) -> dict:
@@ -1142,6 +1173,8 @@ class Subscriptions:
                           "created_by=?, updated_at=?, version=version+1 WHERE id=?", (authority.dumps(by), t, sid))
                 top = c.execute("SELECT COALESCE(MAX(seq), 0) AS seq FROM job_events").fetchone()["seq"]
                 c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (RESUME_SEQ_KEY + sid, str(top)))
+                self._audit("resume", by, row["tenant"], sid, host=urlsplit(row["url"]).hostname, version=row["version"] + 1,
+                            from_status=row["status"], disabled_reason=row.get("disabled_reason"))
         return self.get(tenant, sid)
 
     def rotate_secret(self, tenant: str | None, sid: str, overlap_s, by: dict) -> dict:
@@ -1159,26 +1192,34 @@ class Subscriptions:
         enc = sealed.seal(self.store, "webhook-secret", plain)
         t = self.clock()
         prev_enc, prev_exp = (row["secret_enc"], t + overlap) if overlap > 0 else (None, None)
-        self.store.execute("UPDATE webhook_subscriptions SET secret_enc=?, secret_prev_enc=?, secret_prev_expires_at=?, "
-                           "created_by=?, updated_at=?, version=version+1 WHERE id=?",
-                           (enc, prev_enc, prev_exp, authority.dumps(by), t, sid))
+        with self.store.tx():
+            self.store.execute("UPDATE webhook_subscriptions SET secret_enc=?, secret_prev_enc=?, secret_prev_expires_at=?, "
+                               "created_by=?, updated_at=?, version=version+1 WHERE id=?",
+                               (enc, prev_enc, prev_exp, authority.dumps(by), t, sid))
+            self._audit("rotate_secret", by, row["tenant"], sid, host=urlsplit(row["url"]).hostname,
+                        version=row["version"] + 1, overlap_s=overlap)
         out = self.get(tenant, sid)
         out["secret"] = plain
         return out
 
     # ---------------------------------------------------------- deliveries
-    def ping(self, tenant: str | None, sid: str) -> dict:
+    def ping(self, tenant: str | None, sid: str, by: dict | None = None) -> dict:
         """Send one signed ``webhook.ping`` now (a single attempt) and return its record."""
         row = self._row(tenant, sid)
         if row["status"] == "disabled":
             raise ServiceError(409, "subscription_disabled", "订阅已停用；请先调用 /resume")
         disp = self._dispatcher()
         t, did = self.clock(), new_id("wh")
-        self.store.execute(
-            "INSERT INTO webhook_deliveries (id, event_id, event_seq, endpoint, status, attempts, next_attempt_at, created_at, "
-            "subscription_id, tenant, event_type, claimed_by, claimed_until) VALUES (?,?,NULL,?,'pending',0,?,?,?,?,?,?,?)",
-            (did, new_id("ev"), SUB_ENDPOINT + sid, t, t, sid, row["tenant"], PING_EVENT, disp.worker_id,
-             t + timeout_s() + CLAIM_MARGIN_S))
+        # The delivery row and its audit commit together, before the network send (never under
+        # the write lock).
+        with self.store.tx():
+            self.store.execute(
+                "INSERT INTO webhook_deliveries (id, event_id, event_seq, endpoint, status, attempts, next_attempt_at, created_at, "
+                "subscription_id, tenant, event_type, claimed_by, claimed_until) VALUES (?,?,NULL,?,'pending',0,?,?,?,?,?,?,?)",
+                (did, new_id("ev"), SUB_ENDPOINT + sid, t, t, sid, row["tenant"], PING_EVENT, disp.worker_id,
+                 t + timeout_s() + CLAIM_MARGIN_S))
+            self._audit("ping", by, row["tenant"], did, object_kind="webhook_delivery", subscription_id=sid,
+                        host=urlsplit(row["url"]).hostname)
         disp.send_one(self.store.one("SELECT * FROM webhook_deliveries WHERE id=?", (did,)), single_attempt=True)
         return self.delivery(tenant, sid, did)
 
@@ -1221,7 +1262,7 @@ class Subscriptions:
             raise ServiceError(404, "not_found", "投递记录不存在")
         return self.delivery(tenant, row["subscription_id"], did)
 
-    def redeliver(self, tenant: str | None, sid: str, did: str) -> dict:
+    def redeliver(self, tenant: str | None, sid: str, did: str, by: dict | None = None) -> dict:
         """Queue the same event again as a new delivery (same webhook-id, new delivery id)."""
         with self.store.tx() as c:
             sub = self._row(tenant, sid)
@@ -1248,6 +1289,9 @@ class Subscriptions:
                       "created_at, subscription_id, tenant, event_type, redelivery_of) VALUES (?,?,?,?,'pending',0,?,?,?,?,?,?)",
                       (new, orig["event_id"], orig.get("event_seq"), f"{SUB_ENDPOINT}{sid}:re:{n + 1}", t, t, sid,
                        sub["tenant"], orig.get("event_type"), did))
+            self._audit("redeliver", by, sub["tenant"], new, object_kind="webhook_delivery", subscription_id=sid,
+                        redelivery_of=did, event_id=orig["event_id"], event_type=orig.get("event_type"),
+                        host=urlsplit(sub["url"]).hostname)
             out = self.delivery(tenant, sid, new)
             if self.dispatcher is not None:
                 self.store.after_commit(self.dispatcher.notify)

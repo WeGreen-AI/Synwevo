@@ -96,6 +96,17 @@ def _print_delivery(d: dict) -> None:
           f"{_ts(d['created_at']):<21}{'重投' if d['redelivery'] else ''} {d['last_error'] or ''}")
 
 
+def _by(tenant: str | None) -> dict:
+    """The command line's descriptor: an operator, named `cli:<os user>` in the audit rows it
+    leaves (decision D7) — a label, never a person's identity."""
+    import getpass
+    try:
+        who = getpass.getuser()
+    except Exception:  # noqa: BLE001 - no login name in some containers
+        who = "unknown"
+    return {**authority.describe(tenant=tenant), "label": f"cli:{who}"}
+
+
 def cmd_webhooks(args) -> int:
     try:
         return _run(args)
@@ -146,7 +157,7 @@ def _run(args) -> int:
             body["events"] = args.events.split(",")
         if args.description is not None:
             body["description"] = args.description
-        s = subs.create(args.tenant, body, authority.describe(tenant=args.tenant))
+        s = subs.create(args.tenant, body, _by(args.tenant))
         s["tenant"] = args.tenant
         _print_sub(s, args.json)
         return 0
@@ -167,25 +178,28 @@ def _run(args) -> int:
         if not body:
             raise ServiceError(400, "missing_argument", "至少提供 --url、--events 或 --description 之一")
         tenant = subs.get(None, sid)["tenant"]
-        _print_sub(subs.update(None, sid, body, None, authority.describe(tenant=tenant)), args.json)
+        _print_sub(subs.update(None, sid, body, None, _by(tenant)), args.json)
         return 0
     if args.action == "pause":
-        _print_sub(subs.pause(None, sid), args.json)
+        tenant = subs.get(None, sid)["tenant"]
+        _print_sub(subs.pause(None, sid, _by(tenant)), args.json)
         return 0
     if args.action == "resume":
         tenant = subs.get(None, sid)["tenant"]
-        _print_sub(subs.resume(None, sid, authority.describe(tenant=tenant)), args.json)
+        _print_sub(subs.resume(None, sid, _by(tenant)), args.json)
         return 0
     if args.action == "delete":
-        subs.delete(None, sid)
+        tenant = subs.get(None, sid)["tenant"]
+        subs.delete(None, sid, _by(tenant))
         print(f"已删除订阅 {sid}；排队中的投递已停止。")
         return 0
     if args.action == "rotate":
         tenant = subs.get(None, sid)["tenant"]
-        _print_sub(subs.rotate_secret(None, sid, args.overlap_s, authority.describe(tenant=tenant)), args.json)
+        _print_sub(subs.rotate_secret(None, sid, args.overlap_s, _by(tenant)), args.json)
         return 0
     if args.action == "ping":
-        d = subs.ping(None, sid)
+        tenant = subs.get(None, sid)["tenant"]
+        d = subs.ping(None, sid, _by(tenant))
         if args.json:
             print(json.dumps(d, ensure_ascii=False, indent=2))
         else:
@@ -208,7 +222,8 @@ def _run(args) -> int:
         return 0
     if args.action == "redeliver":
         _need(args, "delivery_id")
-        d = subs.redeliver(None, sid, args.delivery_id)
+        tenant = subs.get(None, sid)["tenant"]
+        d = subs.redeliver(None, sid, args.delivery_id, _by(tenant))
         print(json.dumps(d, ensure_ascii=False, indent=2) if args.json else
               f"已排队重新投递：{d['id']}（webhook-id {d['webhook_id']} 不变），由运行中的服务发送。")
         return 0

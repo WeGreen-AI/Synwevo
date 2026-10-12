@@ -96,13 +96,13 @@ def build_router(app_, views, jobs, auth) -> APIRouter:
 
     @r.delete("/webhooks/subscriptions/{sid}", summary="删除订阅（未完成的重试随之停止）", openapi_extra=_ox("admin"))
     def delete_subscription(request: Request, sid: str):
-        _, tenant = manage(request)
-        return service(request).delete(tenant, sid)
+        p, tenant = manage(request)
+        return service(request).delete(tenant, sid, by(p))
 
     @r.post("/webhooks/subscriptions/{sid}/pause", summary="暂停订阅（排队中的投递不再发送）", openapi_extra=_ox("admin"))
     def pause_subscription(request: Request, response: Response, sid: str):
-        _, tenant = manage(request)
-        return etag(response, service(request).pause(tenant, sid))
+        p, tenant = manage(request)
+        return etag(response, service(request).pause(tenant, sid, by(p)))
 
     @r.post("/webhooks/subscriptions/{sid}/resume", summary="恢复订阅（此后的事件才会投递）", openapi_extra=_ox("admin"))
     def resume_subscription(request: Request, response: Response, sid: str):
@@ -119,9 +119,9 @@ def build_router(app_, views, jobs, auth) -> APIRouter:
 
     @r.post("/webhooks/subscriptions/{sid}/ping", summary="立即发送一次签名的 webhook.ping（只尝试一次）", openapi_extra=_ox("admin"))
     def ping_subscription(request: Request, sid: str):
-        _, tenant = manage(request)
+        p, tenant = manage(request)
         reject_idempotency(request)
-        return service(request).ping(tenant, sid)
+        return service(request).ping(tenant, sid, by(p))
 
     # ------------------------------------------------------------ deliveries
     @r.get("/webhooks/subscriptions/{sid}/deliveries", summary="投递记录（游标分页，最新在前）", openapi_extra=_ox("admin"))
@@ -150,7 +150,7 @@ def build_router(app_, views, jobs, auth) -> APIRouter:
             svc = service(request)
             return Idempotency(store).run(request,
                 "/api/v1/webhooks/subscriptions/{sid}/deliveries/{did}/redeliver", {"sid": sid, "did": did},
-                lambda: svc.redeliver(tenant, sid, did),
+                lambda: svc.redeliver(tenant, sid, did, by(p)),
                 replay_check=lambda out: svc.replay_delivery(tenant, out["id"]), status=202)
 
     # ------------------------------------------------------------ event feed

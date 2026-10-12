@@ -474,3 +474,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：账户服务 50 余处 `Platform.audit` 调用全部显式给 actor_id（默认 actor_kind=user）→ 行内容不变，仅 meta 序列化改为规范形（键排序、无空格），任何读取方都用 JSON 解析；Suite 原本就用规范 JSON；审计失败仍抛出，事务回滚语义不变（新增事务共享测试）；`describe_request` 对匿名请求不再误标为 operator（网关只在有用户或主体时设置）。
 - 风险/未做：Docs 的约 80 条无审计路由（WP2–WP7）、Suite 旁路（WP9）、机器 actor_kind 与拒绝/失败/完成行（WP8）、Suite webhook 与投递列（WP10）、审计页目录（WP11）按 D7 分包推进。
 - 验证：新增 3 例 + 账户服务/集成/Docs/Suite 所有读 `audit_events` 的测试文件 527 通过；五守卫通过；全量 pytest 见 EVIDENCE 同名节。
+
+## CR-110 · G26 WP2 Docs webhook 的每个操作在事务内审计（2026-10-12，本轮新增，本地已验证）
+
+- 位置：apps/docs/synwevo_docs/webhooks.py（`Subscriptions._audit`：`docs.webhook.create|update|pause|resume|rotate_secret|ping|redeliver|delete`，meta 只有目标主机、事件、版本号、投递/订阅标识与 `change()` 的前后值，从不含地址路径与密钥；`delete/pause/ping/redeliver` 新增 `by` 参数；`rotate_secret` 与 `ping` 的写入补上事务；`WebhookDispatcher.disable_subscription` 在同事务写 `docs.webhook.disable` 系统行，操作者 `webhook-dispatcher`）；api/v1_webhooks.py（四条路由把调用方描述符传入）；cli_webhooks.py（`_by()`：操作者描述符带 `cli:<os user>` 标签，D7 约定）；apps/docs/tests/test_webhook_audit.py（新增 3 例）。
+- 审查要点：`update` 只在 UPDATE 命中时审计（版本冲突不留行）；`redeliver` 的审计在路由事务与 `Idempotency.run` 内，重放命中缓存不再进入 `work()`，测试断言同键两次请求只有一行；`ping` 的投递行与审计先提交再发网络请求，不在写锁内发送；`by` 为空时由 `audit_event` 回落到网关记录的主体，所以 CLI 之外漏传描述符的调用方仍被正确归因；审计失败使暂停/删除整体回滚（测试经 `auth.audit_event` 注入）。
+- 风险/未做：`created_by` 列现在可能带 `label` 键（CLI），`authority.loads` 只按 kind 判断，不受影响；投递尝试的签名密钥 ID/时间戳列（WP10）未做；审计页对 `docs.*` 动作仍显示原始代码（WP11）。
+- 验证：webhook 四个测试文件 + 契约 + CLI 共 61 通过；五守卫通过；Docs 全套件见 EVIDENCE。
