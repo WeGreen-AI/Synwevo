@@ -827,3 +827,9 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 要求第二因素时可设 0–30 天宽限期：期内未登记/会话不强的管理员只在账户页看到到期提醒并可继续管理，期满锁定；策略卡显示宽限期至何时；`/api/auth/me` `admin_grace`、`/api/admin/session` `step_up.grace_until`。
 测试：A11 测试扩展（40 天 → 400；7 天 → required 且 grace_until 在 6–7 天间；仅口令会话仍 200；`admin_grace` 对未登记者给出、对强会话为空；期满回拨 → 403 且 admin_grace 为空；off 清除键；审计序列 required/required/off）；identity 相关子集 975、integration 相关子集 182 通过；根 typecheck、account-web 173/build、五守卫通过。
 浏览器（隔离合成实例 127.0.0.1:33944，系统 Chrome）：最高管理员真实登记动态验证码 → 平台配置页选择「要求管理员使用第二因素」、宽限期 7 天、保存（理由+重认证）→ 策略行「宽限期至 2026/10/19 …：期内只提醒，不锁定」，概览仍 200，`admin_grace` 返回 → 其账户页显示「平台将从 … 起要求管理员使用第二因素」与已登记文案 → support（未登记）`/api/admin/users` 200、账户页提醒含「前往账户安全页登记」按钮、英文提醒 → 夹具回拨到期后 `/api/admin/users` 403、`admin_lock.reason=second_factor`。证据 `evidence/2026-10-12-admin-second-factor-grace/`（browser-report.json、verification.json、4 张截图）。
+
+## 2026-10-12 CR-103 Admin G24 管理操作目录（本地+隔离浏览器）
+
+`admin_actions.py` 列出全部 47 个 `admin.*` 动作（9 个范围、三语言），`GET /api/admin/audit/actions` 提供给审计页；源码扫描测试保证目录与代码一致。
+测试：test_admin 新增 1 例（源码字面量集合 == 目录；首次运行即发现子包里的 `admin.model_provider.closed` 未入目录，已补）；矩阵新增 1 行；account-web 173 通过；typecheck/build、五守卫通过。
+浏览器（隔离合成实例 127.0.0.1:33946，系统 Chrome）：经真实冻结/解冻路由产生审计后，审计页筛选下拉含 9 个范围分组共 56 个选项，选择「冻结工作空间」只剩 1 行且行内显示「冻结工作空间 / admin.workspace.freeze」；英文视图「Freeze a workspace」。证据 `evidence/2026-10-12-admin-action-catalogue/`（browser-report.json、verification.json、2 张截图）。

@@ -448,17 +448,26 @@ function WorkspacesTab({ onDenied, held }: { onDenied: () => void; held: Held })
   </section>;
 }
 
+type ActionCatalogue = { items: { code: string; scope: string; label: Record<string, string> }[]; scopes: { id: string; label: Record<string, string> }[] };
+
 function AuditTab({ onDenied }: { onDenied: () => void }) {
+  const { locale } = useI18n();
   const [q, setQ] = useState("");
   const query = useDebounced(q.trim());
   const [action, setAction] = useState("");
   const { data, err, loading, reload, offset, setOffset } = useAdminPage<AuditRow>(`/api/admin/audit${qs({ q: query, action })}`, onDenied);
+  // The catalogue of administration actions (G24): names for the filter and the rows, in the reader's language.
+  const catalogue = useAdminData<ActionCatalogue>("/api/admin/audit/actions", onDenied);
+  const named = (code: string) => catalogue.data?.items.find((i) => i.code === code)?.label[locale] ?? null;
   const items = loading || err ? [] : data?.items || [];
   return <section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{tr("审计记录")}</h2><input className="input" type="search" maxLength={100} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("操作者邮箱或对象")} aria-label={tr("搜索审计记录")} />
       <button className="btn sm" disabled={loading} onClick={reload}>{tr("刷新审计")}</button></div>
     <label className="field">{tr("操作范围")}<select className="input" aria-label={tr("筛选审计操作")} value={action} onChange={(e) => setAction(e.target.value)}>
       {AUDIT_SCOPES.map(([prefix, label]) => <option key={prefix} value={prefix}>{tr(label)}</option>)}
+      {catalogue.data?.scopes.map((s) => <optgroup key={s.id} label={s.label[locale] || s.label["zh-Hans"]}>
+        {catalogue.data!.items.filter((i) => i.scope === s.id).map((i) => <option key={i.code} value={i.code}>{i.label[locale] || i.label["zh-Hans"]}</option>)}
+      </optgroup>)}
     </select></label>
     <p className="muted small">{tr("翻页时保留本次查询的范围；刷新后包含新记录。")}</p>
     {err && <div className="notice err" role="alert">{err} <button className="btn sm" onClick={reload}>{tr("重试")}</button></div>}
@@ -466,7 +475,7 @@ function AuditTab({ onDenied }: { onDenied: () => void }) {
     <div className="list-wrap"><table className="gov" aria-label={tr("审计记录")} aria-busy={loading}>
       <thead><tr><th scope="col">{tr("时间")}</th><th scope="col" className="act">{tr("操作")}</th><th scope="col">{tr("操作者")}</th><th scope="col">{tr("对象")}</th><th scope="col">{tr("结果")}</th><th scope="col">{tr("理由")}</th></tr></thead>
       <tbody>{items.map((a) => <tr key={a.id}>
-        <td>{fmtTime(a.at)}</td><td>{a.action}</td><td>{a.actor_email || "—"}</td>
+        <td>{fmtTime(a.at)}</td><td>{named(a.action) ? <>{named(a.action)}<div className="tiny muted"><code>{a.action}</code></div></> : a.action}</td><td>{a.actor_email || "—"}</td>
         <td>{a.object_id || "—"}</td><td>{a.result === "ok" ? tr("成功") : a.result === "denied" ? tr("被拒绝") : a.result}</td>
         <td>{a.actor_kind === "system" ? systemReasonText(String(a.meta.reason || "")) : String(a.meta.reason || "")}</td>
       </tr>)}{!loading && !err && !items.length && <tr className="empty-row"><td colSpan={6}>{tr("没有匹配的记录。")}</td></tr>}</tbody>

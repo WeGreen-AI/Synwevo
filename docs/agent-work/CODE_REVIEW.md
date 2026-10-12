@@ -396,3 +396,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：宽限期只推迟锁定，不改变「至少一名可用最高管理员已登记」的开启前提；提醒只对 required 且会话不强的管理员出现（强会话不打扰）；期满立刻按原规则锁定（无额外状态机）；关闭策略同时清除宽限期；再次保存 required 可重设宽限（UI 的保存按钮按此启用）。
 - 风险/未做：组织级/全体用户策略仍未做；宽限提醒只在账户页步骤卡（管理页顶栏不另加横幅）。
 - 验证：identity 策略/步骤子集 36 通过，`me/session/login` 子集 975 通过，integration 登录/会话子集 182 通过；根 typecheck、account-web 173 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-12-admin-second-factor-grace。
+
+## CR-103 · Admin G24 管理操作目录（2026-10-12，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：services/identity/synwevo_identity/admin_actions.py（`SCOPES` 9 个范围、`ADMIN_ACTIONS` 47 个 `admin.*` 动作，三语言标签，`catalogue()`）；admin_routes.py `GET /audit/actions`（`platform.audit.view`，只读）；account-web Admin.tsx 审计页（筛选下拉按范围分组列出具体动作、行内显示名称+代码，取服务端标签按读者语言显示）；tests：test_admin.py 1 例（扫描 identity 与 core 包全部 .py 的 `"admin.…"` 字面量 ⇔ 目录集合相等；每项有范围与三语言；路由形状；无权限 404）、矩阵 1 行；docs/platform/admin-coverage.md G24 行。
+- 审查要点：目录与代码的一致性由测试强制（新增动作未入目录即失败，过时条目同样失败）；标签只说动作本身，不说结果与对象；三语言随服务端返回，前端不需再维护目录；筛选仍走既有 `action LIKE code%`，选择具体动作即精确到该动作及其子动作。
+- 风险/未做：G24 的「同一事务写审计」与「统一前后值」仍未做；API 控制台 `api_platform.*` 族以动态后缀审计，未逐个命名；扫描只覆盖 `services/identity` 与 `packages/core`（`admin.*` 只在这两处出现）。
+- 验证：identity 相关 16 例通过；account-web typecheck/173 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-12-admin-action-catalogue。

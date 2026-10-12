@@ -1,0 +1,37 @@
+{
+ "base": "http://127.0.0.1:33946",
+ "engine": "chrome",
+ "steps": {
+  "actions": {
+   "freeze": 200,
+   "unfreeze": 200
+  },
+  "filter": {
+   "option_count": 56,
+   "has_freeze_label": true,
+   "groups": [
+    "被拒绝的管理请求",
+    "账户管理",
+    "工作空间管理",
+    "平台权限",
+    "平台配置与安全策略",
+    "邮件与通知",
+    "模型提供方、价格与风险",
+    "付费与钱包",
+    "Agent 内容安全"
+   ]
+  },
+  "filtered_rows": {
+   "count": 1,
+   "first": "2026/10/12 11:03\t冻结工作空间 | admin.workspace.freeze | \tadmin-fixture@example.test\tw_2266846c245c\t成功\t合成验收：冻结以产生审计记录",
+   "labelled": true
+  },
+  "en": {
+   "has_freeze_label": true,
+   "first": "10/12/2026, 11:03 AM\tFreeze a workspace | admin.workspace.freeze | \tadmin-fixture@example.test\tw_2266846c245c\tSuccess\t合成验收：冻结以产生审计记录"
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ]
+ }
+}

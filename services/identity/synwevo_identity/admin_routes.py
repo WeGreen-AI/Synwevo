@@ -1636,6 +1636,14 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             return {"ok": True, **_access(request).revoke(actor["id"], gid, _reason(body))}
 
     # ------------------------------------------------------------------ audit
+    @r.get("/audit/actions")
+    def audit_actions(request: Request):
+        """The catalogue of administration actions (G24): every `admin.*` code with its scope and
+        a label in the three languages, for the audit page's filter and rows. Read-only."""
+        _admin(request, "platform.audit.view")
+        from .admin_actions import catalogue as action_catalogue
+        return action_catalogue()
+
     @r.get("/audit")
     def audit_log(request: Request, q: str = Query("", max_length=100),
                   action: str = Query("", max_length=64), limit: int = 100,

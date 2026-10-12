@@ -45,6 +45,7 @@ ROUTES = [
     ("GET", "/api/admin/users", "platform.users.view", False),
     ("GET", "/api/admin/users/{uid}", "platform.users.view", False),
     ("GET", "/api/admin/diagnostics/registration", "platform.users.view", False),
+    ("GET", "/api/admin/audit/actions", "platform.audit.view", False),
     ("GET", "/api/admin/users/{uid}/access", "platform.roles.view", False),
     ("POST", "/api/admin/users/{uid}/status-preview", "platform.users.manage", False),
     ("POST", "/api/admin/users/{uid}/status", "platform.users.manage", True),

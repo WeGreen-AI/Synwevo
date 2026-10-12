@@ -967,3 +967,26 @@ def test_second_factor_adoption_counts_real_enrolments_without_any_code(env):
     store.execute("UPDATE recovery_codes SET used_at=? WHERE user_id=?", (now(), alice["id"]))
     assert c.get("/api/admin/overview").json()["second_factor"]["totp_without_recovery"] == 1
     assert secret not in r.text and admin_secret not in r.text and "secret" not in json.dumps(body["second_factor"]) and "code" not in json.dumps(body["second_factor"])
+
+
+def test_every_admin_audit_action_is_catalogued_in_three_languages(env):
+    """G24: the catalogue of administration actions equals the `admin.*` codes the source audits —
+    a new action must be named in all three languages before it ships — and the audit page reads it."""
+    import pathlib
+    import re
+    import synwevo_core
+    import synwevo_identity
+    from synwevo_identity.admin_actions import ADMIN_ACTIONS, SCOPES
+    pattern = re.compile(r'"(admin\.[a-z_]+(?:\.[a-z_]+)+)"')
+    found = set()
+    for package in (synwevo_identity, synwevo_core):
+        for path in pathlib.Path(package.__file__).parent.rglob("*.py"):
+            found |= set(pattern.findall(path.read_text()))
+    assert found == set(ADMIN_ACTIONS), {"uncatalogued": sorted(found - set(ADMIN_ACTIONS)), "stale": sorted(set(ADMIN_ACTIONS) - found)}
+    for code, item in ADMIN_ACTIONS.items():
+        assert item["scope"] in SCOPES, code
+        assert all(item["label"][locale] for locale in ("zh-Hans", "zh-Hant", "en")), code
+    body = env["c"].get("/api/admin/audit/actions").json()
+    assert [i["code"] for i in body["items"]] == sorted(ADMIN_ACTIONS) and {s["id"] for s in body["scopes"]} == set(SCOPES)
+    assert next(i for i in body["items"] if i["code"] == "admin.workspace.claim")["label"]["en"] == "Assign the historical data"
+    assert env["plain"].get("/api/admin/audit/actions").status_code == 404
