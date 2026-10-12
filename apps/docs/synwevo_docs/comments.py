@@ -18,6 +18,8 @@ import json
 import re
 import unicodedata
 
+from synwevo_core import auth as _auth
+from synwevo_core import context
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id, now
 
@@ -76,6 +78,15 @@ class Comments:
         return r
 
     # ------------------------------------------------------------------ writing
+    def _audit(self, action: str, actor_id: str, row: dict, **meta) -> None:
+        """One row per change to a comment, in the transaction of the change (admin coverage G26,
+        decision D7): the request's principal when there is one, else the person named by the
+        caller; the comment and project identifiers only — never the body."""
+        _auth.audit_event(self.store, action, actor=context.principal() or {"kind": "user", "user_id": actor_id},
+                          workspace_id=row["tenant"], object_kind="comment", object_id=row["id"],
+                          meta={"project_id": row["project_id"], "parent_id": row.get("parent_id"),
+                                **{k: v for k, v in meta.items() if v is not None}})
+
     def create(self, pid: str, author_id: str, body, *, anchor=None, mentions=None, parent_id=None) -> dict:
         p = self.app.get_project(pid)
         text = clean_body(body)
@@ -96,6 +107,7 @@ class Comments:
             from synwevo_core.messaging_bridge import emit_comment
             emit_comment(t, comment_id=row["id"], project_id=pid, workspace_id=p["tenant"], author_id=author_id,
                          mentions=mentioned, parent_id=parent_id or None)
+            self._audit("docs.comment.create", author_id, row, anchored=bool(anchor) or None, mentions=len(mentioned) or None)
         self._tell(p, row, mentioned, author_id)
         # Whoever has the project open sees the comment arrive (the project room's change frame)
         # and the activity feed attributes it. The body itself is not copied into the feed: it is
@@ -111,7 +123,9 @@ class Comments:
         text = clean_body(body)
         before = set(json.loads(r["mentions"]) if r.get("mentions") else [])
         mentioned = self._check_mentions(p, mentions if mentions is not None else list(before), actor_id)
-        self.store.update("project_comments", {"id": cid}, {"body": text, "mentions": json.dumps(mentioned) if mentioned else None, "edited_at": now()})
+        with self.store.tx():
+            self.store.update("project_comments", {"id": cid}, {"body": text, "mentions": json.dumps(mentioned) if mentioned else None, "edited_at": now()})
+            self._audit("docs.comment.edit", actor_id, r, mentions_added=len([m for m in mentioned if m not in before]) or None)
         row = self.store.one("SELECT * FROM project_comments WHERE id=?", (cid,))
         self._tell(p, row, [m for m in mentioned if m not in before], actor_id, only_mentions=True)
         self._changed(r["project_id"], "comment.edit", {"id": cid, "parent_id": r.get("parent_id")})
@@ -121,8 +135,11 @@ class Comments:
         r = self.get(cid)
         if r["author_id"] != actor_id and not self._administers(r["tenant"], actor_id):
             raise ServiceError(403, "forbidden", "只有作者或工作空间管理员可以删除这条评论")
-        self.store.update("project_comments", {"id": cid}, {"deleted_at": now()})
-        self.store.execute("UPDATE project_comments SET deleted_at=? WHERE parent_id=? AND deleted_at IS NULL", (now(), cid))
+        with self.store.tx():
+            self.store.update("project_comments", {"id": cid}, {"deleted_at": now()})
+            replies = self.store.execute("UPDATE project_comments SET deleted_at=? WHERE parent_id=? AND deleted_at IS NULL", (now(), cid))
+            self._audit("docs.comment.delete", actor_id, r, replies_removed=replies or None,
+                        by_administrator=True if r["author_id"] != actor_id else None)
         self._changed(r["project_id"], "comment.delete", {"id": cid, "parent_id": r.get("parent_id")})
 
     def resolve(self, cid: str, actor_id: str, resolved: bool) -> dict:
@@ -136,7 +153,9 @@ class Comments:
             raise ServiceError(409, "already_resolved", "这条评论已经标记为解决")
         if not resolved and not r.get("resolved_at"):
             raise ServiceError(409, "not_resolved", "这条评论没有被标记为解决")
-        self.store.update("project_comments", {"id": cid}, {"resolved_at": now() if resolved else None, "resolved_by": actor_id if resolved else None})
+        with self.store.tx():
+            self.store.update("project_comments", {"id": cid}, {"resolved_at": now() if resolved else None, "resolved_by": actor_id if resolved else None})
+            self._audit("docs.comment.resolve" if resolved else "docs.comment.reopen", actor_id, r)
         p = self.app.get_project(r["project_id"])
         row = self.store.one("SELECT * FROM project_comments WHERE id=?", (cid,))
         self._changed(r["project_id"], "comment.resolve" if resolved else "comment.reopen", {"id": cid})

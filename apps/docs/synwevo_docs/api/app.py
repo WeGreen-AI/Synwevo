@@ -199,15 +199,19 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
         if not isinstance(scope, dict):
             raise ServiceError(400, "invalid_field", "scope 必须是对象", {"field": "scope"})
         manifest, digest = build_manifest(app_, pid, scope)
-        r = copies.create(requester_id=uid, source_workspace_id=current_tenant(), source_project_id=pid,
-                          target_workspace_id=str(body.get("target_workspace_id") or ""), name=str(body.get("name") or manifest["project"]["name"]),
-                          purpose=body.get("purpose"), scope=scope, manifest=manifest, digest=digest)
-        plat.audit(request, "docs.copy.request", actor_id=uid, workspace_id=current_tenant(), object_kind="project_copy", object_id=r["id"], result="ok",
-                   meta={"project_id": pid, "target_workspace_id": r["target_workspace_id"], "scope": r["scope"], "digest": digest})
+        # The request row and its record commit together (G26); the service's own transaction
+        # nests in this one.
+        with store.tx():
+            r = copies.create(requester_id=uid, source_workspace_id=current_tenant(), source_project_id=pid,
+                              target_workspace_id=str(body.get("target_workspace_id") or ""), name=str(body.get("name") or manifest["project"]["name"]),
+                              purpose=body.get("purpose"), scope=scope, manifest=manifest, digest=digest)
+            plat.audit(request, "docs.copy.request", actor_id=uid, workspace_id=current_tenant(), object_kind="project_copy", object_id=r["id"], result="ok",
+                       meta={"project_id": pid, "target_workspace_id": r["target_workspace_id"], "scope": r["scope"], "digest": digest})
         if body.get("decide") == "approve":
-            r = copies.decide(r["id"], uid, "approve", reason=str(body.get("reason") or ""))
-            plat.audit(request, "docs.copy.decide", actor_id=uid, object_kind="project_copy", object_id=r["id"], result="ok",
-                       meta={"action": "approve", "self_approved": True, "organization_id": r["target_organization_id"]})
+            with store.tx():
+                r = copies.decide(r["id"], uid, "approve", reason=str(body.get("reason") or ""))
+                plat.audit(request, "docs.copy.decide", actor_id=uid, object_kind="project_copy", object_id=r["id"], result="ok",
+                           meta={"action": "approve", "self_approved": True, "organization_id": r["target_organization_id"]})
             api.state.copy_runner.wake()
         else:
             announce_request(store, plat.identity, copies, notifier, r, uid, manifest["project"]["name"])
@@ -245,9 +249,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
 
     @api.delete("/api/comments/{cid}")
     def delete_comment(request: Request, cid: str):
-        uid = _uid(request)
-        comments.delete(cid, uid)
-        plat.audit(request, "docs.comment.delete", actor_id=uid, object_kind="comment", object_id=cid, result="ok")
+        comments.delete(cid, _uid(request))          # audited by the service, in its transaction
         return {"ok": True}
 
     @api.post("/api/comments/{cid}/resolve")
@@ -261,8 +263,9 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     @api.post("/api/copy-requests/{cid}/withdraw")
     def withdraw_copy(request: Request, cid: str):
         uid = _uid(request)
-        r = copies.withdraw(cid, uid)
-        plat.audit(request, "docs.copy.withdraw", actor_id=uid, object_kind="project_copy", object_id=cid, result="ok")
+        with store.tx():
+            r = copies.withdraw(cid, uid)
+            plat.audit(request, "docs.copy.withdraw", actor_id=uid, object_kind="project_copy", object_id=cid, result="ok")
         return copies.public(r, for_requester=True)
 
     # ------------------------------------------------------------ regression cases & desensitization
@@ -590,27 +593,15 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
 
     @api.post("/api/templates/{tid}/publish", status_code=201)
     def publish_template(request: Request, tid: str, body: dict = Body(default={})):
-        uid = _uid(request)
-        out = shared.publish(tid, uid, body.get("description"))
-        plat.audit(request, "docs.template.publish", actor_id=uid, workspace_id=current_tenant(), object_kind="organization_template", object_id=out["id"], result="ok",
-                   meta={"template_id": tid, "organization_id": out["organization_id"], "version_no": out["version_no"]})
-        return out
+        return shared.publish(tid, _uid(request), body.get("description"))      # audited by the service, in its transaction
 
     @api.post("/api/organization-templates/{pid}/update")
     def update_shared_template(request: Request, pid: str, body: dict = Body(default={})):
-        uid = _uid(request)
-        out = shared.update(pid, uid, body.get("description"), set_description="description" in body)
-        plat.audit(request, "docs.template.release", actor_id=uid, workspace_id=current_tenant(), object_kind="organization_template", object_id=pid, result="ok",
-                   meta={"release_no": out["release_no"], "version_no": out["version_no"], "released": out["released"]})
-        return out
+        return shared.update(pid, _uid(request), body.get("description"), set_description="description" in body)
 
     @api.post("/api/organization-templates/{pid}/deprecate")
     def deprecate_shared_template(request: Request, pid: str, body: dict = Body(default={})):
-        uid = _uid(request)
-        out = shared.set_deprecated(pid, uid, body.get("deprecated", True) is not False, body.get("note"))
-        plat.audit(request, "docs.template.deprecate" if out["deprecated"] else "docs.template.restore", actor_id=uid, workspace_id=current_tenant(),
-                   object_kind="organization_template", object_id=pid, result="ok")
-        return out
+        return shared.set_deprecated(pid, _uid(request), body.get("deprecated", True) is not False, body.get("note"))
 
     @api.post("/api/organization-templates/{pid}/use", status_code=201)
     def use_shared_template(request: Request, pid: str, body: dict = Body(default={})):
@@ -621,8 +612,6 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
             if body.get("base_settings_rev") is not None:
                 values["base_settings_rev"] = body["base_settings_rev"]
             app_.update_project(body["project_id"], values)
-        plat.audit(request, "docs.template.use_shared", actor_id=uid, workspace_id=current_tenant(), object_kind="organization_template", object_id=pid, result="ok",
-                   meta={"template_id": t["id"], "project_id": body.get("project_id")})
         return t
 
     @api.patch("/api/templates/{tid}")

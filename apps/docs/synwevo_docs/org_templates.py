@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import json
 
-from synwevo_core import authority, data_flow, quarantine
+from synwevo_core import auth as _auth
+from synwevo_core import authority, context, data_flow, quarantine
 from synwevo_core.apps import Apps, DOCS_APP_ID
 from synwevo_core.context import as_tenant, tenant as current_tenant
 from synwevo_core.errors import ServiceError
@@ -137,6 +138,14 @@ class OrgTemplates:
         with as_tenant(source):
             return self._frozen(tid)
 
+    def _audit(self, action: str, uid: str, pid: str, **meta) -> None:
+        """One row per change to a shared template, in the transaction of the change (admin
+        coverage G26, decision D7): the request's principal when there is one (a delegated client
+        is named beside the person), else the person the caller named; identifiers only."""
+        _auth.audit_event(self.store, action, actor=context.principal() or {"kind": "user", "user_id": uid},
+                          workspace_id=current_tenant(), object_kind="organization_template", object_id=pid,
+                          meta={k: v for k, v in meta.items() if v is not None})
+
     def publish(self, tid: str, uid: str, description: str | None = None, *, requested_authority: dict | None = None) -> dict:
         # Browser routes and unkeyed machine calls have no surrounding transaction;
         # keyed machine calls nest here safely in Store's re-entrant BEGIN IMMEDIATE.
@@ -165,6 +174,7 @@ class OrgTemplates:
         self.store.insert("organization_templates", row)
         self.store.insert("organization_template_releases", {"publication_id": pid, "release_no": 1, "version_no": v["version_no"], "working_blob": v["working_blob"],
                                                              "slots": v["slots"] or [], "info": info, "note": v.get("note"), "released_by": uid, "released_at": ts})
+        self._audit("docs.template.publish", uid, pid, template_id=tid, organization_id=org["id"], version_no=v["version_no"], release_no=1)
         return self._out(self.store.one("SELECT * FROM organization_templates WHERE id=?", (pid,)), uid, member)
 
     def update(self, pid: str, uid: str, description: str | None = None, *, set_description: bool = False,
@@ -203,6 +213,9 @@ class OrgTemplates:
         self.store.update("organization_templates", {"id": pid}, changes)
         out = self._out(self.store.one("SELECT * FROM organization_templates WHERE id=?", (pid,)), uid, member)
         out["released"] = released
+        self._audit("docs.template.release", uid, pid, template_id=pub["template_id"], organization_id=pub["organization_id"],
+                    release_no=out["release_no"], version_no=out["version_no"], released=released,
+                    description_changed=True if set_description else None)
         return out
 
     def set_deprecated(self, pid: str, uid: str, deprecated: bool, note: str | None = None) -> dict:
@@ -211,9 +224,12 @@ class OrgTemplates:
             raise ServiceError(403, "forbidden", "只有源工作空间的编辑者或组织管理员可以维护这个共享模板")
         if bool(pub["deprecated_at"]) == deprecated:
             raise ServiceError(409, "unchanged", "已经是这个状态")
-        self.store.update("organization_templates", {"id": pid}, {"deprecated_at": now() if deprecated else None, "deprecated_by": uid if deprecated else None,
-                                                                   "deprecation_note": (str(note).strip()[:MAX_DESCRIPTION] or None) if deprecated and note else None,
-                                                                   "updated_by": uid, "updated_at": now()})
+        with self.store.tx():
+            self.store.update("organization_templates", {"id": pid}, {"deprecated_at": now() if deprecated else None, "deprecated_by": uid if deprecated else None,
+                                                                       "deprecation_note": (str(note).strip()[:MAX_DESCRIPTION] or None) if deprecated and note else None,
+                                                                       "updated_by": uid, "updated_at": now()})
+            self._audit("docs.template.deprecate" if deprecated else "docs.template.restore", uid, pid,
+                        template_id=pub["template_id"], organization_id=pub["organization_id"], note_given=True if deprecated and note else None)
         return self._out(self.store.one("SELECT * FROM organization_templates WHERE id=?", (pid,)), uid, member)
 
     def use(self, pid: str, uid: str, name: str | None = None) -> dict:
@@ -249,10 +265,15 @@ class OrgTemplates:
         slots = pub["slots"] if isinstance(pub["slots"], list) else json.loads(pub["slots"] or "[]")
         info["origin"] = {"publication_id": pub["id"], "organization_id": pub["organization_id"], "release_no": pub["release_no"], "version_no": pub["version_no"],
                           "name": pub["name"], "used_at": ts}
-        self.store.insert("templates", {"id": tid, "tenant": current_tenant(), "name": (name or pub["name"])[:100], "kind": pub["kind"] or "uploaded", "format": pub["format"],
-                                        "original_blob": pub["working_blob"], "original_name": pub["name"], "head": 1, "created_at": ts, "updated_at": ts, "info": info,
-                                        "scan": scan_record})
-        self.store.insert("template_versions", {"template_id": tid, "version_no": 1, "parent_no": None, "working_blob": pub["working_blob"], "slots": slots,
-                                                "note": f"来自组织共享模板「{pub['name']}」第 {pub['release_no']} 次发布", "created_at": ts})
-        self.store.execute("UPDATE organization_templates SET use_count=use_count+1 WHERE id=?", (pid,))
+        # The copy, its first version, the use count and the record commit together; the scan above
+        # (a network call where this deployment scans) stays outside the write lock.
+        with self.store.tx():
+            self.store.insert("templates", {"id": tid, "tenant": current_tenant(), "name": (name or pub["name"])[:100], "kind": pub["kind"] or "uploaded", "format": pub["format"],
+                                            "original_blob": pub["working_blob"], "original_name": pub["name"], "head": 1, "created_at": ts, "updated_at": ts, "info": info,
+                                            "scan": scan_record})
+            self.store.insert("template_versions", {"template_id": tid, "version_no": 1, "parent_no": None, "working_blob": pub["working_blob"], "slots": slots,
+                                                    "note": f"来自组织共享模板「{pub['name']}」第 {pub['release_no']} 次发布", "created_at": ts})
+            self.store.execute("UPDATE organization_templates SET use_count=use_count+1 WHERE id=?", (pid,))
+            self._audit("docs.template.use_shared", uid, pid, template_id=tid, organization_id=pub["organization_id"],
+                        release_no=pub["release_no"], version_no=pub["version_no"])
         return self.app.template_detail(tid)

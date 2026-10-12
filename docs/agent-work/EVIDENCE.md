@@ -872,3 +872,7 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 ## 2026-10-12 CR-110 G26 WP2 Docs webhook 审计（本地）
 
 八种订阅/投递操作各自在写入事务内留一行审计（`docs.webhook.*`），机器调用方记为 `api:<key id>`，meta 只含主机、事件、版本、投递与订阅标识；调度器放弃目标写系统行 `webhook-dispatcher`。测试：`test_webhook_audit.py` 3 例（八操作各一行且不含密钥/路径、更新行的 `changed`、重放不加行、审计失败回滚暂停与删除、自动停用系统行）；连同 redelivery/hardening/subscriptions/contract/CLI 测试 61 通过；五守卫通过。Docs 全套件：`apps/docs/tests` 全套件 + 审计映射测试 1644 通过、2 跳过（7 分钟）。
+
+## 2026-10-12 CR-111 G26 WP3 共享模板/评论/复制申请审计（本地）
+
+组织共享模板五种操作与评论五种操作改由服务在写入事务内审计（两种调用面各一行，正文与名称不入 meta），复制申请/自批/撤回的路由审计并入事务。测试：`test_audit_sharing_templates.py`（五操作各一行、不含名称与备注文本；审计失败回滚 use 的模板复制与 use_count）、`test_audit_sharing_comments.py`（五操作各一行、管理员代删标记、正文不入记录；审计失败回滚删除）共 4 例通过；既有 99 项相关测试通过；五守卫通过。全套件：Docs 与集成两套件 3004 通过、2 跳过（12:40–12:57Z，日志 scratchpad/a13/g26wp3-suites.log，未入库）；完整根套件在 WP4 推送前再跑一次。

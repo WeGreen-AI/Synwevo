@@ -99,15 +99,17 @@ def register(r: APIRouter, app_, scope, idem) -> None:
 
         def work() -> dict:
             manifest, digest = build_manifest(app_, pid, scope_)
-            row = copies.create(requester_id=uid, source_workspace_id=current_tenant(), source_project_id=pid,
-                                target_workspace_id=normalized["target_workspace_id"],
-                                name=normalized["name"] or manifest["project"]["name"], purpose=normalized["purpose"],
-                                scope=scope_, manifest=manifest, digest=digest,
-                                requested_authority=authority.describe_request(request))
-            request.app.state.platform_audit(
-                request, "docs.copy.request", actor_id=uid, workspace_id=current_tenant(), object_kind="project_copy",
-                object_id=row["id"], result="ok", meta={"project_id": pid, "target_workspace_id": row["target_workspace_id"],
-                                                        "scope": row["scope"], "digest": digest, "via": "api", "client_id": p.get("client_id")})
+            # The request row and its record commit together with or without an Idempotency-Key (G26).
+            with store.tx():
+                row = copies.create(requester_id=uid, source_workspace_id=current_tenant(), source_project_id=pid,
+                                    target_workspace_id=normalized["target_workspace_id"],
+                                    name=normalized["name"] or manifest["project"]["name"], purpose=normalized["purpose"],
+                                    scope=scope_, manifest=manifest, digest=digest,
+                                    requested_authority=authority.describe_request(request))
+                request.app.state.platform_audit(
+                    request, "docs.copy.request", actor_id=uid, workspace_id=current_tenant(), object_kind="project_copy",
+                    object_id=row["id"], result="ok", meta={"project_id": pid, "target_workspace_id": row["target_workspace_id"],
+                                                            "scope": row["scope"], "digest": digest, "via": "api", "client_id": p.get("client_id")})
             announce_request(store, request.app.state.identity, copies, request.app.state.notifier, row, uid, manifest["project"]["name"])
             return CopyRequestView.model_validate(copies.public(row, for_requester=True)).model_dump(mode="json")
 
@@ -127,7 +129,8 @@ def register(r: APIRouter, app_, scope, idem) -> None:
     def withdraw_copy_request(request: Request, cid: str):
         p = person(request, "write")
         mine(request, p, cid)
-        out = service(request).withdraw(cid, p["user_id"])
-        request.app.state.platform_audit(request, "docs.copy.withdraw", actor_id=p["user_id"], object_kind="project_copy", object_id=cid,
-                                         result="ok", meta={"via": "api", "client_id": p.get("client_id")})
+        with store.tx():
+            out = service(request).withdraw(cid, p["user_id"])
+            request.app.state.platform_audit(request, "docs.copy.withdraw", actor_id=p["user_id"], object_kind="project_copy", object_id=cid,
+                                             result="ok", meta={"via": "api", "client_id": p.get("client_id")})
         return service(request).public(out, for_requester=True)

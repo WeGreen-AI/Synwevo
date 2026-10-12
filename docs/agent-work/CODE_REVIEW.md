@@ -481,3 +481,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：`update` 只在 UPDATE 命中时审计（版本冲突不留行）；`redeliver` 的审计在路由事务与 `Idempotency.run` 内，重放命中缓存不再进入 `work()`，测试断言同键两次请求只有一行；`ping` 的投递行与审计先提交再发网络请求，不在写锁内发送；`by` 为空时由 `audit_event` 回落到网关记录的主体，所以 CLI 之外漏传描述符的调用方仍被正确归因；审计失败使暂停/删除整体回滚（测试经 `auth.audit_event` 注入）。
 - 风险/未做：`created_by` 列现在可能带 `label` 键（CLI），`authority.loads` 只按 kind 判断，不受影响；投递尝试的签名密钥 ID/时间戳列（WP10）未做；审计页对 `docs.*` 动作仍显示原始代码（WP11）。
 - 验证：webhook 四个测试文件 + 契约 + CLI 共 61 通过；五守卫通过；Docs 全套件见 EVIDENCE。
+
+## CR-111 · G26 WP3 共享模板、评论与复制申请的审计进入写入事务（2026-10-12，本轮新增，本地已验证）
+
+- 位置：apps/docs/synwevo_docs/org_templates.py（`_audit`：`docs.template.publish|release|deprecate|restore|use_shared` 在 `_publish`/`_update` 事务内写，`set_deprecated` 与 `use` 的多条写入补上事务并在其中审计；扫描网络调用仍在事务外）；apps/docs/synwevo_docs/comments.py（`_audit`：`docs.comment.create|edit|delete|resolve|reopen`，edit/delete/resolve 补上事务；meta 只有项目/父评论标识与计数，不含正文）；apps/docs/synwevo_docs/api/app.py（删除 5 处路由层事后审计——发布/更新发布/弃用恢复/使用/删除评论；复制申请、自批与撤回的路由审计并入 `store.tx()`）；apps/docs/synwevo_docs/api/v1_copies.py（申请与撤回的审计并入事务，无 Idempotency-Key 时同样原子）；tests/integration/test_audit_sharing_templates.py、test_audit_sharing_comments.py（新增 4 例）。
+- 审查要点：浏览器路由与 v1 机器路由共用同一服务对象，审计搬进服务后两面各产生恰好一行（原先 v1 的组织模板路由无审计、浏览器路由事后审计）；操作者取 `context.principal()`，机器委托调用因此带上 `meta.delegation`，服务被直接调用时回落到调用方给的 uid；复制决定保留在路由层（账户服务审批路由已有 `organization.copy.decide` 行，搬进共享类会双行）；评论删除的管理员代删标 `by_administrator`。
+- 风险/未做：`use` 绑定项目时的 `update_project` 写入由 WP4 审计；复制申请在 Docs 路由层而非 `ProjectCopies` 内审计，账户服务审批路由的 `decide` 行格式与 Docs 自批行不同（WP11 目录时统一标签）。
+- 验证：既有评论/组织模板/复制/事件/契约测试 99 通过；新增 4 例 + webhook 审计 3 例通过；五守卫通过；Docs 与集成全套件见 EVIDENCE。
