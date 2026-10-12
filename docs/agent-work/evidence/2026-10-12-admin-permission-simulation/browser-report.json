@@ -1,0 +1,30 @@
+{
+ "base": "http://127.0.0.1:33947",
+ "engine": "chrome",
+ "steps": {
+  "grant": {
+   "heading": true,
+   "feasible": true,
+   "gains": true,
+   "no_loss": true,
+   "excerpt": "若授予「审计查看」 · 你现在可以执行这一变化。\n\n将新增权限：查看平台概览 · 查看账户 · 查看工作空间（只含数量） · 查看组织 · 查看平台配置与登录方式 · 查看邮件投递 · 查看业务应用与流程的运行记录（不含内容） · 查看审计记录 · 查看平台管理员与权限说明\n\n不会失去权限。\n\n模拟只按角色目录与计入规则计算，不执行任何变更，也不改变任何授予。"
+  },
+  "revoke_not_held": {
+   "heading": true,
+   "refusal": true,
+   "no_change": true
+  },
+  "en": {
+   "heading": true,
+   "feasible": true,
+   "excerpt": "If “Audit viewer” were granted · You could make this change now.\n\nWould gain: View the platform overview · View accounts · View workspaces (counts only) · View organizations · View platform settings and sign-in methods ·"
+  },
+  "grants_unchanged": {
+   "before": 2,
+   "after": 2
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ]
+ }
+}

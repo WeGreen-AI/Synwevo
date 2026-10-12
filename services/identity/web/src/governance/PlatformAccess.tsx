@@ -156,6 +156,52 @@ const EXPIRY_DAYS = [0, 1, 7, 30, 90];
 
 /** One account's platform access: its grants and effective permissions, and — for a caller who
  *  may — granting a built-in role or revoking a grant, each confirmed with a reason. */
+/** A5 (simulation): the server's answer to "what if this role were granted or no longer held". */
+export type Simulation = { user_id: string; change: "grant" | "revoke"; role: string; counts: boolean;
+  before: { roles: string[]; permissions: string[] }; after: { roles: string[]; permissions: string[] };
+  gained: string[]; lost: string[]; feasible: boolean; refusal: string | null };
+export const SIMULATION_REFUSALS: Record<string, string> = {
+  already_held: "该账户已持有这个角色", not_held: "该账户并未持有这个角色", last_super_admin: "必须保留至少一位可用的最高管理员。",
+  platform_permission_denied: "你的平台角色不包含这项操作", role_exceeds_own: "不能授予自己没有的权限", self_assignment: "不能更改自己的授予权限",
+};
+export function SimulationSummary({ sim }: { sim: Simulation }) {
+  useI18n();
+  const roleName = platformRoleLabel(sim.role);
+  return <div className="col gap8" role="status">
+    <p><b>{sim.change === "grant" ? tr("若授予「{role}」", { role: roleName }) : tr("若撤销「{role}」", { role: roleName })}</b>
+      {" · "}{sim.feasible ? tr("你现在可以执行这一变化。") : tr("你现在不能执行这一变化：{reason}", { reason: tr(SIMULATION_REFUSALS[sim.refusal || ""] || sim.refusal || "") })}</p>
+    {!sim.counts && <p className="notice" role="note">{tr("该账户的授予目前不计入（邮箱未验证或账户不可用），所以有效权限不会变化。")}</p>}
+    <p className="small">{sim.gained.length ? tr("将新增权限：{list}", { list: sim.gained.map(permissionLabel).join(LIST) }) : tr("不会新增权限。")}</p>
+    <p className="small">{sim.lost.length ? tr("将失去权限：{list}", { list: sim.lost.map(permissionLabel).join(LIST) }) : tr("不会失去权限。")}</p>
+    <p className="muted small">{tr("模拟只按角色目录与计入规则计算，不执行任何变更，也不改变任何授予。")}</p>
+  </div>;
+}
+
+function SimulationForm({ userId, roles }: { userId: string; roles: string[] }) {
+  const [change, setChange] = useState<"grant" | "revoke">("grant");
+  const [role, setRole] = useState(roles[0] || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sim, setSim] = useState<Simulation | null>(null);
+  const run = async () => {
+    setBusy(true); setError(null);
+    try { setSim(await get<Simulation>(`/api/admin/users/${encodeURIComponent(userId)}/platform-access/simulate?change=${change}&role=${encodeURIComponent(role)}`)); }
+    catch (e) { setSim(null); setError(errText(e)); }
+    finally { setBusy(false); }
+  };
+  return <details><summary>{tr("模拟一次变化")}</summary>
+    <form className="row gap8 wrap" onSubmit={(e) => { e.preventDefault(); void run(); }}>
+      <label className="field">{tr("变化")}<select className="input" value={change} onChange={(e) => setChange(e.target.value as "grant" | "revoke")} aria-label={tr("变化")}>
+        <option value="grant">{tr("授予")}</option><option value="revoke">{tr("撤销")}</option></select></label>
+      <label className="field">{tr("角色")}<select className="input" value={role} onChange={(e) => setRole(e.target.value)} aria-label={tr("角色")}>
+        {roles.map((r) => <option key={r} value={r}>{platformRoleLabel(r)}</option>)}</select></label>
+      <button type="submit" className="btn" disabled={busy || !role}>{busy ? tr("正在模拟…") : tr("模拟")}</button>
+    </form>
+    {error && <p className="notice err" role="alert">{error}</p>}
+    {sim && <SimulationSummary sim={sim} />}
+  </details>;
+}
+
 export function PlatformAccessDialog({ user, onClose, onChanged }: {
   user: { id: string; email: string }; onClose: () => void; onChanged: () => void;
 }) {
@@ -226,6 +272,7 @@ export function PlatformAccessDialog({ user, onClose, onChanged }: {
           <ul className="small">{data.permissions.map((p) => <li key={p.permission}>{permissionLabel(p.permission)}
             <span className="muted"> — {Array.from(new Set(p.sources.map((s) => s.role))).map(platformRoleLabel).join(LIST)}</span></li>)}</ul>
         </details>}
+        <SimulationForm userId={user.id} roles={data.catalogue.map((r) => r.id)} />
       </>}
     </div>
   </Modal>{confirm}{offering && <SuperAdminOfferDialog user={user} onClose={() => setOffering(false)} onDone={out => {

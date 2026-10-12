@@ -403,3 +403,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：目录与代码的一致性由测试强制（新增动作未入目录即失败，过时条目同样失败）；标签只说动作本身，不说结果与对象；三语言随服务端返回，前端不需再维护目录；筛选仍走既有 `action LIKE code%`，选择具体动作即精确到该动作及其子动作。
 - 风险/未做：G24 的「同一事务写审计」与「统一前后值」仍未做；API 控制台 `api_platform.*` 族以动态后缀审计，未逐个命名；扫描只覆盖 `services/identity` 与 `packages/core`（`admin.*` 只在这两处出现）。
 - 验证：identity 相关 16 例通过；account-web typecheck/173 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-12-admin-action-catalogue。
+
+## CR-104 · Admin A5 权限模拟（2026-10-12，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：services/identity/synwevo_identity/admin_routes.py `GET /users/{uid}/platform-access/simulate`（change=grant|revoke、role；400 `bad_simulation`）；account-web `governance/PlatformAccess.tsx`（`Simulation`、`SIMULATION_REFUSALS`、`SimulationSummary`、对话框内「模拟一次变化」折叠块）、labels.ts 错误码、messages.ts 20 条；tests：test_platform_access.py 1 例 + 矩阵 1 行 + 状态拒绝、admin-simulation.test.mjs 2 例。
+- 审查要点：模拟只读：由 `explain()` 的现状、`ROLES` 目录与计入规则（账户被阻、邮箱未验证则新授予不计入）算出前后集合，不写任何表（测试断言授予表行数不变）；可行性复用 `_assign_refusal`（与真实授予/撤销同一拒绝顺序：自我授予规则先于 already_held），再补 already_held / not_held；按设计不模拟业务操作，也不列出无权对象。
+- 风险/未做：`last_super_admin` 分支在正常调用路径里不可达（可用最高管理员对他人模拟时自己就是另一位），保留为防御；业务操作模拟不在范围。
+- 验证：identity 相关 10 例通过；account-web typecheck/175 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-12-admin-permission-simulation。

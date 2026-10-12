@@ -30,7 +30,7 @@ from synwevo_core.identity import Identity
 from synwevo_core.notifications import Notifier, RETRY_DELAYS_S
 from synwevo_core.organizations import Organizations
 from synwevo_core.platform_access import (PERMISSIONS, ROLE_ORDER, ROLES, SUPER_ADMIN, PlatformAccess,
-                                          catalogue)
+                                          catalogue, sorted_permissions, clock)
 from synwevo_core.sessions import ADMIN_IDLE_SECONDS, CSRF_COOKIE, CSRF_HEADER
 from synwevo_core.store import Store, now
 
@@ -140,6 +140,7 @@ ROUTES = [
     ("GET", "/api/admin/audit", "platform.audit.view", False),
     ("GET", "/api/admin/platform/roles", "platform.roles.view", False),
     ("GET", "/api/admin/users/{uid}/platform-access", "platform.roles.view", False),
+    ("GET", "/api/admin/users/{uid}/platform-access/simulate", "platform.roles.view", False),
     ("POST", "/api/admin/users/{uid}/platform-grants", "platform.roles.assign", True),
     ("POST", "/api/admin/platform-grants/{gid}/revoke", "platform.roles.assign", True),
     ("POST", "/api/admin/users/{uid}/platform-role", "platform.roles.assign", True),
@@ -277,6 +278,7 @@ def _path(template, w, *, legacy: str | None = None):
 RISK_STATE_REFUSALS = {
                        # The diagnosis needs an address; the matrix supplies none.
                        "/api/admin/diagnostics/registration": (400, "bad_email"),
+                       "/api/admin/users/{uid}/platform-access/simulate": (400, "bad_simulation"),
                        "/api/admin/users/{uid}/access": (400, "bad_access_query"),
                        # No stored payment key in the matrix; authorized readers reach this refusal.
                        "/api/admin/billing/payments/readiness": (409, "payment_readiness_no_keys"),
@@ -1091,3 +1093,40 @@ def test_the_admin_second_factor_policy_locks_password_only_administrators_until
     stale = post(strong, "/api/admin/security/second-factor", {"mode": "required", "expected_mode": "required", "reason": REASON})
     assert stale.status_code == 409 and stale.json()["error"] == "policy_changed"
     assert [json.loads(r["meta"])["mode"] for r in store.all("SELECT meta FROM audit_events WHERE action='admin.security.second_factor' ORDER BY seq")] == ["required", "required", "off"]
+
+
+def test_platform_access_simulation_computes_the_change_without_making_it(world):
+    """A5, simulation: what an account's effective permissions would be after one hypothetical
+    grant or revocation, from the catalogue and the counting rules, plus whether the caller could
+    really make that change — and nothing in the store moves."""
+    w, store = world, world["store"]
+    root = w["login"](w["root"])
+    plain = w["plain"]["id"]
+    path = f"/api/admin/users/{plain}/platform-access/simulate"
+    assert root.get(path).json()["error"] == "bad_simulation"
+    assert root.get(path + "?change=grant&role=owner").status_code == 400
+    before_rows = store.all("SELECT id FROM platform_role_grants ORDER BY id")
+    sim = root.get(path + "?change=grant&role=auditor").json()
+    assert sim["before"] == {"roles": [], "permissions": []} and sim["after"]["roles"] == ["auditor"]
+    assert sim["gained"] == sorted_permissions(ROLES["auditor"]) and sim["lost"] == [] and sim["feasible"] is True and sim["refusal"] is None
+    assert sim["counts"] is True
+    # The root cannot hand itself the assigning role again, nor drop the last usable super administrator.
+    own = f"/api/admin/users/{w['root']['id']}/platform-access/simulate"
+    assert root.get(own + "?change=grant&role=super_admin").json()["refusal"] == "self_assignment", "the self rule answers first, as the grant route would"
+    drop = root.get(own + "?change=revoke&role=super_admin").json()
+    assert drop["refusal"] == "self_assignment" and drop["feasible"] is False, "one's own assigning role: the self rule, as the revoke route answers"
+    assert drop["after"]["permissions"] == [] and set(drop["lost"]) == set(PERMISSIONS), "the arithmetic is still shown"
+    assert root.get(path + "?change=revoke&role=auditor").json()["refusal"] == "not_held"
+    # An unverified address: a person's grant would not count yet, and the simulation says so.
+    store.execute("UPDATE users SET email_verified_at=NULL WHERE id=?", (plain,))
+    pending = root.get(path + "?change=grant&role=support").json()
+    assert pending["counts"] is False and pending["gained"] == [] and pending["after"]["roles"] == []
+    store.execute("UPDATE users SET email_verified_at=? WHERE id=?", (clock(), plain))
+    # An auditor reads the simulation but could not make the change; the refusal names why.
+    aud = holder(w, "auditor")
+    auditor = w["login"](aud)
+    assert root.get(f"/api/admin/users/{aud['id']}/platform-access/simulate?change=grant&role=auditor").json()["refusal"] == "already_held"
+    seen = auditor.get(path + "?change=grant&role=support").json()
+    assert seen["gained"] == sorted_permissions(ROLES["support"]) and seen["feasible"] is False and seen["refusal"] == "platform_permission_denied"
+    assert store.all("SELECT id FROM platform_role_grants ORDER BY id") == before_rows or len(store.all("SELECT id FROM platform_role_grants")) == len(before_rows) + 1, "only the auditor's own fixture grant was added; the simulation wrote nothing"
+    assert PlatformAccess(store).roles(w["ident"].get_user(plain)) == []

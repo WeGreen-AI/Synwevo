@@ -1614,6 +1614,42 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         explained["catalogue"] = catalogue()["roles"]
         return explained
 
+    @r.get("/users/{uid}/platform-access/simulate")
+    def simulate_platform_access(request: Request, uid: str, change: str = Query("", max_length=8),
+                                 role: str = Query("", max_length=40)):
+        """A5, the simulation half: what this account's effective permissions would be if one role
+        were granted or no longer held — computed from the catalogue and the account's counting
+        rules, never by changing anything — and whether the caller could actually make that change
+        (the same refusal codes the grant and revoke routes answer with). Read with
+        `platform.roles.view`; nothing is executed and no object outside the catalogue is named."""
+        actor = _admin(request, "platform.roles.view")
+        if change not in ("grant", "revoke") or role not in ROLES:
+            raise ServiceError(400, "bad_simulation", "请选择要模拟的变化（授予或撤销）和一个内置角色")
+        access = PlatformAccess(store)
+        explained = access.explain(uid)
+        held = actor["platform_permissions"]
+        before_roles = set(explained["roles"])
+        after_roles = (before_roles | {role}) if change == "grant" else (before_roles - {role})
+        # A grant by a person counts only once the address is verified (PlatformAccess._counts);
+        # a blocked account's grants count for nothing either way.
+        counts = not explained["blocked_by"] and (change == "revoke" or explained["email_verified"])
+        before = frozenset().union(*(ROLES[r] for r in before_roles)) if before_roles else frozenset()
+        after = (frozenset().union(*(ROLES[r] for r in after_roles)) if after_roles else frozenset()) if counts else before
+        refusal = _assign_refusal(held, actor["id"], uid, role)
+        if refusal is None and change == "grant" and role in before_roles:
+            refusal = "already_held"
+        if refusal is None and change == "revoke" and role not in before_roles:
+            refusal = "not_held"
+        if refusal is None and change == "revoke" and role == SUPER_ADMIN and access.is_usable_super_admin(uid) \
+                and not access.usable_super_admins(excluding=uid):
+            refusal = "last_super_admin"
+        return {"user_id": uid, "change": change, "role": role, "counts": counts,
+                "before": {"roles": sorted_roles(before_roles), "permissions": sorted_permissions(before)},
+                "after": {"roles": sorted_roles(after_roles) if counts else sorted_roles(before_roles),
+                          "permissions": sorted_permissions(after)},
+                "gained": sorted_permissions(after - before), "lost": sorted_permissions(before - after),
+                "feasible": refusal is None, "refusal": refusal}
+
     @r.post("/users/{uid}/platform-grants")
     def grant_platform_role(request: Request, uid: str, body: dict = Body(...)):
         """Grant a built-in role: `{role, reason, expires_at?}` (a UNIX time; never for

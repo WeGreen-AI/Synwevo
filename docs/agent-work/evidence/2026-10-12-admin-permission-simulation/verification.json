@@ -1,0 +1,50 @@
+{
+ "package": "CR-104 · Admin A5 权限模拟（受控：只算不做）",
+ "written_at": "2026-10-12T03:39:12+00:00",
+ "worktree": ".claude/worktrees/agent-billing (branch claude/agent-billing)",
+ "environment": "http://127.0.0.1:33947 — isolated synthetic instance (synwevo_server create_app role=all, start_jobs=False) in the session scratchpad; SYNWEVO_TEST_INSTANCE=1; synthetic accounts; no production data, model, payment or outbound network; Playwright Chrome",
+ "backend_tests": {
+  "services/identity/tests/test_platform_access.py -k 'simulation or roster_and_explanation or matrix or grants_and_revokes'": "10 passed (new: test_platform_access_simulation_computes_the_change_without_making_it; matrix row + state refusal bad_simulation)"
+ },
+ "frontend": {
+  "account-web typecheck": "exit 0",
+  "account-web npm test": "175 passed (new admin-simulation.test.mjs: 2; refusals gate catalogued bad_simulation)",
+  "account-web build": "ok"
+ },
+ "guards": "check_boundaries, check_brand, check_design, check_component_names, brand_assets --check: ok",
+ "browser_steps": {
+  "grant": {
+   "heading": true,
+   "feasible": true,
+   "gains": true,
+   "no_loss": true,
+   "excerpt": "若授予「审计查看」 · 你现在可以执行这一变化。\n\n将新增权限：查看平台概览 · 查看账户 · 查看工作空间（只含数量） · 查看组织 · 查看平台配置与登录方式 · 查看邮件投递 · 查看业务应用与流程的运行记录（不含内容） · 查看审计记录 · 查看平台管理员与权限说明\n\n不会失去权限。\n\n模拟只按角色目录与计入规则计算，不执行任何变更，也不改变任何授予。"
+  },
+  "revoke_not_held": {
+   "heading": true,
+   "refusal": true,
+   "no_change": true
+  },
+  "en": {
+   "heading": true,
+   "feasible": true,
+   "excerpt": "If “Audit viewer” were granted · You could make this change now.\n\nWould gain: View the platform overview · View accounts · View workspaces (counts only) · View organizations · View platform settings and sign-in methods ·"
+  },
+  "grants_unchanged": {
+   "before": 2,
+   "after": 2
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ]
+ },
+ "screenshots": [
+  "a5-simulation-en.png",
+  "a5-simulation-grant-zh-hans.png"
+ ],
+ "console_errors_note": "the single 'Failed to load resource' entry is the login page's session probe (401)",
+ "not_done": [
+  "simulating business operations (deliberately out of scope: the catalogue decides permissions, business authorization is per object)",
+  "deployment (GitHub Actions billing block)"
+ ]
+}

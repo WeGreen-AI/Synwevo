@@ -64,7 +64,7 @@ const errors: Record<string, string> = {
   no_throttle: "找不到该限流记录，可能已经过期或被解除。",
   finalize_failed: "到期删除未能完成，已记录失败；请查看服务日志后重试。",
   no_second_factor_admin: "至少需要一名可用的最高管理员已登记安全密钥或动态验证码，才能要求管理员使用第二因素。",
-  bad_second_factor_mode: "请选择有效的第二因素策略。", bad_grace_days: "宽限期须为 0 到 30 的整数天。", mail_rate_limited: "发送过于频繁，请稍后重试。",
+  bad_second_factor_mode: "请选择有效的第二因素策略。", bad_simulation: "请选择要模拟的变化（授予或撤销）和一个内置角色。", bad_grace_days: "宽限期须为 0 到 30 的整数天。", mail_rate_limited: "发送过于频繁，请稍后重试。",
   mail_not_configured: "邮件服务尚未配置。", public_url_missing: "邮件链接地址尚未配置，请联系部署管理员。",
   smtp_not_configured: "邮件服务尚未配置。", smtp_config_invalid: "邮件服务配置无效，请联系部署管理员。",
   mail_not_retryable: "该邮件不能安全重试。", no_mail: "找不到该邮件。", already_verified: "该邮箱已经验证。",
