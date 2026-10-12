@@ -900,3 +900,15 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 ## 2026-10-12 CR-116 G26 WP8 Suite 能力中心审计（本地）
 
 测试：`apps/suite/tests/test_audit_capability_path.py`（5 例：入口处 scope/无 scope/Agent 拒绝各一条 denied 行、ui 拒绝零行；ui 调用为人、委托 OAuth 为人 + delegation + ip/request_id、服务账户与密钥为 machine；事务型/两阶段失败各恰好一条 error 行且无 ok 行；机器拒绝一分钟一行、ui 拒绝零行、HTTP 路径带 delegation；异步受理行 phase=accepted、完成行 phase=completion（成功/失败）、flow 委托随行）；定向 85 项通过（16:58Z）；Suite 全目录 `apps/suite/tests`：1131 通过（17:05Z，含不可读主体完成行修复）；拒绝行扩展到入口处的 scope/自动化/Agent 拒绝后再跑 1135 通过（17:11–17:14Z，含子代理的 4 例；第 5 例随后单独通过）。
+
+## 2026-10-12 CR-117 G26 WP9 Suite 旁路路径审计（本地）
+
+测试：`apps/suite/tests/test_audit_bypass_paths.py`（5 例：十种字节搬运路由两面各一行（凭据路径带 delegation、上传重放零行、提取导出会话一行/凭据路径只有操作行）；公开填表草稿零行、上传/放弃/提交/补交匿名行（pub: 哈希前缀）、专属链接 recipient:、登录填写人为人；到期与审批提醒归因到引擎；自动化触发系统行、手动启动零行；审计失败回滚公开提交）；Suite 全目录 1136 通过（17:28–17:31Z，含 WP9；覆盖测试随后 5 例通过）。
+
+## 2026-10-12 CR-118 G26 WP10 Webhook 操作审计与签名元数据（本地）
+
+测试：`apps/suite/tests/test_audit_webhook_operations.py`（Suite 3 例：ping/redeliver 各一行且对象为投递记录、429/409 零行；410 Gone 触发的停用一行（原因/未送位置/丢弃数/状态前后）、陈旧版本零行；每次尝试记 12 位密钥指纹与时间、公开视图不含、轮换后指纹变化；Docs 1 例（test_webhook_delivery.py）同样覆盖指纹/时间/视图/轮换）；两应用 webhook 相关 132 + 122 项（含迁移测试）通过（17:31–17:35Z）。
+
+## 2026-10-12 CR-119 G26 WP11 审计页应用动作目录（本地）
+
+测试：账户服务目录 3 项 + 集成比对 2 项 + 两应用源码扫描 3 项通过（17:36Z）；账户前端 typecheck 与 node 测试通过；根 typecheck/build 通过，六个前端工作区 615 项 node 测试通过（17:37Z）。

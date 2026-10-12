@@ -67,4 +67,7 @@ export const AUDIT_SCOPES: [string, string][] = [
   ["", "全部操作"], ["admin.user.", "账户管理"], ["admin.workspace.", "工作空间管理"],
   ["admin.platform.", "平台权限"], ["admin.access.", "被拒绝的管理请求"],
   ["auth.", "登录与账户安全"], ["member.", "成员管理"], ["invite.", "邀请"], ["mfa.", "两步验证"],
+  // The applications' own rows (G26, D7 §9): every Synwevo Docs change, every workplace-application
+  // change made outside its registered operations. Single codes are offered from the catalogue.
+  ["docs.", "Synwevo Docs 操作"], ["suite.", "工作空间应用操作"],
 ];

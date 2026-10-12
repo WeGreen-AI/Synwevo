@@ -303,6 +303,14 @@ export const governanceMessages = {
     "en": "All actions",
     "zh-Hant": "全部操作"
   },
+  "Synwevo Docs 操作": {
+    "en": "Synwevo Docs actions",
+    "zh-Hant": "Synwevo Docs 操作"
+  },
+  "工作空间应用操作": {
+    "en": "Workplace application actions",
+    "zh-Hant": "工作空間應用操作"
+  },
   "账户管理": {
     "en": "Account administration",
     "zh-Hant": "帳戶管理"

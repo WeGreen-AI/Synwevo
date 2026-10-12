@@ -1715,10 +1715,14 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     @r.get("/audit/actions")
     def audit_actions(request: Request):
         """The catalogue of administration actions (G24): every `admin.*` code with its scope and
-        a label in the three languages, for the audit page's filter and rows. Read-only."""
+        a label in the three languages, for the audit page's filter and rows — and, beside it, the
+        applications' `docs.*` / `suite.*` codes (G26, D7 §9), kept as data here because the account
+        service may not import the applications. Read-only."""
         _admin(request, "platform.audit.view")
         from .admin_actions import catalogue as action_catalogue
-        return action_catalogue()
+        from .app_actions import catalogue as app_catalogue
+        apps = app_catalogue()
+        return {**action_catalogue(), "applications": apps["items"], "application_scopes": apps["scopes"]}
 
     @r.get("/audit")
     def audit_log(request: Request, q: str = Query("", max_length=100),

@@ -523,3 +523,23 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：拒绝行不改变拒绝本身（写入失败只记日志）；错误行与失败记录同事务；完成行由 worker 代原主体写、无请求 ID；只读 ui 操作仍不记。
 - 风险/未做：拒绝限频是进程内窗口，多实例各自计数（上限按实例数线性放大，仍有界）；`ip` 对 agent/flow 调用方为空属设计。
 - 验证：新增 5 例 + 定向 85/103 项（能力中心/机器 API/延期运行/原子性/契约/提供方策略/审计归因）通过；Suite 全目录 1131 通过（17:05Z），拒绝行扩展后 1135 通过（17:14Z）。
+
+## CR-117 · G26 WP9 Suite 旁路路径的审计：字节搬运路由、公开填表、引擎转换、自动化触发（2026-10-12，本轮新增，本地已验证）
+
+- 位置：apps/suite/synwevo_suite/tables/transfer.py（`stage_import` → `suite.tables.upload`、`export_download` → `suite.tables.download`，在路由事务内）；extract/service.py（`upload` 事务内 `suite.extract.upload`、重放零行；`file_bytes` → `suite.extract.download`）与 extract/__init__.py（导出路由仅会话路径写 `suite.extract.export`——凭据路径由其调用的 `extract.task.result` 操作行覆盖，避免双行）；dataprep/service.py（`upload` 事务内 `suite.dataprep.upload`）与 dataprep/routes.py（数据集/异常清单导出 `suite.dataprep.export`，两面共用的唯一函数）；forms/service.py（附件下载 `suite.forms.download`；到期 `suite.forms.request.expire` 由系统 `forms-expiry` 归因，不记触发它的查看者）；forms/filling.py（`_audit`：登录填写人为人，其余 `actor_kind=anonymous`——公开链接取填写者密钥哈希前缀、专属链接取 `recipient:<request>`；上传/放弃补事务，提交在既有事务内；草稿不记）；approvals/service.py（无调用上下文的 `_record`——扫描器的 reminder/escalated——写 `suite.approvals.<kind>`，系统 `approvals-engine` 或给定的人）；agent/files.py（个人文件上传/下载，无空间）；packages/core/synwevo_core/flows/engine.py（`_start` 仅在 `trigger_id` 时写 `suite.agent.flow.trigger`，系统 `automation`，本人手动启动由操作行覆盖）。测试：apps/suite/tests/test_audit_bypass_paths.py（5 例）。
+- 审查要点：两面各恰好一行且凭据路径带 `delegation`；上传重放零行；提取导出不双行；匿名行不含答案与文件名；到期与升级归因到引擎而非旁观者；审计失败回滚公开提交。
+- 风险/未做：`extract.task.result` 的会话路径是只读操作不记行，所以导出行只在 ui 路径补；approvals 其余转换走调用上下文由能力中心记。
+- 验证：新增 5 例；Suite 全目录 1136 通过（17:28–17:31Z，含 WP9；覆盖测试随后 5 例通过）。
+
+## CR-118 · G26 WP10 Webhook 的 ping/redeliver/系统停用审计与逐次签名元数据（2026-10-12，本轮新增，本地已验证）
+
+- 位置：apps/suite/synwevo_suite/common/machine_webhooks.py（`ping`/`redeliver` 新增 `note=`，路由传入 `noting(request, p)`——lambda 支持 object_kind/object_id 覆盖——在排队事务内写 `suite.webhook.ping|redeliver`，对象为投递记录；`disable` 在其事务内写 `suite.webhook.disable`，系统 `webhook-dispatcher`，含原因、未送位置、丢弃数与状态前后；版本守卫未改到行时零行；每次尝试在投递行记 `signed_at` 与 `signing_key`（当前密钥的 12 位指纹，永不记签名或密钥）；`delivery_public` 不暴露这两列）；apps/docs/synwevo_docs/webhooks.py（两种分支同样记签名元数据）；packages/core/synwevo_core/suite_schema/webhooks.py（`COLUMNS` 两个可空列）与 store.py（`WEBHOOK_SIGNING_COLUMNS` 两个可空列，启动迁移追加）。测试：apps/suite/tests/test_audit_webhook_operations.py（4 例）。
+- 审查要点：D7 §8——投递尝试留在投递表而非审计表；ping 限流 429 零行；重新投递被拒零行；旧库升级只加可空列。
+- 风险/未做：指纹按当前密钥，重叠期内由旧密钥验签的接收方看到的是新密钥指纹（行记"用哪把签"，当前+旧两把都签在头里）。
+- 验证：新增 4 例 + 两应用 webhook 契约/投递/加固/重投/CLI/示例 254 项与迁移测试通过。
+
+## CR-119 · G26 WP11 审计页为应用动作提供三语言标签而不跨越边界（2026-10-12，本轮新增，本地已验证）
+
+- 位置：services/identity/synwevo_identity/app_actions.py（新模块：13 个应用范围、86 个 `docs.*`/`suite.*` 动作的三语言标签，纯数据，不导入应用）；admin_routes.py（`GET /api/admin/audit/actions` 在 `items/scopes` 之外新增 `applications/application_scopes`，既有管理目录契约不变）；services/identity/web/src/Admin.tsx（行标签在两份目录中查找；筛选下拉追加应用范围的 optgroup）与 governance/access.ts + messages.ts（范围前缀 `docs.`/`suite.` 两项，三语言）；apps/docs/synwevo_docs/audit_actions.py 与 apps/suite/synwevo_suite/common/audit_actions.py（各应用自己的动作清单）；apps/docs/tests/test_audit_catalogue.py 与 apps/suite/tests/test_audit_catalogue.py（源码扫描：字面量、`App.audit("…")` 短名、webhook `_audit("…")` 词干、approvals 无调用上下文的两种 kind，必须与清单完全相等）；tests/integration/test_audit_catalogue.py（账户服务的副本 == 两应用清单之并集，三语言非空、范围前缀一致）；services/identity/tests/test_admin.py（新增 1 例：应用目录经路由返回、与管理目录不重叠）。
+- 审查要点：边界规则靠三处测试而非共享模块维持；注册操作（`forms.form.create` 等）仍按代码原样显示——其标题属于 Suite 注册表，账户服务不可导入，留待需要时经工作空间源另取。
+- 验证：目录测试 8 项通过；账户前端 typecheck/test 通过；根 typecheck/build 通过，六个前端工作区 615 项 node 测试通过（17:37Z）。

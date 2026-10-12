@@ -992,6 +992,24 @@ def test_every_admin_audit_action_is_catalogued_in_three_languages(env):
     assert env["plain"].get("/api/admin/audit/actions").status_code == 404
 
 
+def test_the_audit_page_also_names_the_applications_actions(env):
+    """G26 / D7 §9: the applications' `docs.*` and `suite.*` codes are labelled from the same route,
+    as data kept beside the administration catalogue (the account service may not import the
+    applications; each application's own test scans its source against its list, and an
+    integration test compares the lists with this one)."""
+    from synwevo_identity.app_actions import APP_ACTIONS, APP_SCOPES
+    assert APP_ACTIONS and all(code.startswith(("docs.", "suite.")) for code in APP_ACTIONS)
+    for code, item in APP_ACTIONS.items():
+        assert item["scope"] in APP_SCOPES, code
+        assert all(item["label"][locale] for locale in ("zh-Hans", "zh-Hant", "en")), code
+        assert item["label"]["zh-Hans"] != item["label"]["en"], code
+    body = env["c"].get("/api/admin/audit/actions").json()
+    assert [i["code"] for i in body["applications"]] == sorted(APP_ACTIONS)
+    assert {s["id"] for s in body["application_scopes"]} == set(APP_SCOPES)
+    assert not set(APP_ACTIONS) & {i["code"] for i in body["items"]}
+    assert next(i for i in body["applications"] if i["code"] == "docs.project.create")["label"]["en"]
+
+
 def _audit_insert_fails(monkeypatch, action):
     """The audit row of `action` cannot be written (a disk or lock failure at that moment): the
     administration write it belongs to must not survive on its own (G24)."""

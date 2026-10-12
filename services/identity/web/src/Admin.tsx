@@ -449,7 +449,11 @@ function WorkspacesTab({ onDenied, held }: { onDenied: () => void; held: Held })
   </section>;
 }
 
-type ActionCatalogue = { items: { code: string; scope: string; label: Record<string, string> }[]; scopes: { id: string; label: Record<string, string> }[] };
+type CatalogueItem = { code: string; scope: string; label: Record<string, string> };
+type CatalogueScope = { id: string; label: Record<string, string> };
+// `items`/`scopes` are the administration actions (G24); `applications`/`application_scopes` the
+// applications' `docs.*` / `suite.*` codes (G26, D7 §9), labelled from the same catalogue route.
+type ActionCatalogue = { items: CatalogueItem[]; scopes: CatalogueScope[]; applications?: CatalogueItem[]; application_scopes?: CatalogueScope[] };
 
 function AuditTab({ onDenied }: { onDenied: () => void }) {
   const { locale } = useI18n();
@@ -459,7 +463,8 @@ function AuditTab({ onDenied }: { onDenied: () => void }) {
   const { data, err, loading, reload, offset, setOffset } = useAdminPage<AuditRow>(`/api/admin/audit${qs({ q: query, action })}`, onDenied);
   // The catalogue of administration actions (G24): names for the filter and the rows, in the reader's language.
   const catalogue = useAdminData<ActionCatalogue>("/api/admin/audit/actions", onDenied);
-  const named = (code: string) => catalogue.data?.items.find((i) => i.code === code)?.label[locale] ?? null;
+  const named = (code: string) => (catalogue.data?.items.find((i) => i.code === code)
+    ?? catalogue.data?.applications?.find((i) => i.code === code))?.label[locale] ?? null;
   const items = loading || err ? [] : data?.items || [];
   return <section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{tr("审计记录")}</h2><input className="input" type="search" maxLength={100} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("操作者邮箱或对象")} aria-label={tr("搜索审计记录")} />
@@ -468,6 +473,9 @@ function AuditTab({ onDenied }: { onDenied: () => void }) {
       {AUDIT_SCOPES.map(([prefix, label]) => <option key={prefix} value={prefix}>{tr(label)}</option>)}
       {catalogue.data?.scopes.map((s) => <optgroup key={s.id} label={s.label[locale] || s.label["zh-Hans"]}>
         {catalogue.data!.items.filter((i) => i.scope === s.id).map((i) => <option key={i.code} value={i.code}>{i.label[locale] || i.label["zh-Hans"]}</option>)}
+      </optgroup>)}
+      {catalogue.data?.application_scopes?.map((s) => <optgroup key={s.id} label={s.label[locale] || s.label["zh-Hans"]}>
+        {(catalogue.data!.applications || []).filter((i) => i.scope === s.id).map((i) => <option key={i.code} value={i.code}>{i.label[locale] || i.label["zh-Hans"]}</option>)}
       </optgroup>)}
     </select></label>
     <p className="muted small">{tr("翻页时保留本次查询的范围；刷新后包含新记录。")}</p>
