@@ -107,3 +107,38 @@ Docs另提供严格extract_context契约，现有成员导入/Extract截取语�
 * **撤回条件**：出现明确的产品需求且满足三点时再开：按通知来源空间与凭据的空间/应用范围求交集过滤；卡片只给
   标识符不给标题正文；每次读取写审计并受本人显式授权（OAuth 同意页列出"读取你的通知"）。届时作为新的
   个人授权范围设计（委托令牌而非服务账号），并补 `api-coverage` 与权限矩阵测试。
+
+## D7 应用内写操作的审计（G26）：一个写入口、按身份描述符归因、写入与审计同事务（2026-10-12）
+
+* **现场**（只读清单 `scratchpad a13/g26-plan.json`，4 路并行盘点 + 合成）：Synwevo Docs 约 93 条状态变更路由中约 80 条不写
+  `audit_events`（项目、来源/OCR、模板/字段/版本、映射、任务创建/取消/重试、上传、签名下载链接、回归用例、评论，以及全部 8 条 webhook
+  路由）；13 处内联审计用三种不同的操作者约定，且多数在服务返回之后写（与写入不同事务）。Suite 的注册操作经 `Capabilities._finish → _audit`
+  每次恰好一行、与事务性操作同事务，但 `actor_kind` 恒为 user、`ip` 为空、无拒绝/失败/异步完成行；匿名公开填表、`acting()` 包裹的字节
+  搬运路由、自动化触发的流程启动、后台 worker 状态迁移、Suite webhook ping/redeliver/系统停用绕过中央路径。投递尝试只存在于
+  `webhook_deliveries` / `suite_webhook_deliveries` 行上，无逐次签名元数据。
+* **决定**：
+  1. 唯一写入口是 `synwevo_core.auth.audit_event`；它新增 `actor: dict | None`（`authority.describe*` 产出的描述符），统一映射：
+     `user`→(`user`, user_id)；`delegated`→(`user`, user_id) + `meta.delegation={kind: oauth_client, client_id, grant}`；
+     `service_account`→(`machine`, `service:<client_id>`)；`api_key`→(`machine`, `api:<key_id>`)；`operator`/None→(`system`, 调用方给的标签，
+     命令行一律 `cli:<os user>`)。`request is None` 时 `request_id` 回落到 `synwevo_core.context.request_id()`。`http.Platform.audit`
+     与 `Capabilities._audit` 都委托给它；当前主体经 `context.principal()` 提供给服务层，由网关在设置 `_actor` 处一并设置。
+  2. 写入与审计同事务：审计写在服务方法内部、与业务语句同一个 `Store.tx()`；今天在路由层事后写的行一律搬进服务并删除路由层的那一行，
+     一次写入在浏览器与 v1 两个表面只产生一行；幂等重放（`Idempotency.run`、`JobService._idem_find` 命中）不再写第二行。
+  3. 只记标识符：`before/after/changed` 经 `audit_change.change` 只覆盖标识符键（template_id、template_version、archived_at、step、
+     head/version 号、mapping_rev、订阅 status/events/host），名称、规则文本、映射标签、评论正文、URL 路径与查询、令牌与密钥永不入 meta。
+  4. 异步操作两行：请求时一行（受理）与完成时一行（同一 `run_id`，`meta.phase=completion`）；现有按行数断言的测试随之调整。
+  5. 拒绝与失败：被回滚的写入在回滚后以独立事务写 `result=error` 一行；机器调用方（`via != ui`）被网关/授权拒绝的写入写 `result=denied`，
+     按（操作者, 动作）每分钟至多一行，防止扫描凭据灌表（G23 同法）；浏览器会话的拒绝沿用现状不记。
+  6. 匿名公开填表只审计提交、上传、放弃三种，`actor_kind=anonymous`，`actor_id` 为填写者密钥哈希前缀；草稿自动保存不记。
+     实时协同只在产生版本时记（collab/save、save_builtin → new_version），不按每次草稿写入记。评论四种操作都记。
+  7. 文件系统对象（回归用例目录、上传分片、blob）无法与行回滚：顺序固定为先写审计行、再改文件系统；其余写入由同事务机制统一阻断
+     （审计写不下去就写不进业务），不区分"高风险/普通"。
+  8. 投递尝试留在投递表：为 `webhook_deliveries` / `suite_webhook_deliveries` 增加可空的签名密钥 ID 与时间戳列（不存签名本身），
+     ping/redeliver/系统停用的审计行引用投递 ID。
+  9. 账户服务不得导入应用（边界规则）：`docs.*` / `suite.*` 动作的三语言标签作为数据放在 `services/identity` 的动作目录里，由各应用
+     套件的源码扫描测试保证每个被审计的动作字面量都在目录中；目录到位前审计页按原样显示代码。
+* **代价**：Docs 服务层约 40 处方法各加一行审计并补事务包裹，分 10 个工作包、每包一次提交；Suite 若干按行数断言的测试要改；
+  投递表加两列（唯一迁移点 `store.py`）。
+* **撤回条件**：若 `audit_events` 单表写入成为性能瓶颈（评论、上传分片状态等高频写），再把应用动作分表——此前先按动作加索引与保留期，
+  不回到"路由层事后写"的模式。
+* **待核实后再动**：`ProjectCopies.decide` 被 Docs 自批与账户服务审批路由两边调用，先确认后者是否已审计，再把复制审计搬进共享类（WP3）。
