@@ -888,3 +888,52 @@ def test_throttles_are_listed_without_addresses_and_lifted_with_a_reason(env):
     assert s.get("/api/admin/security/throttles").status_code == 403
     _reauth(s)
     assert post(s, path, {"id": account["id"], "reason": "支持角色不能解除限流"}).json()["error"] == "platform_permission_denied"
+
+
+def test_effective_access_is_explained_gate_by_gate_from_the_real_check(env):
+    """A49: why a person can or cannot open an application in a workspace — each gate named with
+    its state, the verdict from the same code the browser gate runs, and the two agreeing; the
+    explanation acts as nobody and grants nothing."""
+    from synwevo_core.apps import DOCS_APP_ID, Apps
+    c, store, ident, alice, api = env["c"], env["store"], env["ident"], env["alice"], env["api"]
+    ws = ident.create_workspace("Access fixture", owner_id=env["admin"]["id"])
+    ident.add_member(ws["id"], alice["id"], "editor")
+    other = ident.create_workspace("Not hers", owner_id=env["admin"]["id"])
+    path = f"/api/admin/users/{alice['id']}/access"
+    assert c.get(path).json()["error"] == "bad_access_query"
+    assert c.get(f"{path}?workspace_id={ws['id']}&app_id=nope").status_code == 404
+    assert c.get(f"{path}?workspace_id=ws_missing&app_id={DOCS_APP_ID}").status_code == 404
+    d = c.get(f"{path}?workspace_id={ws['id']}&app_id={DOCS_APP_ID}").json()
+    assert d["verdict"]["allowed"] is True and d["consistent"] is True and d["verdict"]["workspace_id"] == ws["id"]
+    assert [g["gate"] for g in d["gates"]] == ["account", "application", "membership", "workspace", "organization", "workspace_app", "entitlement"]
+    assert all(g["state"] == "pass" for g in d["gates"]) and d["gates"][2]["detail"]["role"] == "editor"
+    assert d["user"]["email"] == "alice@example.com" and d["workspace"]["name"] == "Access fixture" and d["app"]["scope"] == "workspace"
+    detail = c.get(f"/api/admin/users/{alice['id']}").json()
+    assert any(w["id"] == ws["id"] and any(a["id"] == DOCS_APP_ID and a["name"] for a in w["apps"]) for w in detail["workspaces"])
+    # The entitlement withdrawn: the gate names it and the verdict follows the real check.
+    Apps(store, ident).revoke(ws["id"], DOCS_APP_ID, alice["id"])
+    d = c.get(f"{path}?workspace_id={ws['id']}&app_id={DOCS_APP_ID}").json()
+    assert d["verdict"]["allowed"] is False and "已被撤销" in d["verdict"]["reason"] and d["consistent"] is True
+    assert {g["gate"]: g["state"] for g in d["gates"]}["entitlement"] == "fail" and d["gates"][-1]["detail"]["entitlement"] == "revoked"
+    # Not a member of the other workspace; the workspace's application switched off; a frozen workspace.
+    d = c.get(f"{path}?workspace_id={other['id']}&app_id={DOCS_APP_ID}").json()
+    assert {g["gate"]: g["state"] for g in d["gates"]}["membership"] == "fail" and d["verdict"]["allowed"] is False and d["consistent"] is True
+    Apps(store, ident).grant(ws["id"], DOCS_APP_ID, alice["id"])
+    Apps(store, ident).disable_for_workspace(ws["id"], DOCS_APP_ID)
+    d = c.get(f"{path}?workspace_id={ws['id']}&app_id={DOCS_APP_ID}").json()
+    assert {g["gate"]: g["state"] for g in d["gates"]}["workspace_app"] == "fail" and d["verdict"]["allowed"] is False and d["consistent"] is True
+    Apps(store, ident).enable_for_workspace(ws["id"], DOCS_APP_ID)
+    store.update("workspaces", {"id": ws["id"]}, {"status": "frozen"})
+    d = c.get(f"{path}?workspace_id={ws['id']}&app_id={DOCS_APP_ID}").json()
+    assert {g["gate"]: g["state"] for g in d["gates"]}["workspace"] == "fail" and d["verdict"]["allowed"] is False and d["consistent"] is True
+    store.update("workspaces", {"id": ws["id"]}, {"status": "active"})
+    assert c.get(f"{path}?workspace_id={ws['id']}&app_id={DOCS_APP_ID}").json()["verdict"]["allowed"] is True, "reading granted nothing and changed nothing"
+    # The auditor reads it; support does not hold the permission.
+    make_platform_admin(store, ident.create_user("auditor@example.com", PW, status="active"), role="auditor")
+    a = TestClient(api)
+    assert post(a, "/api/auth/login", {"email": "auditor@example.com", "password": PW}).status_code == 200
+    assert a.get(f"{path}?workspace_id={ws['id']}&app_id={DOCS_APP_ID}").json()["consistent"] is True
+    make_platform_admin(store, ident.create_user("support@example.com", PW, status="active"), role="support")
+    s = TestClient(api)
+    assert post(s, "/api/auth/login", {"email": "support@example.com", "password": PW}).status_code == 200
+    assert s.get(f"{path}?workspace_id={ws['id']}&app_id={DOCS_APP_ID}").status_code == 403

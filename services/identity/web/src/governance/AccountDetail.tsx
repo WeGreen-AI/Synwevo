@@ -35,7 +35,9 @@ export type AccountDetail = {
   platform_roles: string[];
   platform_grants: { role: string; granted_at: number; expires_at: number | null }[];
   /** `name` is null when the caller may not list workspaces (platform.workspaces.view). */
-  workspaces: { id: string; name: string | null; kind: string; status: string; role: string; can_export: boolean; joined_at: number }[];
+  workspaces: { id: string; name: string | null; kind: string; status: string; role: string; can_export: boolean; joined_at: number;
+    /** the applications the workspace has switched on (ids and names), for the access explanation (A49) */
+    apps?: { id: string; name: string }[] }[];
   /** `name` is null when the caller may not list organizations (platform.orgs.view). */
   organizations: { id: string; name: string | null; status: string; role: string; joined_at: number }[];
   sessions: { id: string; created_at: number; last_seen_at: number; expires_at: number; amr: string; client: string;
@@ -98,7 +100,11 @@ export function pushDeviceText(ua: string | null | undefined): string {
 /** One of the per-object actions (A17); the dialog confirms it with a reason and re-authentication. */
 export type AccountAction = { kind: "session" | "passkey" | "external" | "push" | "agent_lift" | "backoff_lift"; id: string; label: string };
 
-export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountDetail; held?: Held; onAct?: (action: AccountAction) => void }) {
+/** One workspace row's "explain access" request (A49): opened as its own dialog over the detail. */
+export type ExplainTarget = { workspace_id: string; workspace_name: string | null; apps: { id: string; name: string }[] };
+
+export function AccountDetailBody({ detail: d, held, onAct, onExplain }: { detail: AccountDetail; held?: Held; onAct?: (action: AccountAction) => void;
+  onExplain?: (target: ExplainTarget) => void }) {
   useI18n();
   const u = d.user;
   const b = d.backoff;
@@ -106,6 +112,8 @@ export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountD
   const mayAct = !!onAct && !!held?.has("platform.users.manage") && !d.outranks_caller && !d.application_identity;
   // Releasing the sign-in backoff is platform configuration (the throttle card's permission), not account management.
   const mayLift = !!onAct && !!held?.has("platform.config.manage") && !d.outranks_caller;
+  // Explaining access is a read (platform.roles.view); it never acts as the person.
+  const mayExplain = !!onExplain && !!held?.has("platform.roles.view");
   const act = (action: AccountAction) => <button type="button" className="btn sm" onClick={() => onAct?.(action)}>{action.label}</button>;
   return <div className="col gap16">
     {d.application_identity && <p className="notice" role="note">{tr("应用身份：由它所属的应用管理，不是一个人。")}</p>}
@@ -162,11 +170,12 @@ export function AccountDetailBody({ detail: d, held, onAct }: { detail: AccountD
 
     <section className="col gap8"><h3 className="secttl">{tr("工作空间（{count} 个）", { count: d.workspaces.length })}</h3>
       {d.workspaces.length ? <div className="list-wrap"><table className="gov" aria-label={tr("工作空间")}>
-        <thead><tr><th scope="col">{tr("名称")}</th><th scope="col">{tr("类型")}</th><th scope="col">{tr("状态")}</th><th scope="col">{tr("角色")}</th><th scope="col">{tr("加入时间")}</th></tr></thead>
+        <thead><tr><th scope="col">{tr("名称")}</th><th scope="col">{tr("类型")}</th><th scope="col">{tr("状态")}</th><th scope="col">{tr("角色")}</th><th scope="col">{tr("加入时间")}</th>{mayExplain && <th scope="col" className="act">{tr("访问")}</th>}</tr></thead>
         <tbody>{d.workspaces.map((w) => <tr key={w.id}>
           <th scope="row">{w.name ?? <span className="muted">{tr("名称不可见：你的角色不能查看工作空间列表")}</span>}</th>
           <td>{WORKSPACE_KIND[w.kind] || w.kind}</td><td>{WORKSPACE_STATUS[w.status] || w.status}</td>
           <td>{roleLabel(w.role)}{w.can_export ? ` · ${tr("可导出")}` : ""}</td><td>{fmtTime(w.joined_at)}</td>
+          {mayExplain && <td className="act"><button type="button" className="btn sm" onClick={() => onExplain?.({ workspace_id: w.id, workspace_name: w.name, apps: w.apps || [] })}>{tr("解释访问")}</button></td>}
         </tr>)}</tbody></table></div>
         : <p className="muted small">{tr("不是任何工作空间的成员。")}</p>}
     </section>
@@ -250,6 +259,82 @@ const ACTION_DONE: Record<AccountAction["kind"], string> = {
   agent_lift: "已恢复该账户的 Agent 使用权限。", backoff_lift: "已解除该账户的登录退避。",
 };
 
+/** The server's answer to "why can or cannot this person open this application here" (A49). */
+export type AccessExplanation = {
+  user: { id: string; email: string | null; status: string };
+  workspace: { id: string; name: string | null; status: string };
+  app: { id: string; name: string; status: string; scope: string };
+  gates: { gate: string; state: "pass" | "fail" | "skip"; detail: Record<string, unknown> }[];
+  verdict: { allowed: boolean; workspace_id: string | null; reason: string | null };
+  consistent: boolean;
+};
+export const GATE_LABELS: Record<string, string> = {
+  account: "账户状态", application: "应用状态", membership: "空间成员资格", workspace: "空间状态", organization: "组织状态与组织成员",
+  workspace_app: "空间已启用该应用", entitlement: "使用资格",
+};
+export const GATE_STATE_LABELS: Record<string, string> = { pass: "通过", fail: "未通过", skip: "不适用" };
+const POLICY_LABELS: Record<string, string> = { members: "成员即可使用", granted: "需逐人授予" };
+const ENTITLEMENT_LABELS: Record<string, string> = { granted: "已授予", revoked: "已撤销", none: "无单独记录" };
+const ORG_REASON_LABELS: Record<string, string> = { organization_unavailable: "组织不可用", not_an_organization_member: "不是该组织的成员" };
+const APP_SCOPE_LABELS: Record<string, string> = { workspace: "按工作空间", organization: "按组织", personal: "个人应用", platform: "平台门户" };
+export const GATE_DETAIL_SENTENCES = [...Object.values(POLICY_LABELS), ...Object.values(ENTITLEMENT_LABELS), ...Object.values(ORG_REASON_LABELS), ...Object.values(APP_SCOPE_LABELS)];
+
+function gateDetail(gate: string, detail: Record<string, unknown>): string {
+  const s = (v: unknown) => (v === null || v === undefined ? DASH : String(v));
+  switch (gate) {
+    case "account": return ACCOUNT_STATUS[s(detail.status)] || s(detail.status);
+    case "application": return `${s(detail.status) === "active" ? tr("正常") : tr("已停用")} · ${tr(APP_SCOPE_LABELS[s(detail.scope)] || s(detail.scope))}${detail.access_policy ? ` · ${tr(POLICY_LABELS[s(detail.access_policy)] || s(detail.access_policy))}` : ""}`;
+    case "membership": return detail.role ? `${roleLabel(s(detail.role))}${detail.can_export ? ` · ${tr("可导出")}` : ""}` : tr("不是成员");
+    case "workspace": return `${WORKSPACE_STATUS[s(detail.status)] || s(detail.status)} · ${WORKSPACE_KIND[s(detail.kind)] || s(detail.kind)}`;
+    case "organization": return detail.reason ? tr(ORG_REASON_LABELS[s(detail.reason)] || s(detail.reason)) : detail.organization_id ? tr("组织正常且本人是其成员") : tr("不属于组织");
+    case "workspace_app": return detail.enabled_at ? tr("已启用（{time}）", { time: fmtTime(Number(detail.enabled_at)) }) : tr("未启用");
+    case "entitlement": return `${tr(ENTITLEMENT_LABELS[s(detail.entitlement)] || s(detail.entitlement))}${detail.access_policy ? ` · ${tr(POLICY_LABELS[s(detail.access_policy)] || s(detail.access_policy))}` : ""}`;
+    default: return detail.note === "not_workspace_scoped" ? tr("该应用不按工作空间授权") : DASH;
+  }
+}
+
+export function AccessExplanationBody({ d }: { d: AccessExplanation }) {
+  useI18n();
+  return <div className="col gap12">
+    <p className={`notice ${d.verdict.allowed ? "ok" : "warn"}`} role="status">{d.verdict.allowed
+      ? tr("可以打开：{app}（{workspace}）", { app: d.app.name, workspace: d.workspace.name || d.workspace.id })
+      : tr("不能打开：{reason}", { reason: d.verdict.reason || DASH })}</p>
+    <div className="list-wrap"><table className="gov" aria-label={tr("访问闸门")}>
+      <thead><tr><th scope="col">{tr("闸门")}</th><th scope="col">{tr("结果")}</th><th scope="col">{tr("说明")}</th></tr></thead>
+      <tbody>{d.gates.map((g) => <tr key={g.gate}>
+        <th scope="row">{tr(GATE_LABELS[g.gate] || g.gate)}</th>
+        <td>{g.state === "skip" ? <span className="muted">{tr(GATE_STATE_LABELS.skip)}</span> : <span className={`badge ${g.state === "pass" ? "ok" : "warn"}`}>{tr(GATE_STATE_LABELS[g.state])}</span>}</td>
+        <td>{g.state === "skip" ? gateDetail("", g.detail) : gateDetail(g.gate, g.detail)}</td>
+      </tr>)}</tbody></table></div>
+    {!d.consistent && <p className="notice err" role="alert">{tr("逐道闸门的解释与实际检查结果不一致：以实际结果为准，请把这个页面报告给开发者。")}</p>}
+    <p className="muted small">{tr("解释与本人实际打开应用走同一条检查路径，只读取，不以该用户身份行事，也不授予任何访问。")}</p>
+  </div>;
+}
+
+function AccessExplanationLoader({ userId, workspaceId, appId }: { userId: string; workspaceId: string; appId: string }) {
+  const path = `/api/admin/users/${encodeURIComponent(userId)}/access?workspace_id=${encodeURIComponent(workspaceId)}&app_id=${encodeURIComponent(appId)}`;
+  const load = useLoad<AccessExplanation>(path, (signal) => get<AccessExplanation>(path, signal));
+  if (load.loading) return <p role="status">{tr("正在解释访问…")}</p>;
+  if (load.error) return <div className="notice err" role="alert">{errText(load.error)} <button className="btn sm" onClick={load.reload}>{tr("重试")}</button></div>;
+  return load.data ? <AccessExplanationBody d={load.data} /> : null;
+}
+
+export function AccessExplanationDialog({ user, target, onClose }: { user: { id: string; email: string }; target: ExplainTarget; onClose: () => void }) {
+  useI18n();
+  const [appId, setAppId] = useState(target.apps[0]?.id || "");
+  return <Modal title={tr("有效访问：{email} · {workspace}", { email: user.email, workspace: target.workspace_name || target.workspace_id })} onClose={onClose} size="wide"
+    footer={<><span className="spacer" /><button type="button" className="btn" onClick={onClose}>{tr("关闭")}</button></>}>
+    <div className="col gap12">
+      <label className="field">{tr("应用")}
+        <select className="input" value={appId} onChange={(e) => setAppId(e.target.value)} aria-label={tr("要解释的应用")}>
+          {target.apps.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select></label>
+      {target.apps.length === 0 && <p className="muted small">{tr("该工作空间没有启用任何应用。")}</p>}
+      {appId && <AccessExplanationLoader key={appId} userId={user.id} workspaceId={target.workspace_id} appId={appId} />}
+    </div>
+  </Modal>;
+}
+
 export function AccountDetailDialog({ user, held, onClose, onChanged }: {
   user: { id: string; email: string }; held?: Held; onClose: () => void; onChanged?: () => void;
 }) {
@@ -258,6 +343,7 @@ export function AccountDetailDialog({ user, held, onClose, onChanged }: {
   const path = `/api/admin/users/${encodeURIComponent(user.id)}`;
   const load = useLoad<AccountDetail>(path, (signal) => get<AccountDetail>(path, signal));
   const [action, setAction] = useState<AccountAction | null>(null);
+  const [explain, setExplain] = useState<ExplainTarget | null>(null);
   // The confirmation opens on top of the detail (the modal stack keeps Escape and focus to the
   // top one); the detail reloads afterwards, so the list shows what is left.
   const confirm = action && <ActionDialog title={action.label} confirmLabel={action.label} reason="required" danger
@@ -268,7 +354,7 @@ export function AccountDetailDialog({ user, held, onClose, onChanged }: {
     footer={<><span className="spacer" /><button type="button" className="btn" onClick={onClose}>{tr("关闭")}</button></>}>
     {load.loading && <p role="status">{tr("正在加载账户详情…")}</p>}
     {!!load.error && <div className="notice err" role="alert">{errText(load.error)} <button className="btn sm" onClick={load.reload}>{tr("重试")}</button></div>}
-    {load.data && <AccountDetailBody detail={load.data} held={held} onAct={setAction} />}
-  </Modal>{confirm}</>;
+    {load.data && <AccountDetailBody detail={load.data} held={held} onAct={setAction} onExplain={setExplain} />}
+  </Modal>{confirm}{explain && <AccessExplanationDialog user={user} target={explain} onClose={() => setExplain(null)} />}</>;
 }
 export const ACCOUNT_ACTION_SENTENCES = [...Object.values(ACTION_IMPACT), ...Object.values(ACTION_DONE)];

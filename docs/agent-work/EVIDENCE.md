@@ -804,3 +804,9 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 `GET /api/admin/security/throttles` 列出 `auth_attempts` 的全部家族（账户登录退避、来源地址窗口、会话重认证、注册/验证码/找回/初始化/安全密钥窗口、账户敏感操作、推送），地址只以哈希句柄出现，账户邮箱随 users.view；`POST /security/throttles/lift`（config.manage + 严格重认证 + 理由）解除一条并审计；账户详情登录退避段可直接解除。
 测试：test_admin 新增 1 例（5 次错口令 + 注册窗口 → 列表/详情一致 → 重认证解除 → 退避清零、立即登录 → 重复 404、格式错 400、审计对象为用户、support 403）；矩阵新增 2 行；account-web 172 通过（新增 2 例；门禁补入两条拒绝句）；typecheck/build、五守卫通过。
 浏览器（隔离合成实例 127.0.0.1:33940，系统 Chrome）：按服务器退避节奏输错口令 8 次后正确口令被拒（429，retry_after 59）→ 平台配置页「限流状态」卡片显示「账户登录退避 · alice… · 8 次 · 等待 59 秒 · 解除」且无原始 IP → 解除（理由+重认证）后提示「限流已解除」、行消失、Alice 立即登录 200 → 再次 3 次错口令后账户详情显示「连续失败 3 次…」与「解除登录退避」，解除后显示「没有失败的登录记录」，时间线出现两条 admin.security.throttle_lift 及理由 → 英文视图「Throttles」→ support 列表 403。证据 `evidence/2026-10-11-admin-throttles/`（browser-report.json、verification.json、5 张截图）。
+
+## 2026-10-12 CR-099 Admin A49 有效访问解释（本地+隔离浏览器）
+
+`GET /api/admin/users/{uid}/access?workspace_id=&app_id=` 按七道闸门解释某人能否在某空间打开某应用，裁决来自真实 `Apps.check_access` 并标明一致性；A13 详情工作空间行「解释访问」打开对话框（应用选择、裁决、闸门表）。
+测试：test_admin 新增 1 例（全通过→撤销资格→非成员→停用空间应用→冻结空间，各闸门与裁决一致且读取不改变状态；auditor 可读、support 403；缺参 400、未知 404）；矩阵新增 1 行；account-web 173 通过（新增 1 例；门禁补入两条拒绝句）；typecheck/build、五守卫通过。
+浏览器（隔离合成实例 127.0.0.1:33941，系统 Chrome）：Alice 详情 → 共享空间行「解释访问」→ 「可以打开：Synwevo Docs（…）」且七道闸门全部通过（成员资格「编辑者 · 可导出」、使用资格「无单独记录 · 成员即可使用」）→ 经真实冻结路由（理由+重认证）冻结该空间后再解释：空间状态「未通过 · 已冻结」、裁决「不能打开：…」→ 解冻 → 英文视图「Can open: …」与七道闸门英文 → support 详情无按钮、API 403。证据 `evidence/2026-10-12-admin-effective-access/`（browser-report.json、verification.json、3 张截图）。

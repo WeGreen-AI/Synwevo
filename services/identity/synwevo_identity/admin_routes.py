@@ -993,6 +993,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             "SELECT m.workspace_id AS id, m.role, m.can_export, m.created_at AS joined_at, w.name, w.kind, w.status "
             "FROM memberships m JOIN workspaces w ON w.id=m.workspace_id "
             "WHERE m.user_id=? AND w.deleted_at IS NULL ORDER BY m.created_at, m.workspace_id", (uid,))
+        for w in workspaces:
+            # The applications the workspace has switched on (ids and names, for the access explanation, A49).
+            w["apps"] = store.all("SELECT a.id, a.name FROM workspace_apps x JOIN apps a ON a.id=x.app_id "
+                                  "WHERE x.workspace_id=? ORDER BY a.id", (w["id"],))
         organizations = store.all(
             "SELECT o.id, o.name, o.status, m.role, m.created_at AS joined_at FROM organization_memberships m "
             "JOIN organizations o ON o.id=m.organization_id WHERE m.user_id=? AND o.deleted_at IS NULL "
@@ -1110,6 +1114,68 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
               object_id="account_deletions", result="ok",
               meta={"reason": reason, "finalized": finalized, "before": before, "after": after})
         return {"ok": True, "finalized": finalized, "before": before, "after": after}
+
+    ACCESS_GATES = ("account", "application", "membership", "workspace", "organization", "workspace_app", "entitlement")
+
+    @r.get("/users/{uid}/access")
+    def explain_access(request: Request, uid: str, workspace_id: str = Query("", max_length=100),
+                       app_id: str = Query("", max_length=64)):
+        """A49: why this person can or cannot open one application in one workspace, gate by gate
+        — account, application, membership, workspace, organization, the workspace's application
+        switch, the entitlement — and then the verdict from the very code the browser gate runs
+        (`Apps.check_access`), so the explanation cannot drift from what the person meets.
+        `consistent` says the two agree. Read with `platform.roles.view`; the explanation acts as
+        nobody and grants nothing; names follow the list permissions, as the detail's do."""
+        from synwevo_core.apps import Apps, MESSAGES_APP_ID, PERSONAL_APP_IDS, PLATFORM_APP_ID, entitlement_state
+        from synwevo_core.organizations import workspace_access_failure
+        actor = _admin(request, "platform.roles.view")
+        if not workspace_id or not app_id:
+            raise ServiceError(400, "bad_access_query", "请指定要解释的工作空间与应用")
+        user = ident.get_user(uid)
+        if not user:
+            raise ServiceError(404, "no_user", "找不到该账户")
+        apps = Apps(store, ident)
+        app = apps.get(app_id)
+        if not app:
+            raise ServiceError(404, "no_app", "找不到该应用")
+        ws = ident.get_workspace(workspace_id)
+        if not ws:
+            raise ServiceError(404, "no_workspace", "找不到这个工作空间")
+        held = actor["platform_permissions"]
+        scope = ("platform" if app_id == PLATFORM_APP_ID else "personal" if app_id in PERSONAL_APP_IDS
+                 else "organization" if app_id == MESSAGES_APP_ID else "workspace")
+        gates = []
+
+        def gate(name, state, **detail):
+            gates.append({"gate": name, "state": state, "detail": detail})
+        gate("account", "pass" if user["status"] == "active" else "fail", status=user["status"])
+        gate("application", "pass" if app["status"] == "active" else "fail", status=app["status"],
+             access_policy=app.get("access_policy"), scope=scope)
+        # Membership as the gate itself sees it (`workspaces_for`: the row, and for an organization's
+        # workspace the organization membership too), never the memberships table alone.
+        mine = next((w for w in ident.workspaces_for(uid) if w["id"] == workspace_id), None)
+        gate("membership", "pass" if mine else "fail", role=mine["role"] if mine else None,
+             can_export=bool(mine["can_export"]) if mine else None)
+        gate("workspace", "pass" if ws["status"] == "active" else "fail", status=ws["status"], kind=ws.get("kind"))
+        if scope == "workspace":
+            why = workspace_access_failure(store, workspace_id, uid)
+            gate("organization", "pass" if why is None else "fail", reason=why, organization_id=ws.get("organization_id"))
+            enabled = store.one("SELECT enabled_at FROM workspace_apps WHERE workspace_id=? AND app_id=?", (workspace_id, app_id))
+            gate("workspace_app", "pass" if enabled else "fail", enabled_at=enabled["enabled_at"] if enabled else None)
+            state = entitlement_state(store, workspace_id, app_id, uid)
+            policy = app.get("access_policy")
+            gate("entitlement", "pass" if state == "granted" or (state == "none" and policy == "members") else "fail",
+                 entitlement=state, access_policy=policy)
+        else:
+            for name in ("organization", "workspace_app", "entitlement"):
+                gate(name, "skip", note="not_workspace_scoped")
+        allowed, resolved, reason = apps.check_access(uid, app_id, workspace_id)
+        return {"user": {"id": uid, "email": user["email"] if "platform.users.view" in held else None, "status": user["status"]},
+                "workspace": {"id": workspace_id, "name": ws["name"] if "platform.workspaces.view" in held else None, "status": ws["status"]},
+                "app": {"id": app_id, "name": app["name"], "status": app["status"], "scope": scope},
+                "gates": gates,
+                "verdict": {"allowed": allowed, "workspace_id": resolved, "reason": None if allowed else reason},
+                "consistent": allowed == all(g["state"] != "fail" for g in gates)}
 
     REGISTRATION_EVENTS = ("auth.registration", "auth.registration.existing_account", "auth.registration.throttled",
                            "auth.email.verify_requested", "auth.email.verified", "auth.onboarding.personal")

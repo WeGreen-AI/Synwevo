@@ -1,0 +1,56 @@
+{
+ "base": "http://127.0.0.1:33941",
+ "engine": "chrome",
+ "steps": {
+  "allowed": {
+   "heading": true,
+   "verdict": [
+    "可以打开：Synwevo Docs（Synthetic shared workspace）"
+   ],
+   "rows": [
+    "闸门\t结果\t说明",
+    "账户状态\t通过\t正常",
+    "应用状态\t通过\t正常 · 按工作空间 · 成员即可使用",
+    "空间成员资格\t通过\t编辑者 · 可导出",
+    "空间状态\t通过\t正常 · 组织",
+    "组织状态与组织成员\t通过\t不属于组织",
+    "空间已启用该应用\t通过\t已启用（2026/10/12 08:47）",
+    "使用资格\t通过\t无单独记录 · 成员即可使用"
+   ],
+   "all_pass": true
+  },
+  "freeze": 200,
+  "frozen": {
+   "verdict": [
+    "不能打开：你所在的工作空间尚未启用「Synwevo Docs」，或你没有使用它的资格"
+   ],
+   "workspace_row": [
+    "空间状态\t未通过\t已冻结 · 组织"
+   ],
+   "consistent_warning": false
+  },
+  "unfreeze": 200,
+  "en": {
+   "verdict": [
+    "Can open: Synwevo Docs (Synthetic shared workspace)"
+   ],
+   "rows": [
+    "Gate\tResult\tNote",
+    "Account status\tPassed\tActive",
+    "Application status\tPassed\tActive · Per workspace · Members may use it",
+    "Workspace membership\tPassed\tEditor · Can export",
+    "Workspace status\tPassed\tActive · Organizations",
+    "Organization status and membership\tPassed\tNot in an organization",
+    "Application enabled in the workspace\tPassed\tEnabled (10/12/2026, 08:47 AM)",
+    "Entitlement\tPassed\tNo separate record · Members may use it"
+   ]
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ],
+  "support": {
+   "explain_button": 0,
+   "api": 403
+  }
+ }
+}

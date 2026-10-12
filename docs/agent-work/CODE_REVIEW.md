@@ -368,3 +368,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：桶名可能含来源地址或邮箱键，列表只给 sha256 前 24 位作为句柄，解除按句柄在服务端匹配，原始地址不出服务器；账户家族的邮箱只对持 users.view 者显示，审计以用户为对象；慢退避（user:/reauth:）按计数等待、固定窗口按 blocked_until，`throttle_state` 只读不计数；解除只删除该桶（下次尝试从零开始），不触碰口令/会话/权限；权限沿用 config.view/config.manage（与 A11 一致，不新增权限）；解除需严格重认证 + 理由 + 越级检查。
 - 风险/未做：无批量解除；地址家族的 ip 桶对攻击者的保护在解除后立即消失（这是解除的含义，界面已写明）；未新增 `platform.security.manage`。
 - 验证：identity 相关 11 例通过；account-web typecheck/172 测试/build 通过（含 refusals 门禁）；五守卫通过；浏览器验收见 evidence/2026-10-11-admin-throttles。
+
+## CR-099 · Admin A49 有效访问解释（2026-10-12，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：services/identity/synwevo_identity/admin_routes.py `GET /users/{uid}/access`（七道闸门 + `Apps.check_access` 裁决 + `consistent`）、A13 详情工作空间行附带 `apps`（已启用应用 id/名称）；account-web `governance/AccountDetail.tsx`（`ExplainTarget`、工作空间行「解释访问」、`AccessExplanationBody/Dialog`、`GATE_LABELS` 等）、labels.ts 两个错误码、messages.ts 36 条；tests：test_admin.py 1 例、test_platform_access.py 矩阵 1 行 + 状态拒绝、admin-account-detail.test.mjs 1 例；docs/platform/admin-coverage.md A49 行。
+- 审查要点：解释不以该用户身份行事，只读；闸门的成员资格以 `workspaces_for` 为准（与真实闸门同源，包含组织成员要求）；最终裁决直接调用真实 `check_access`，并以 `consistent` 暴露任何偏差而不是掩盖；按应用种类（个人/组织/门户）跳过不适用的闸门，与 `_check_platform` 一致；邮箱与空间名随 users.view / workspaces.view；权限用 `platform.roles.view`（审计员可读、支持不可读），与 A5 一致。
+- 风险/未做：不解释机器凭据；冻结空间时真实句子是通用句（闸门表点名）；组织冻结场景仅后端测试覆盖。
+- 验证：identity 相关 11 例通过；account-web typecheck/173 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-12-admin-effective-access。

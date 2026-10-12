@@ -44,6 +44,7 @@ ROUTES = [
     ("GET", "/api/admin/users", "platform.users.view", False),
     ("GET", "/api/admin/users/{uid}", "platform.users.view", False),
     ("GET", "/api/admin/diagnostics/registration", "platform.users.view", False),
+    ("GET", "/api/admin/users/{uid}/access", "platform.roles.view", False),
     ("POST", "/api/admin/users/{uid}/status-preview", "platform.users.manage", False),
     ("POST", "/api/admin/users/{uid}/status", "platform.users.manage", True),
     ("POST", "/api/admin/users/{uid}/recovery", "platform.users.support", True),
@@ -274,6 +275,7 @@ def _path(template, w, *, legacy: str | None = None):
 RISK_STATE_REFUSALS = {
                        # The diagnosis needs an address; the matrix supplies none.
                        "/api/admin/diagnostics/registration": (400, "bad_email"),
+                       "/api/admin/users/{uid}/access": (400, "bad_access_query"),
                        # No stored payment key in the matrix; authorized readers reach this refusal.
                        "/api/admin/billing/payments/readiness": (409, "payment_readiness_no_keys"),
                        "/api/admin/billing/risk/allowlist/{entry_id}/remove": (404, "risk_allowlist_not_found"),

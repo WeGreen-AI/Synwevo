@@ -38,7 +38,7 @@ const FIXTURE = {
       email_verified: true, created_at: T, last_used_at: T }],
   },
   platform_roles: ["support"], platform_grants: [{ role: "support", granted_at: T, expires_at: T + 86400 }],
-  workspaces: [{ id: "ws_fixture", name: "Fixture workspace", kind: "org", status: "active", role: "editor", can_export: true, joined_at: T }],
+  workspaces: [{ id: "ws_fixture", name: "Fixture workspace", kind: "org", status: "active", role: "editor", can_export: true, joined_at: T, apps: [{ id: "docweave", name: "Synwevo Docs" }] }],
   organizations: [{ id: "org_fixture", name: null, status: "active", role: "member", joined_at: T }],
   sessions: [
     { id: "s_fixture_1", created_at: T, last_seen_at: T, expires_at: T + 3600, amr: "password+totp", client: "macOS 上的 Chrome",
@@ -60,10 +60,10 @@ const HAN = /[㐀-鿿]/;
 const FIXTURE_TEXT = /detail-fixture@example\.test|Fixture (workspace|Person|key)|u_fixture_detail/g;
 
 /** Static markup with the entities React escapes in text turned back into characters. */
-function render(locale, d, held, onAct) {
+function render(locale, d, held, onAct, onExplain) {
   ui.setLocale(locale);
   try {
-    return renderToStaticMarkup(React.createElement(detail.AccountDetailBody, { detail: d, held, onAct }))
+    return renderToStaticMarkup(React.createElement(detail.AccountDetailBody, { detail: d, held, onAct, onExplain }))
       .replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
   } finally { ui.setLocale("zh-Hans"); }
 }
@@ -123,10 +123,50 @@ test("the per-object actions follow the caller's permission and never show on an
   assert.ok(!render("en", FIXTURE, manage).includes("Sign this device out"), "no handler, no buttons");
 });
 
+// FIXTURE: the server's access explanation (admin_routes.explain_access) for the fixture workspace.
+const EXPLANATION = {
+  user: { id: "u_fixture_detail", email: "detail-fixture@example.test", status: "active" },
+  workspace: { id: "ws_fixture", name: "Fixture workspace", status: "active" },
+  app: { id: "docweave", name: "Synwevo Docs", status: "active", scope: "workspace" },
+  gates: [
+    { gate: "account", state: "pass", detail: { status: "active" } },
+    { gate: "application", state: "pass", detail: { status: "active", access_policy: "members", scope: "workspace" } },
+    { gate: "membership", state: "pass", detail: { role: "editor", can_export: true } },
+    { gate: "workspace", state: "pass", detail: { status: "active", kind: "org" } },
+    { gate: "organization", state: "pass", detail: { reason: null, organization_id: "org_fixture" } },
+    { gate: "workspace_app", state: "pass", detail: { enabled_at: T } },
+    { gate: "entitlement", state: "fail", detail: { entitlement: "revoked", access_policy: "members" } },
+  ],
+  verdict: { allowed: false, workspace_id: null, reason: "你在该工作空间使用「Synwevo Docs」的资格已被撤销，请联系工作空间管理员" },
+  consistent: true,
+};
+
+test("the access explanation names each gate with its result, in the reader's language (A49)", () => {
+  const roles = new Set(["platform.users.view", "platform.roles.view"]);
+  assert.ok(render("en", FIXTURE, roles, undefined, () => {}).includes("Explain access"), "the button for a reader of platform access");
+  assert.ok(!render("en", FIXTURE, new Set(["platform.users.view"]), undefined, () => {}).includes("Explain access"), "not without the permission");
+  assert.ok(!render("en", FIXTURE, roles).includes("Explain access"), "no handler, no button");
+  ui.setLocale("en");
+  let html;
+  try { html = renderToStaticMarkup(React.createElement(detail.AccessExplanationBody, { d: EXPLANATION })).replace(/&quot;/g, '"').replace(/&#x27;/g, "'"); }
+  finally { ui.setLocale("zh-Hans"); }
+  for (const expected of ["Cannot open:", "Account status", "Workspace membership", "Organization active and the person is a member", "Application enabled in the workspace",
+    "Entitlement", "Revoked", "Members may use it", "Failed", "Passed", "never acts as the person"]) assert.ok(html.includes(expected), `missing: ${expected}\n${html}`);
+  assert.ok(!HAN.test(html.replace(/你在该工作空间使用「Synwevo Docs」的资格已被撤销，请联系工作空间管理员/g, "")), `untranslated in English:\n${html}`);
+  ui.setLocale("en");
+  try {
+    const skip = renderToStaticMarkup(React.createElement(detail.AccessExplanationBody, { d: { ...EXPLANATION, app: { ...EXPLANATION.app, scope: "personal" },
+      gates: EXPLANATION.gates.slice(0, 4).concat(["organization", "workspace_app", "entitlement"].map((gate) => ({ gate, state: "skip", detail: { note: "not_workspace_scoped" } }))),
+      verdict: { allowed: true, workspace_id: "ws_fixture", reason: null }, consistent: false } }));
+    assert.ok(skip.includes("Not applicable") && skip.includes("not authorized per workspace") && skip.includes("Can open:") && skip.includes("disagrees with the real check"), skip);
+  } finally { ui.setLocale("zh-Hans"); }
+});
+
 test("every sentence of the dialog is catalogued in English and Traditional Chinese", () => {
   const src = readFileSync(new URL("../src/governance/AccountDetail.tsx", import.meta.url), "utf8");
   const sentences = new Set([...src.matchAll(/\btr\("([^"]+)"/g)].map((m) => m[1]));
-  for (const map of [detail.AMR_LABELS, detail.FACTOR_SUFFIX_LABELS, detail.ORG_ROLE_LABELS, detail.DELETION_BLOCKER_LABELS]) for (const text of Object.values(map)) sentences.add(text);
+  for (const map of [detail.AMR_LABELS, detail.FACTOR_SUFFIX_LABELS, detail.ORG_ROLE_LABELS, detail.DELETION_BLOCKER_LABELS, detail.GATE_LABELS, detail.GATE_STATE_LABELS]) for (const text of Object.values(map)) sentences.add(text);
+  for (const text of detail.GATE_DETAIL_SENTENCES) sentences.add(text);
   for (const text of detail.ACCOUNT_ACTION_SENTENCES) sentences.add(text);
   sentences.add("查看详情"); // the row-menu item in Admin.tsx that opens the dialog
   assert.ok(sentences.size > 40, `expected the dialog's sentences, found ${sentences.size}`);
