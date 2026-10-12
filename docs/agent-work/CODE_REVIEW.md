@@ -417,3 +417,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：故障注入只针对该动作 result=ok 的审计 INSERT（`Store.execute` 包装，与既有 model provider 测试同法），其余 SQL 照常；断言三件事——响应 ≥500、状态与注入前完全相同（会话仍有效/限流桶仍在/策略不变/订阅仍在/无新邮件且旧链接仍未用/账户仍 pending_delete/空间仍 pending_claim 且无成员）、该动作无新的 ok 审计行；并断言故障原文不进响应、响应含 request_id。源码扫描确认直接写审计的 11 条路由与 claim/unclaim 均在事务内。
 - 风险/未做：统一前后值仍由各路由自定；API 控制台（`api_platform.py`）的事务/审计关系未纳入本测试（其 `mutation()` 有自己的边界测试）；Docs/Suite 的管理写入不在本包。
 - 验证：test_admin 相关 9 例通过；identity `-k admin` 子集 666 通过；五守卫通过。无界面变化，未做浏览器验收。
+
+## CR-106 · WP1 Forms 桌面宽屏与英文/繁体走查（2026-10-12，本轮新增，本地已验证）
+
+- 位置：apps/suite/web/src/apps/forms/Pages.tsx（表单库标题源文「表单库」；卡片计数拆为 `{n} 个请求` / `{n} 份提交` 两条复数消息）、apps/suite/web/src/apps/forms/messages.ts（「表单」单数 Form；两条新复数条目）、packages/ui/src/i18n-core.ts（`pluralCount`：显式 `count`，否则唯一数字参数）、packages/ui/tests/i18n.test.ts、packages/auth-client/web/src/PlatformNav.tsx（无所有者前缀时不写分隔符）；
+- 审查要点：目录「先注册者胜」意味着通用源文在多个应用间共享，页面标题应使用专属源文；复数选形此前只看 `count`，而现有调用全部以 `{n}` 传数，修正为按唯一数字参数选形不改变任何带 `count` 的现有行为（显式 `count` 仍优先），多数字参数无 `count` 时保持 other；
+- 风险/未做：`check_design`/`check_component_names` 对此无影响；窄屏与 Docs/Message 适配（WP7）不在本轮；走查为 Forms 应用，Tables/Approvals 等其他 Suite 应用的英文/繁体宽屏走查仍待做；
+- 验证：六个前端工作区测试 612 通过（含 account-web 刷新门禁 175）；根 typecheck/build 通过；五守卫通过；隔离浏览器三语言走查重跑通过（evidence/2026-10-12-forms-wide-locales）。

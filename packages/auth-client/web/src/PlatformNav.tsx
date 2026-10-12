@@ -111,7 +111,7 @@ export function PlatformNav() {
                 disabled={switching} aria-label={t("切换工作空间")}
                 onChange={(e) => void switchTo(e.target.value)}>
           {!current && <option value="" disabled>{t("选择工作空间…")}</option>}
-          {spaces.map((w) => <option key={w.id} value={w.id} disabled={w.status !== "active"}>{w.kind === "personal" ? t("个人") : w.organization_name || ""} · {w.name}</option>)}
+          {spaces.map((w) => { const owner = w.kind === "personal" ? t("个人") : w.organization_name || ""; return <option key={w.id} value={w.id} disabled={w.status !== "active"}>{owner ? `${owner} · ${w.name}` : w.name}</option>; })}
         </select>
       )}
       {/* Conversations live on Synwevo Message (CI-66): the registry's address through its

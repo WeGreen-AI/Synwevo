@@ -31,6 +31,10 @@ test('interpolation is plain text and nonrecursive, unknown keys fall back witho
   assert.equal(translate('en', '测试 {name}，共 {count} 条', { name: input, count: 1 }), `Test ${input}: 1 item`);
   assert.equal(translate('en', '测试 {name}，共 {count} 条', { name: input, count: 12000 }), `Test ${input}: 12,000 items`);
   assert.equal(translate('zh-Hant', '测试 {name}，共 {count} 条', { name: '客户原文', count: 2 }), '測試 客户原文，共 2 條');
+  registerMessages({ '{n} 步': { en: { one: '{n} step', other: '{n} steps' }, 'zh-Hant': '{n} 步' } });
+  assert.equal(translate('en', '{n} 步', { n: 1 }), '1 step', 'the only numeric parameter chooses the plural form');
+  assert.equal(translate('en', '{n} 步', { n: 3 }), '3 steps');
+  assert.equal(translate('zh-Hant', '{n} 步', { n: 1 }), '1 步');
   assert.equal(translate('en', 'Unregistered source'), 'Unregistered source');
   assert.equal(translate('en', '{missing}'), '{missing}');
   assert.equal(translate('en', '{value}', { value: null }), '');

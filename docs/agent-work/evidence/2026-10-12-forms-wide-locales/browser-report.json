@@ -1,0 +1,161 @@
+{
+ "base": "http://127.0.0.1:33951",
+ "engine": "chrome",
+ "viewport": "1440x900",
+ "steps": {
+  "seed": {
+   "form": "frm_e6e367f077b8",
+   "version": 1,
+   "requests": {
+    "zh-hans": "freq_e36cd6c374a5",
+    "en": "freq_c233750f808b",
+    "zh-hant": "freq_882f9af6e261"
+   },
+   "has_link": true
+  },
+  "zh-hans_member": {
+   "views": {
+    "library": {
+     "has_form_title": true,
+     "chars": 290,
+     "nav_sections": 3,
+     "han_in_en": null,
+     "horizontal_overflow": false
+    },
+    "editor": {
+     "has_form_title": true,
+     "chars": 462,
+     "nav_sections": 3,
+     "han_in_en": null,
+     "horizontal_overflow": false
+    },
+    "requests": {
+     "has_form_title": true,
+     "chars": 441,
+     "nav_sections": 3,
+     "han_in_en": null,
+     "horizontal_overflow": false
+    },
+    "submissions": {
+     "has_form_title": false,
+     "chars": 231,
+     "nav_sections": 3,
+     "han_in_en": null,
+     "horizontal_overflow": false
+    }
+   },
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+   ],
+   "failed_responses": [
+    [
+     401,
+     "/api/auth/me"
+    ]
+   ],
+   "submission_listed": true
+  },
+  "zh-hans_filler": {
+   "fields_shown": true,
+   "submitted": true,
+   "han_in_en": null,
+   "excerpt": "Forms\n语言\n简体中文\n繁體中文\nEnglish\n已提交\n\nThanks, we will check it.\n\n回执编号：fsub_47f3d4487390"
+  },
+  "en_member": {
+   "views": {
+    "library": {
+     "has_form_title": true,
+     "chars": 475,
+     "nav_sections": 3,
+     "han_in_en": [],
+     "horizontal_overflow": false
+    },
+    "editor": {
+     "has_form_title": true,
+     "chars": 790,
+     "nav_sections": 3,
+     "han_in_en": [],
+     "horizontal_overflow": false
+    },
+    "requests": {
+     "has_form_title": true,
+     "chars": 697,
+     "nav_sections": 3,
+     "han_in_en": [],
+     "horizontal_overflow": false
+    },
+    "submissions": {
+     "has_form_title": false,
+     "chars": 419,
+     "nav_sections": 3,
+     "han_in_en": [],
+     "horizontal_overflow": false
+    }
+   },
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+   ],
+   "failed_responses": [
+    [
+     401,
+     "/api/auth/me"
+    ]
+   ],
+   "submission_listed": true
+  },
+  "en_filler": {
+   "fields_shown": true,
+   "submitted": true,
+   "han_in_en": [],
+   "excerpt": "Forms\nLanguage\n简体中文\n繁體中文\nEnglish\nSubmitted\n\nThanks, we will check it.\n\nReceipt: fsub_cfabfb5bef6f"
+  },
+  "zh-hant_member": {
+   "views": {
+    "library": {
+     "has_form_title": true,
+     "chars": 292,
+     "nav_sections": 3,
+     "han_in_en": null,
+     "horizontal_overflow": false
+    },
+    "editor": {
+     "has_form_title": true,
+     "chars": 462,
+     "nav_sections": 3,
+     "han_in_en": null,
+     "horizontal_overflow": false
+    },
+    "requests": {
+     "has_form_title": true,
+     "chars": 447,
+     "nav_sections": 3,
+     "han_in_en": null,
+     "horizontal_overflow": false
+    },
+    "submissions": {
+     "has_form_title": false,
+     "chars": 298,
+     "nav_sections": 3,
+     "han_in_en": null,
+     "horizontal_overflow": false
+    }
+   },
+   "console_errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+   ],
+   "failed_responses": [
+    [
+     401,
+     "/api/auth/me"
+    ]
+   ],
+   "submission_listed": true
+  },
+  "zh-hant_filler": {
+   "fields_shown": true,
+   "submitted": true,
+   "han_in_en": null,
+   "excerpt": "Forms\n語言\n简体中文\n繁體中文\nEnglish\n已提交\n\nThanks, we will check it.\n\n回執編號：fsub_e909afadc171"
+  }
+ }
+}

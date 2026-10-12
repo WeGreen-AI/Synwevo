@@ -64,12 +64,18 @@ export function registerMessages(messages: Messages): void {
   // Domains may reuse common source text. The first registered wording wins consistently.
   for (const [source, value] of Object.entries(messages)) if (!catalog[source]) catalog[source] = value;
 }
+/** The number a plural form is chosen by: an explicit `count`, otherwise the only numeric parameter. */
+function pluralCount(params: Params): number {
+  if (params.count !== undefined && params.count !== null) return Number(params.count);
+  const numbers = Object.values(params).filter((v): v is number => typeof v === 'number');
+  return numbers.length === 1 ? numbers[0] : 0;
+}
 export function translate(locale: Locale, source: string, params: Params = {}): string {
   const previous = !hasMessage(source) && !Object.keys(params).length ? rendered.get(source) : undefined;
   if (previous && 'parts' in previous) return previous.parts.map(part => translate(locale, part)).join(previous.separator);
   if (previous) { source = previous.source; params = previous.params; }
   const value = locale === 'zh-Hans' ? source : catalog[source]?.[locale] ?? source;
-  const message = typeof value === 'string' ? value : (new Intl.PluralRules(locale).select(Number(params.count ?? 0)) === 'one' ? value.one : undefined) || value.other;
+  const message = typeof value === 'string' ? value : (new Intl.PluralRules(locale).select(pluralCount(params)) === 'one' ? value.one : undefined) || value.other;
   // Replace once; a parameter containing braces or markup remains literal text.
   const result = message.replace(/\{([a-zA-Z][\w]*)\}/g, (token, name: string) =>
     Object.hasOwn(params, name) ? typeof params[name] === 'number' ? new Intl.NumberFormat(locale).format(params[name]) : String(params[name] ?? "") : token);

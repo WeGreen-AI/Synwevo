@@ -844,3 +844,10 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 
 `account-deletions/finalize` 的扫描与审计改为同一事务；新增故障注入测试：审计行写入失败时 8 条管理写入路由各自返回 ≥500、状态原样、无审计行、故障原文不外泄且带 request_id。源码扫描：直接写审计的 11 条路由与 claim/unclaim 均在事务内。
 测试：test_admin 相关 9 例通过；identity `-k admin` 子集 666 通过；五守卫通过。无界面变化，未做浏览器验收。
+
+## 2026-10-12 CR-106 WP1 Forms 桌面宽屏与英文/繁体走查（本地+隔离浏览器）
+
+隔离合成实例 127.0.0.1:33951（role=all，SUITE_APPS=forms,tables，文件邮件），系统 Chrome，视口 1440×900。以空间所有者经真实操作 API 建表单（4 个字段）→发布版本 1→三份填写请求（每语言一份，一次性策略）；三种语言分别以成员走表单库/编辑器/填写请求/提交记录四页，并以匿名浏览器打开真实链接填写提交，回执页显示表单自定义确认语与回执编号，提交随后出现在成员的提交记录。
+检查项：表单标题可见（标题或编辑器标题输入框）、三个分区标签为该语言、`scrollWidth` 不超视口、英文页在数据之外无汉字（个人空间名「… 的空间」是账户创建时按 zh-Hans 生成的数据，语言菜单项为各语言自称）。控制台仅登录页匿名探测 `/api/auth/me` 的一次 401，属预期。
+走查发现 3 处并修正后重跑取证：英文表单库标题「Form」→「Forms」（源文改用「表单库」；Forms 目录「表单」改为单数「Form」与其他目录一致）；「1 submissions」→「1 submission」（拆两条复数消息；`packages/ui` 翻译器无 `count` 时按唯一数字参数选形，新增测试）；空间切换器无组织名时不再以「 · 」开头。
+验证：packages/ui 20、auth-client 41、docs-web 145、messages-web 25、suite-web 206、account-web 175 全部通过；根 typecheck/build 通过；五守卫通过；Python 套件未跑（无 Python 改动）。证据：evidence/2026-10-12-forms-wide-locales/（15 张截图、browser-report.json、verification.json）。

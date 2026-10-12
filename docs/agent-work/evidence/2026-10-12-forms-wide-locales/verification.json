@@ -1,0 +1,40 @@
+{
+  "id": "CR-106",
+  "scope": "WP1 remainder: Synwevo Forms at desktop width (1440x900) in English and Traditional Chinese, with the Simplified Chinese baseline",
+  "date": "2026-10-12",
+  "instance": "isolated synwevo_server role=all on 127.0.0.1:33951 (SUITE_APPS=forms,tables, MAIL_MODE=file, synthetic accounts only; data dir under the session scratchpad, never data/)",
+  "engine": "system Chrome via Playwright (channel=chrome)",
+  "proof": "scratchpad a13/wp1_proof.py; browser-report.json in this directory is its output",
+  "seed": "as the workspace owner through the real operations API: forms.form.create (4 fields: text, select with 2 options, money CNY, boolean) -> forms.form.publish (version 1) -> three forms.request.create (one per language; policy once)",
+  "walkthrough": {
+    "member_pages": ["/forms/w/<wid>", "/forms/w/<wid>/f/<fid>", "/forms/w/<wid>/requests", "/forms/w/<wid>/submissions"],
+    "per_language_checks": ["form title present (heading or editor title input)", "the three section tabs read in that language", "no horizontal page overflow at 1440px", "English pages contain no Han text outside data (workspace names, language autonyms)"],
+    "filler": "anonymous browser in the same language opens /forms/fill/<token>, fills the four fields, submits; the receipt page shows the submitted heading, the form's own confirmation text and the receipt id; the submission then appears in the member's list as the anonymous filler"
+  },
+  "results": {
+    "zh-Hans": {"library": "ok", "editor": "ok", "requests": "ok", "submissions": "ok", "fill_and_submit": "ok", "listed_after": true},
+    "en": {"library": "ok", "editor": "ok", "requests": "ok", "submissions": "ok", "fill_and_submit": "ok", "listed_after": true, "han_outside_data": []},
+    "zh-Hant": {"library": "ok", "editor": "ok", "requests": "ok", "submissions": "ok", "fill_and_submit": "ok", "listed_after": true},
+    "horizontal_overflow": false,
+    "console": "one 401 on /api/auth/me per language run, from the shell's anonymous session probe on the sign-in page before signing in (expected: nobody is signed in yet); no page errors"
+  },
+  "defects_found_and_fixed_in_this_round": [
+    {"what": "English library heading read 'Form' while the section tab reads 'Forms'", "cause": "the Agent app's context-kind table registers the source '表单' -> 'Form' first and the catalogue keeps the first wording; the library heading reused that generic source", "fix": "the heading uses the library's own source '表单库' (Forms / 表單庫, same as the tab); the Forms catalogue's '表单' entry now says 'Form' like every other catalogue (it labels one form in the request dialog)", "files": ["apps/suite/web/src/apps/forms/Pages.tsx", "apps/suite/web/src/apps/forms/messages.ts"]},
+    {"what": "'1 submissions' on the library card", "cause": "one combined message with two numbers cannot pluralise; plural forms were also only chosen by a `count` parameter that call sites such as '{n} 步' never pass, so '1 steps' was possible", "fix": "two plural messages joined with a separator; the shared translator chooses the plural form by `count` or else by the only numeric parameter (test added)", "files": ["packages/ui/src/i18n-core.ts", "packages/ui/tests/i18n.test.ts", "apps/suite/web/src/apps/forms/Pages.tsx", "apps/suite/web/src/apps/forms/messages.ts"]},
+    {"what": "workspace switcher option started with ' · ' for a workspace without an organization", "fix": "the separator is only written when there is an owner prefix (personal / organization name)", "files": ["packages/auth-client/web/src/PlatformNav.tsx"]}
+  ],
+  "re_proof": "the walkthrough was re-run on the rebuilt bundle (127.0.0.1:33951) after the fixes; screenshots in this directory are from that run and show 'Forms' / '表單庫', '1 submission' and the switcher without the leading separator",
+  "verification": {
+    "packages/ui tests": "20 passed",
+    "apps/suite/web typecheck + tests": "typecheck clean; 206 passed",
+    "packages/auth-client/web tests": "41 passed",
+    "npm test --workspaces --if-present": "ui 20, auth-client 41, docs-web 145, messages-web 25, suite-web 206, account-web 175: all passed",
+    "root npm run typecheck && npm run build": "both exit 0",
+    "guards": "check_boundaries, check_brand, check_design, check_component_names, brand_assets --check: all passed",
+    "not run": "Python suites (no Python change in this round)"
+  },
+  "notes": [
+    "The personal workspace of the synthetic member is named 'Synthetic member 的空间' because the account was created with the zh-Hans default; it is data, not interface text, and is excluded from the English Han check.",
+    "Language menu options are autonyms (简体中文 / 繁體中文 / English) by design."
+  ]
+}

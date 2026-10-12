@@ -55,7 +55,7 @@ export function Library({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
 
   return <>
     <div className="suite-head">
-      <div><h1>{t("表单")}</h1><p className="lede">{t("设计表单并发布版本，向指定的人发出填写请求，或开放公开链接收集资料。")}</p></div>
+      <div><h1>{t("表单库")}</h1><p className="lede">{t("设计表单并发布版本，向指定的人发出填写请求，或开放公开链接收集资料。")}</p></div>
       <div className="actions">{canWrite && <button type="button" className="btn primary" onClick={() => void create()}>{t("新建表单")}</button>}</div>
     </div>
     <div className="suite-toolbar">
@@ -77,7 +77,7 @@ export function Library({ ws, canWrite }: { ws: WS; canWrite: boolean }) {
        </div>
        {f.public && <span className="badge info">{t("公开链接")}</span>}
        <span className={`badge ${f.published_version ? "ok" : ""}`}>{f.published_version ? t("版本 {v}", { v: f.published_version }) : t("草稿")}</span>
-       <span className="muted small nowrap">{t("{r} 个请求 · {s} 份提交", { r: f.requests, s: f.submissions })}</span>
+       <span className="muted small nowrap">{t("{n} 个请求", { n: f.requests })} · {t("{n} 份提交", { n: f.submissions })}</span>
      </Link>)}</div>}
   </>;
 }
