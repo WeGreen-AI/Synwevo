@@ -25,7 +25,9 @@ def _committed_policy_facts(store):
     return {
         "versions": store.all("SELECT * FROM billing_payer_budget_versions ORDER BY revision"),
         "events": store.all("SELECT * FROM app_events WHERE type=? ORDER BY seq", (EVENT,)),
-        "audit": store.all("SELECT * FROM audit_events WHERE action=? ORDER BY seq", (OP,)),
+        # The success rows only: a rolled-back run leaves its own `result=error` row (D7 §5),
+        # which `_assert_failure_rolled_back` checks separately.
+        "audit": store.all("SELECT * FROM audit_events WHERE action=? AND result='ok' ORDER BY seq", (OP,)),
         "successes": store.all("SELECT * FROM op_runs WHERE op=? AND status='succeeded' ORDER BY id", (OP,)),
     }
 
@@ -61,6 +63,12 @@ def _assert_failure_rolled_back(fixture, run_ids, key):
     assert announced == []
     failed = observer.one("SELECT * FROM op_runs WHERE id=?", (run_ids[0],))
     assert failed["status"] == "failed" and failed["error_code"] == "operation_failed"
+    # The failure itself is recorded, after the rollback, as one `error` row for this run and no
+    # `ok` row (the audit row written inside the rolled-back transaction went with it).
+    import json
+    errors = observer.all("SELECT * FROM audit_events WHERE action=? AND result='error' ORDER BY seq", (OP,))
+    metas = [json.loads(r["meta"]) if isinstance(r["meta"], str) else r["meta"] for r in errors]
+    assert [m["run_id"] for m in metas] == run_ids and metas[0]["error"] == "operation_failed"
     assert failed["output"] is None and failed["object_id"] is None
     assert failed["idempotency_key"] == key
     with pytest.raises(ServiceError) as error:

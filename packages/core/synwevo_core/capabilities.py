@@ -68,6 +68,11 @@ VIA = ("ui", "api", "flow", "agent", "automation", "system")
 RUN_STATES = ("queued", "running", "waiting_input", "waiting_approval", "succeeded", "partial",
               "failed", "cancelled", "unknown")
 TERMINAL_STATES = frozenset({"succeeded", "partial", "failed", "cancelled"})
+#: A machine caller refused before a run exists leaves one `denied` audit row per (actor,
+#: operation) in this window (D7 §5): a scanning credential cannot fill the table.
+DENIED_ROW_INTERVAL_S = 60.0
+_DENIED_RECENT: dict[tuple[str, str], float] = {}
+_DENIED_LOCK = threading.Lock()
 
 MAX_INPUT_BYTES = 256 * 1024
 MAX_OUTPUT_BYTES = 1024 * 1024
@@ -524,6 +529,19 @@ def fingerprint(value: Any) -> str:
     return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
 
 
+def _readable_json(value: Any) -> Any:
+    """A stored JSON column as a value, or None when it holds nothing readable: a row written by
+    an older process, or one a test made unreadable on purpose, must not raise in a reader."""
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, (str, bytes)) and value:
+        try:
+            return json.loads(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _j(value: Any) -> Any:
     """A JSON column's value. `Store` already decodes some column names (``output``, ``data`` …;
     `store.JSON_COLS`), so this accepts both the decoded value and the raw text."""
@@ -640,12 +658,14 @@ class Capabilities:
                                "自动触发的链条过深，已停止以免循环。请检查流程是否在更新自己触发的对象。",
                                {"depth": depth})
         if via in ("flow", "automation") and not op.unattended:
-            raise ServiceError(403, "person_required",
-                               "这个操作必须由本人在应用里亲自完成，不能由自动流程代为执行。",
-                               {"operation": op_id})
+            raise self._denied(op, user_id, workspace_id, via, principal, request,
+                               ServiceError(403, "person_required",
+                                            "这个操作必须由本人在应用里亲自完成，不能由自动流程代为执行。",
+                                            {"operation": op_id}))
         if via == "agent" and op.agent == "never":
-            raise ServiceError(403, "not_for_agent", "这个操作不能由 Agent 执行，请在应用里亲自完成。",
-                               {"operation": op_id})
+            raise self._denied(op, user_id, workspace_id, via, principal, request,
+                               ServiceError(403, "not_for_agent", "这个操作不能由 Agent 执行，请在应用里亲自完成。",
+                                            {"operation": op_id}))
         credential = _CREDENTIAL.get()
         if via == "api":
             # Whatever HTTP entry passed this along: a credential never reaches a person's own
@@ -657,13 +677,13 @@ class Capabilities:
                 # scopes of its own can narrow what it asks with, never widen it.
                 held = credential["scopes"] if held is None else held & credential["scopes"]
             if held is None:
-                raise _person_required(op_id)
+                raise self._denied(op, user_id, workspace_id, via, principal, request, _person_required(op_id))
             refusal = _scope_refusal(op, self.registry.app(op.app), held)
             if refusal:
                 if credential is not None:
                     # asked from inside a machine call: an inner refusal, however the handler asked
                     refusal = _inner_refusal()
-                raise refusal
+                raise self._denied(op, user_id, workspace_id, via, principal, request, refusal)
             if credential is None:
                 credential = {"scopes": held, "app": op.app}
         elif scopes is not None:
@@ -691,7 +711,10 @@ class Capabilities:
              delegation: dict | None, depth: int, request: Any, principal: dict | None) -> dict:
         """The body of :meth:`invoke`, entered with the caller's credential (if any) in effect."""
         op_id = op.id
-        user, role = self.authorize(op, user_id, workspace_id)
+        try:
+            user, role = self.authorize(op, user_id, workspace_id)
+        except ServiceError as err:
+            raise self._denied(op, user_id, workspace_id, via, principal, request, err) from None
 
         raw = payload if payload is not None else {}
         try:
@@ -753,11 +776,11 @@ class Capabilities:
                     raise ServiceError(409, "idempotency_conflict", "同一个幂等键已用于不同的参数。") from None
                 return self._replay(prior)
             except ServiceError as err:
-                self._record_failure(row, insert, err)
+                self._record_failure(call, row, insert, err)
                 raise
             except Exception:
                 log.exception("operation %s failed (run %s)", op.id, run_id)
-                self._record_failure(row, insert, ServiceError(500, "operation_failed", "操作失败，请稍后重试"))
+                self._record_failure(call, row, insert, ServiceError(500, "operation_failed", "操作失败，请稍后重试"))
                 raise ServiceError(500, "operation_failed", "操作失败，请稍后重试", {"run_id": run_id}) from None
 
         # Two-phase: record, run, record. A crash in the middle leaves `running`, which
@@ -775,12 +798,12 @@ class Capabilities:
         try:
             result = op.handler(call, parsed)
         except ServiceError as err:
-            self._fail_existing(run_id, err)
+            self._fail_existing(call, err)
             raise
         except Exception:
             log.exception("operation %s failed (run %s)", op.id, run_id)
             err = ServiceError(500, "operation_failed", "操作失败，请稍后重试", {"run_id": run_id})
-            self._fail_existing(run_id, err)
+            self._fail_existing(call, err)
             raise err from None
         with self.store.tx() as t:
             output = self._finish(t, call, result)
@@ -909,19 +932,103 @@ class Capabilities:
                             "correlation_id": call.correlation_id, "depth": call.depth})
         call.events = written
 
-    def _audit(self, t, call: Call, status: str) -> None:
+    @staticmethod
+    def _audit_meta(call: Call) -> dict:
         meta = {"run_id": call.run_id, "via": call.via, "operation": call.op.id}
         if call.delegation:
             meta["delegation"] = call.delegation
         if call.correlation_id != call.run_id:
             meta["correlation_id"] = call.correlation_id
+        return meta
+
+    def _audit(self, t, call: Call, status: str) -> None:
         # The one writer (G26): `store.execute` joins the open transaction `t` belongs to, so the
-        # row still commits or rolls back with the operation. The actor stays the person for now
-        # (`via` and `delegation` say how they called); the machine actor kinds come with WP8.
+        # row still commits or rolls back with the operation. The actor is the call's authority
+        # descriptor (D7 §2): a person, a person behind a delegated client, or a machine credential
+        # (`api:<key>`); `via` says how they called. An asynchronous operation's row here is its
+        # acceptance; `update_run` writes the completion with the same run_id (D7 §4).
+        meta = self._audit_meta(call)
+        if status not in TERMINAL_STATES:
+            meta["phase"] = "accepted"
         from .auth import audit_event
-        audit_event(self.store, call.op.id, actor_kind="user", actor_id=call.user_id,
+        audit_event(self.store, call.op.id, actor=call.principal,
                     workspace_id=call.workspace_id, object_kind=call.object_kind, object_id=call.object_id,
                     result="ok" if status != "failed" else "error", meta=meta, request=call.request)
+
+    def _audit_failure(self, call: Call, err: ServiceError) -> None:
+        """The `result=error` row of a failed run (D7 §5), written with the failure record after the
+        work's own transaction rolled back; the same operations that are audited on success."""
+        if call.op.side_effect == "none" and call.via == "ui":
+            return
+        from .auth import audit_event
+        audit_event(self.store, call.op.id, actor=call.principal, workspace_id=call.workspace_id,
+                    object_kind=call.object_kind, object_id=call.object_id, result="error",
+                    meta={**self._audit_meta(call), "error": err.code, "status": err.status}, request=call.request)
+
+    def _denied(self, op: Operation, user_id: str, workspace_id: str | None, via: str,
+                principal: dict | None, request: Any, err: ServiceError) -> ServiceError:
+        """A refusal before any run exists — the caller's way in (automation, agent, a credential's
+        scope) or `authorize()` — recorded for machine callers (D7 §5) and handed back to be raised."""
+        if via != "ui":
+            self._audit_denied(op, user_id, workspace_id, via, principal, request, err)
+        return err
+
+    def _audit_denied(self, op: Operation, user_id: str, workspace_id: str | None, via: str,
+                      principal: dict | None, request: Any, err: ServiceError) -> None:
+        """A machine caller refused before a run exists (D7 §5): one `denied` row per (actor,
+        operation) per DENIED_ROW_INTERVAL_S; a browser session's refusal is not recorded, as
+        before. Never turns the refusal into a different error."""
+        from . import authority
+        from .auth import audit_event
+        desc = principal or {"kind": "user", "user_id": user_id}
+        key = ((authority.label(principal) if principal else f"user:{user_id}"), op.id)
+        at = now()
+        with _DENIED_LOCK:
+            last = _DENIED_RECENT.get(key)
+            if last is not None and at - last < DENIED_ROW_INTERVAL_S:
+                return
+            _DENIED_RECENT[key] = at
+            if len(_DENIED_RECENT) > 10000:
+                for k, v in list(_DENIED_RECENT.items()):
+                    if at - v >= DENIED_ROW_INTERVAL_S:
+                        _DENIED_RECENT.pop(k, None)
+        try:
+            with self.store.tx():
+                audit_event(self.store, op.id, actor=desc, workspace_id=workspace_id, result="denied",
+                            meta={"via": via, "operation": op.id, "error": err.code, "status": err.status}, request=request)
+        except Exception:  # noqa: BLE001 — the refusal stands on its own
+            log.exception("could not record the refused call of %s", op.id)
+
+    def _audit_completion(self, run_id: str, status: str, error: ServiceError | None) -> None:
+        """The second row of an asynchronous operation (D7 §4): the same run_id, `meta.phase`
+        completion and the outcome as result, written with the terminal update by whoever reports
+        it (a worker) on behalf of the principal that made the run."""
+        run = self.store.one("SELECT op, workspace_id, user_id, principal, via, delegation, correlation_id, "
+                             "object_kind, object_id FROM op_runs WHERE id=?", (run_id,))
+        if not run:
+            return
+        op = self.registry.get(run["op"])
+        if op is not None and op.side_effect == "none" and run["via"] == "ui":
+            return
+        desc = _readable_json(run.get("principal"))
+        if not isinstance(desc, dict) or not desc:
+            # A stored descriptor that cannot be read is not the person's own run (see
+            # test_machine_deferred): the row names nobody rather than guessing, and the worker's
+            # own refusal of such a run is what the status says.
+            desc = {"kind": "operator", "label": "unattributable-run"}
+        delegation = _readable_json(run.get("delegation"))
+        if not isinstance(delegation, dict):
+            delegation = None
+        meta = {"run_id": run_id, "via": run["via"], "operation": run["op"], "phase": "completion", "status": status}
+        if delegation:
+            meta["delegation"] = delegation
+        if run.get("correlation_id") and run["correlation_id"] != run_id:
+            meta["correlation_id"] = run["correlation_id"]
+        if error is not None:
+            meta["error"] = error.code
+        from .auth import audit_event
+        audit_event(self.store, run["op"], actor=desc, workspace_id=run["workspace_id"], object_kind=run.get("object_kind"),
+                    object_id=run.get("object_id"), result="ok" if status in ("succeeded", "partial") else "error", meta=meta)
 
     def _after(self, call: Call) -> None:
         # Listeners (flow wake-ups) act for whoever owns what they wake, never for this caller:
@@ -941,8 +1048,9 @@ class Capabilities:
                 except Exception:  # noqa: BLE001 — a listener is a wake-up, not part of the result
                     log.exception("capability event listener failed")
 
-    def _record_failure(self, row: tuple, insert: str, err: ServiceError) -> None:
-        """The transaction that tried the work rolled back; record the attempt on its own."""
+    def _record_failure(self, call: Call, row: tuple, insert: str, err: ServiceError) -> None:
+        """The transaction that tried the work rolled back; record the attempt, and its audit row,
+        on their own."""
         ts = now()
         try:
             with self.store.tx() as t:
@@ -950,15 +1058,18 @@ class Capabilities:
                 t.execute("UPDATE op_runs SET status='failed', error_code=?, error_message=?, error_detail=?, "
                           "finished_at=?, updated_at=? WHERE id=?",
                           (err.code, err.message[:500], canonical(err.detail)[:4000], ts, ts, row[0]))
+                self._audit_failure(call, err)
         except Exception as exc:  # noqa: BLE001
             if "UNIQUE" not in str(exc):
                 log.exception("could not record failed run %s", row[0])
 
-    def _fail_existing(self, run_id: str, err: ServiceError) -> None:
+    def _fail_existing(self, call: Call, err: ServiceError) -> None:
         ts = now()
-        self.store.execute("UPDATE op_runs SET status='failed', error_code=?, error_message=?, error_detail=?, "
-                           "finished_at=?, updated_at=? WHERE id=?",
-                           (err.code, err.message[:500], canonical(err.detail)[:4000], ts, ts, run_id))
+        with self.store.tx():
+            self.store.execute("UPDATE op_runs SET status='failed', error_code=?, error_message=?, error_detail=?, "
+                               "finished_at=?, updated_at=? WHERE id=?",
+                               (err.code, err.message[:500], canonical(err.detail)[:4000], ts, ts, call.run_id))
+            self._audit_failure(call, err)
 
     # ---------------------------------------------------------------- runs
     def run(self, run_id: str, *, user_id: str) -> dict:
@@ -990,12 +1101,15 @@ class Capabilities:
         if status not in RUN_STATES:
             raise ValueError(status)
         ts = now()
-        self.store.execute(
-            "UPDATE op_runs SET status=?, output=COALESCE(?, output), error_code=?, error_message=?, "
-            "finished_at=?, updated_at=? WHERE id=?",
-            (status, canonical(_dump(output)) if output is not None else None,
-             error.code if error else None, error.message[:500] if error else None,
-             ts if status in TERMINAL_STATES else None, ts, run_id))
+        with self.store.tx():
+            self.store.execute(
+                "UPDATE op_runs SET status=?, output=COALESCE(?, output), error_code=?, error_message=?, "
+                "finished_at=?, updated_at=? WHERE id=?",
+                (status, canonical(_dump(output)) if output is not None else None,
+                 error.code if error else None, error.message[:500] if error else None,
+                 ts if status in TERMINAL_STATES else None, ts, run_id))
+            if status in TERMINAL_STATES:
+                self._audit_completion(run_id, status, error)
 
     # ---------------------------------------------------------------- deferred work
     def standing(self, run_id: str | None) -> dict | None:

@@ -899,6 +899,7 @@ through the pre-fix transport, which lacked explicit certificate verification.
 
 12:14Z 推送 ae93e86d（CR-109）与 12:36Z 推送 b8989b93（CR-110）各自触发运行 [38247806809](https://github.com/WeGreen-AI/Synwevo/actions/runs/38247806809) 与 [38250048637](https://github.com/WeGreen-AI/Synwevo/actions/runs/38250048637)：verify 作业同样未启动（0 个步骤，注解相同），deploy 跳过。12:50Z 对 38250048637 重跑（attempt 2，累计第 14 次计费重试）仍未启动，注解相同。生产仍为 `synwevo:e99212d`。计费恢复后只需重跑最新运行（`gh run rerun 38250048637 --failed`，或之后更新的运行）即可验证并部署 main 头部，无需再推送。
 12:59Z 推送 72ab793a（CR-111 + 部署记录）触发运行 [38252548239](https://github.com/WeGreen-AI/Synwevo/actions/runs/38252548239)，verify 同样未启动。15:58Z 对 38250048637 再重跑（attempt 3，累计第 15 次计费重试）仍未启动，注解相同；生产仍为 `synwevo:e99212d`。
+16:53Z `git push origin HEAD:main`，`72ab793a..efc5db63`（5 个提交：CR-112 WP4 项目/来源审计 604ce96e、CR-113/114 WP5+WP6 模板/映射/定义/任务审计 6b0d550d、解析启动修复 cb157e83、记录 2 个）。推送前：完整根套件 5821 通过/2 失败（已修复后 Docs 套件重跑 1655 通过）/2 跳过，五守卫 + 图标检查通过；前端未改动。运行 [38280521415](https://github.com/WeGreen-AI/Synwevo/actions/runs/38280521415)：verify 作业同样未启动（0 个步骤，注解相同），deploy 跳过；生产仍为 `synwevo:e99212d`。计费恢复后重跑最新运行（`gh run rerun 38280521415 --failed`）即可验证并部署 main 头部。
 
 ## 2026-10-11 393b066 未部署（GitHub Actions 计费阻断）
 

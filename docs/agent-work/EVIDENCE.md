@@ -892,3 +892,11 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 ## 2026-10-12 WP4–WP6 推送前完整根套件（本地）
 
 6b0d550d 树上 `pytest`（根，三套件）：5821 通过、2 失败、2 跳过（16:21–16:45Z，日志 scratchpad/a13/g26wp456-full.log，未入库）。两例失败均为 `test_idempotency_durability.py::test_source_parser_waits_for_creator_commit_or_rollback`：WP4 把来源解析/扫描改为 `after_commit` 启动，而既有设计是解析器自行等待创建者提交或回滚（外层幂等事务下 after_commit 不会在回滚时运行、也不会在提交前启动）。cb157e83 恢复原语义（事务块结束后立即提交解析），定向重跑 111 项（耐久性、文件事件、来源操作、WP4 两面覆盖）通过；推送前再跑 Docs 套件：cb157e83 树上 `apps/docs/tests` 1655 通过、2 跳过（16:45–16:52Z）。前端未改动，typecheck/build/npm test 沿用 2066a035 推送前的结果。。
+
+## 2026-10-12 CR-115 G26 WP7 上传/签名链接/回归用例审计（本地）
+
+测试：`apps/docs/tests/test_audit_uploads_links.py`（5 例：上传 create/complete/consume/abort（请求与隔离判定两种原因）各一行、重放与重复零行、消费行与 source.add 行同 request_id；artifact/archive 链接各一行且无令牌/URL、重放零行；回归用例行先于目录（审计失败则不建目录）、删除行；审计失败回滚上传完成并可重试）；既有 92 项（上传契约/重放/耐久性、链接契约、回归用例与隔离、幂等、WP4 覆盖）通过（16:54Z，耐久性测试崩溃点按同事务语义调整后 16 项通过）。
+
+## 2026-10-12 CR-116 G26 WP8 Suite 能力中心审计（本地）
+
+测试：`apps/suite/tests/test_audit_capability_path.py`（5 例：入口处 scope/无 scope/Agent 拒绝各一条 denied 行、ui 拒绝零行；ui 调用为人、委托 OAuth 为人 + delegation + ip/request_id、服务账户与密钥为 machine；事务型/两阶段失败各恰好一条 error 行且无 ok 行；机器拒绝一分钟一行、ui 拒绝零行、HTTP 路径带 delegation；异步受理行 phase=accepted、完成行 phase=completion（成功/失败）、flow 委托随行）；定向 85 项通过（16:58Z）；Suite 全目录 `apps/suite/tests`：1131 通过（17:05Z，含不可读主体完成行修复）；拒绝行扩展到入口处的 scope/自动化/Agent 拒绝后再跑 1135 通过（17:11–17:14Z，含子代理的 4 例；第 5 例随后单独通过）。

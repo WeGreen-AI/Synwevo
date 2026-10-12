@@ -509,3 +509,17 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：浏览器夹具（`SYNWEVO_UI_AUTH` 未设）下的操作者是 `system/operator`，测试如实断言；Idempotency-Key 重放与冲突（409）均不加行；审计失败回滚取消（状态、项、运行与 `job_events` 不变）。
 - 风险/未做：running→cancelling 的取消行未在测试中覆盖（需手工运行器中途取消）；带会话的浏览器操作者用例沿用 test_jobs_authority 的长夹具，未重复。
 - 验证：新增 5 例 + 既有 50 项任务契约/幂等/重试/验收测试通过；五守卫通过。
+
+## CR-115 · G26 WP7 续传上传、签名下载链接与回归用例的审计（2026-10-12，本轮新增，本地已验证）
+
+- 位置：apps/docs/synwevo_docs/api/v1_uploads.py（`docs.upload.create` 与 `uploads` 插入同事务、幂等重放不加行；`docs.upload.complete` 与完成 UPDATE 同事务、重复完成零行；`docs.upload.abort` 只在 UPDATE 改到行时写，含请求取消与隔离判定两种原因；`use_upload` 在最终 UPDATE 事务内写 `docs.upload.consume`，被消费生成的来源/模板另有自己的行）；apps/docs/synwevo_docs/api/v1.py（`docs.artifact.link` / `docs.job.archive_link`：到期时间与 TTL，永不记令牌或 URL；在 `Idempotency.run` 的事务内，重放零行）；apps/docs/synwevo_docs/regression.py（`docs.regression_case.create` 在建目录前写、`docs.regression_case.delete` 在 rmtree 前写——D7 §7 文件系统对象先行后文件；`delete` 新增 `store=` 关键字由路由传入，无 store 的维护脚本调用不留行）；apps/docs/tests/test_upload_durability.py（"after_commit" 阶段的崩溃点从完成语句之后移到提交之后的第一条语句 `_unlink_part`：完成与审计同事务后，"语句之后"不再等于"提交之后"，测试意图不变）。测试：apps/docs/tests/test_audit_uploads_links.py（5 例）。
+- 审查要点：上传四种状态迁移各一行、重放与重复零行；链接行不含令牌/URL；回归用例行先于目录、审计失败则不建目录；完成的审计失败回滚完成、重试仍能完成。
+- 风险/未做：上传分片 PUT 不记行（字节搬运，完成时一行即可）；下载 GET（`/api/desensitized`、来源/模板/产物下载）沿用导出路由不记行，只有签发签名链接记行。
+- 验证：新增 5 例 + 既有 92 项上传/链接/回归/幂等/耐久性/WP4 覆盖测试通过。
+
+## CR-116 · G26 WP8 Suite 能力中心路径：机器操作者、失败/拒绝行、异步完成行（2026-10-12，本轮新增，本地已验证）
+
+- 位置：packages/core/synwevo_core/capabilities.py（`_audit` 以 `actor=call.principal` 归因——委托客户端仍是人 + `meta.delegation`，服务账户/密钥为 machine；非终态受理行加 `meta.phase=accepted`；`_record_failure`/`_fail_existing` 在记录失败的事务内写 `result=error` 行，动作/请求方式/错误码；`via != ui` 的拒绝写 `result=denied` 行——`authorize()` 的拒绝与入口处的拒绝（凭据缺 scope / 无 scope、自动流程请求须本人的操作、Agent 请求标为 never 的操作，子代理探测发现首版漏掉这一组）同一处理，按（操作者, 动作）每 60 秒至多一行（进程内窗口 `_DENIED_RECENT`），浏览器会话拒绝沿用现状不记；`update_run` 终态时在同一事务写完成行 `meta.phase=completion`、同 run_id、结果按状态）；apps/suite/tests/test_agent_payer_budget_atomicity.py（成功事实限定为 `result='ok'` 行，另断言回滚后恰好一条 error 行）。测试：apps/suite/tests/test_audit_capability_path.py（5 例，含入口处拒绝一例）。
+- 审查要点：拒绝行不改变拒绝本身（写入失败只记日志）；错误行与失败记录同事务；完成行由 worker 代原主体写、无请求 ID；只读 ui 操作仍不记。
+- 风险/未做：拒绝限频是进程内窗口，多实例各自计数（上限按实例数线性放大，仍有界）；`ip` 对 agent/flow 调用方为空属设计。
+- 验证：新增 5 例 + 定向 85/103 项（能力中心/机器 API/延期运行/原子性/契约/提供方策略/审计归因）通过；Suite 全目录 1131 通过（17:05Z），拒绝行扩展后 1135 通过（17:14Z）。
