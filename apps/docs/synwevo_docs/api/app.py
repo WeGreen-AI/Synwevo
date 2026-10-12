@@ -812,8 +812,8 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
         return {"items": rows, "total": total, "offset": offset, "limit": limit, "next_offset": nxt if nxt < total else None}
 
     @api.post("/api/jobs/{jid}/cancel")
-    def cancel_job(jid: str):
-        return jobs.cancel(jid)
+    def cancel_job(request: Request, jid: str):
+        return jobs.cancel(jid, principal=authority.describe_request(request))
 
     @api.post("/api/jobs/{jid}/retry")
     def retry_job(request: Request, jid: str, body: dict = Body(default={})):

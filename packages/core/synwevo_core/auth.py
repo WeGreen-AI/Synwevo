@@ -138,6 +138,10 @@ def audit_event(store: Store, action: str, *, actor_kind: str | None = None, act
             actor_kind, actor_id, delegation = audit_actor(desc)
             if delegation and "delegation" not in meta:
                 meta["delegation"] = delegation
+        elif context.actor() is not None:
+            # A live editing room or a hook acting for a signed-in person (`collab.acting`) has no
+            # request principal; the person it acts for is the actor, never the system.
+            actor_kind, actor_id = "user", context.actor()
     if actor_kind is None:
         actor_kind = "user" if actor_id is not None else "system"
     state = getattr(request, "state", None)

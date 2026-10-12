@@ -880,3 +880,11 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 ## 2026-10-12 CR-112 G26 WP4 Docs 项目与来源审计（本地）
 
 项目与来源的 11 种写操作改由服务在写入事务内审计（浏览器与 v1 两面各一行，前后值只含 template_id/template_version/archived_at/settings_rev/代表文件/顺序/版本/状态等标识符），`_project_changed` 改为提交后触发。测试：`tests/integration/test_audit_coverage_projects.py`（4 例：11 条路由各一行并校验 `authz.ROUTE_POLICY` 分类、步骤导航零行、审计失败回滚且无活动行、查看者拒绝零行）、`apps/docs/tests/test_audit_projects_v1.py`（4 例：10 条 v1 路由各一行、幂等重放不加行、陈旧 PATCH 无行、OCR 行无文字）通过；既有 135 项相关测试通过（`test_project_collab`、`test_services_views`、`test_api_source_operations`、`test_file_events`、`test_refusal_details`、`test_gate_roles`、`test_project_copy`）；五守卫 + `app_icon_assets --check` 通过（13:01Z）。完整根套件在 WP5 后、推送前跑一次。
+
+## 2026-10-12 CR-113 G26 WP5 模板/版本/映射/定义审计（本地）
+
+模板上传/内置创建/每个版本/恢复/撤销重做/改名/删除/复制、映射保存/撤销/重做、字段定义导入与项目定义导入改由服务在写入事务内审计；`audit_event` 回落到 `context.actor()`；共享模板动作改名 `docs.shared_template.*`。测试：`tests/integration/test_audit_coverage_templates.py`（4 例：15 条路由各一行、审计失败回滚版本保存、使用中删除 409 零行、查看者零行）；`apps/docs/tests/test_audit_templates_v1.py`（5 例：v1 上传/内置创建/保存/两个字段定义导入只留一行且无中间版本行/字段改删/恢复/映射保存两次/定义导入四行同 request_id/删除各恰好一行，机器操作者 api:<key>；幂等上传重放不加行；save_live_sheet 在 set_actor 下归因到人；审计失败回滚字段导入）；既有 325 项相关测试通过（13:03Z，含 WP4 覆盖测试）；五守卫 + 图标检查通过（16:05Z）。
+
+## 2026-10-12 CR-114 G26 WP6 任务审计（本地）
+
+任务 create/cancel/retry 在插入分支内审计，重放与无变化取消零行。测试：`apps/docs/tests/test_audit_jobs.py`（5 例，17 项含既有幂等/授权测试通过）；既有 28 项任务授权/幂等/重试/验收/链接测试通过（13:08Z）。

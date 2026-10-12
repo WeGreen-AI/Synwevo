@@ -73,6 +73,7 @@ def create_builtin(app: App, body: dict) -> dict:
                                    "created_at": t, "updated_at": t, "info": {"notes": []}})
         app.store.insert("template_versions", {"template_id": tid, "version_no": 1, "parent_no": None, "working_blob": blob,
                                                "slots": slots, "editor": editor, "note": "在软件内创建", "created_at": t})
+        app.audit("template.create", "template", tid, kind=kind, format=fmt)
     return app.template_detail(tid)
 
 
@@ -319,6 +320,6 @@ def save_live_sheet(app: App, tid: str, editor: dict, *, base_head: int, note=No
     data, slots, _ = _build(r["kind"], editor)
     _keep_slot_settings(app.get_version(tid, r["head"])["slots"], slots)
     with app.store.tx():
-        detail = app.new_version(tid, data, slots, note, editor, base_head=base_head)
+        detail = app.new_version(tid, data, slots, note, editor, base_head=base_head, reason="live_save")
         app.store.update("templates", {"id": tid}, {"original_blob": app.store.put_blob(data)})
     return detail

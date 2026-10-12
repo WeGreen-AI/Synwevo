@@ -22,6 +22,8 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import Path
 
+from synwevo_core import auth as _auth
+from synwevo_core.audit_change import change as audit_change
 from synwevo_core import authority, env
 from synwevo_core.context import request_id as current_request_id, tenant as current_tenant
 from synwevo_core.errors import ServiceError, not_found
@@ -1264,6 +1266,12 @@ class JobService:
                     self._emit(c, jid, tenant, "job.created", {"status": "queued", "phase": phase, "run_no": 1, "samples": n,
                                                                 "skipped": invalid_n if sync else None, "formats": formats,
                                                                 "request_id": current_request_id()})
+                    # The audit row sits in the branch that inserts (G26 / D7): a replay adds no second row,
+                    # and the actor is the submitter the job already names. Counts and identifiers only.
+                    _auth.audit_event(self.store, "docs.job.create", actor=desc, workspace_id=tenant, object_kind="job", object_id=jid,
+                                      meta={"project_id": pid, "run_no": 1, "origin": origin, "records": n, "phase": phase,
+                                            "formats": list(formats), "idempotency_key": bool(idem_key),
+                                            "skipped": invalid_n if sync else None})
         except sqlite3.IntegrityError:
             # another process inserted the same idempotency key between our check and our insert
             replay = self._idem_find(tenant, scopes, idem_key or "", hashes) if idem_key else None
@@ -1385,9 +1393,11 @@ class JobService:
                            "sync_plan_max": sync_plan_max()}}
 
     # -------------------------------------------------------------- control
-    def cancel(self, jid: str, tenant: str | None = None) -> dict:
+    def cancel(self, jid: str, tenant: str | None = None, principal: dict | None = None) -> dict:
         """Cancel.  queued → cancelled at once; running → cancelling (no new item starts; the item
-        in progress finishes and keeps its result); terminal → unchanged, reported as such."""
+        in progress finishes and keeps its result); terminal → unchanged, reported as such.
+        ``principal``: who asked (the routes pass the request's authority descriptor); without one
+        the audit row names the request principal in the context, else the system."""
         self.get(jid, tenant)
         accepted, reason = True, None
         with self.store.tx() as c:
@@ -1406,6 +1416,11 @@ class JobService:
                 self._emit(c, jid, j["tenant"], "job.cancel_requested", {"status": "cancelling", "run_no": j["run_no"]})
             else:
                 reason = "already_requested"                  # cancelling
+            if reason is None:
+                # Only a cancel that changed the job leaves a row; a repeat or a terminal job changed nothing.
+                _auth.audit_event(self.store, "docs.job.cancel", actor=authority.loads(principal), workspace_id=j["tenant"],
+                                  object_kind="job", object_id=jid,
+                                  meta={"run_no": j["run_no"], **audit_change({"status": st}, {"status": "cancelled" if st == "queued" else "cancelling"})})
         out = self.get(jid, tenant)
         out["cancel"] = {"accepted": accepted, "reason": reason}
         return out
@@ -1466,6 +1481,10 @@ class JobService:
                               (jid, run_no, "retry", requested_by, n + unplanned, now(), "queued", authority.dumps(desc)))
                     counts = self._update_counts(jid, c)
                     self._emit(c, jid, tenant, "job.retry_requested", {"status": "queued", "run_no": run_no, "items": n + unplanned, "counts": counts})
+                    _auth.audit_event(self.store, "docs.job.retry", actor=desc, workspace_id=tenant, object_kind="job", object_id=jid,
+                                      meta={"project_id": j0.get("project_id"), "run_no": run_no, "items": n + unplanned,
+                                            "include_skipped": include_skipped, "failed_only": failed_only,
+                                            "requested_by": requested_by, "idempotency_key": bool(idem_key)})
         except sqlite3.IntegrityError:
             replay = self._idem_find(tenant, scopes, idem_key or "", (h,)) if idem_key else None
             if not replay:

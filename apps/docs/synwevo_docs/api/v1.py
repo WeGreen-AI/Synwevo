@@ -1017,7 +1017,7 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
             summary="取消任务", openapi_extra=_ox("write"))
     def cancel_job(request: Request, jid: str):
         scope(request, "write")
-        return job_view(jobs.cancel(jid))
+        return job_view(jobs.cancel(jid, principal=authority.describe_request(request)))
 
     @r.post("/jobs/{jid}/retry", response_model=JobView, response_model_exclude_unset=True,
             summary="重试失败项（沿用原快照，可带 Idempotency-Key）",

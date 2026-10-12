@@ -1210,16 +1210,20 @@ class App:
         tid = new_id("t")
         t = now()
         orig = self.store.put_blob(working)
-        self.store.insert("templates", {"id": tid, "tenant": current_tenant(), "name": (name or filename.rsplit(".", 1)[0])[:100], "kind": "uploaded",
-                                        "format": fmt, "original_blob": orig, "original_name": filename, "head": 1,
-                                        "created_at": t, "updated_at": t, "info": {"notes": notes, "inventory": check.get("inventory", {}),
-                                                                                    "pdf": check.get("pdf"), "image": image_meta}, "scan": scan_record})
-        self.store.insert("template_versions", {"template_id": tid, "version_no": 1, "parent_no": None, "working_blob": orig,
-                                                "slots": [], "note": "上传原始模板", "created_at": t})
+        with self.store.tx():
+            self.store.insert("templates", {"id": tid, "tenant": current_tenant(), "name": (name or filename.rsplit(".", 1)[0])[:100], "kind": "uploaded",
+                                            "format": fmt, "original_blob": orig, "original_name": filename, "head": 1,
+                                            "created_at": t, "updated_at": t, "info": {"notes": notes, "inventory": check.get("inventory", {}),
+                                                                                        "pdf": check.get("pdf"), "image": image_meta}, "scan": scan_record})
+            self.store.insert("template_versions", {"template_id": tid, "version_no": 1, "parent_no": None, "working_blob": orig,
+                                                    "slots": [], "note": "上传原始模板", "created_at": t})
+            self.audit("template.upload", "template", tid, format=fmt, size=len(data), converted=working is not data,
+                       macros_removed=bool(info["macros"]), scan=(scan_record or {}).get("status"))
         return self.template_detail(tid)
 
     def new_version(self, tid: str, working: bytes, slots: list[dict], note: str, editor: dict | None = None,
-                    base_head: int | None = None, *, discard_live: bool = False) -> dict:
+                    base_head: int | None = None, *, discard_live: bool = False, reason: str = "save",
+                    audit: bool = True) -> dict:
         """Add a version and make it head — only if head is still ``base_head`` (the version the
         edit was computed from). ``discard_live``: the caller confirmed that unsaved live edits may be
         thrown away (``_guard_live_edits``); an open live table room then starts afresh from this
@@ -1247,6 +1251,12 @@ class App:
                       "VALUES (?,?,?,?,?,?,?,?)", (tid, no, head, blob, json.dumps(slots, ensure_ascii=False), note,
                                                    json.dumps(editor, ensure_ascii=False) if editor is not None else None, t))
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (no, t, tid))
+            if audit:
+                # One row per version, from whichever path made it (an editor save, a field added,
+                # changed or removed, a live table save); `reason` is that path. A definition import
+                # folds its intermediate versions and writes its own row (audit=False here).
+                self.audit("template.version", "template", tid, version_no=no, previous_head=head, reason=reason,
+                           slots=len(slots), discard_live=discard_live, base_head_given=base_head is not None)
         self._bump_projects_using(tid)
         self._template_changed(tid, no, editor, "save", previous=head, discard_live=discard_live)
         return self.template_detail(tid)
@@ -1363,6 +1373,8 @@ class App:
                     raise ServiceError(400, "nothing_to_undo", "没有可撤销的模板修改")
                 target = v["parent_no"]
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (target, now(), tid))
+            self.audit("template.redo" if redo else "template.undo", "template", tid, version_no=target, previous_head=head,
+                       discard_live=discard_live)
         self._bump_projects_using(tid)
         self._template_changed(tid, target, self.editor_of(tid, self.get_version(tid, target), self.get_template(tid).get("kind")),
                                "redo" if redo else "undo", previous=head, discard_live=discard_live)
@@ -1398,6 +1410,8 @@ class App:
                       (tid, no, head, target["working_blob"], json.dumps(target["slots"] or [], ensure_ascii=False), f"恢复自 v{version_no}",
                        json.dumps(target.get("editor"), ensure_ascii=False) if target.get("editor") is not None else None, t))
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (no, t, tid))
+            self.audit("template.restore", "template", tid, version_no=no, previous_head=head, source_version=version_no,
+                       discard_live=discard_live)
         self._bump_projects_using(tid)
         self._template_changed(tid, no, target.get("editor"), "restore", previous=head, source=version_no, discard_live=discard_live)
         return self.template_detail(tid)
@@ -1415,17 +1429,22 @@ class App:
         v = self.get_version(tid, r["head"])
         nid = new_id("t")
         t = now()
-        self.store.insert("templates", {"id": nid, "tenant": current_tenant(), "name": (name or r["name"] + " 副本")[:100], "kind": r["kind"], "format": r["format"],
-                                        "original_blob": r["original_blob"], "original_name": r["original_name"], "head": 1,
-                                        "created_at": t, "updated_at": t, "info": r.get("info"), "scan": r.get("scan")})
-        self.store.insert("template_versions", {"template_id": nid, "version_no": 1, "parent_no": None, "working_blob": v["working_blob"],
-                                                "slots": v["slots"], "editor": self.editor_of(tid, v, r.get("kind")), "note": f"复制自「{r['name']}」v{v['version_no']}",
-                                                "created_at": t})
+        with self.store.tx():
+            self.store.insert("templates", {"id": nid, "tenant": current_tenant(), "name": (name or r["name"] + " 副本")[:100], "kind": r["kind"], "format": r["format"],
+                                            "original_blob": r["original_blob"], "original_name": r["original_name"], "head": 1,
+                                            "created_at": t, "updated_at": t, "info": r.get("info"), "scan": r.get("scan")})
+            self.store.insert("template_versions", {"template_id": nid, "version_no": 1, "parent_no": None, "working_blob": v["working_blob"],
+                                                    "slots": v["slots"], "editor": self.editor_of(tid, v, r.get("kind")), "note": f"复制自「{r['name']}」v{v['version_no']}",
+                                                    "created_at": t})
+            self.audit("template.duplicate", "template", nid, source_template_id=tid, source_version=v["version_no"],
+                       kind=r["kind"], format=r["format"])
         return self.template_detail(nid)
 
     def rename_template(self, tid: str, name: str) -> dict:
-        self.get_template(tid)
-        self.store.update("templates", {"id": tid}, {"name": name.strip()[:100], "updated_at": now()})
+        with self.store.tx():
+            self.get_template(tid)
+            self.store.update("templates", {"id": tid}, {"name": name.strip()[:100], "updated_at": now()})
+            self.audit("template.rename", "template", tid)         # the name itself is content
         return self.template_detail(tid)
 
     def delete_template(self, tid: str) -> None:
@@ -1435,19 +1454,21 @@ class App:
         request 404ed on the template) and every job on them failed. Refused instead, with the
         projects named, so the person can re-point or delete them first. Archived projects count:
         they are still usable. A template a rescan rejected can be deleted like any other."""
-        t = self.get_template(tid, accepted=False)
-        users = self.store.all("SELECT id, name FROM projects WHERE template_id=? AND deleted=0 AND COALESCE(tenant,'default')=? "
-                               "ORDER BY updated_at DESC", (tid, current_tenant()))
-        if users:
-            raise ServiceError(409, "template_in_use",
-                               f"模板「{t['name']}」正被 {len(users)} 个项目使用（如「{users[0]['name']}」）。"
-                               "请先在这些项目中更换模板或删除这些项目，再删除模板",
-                               {"projects": [{"id": u["id"], "name": u["name"]} for u in users[:20]], "total": len(users),
-                                "template": t["name"]})
-        self.store.update("templates", {"id": tid}, {"deleted": 1, "updated_at": now()})
+        with self.store.tx():
+            t = self.get_template(tid, accepted=False)
+            users = self.store.all("SELECT id, name FROM projects WHERE template_id=? AND deleted=0 AND COALESCE(tenant,'default')=? "
+                                   "ORDER BY updated_at DESC", (tid, current_tenant()))
+            if users:
+                raise ServiceError(409, "template_in_use",
+                                   f"模板「{t['name']}」正被 {len(users)} 个项目使用（如「{users[0]['name']}」）。"
+                                   "请先在这些项目中更换模板或删除这些项目，再删除模板",
+                                   {"projects": [{"id": u["id"], "name": u["name"]} for u in users[:20]], "total": len(users),
+                                    "template": t["name"]})
+            self.store.update("templates", {"id": tid}, {"deleted": 1, "updated_at": now()})
+            self.audit("template.delete", "template", tid, kind=t.get("kind"), format=t.get("format"))
         self._template_changed(tid, None, None, "delete")
 
-    def add_slot(self, tid: str, req: dict) -> dict:
+    def add_slot(self, tid: str, req: dict, *, audit: bool = True) -> dict:
         r = self.get_template(tid)
         self._refuse_builtin_field_change(r)
         v = self.get_version(tid, r["head"])
@@ -1463,7 +1484,7 @@ class App:
                 raise ServiceError(400, e.code, str(e)) from e
             slots = [blk if s["id"] == blk["id"] else s for s in slots]
             detail = self.new_version(tid, work2, slots, f"为重复内容块「{blk['name']}」添加列「{blk['columns'][-1]['name']}」",
-                                      base_head=r["head"])
+                                      base_head=r["head"], reason="field.add", audit=audit)
             detail["created_slot"] = blk
             return detail
         try:
@@ -1502,7 +1523,7 @@ class App:
             if other:
                 slot["binding"] = other.get("binding") or other["id"]
         slots.append(slot)
-        detail = self.new_version(tid, work2, slots, f"添加字段「{slot['name']}」", base_head=r["head"])
+        detail = self.new_version(tid, work2, slots, f"添加字段「{slot['name']}」", base_head=r["head"], reason="field.add", audit=audit)
         detail["created_slot"] = slot
         return detail
 
@@ -1615,7 +1636,7 @@ class App:
             from .builtin_service import sync_editor_fields
             base = self.editor_of(tid, v, r["kind"])
             editor = sync_editor_fields(r["kind"], base, slots) if base else None
-        return self.new_version(tid, work, slots, note, editor=editor, base_head=r["head"])
+        return self.new_version(tid, work, slots, note, editor=editor, base_head=r["head"], reason="field.update")
 
     def remove_slot(self, tid: str, slot_id: str, project_id: str | None = None, cascade: bool = True, *,
                     expect_head: int | None = None) -> dict:
@@ -1648,7 +1669,7 @@ class App:
             removed_maps = [m for m in ms if m not in keep]
         # The version first: if it is refused as stale, the mappings must still be as they were.
         detail = self.new_version(tid, work, remaining, f"删除字段「{sl['name']}」" + (f"（同时移除 {len(removed_maps)} 个映射）" if removed_maps else ""),
-                                  base_head=r["head"])
+                                  base_head=r["head"], reason="field.remove")
         if removed_maps:
             self.save_mappings(project_id, keep, f"删除字段「{sl['name']}」并移除相关映射")
         detail["removed_mappings"] = [m["id"] for m in removed_maps]
@@ -1816,6 +1837,11 @@ class App:
                 c.execute("INSERT INTO mapping_revs (project_id, rev, parent_rev, data, note, created_at) VALUES (?,?,?,?,?,?)",
                           (pid, mx + 1, cur, json.dumps(clean, ensure_ascii=False), note, now()))
                 c.execute("UPDATE projects SET mapping_rev=? WHERE id=?", (mx + 1, pid))
+            # Revision numbers and counts; the mappings' labels and sources are the project's content.
+            diff = self.mapping_diff(current, clean)
+            self.audit("mappings.save", "project", pid, rev=mx + 1, previous_rev=cur, base_rev=base_rev, merged_with=merged_with,
+                       unchanged=unchanged, count=len(clean), added=len(diff["added"]), removed=len(diff["removed"]),
+                       modified=len(diff["changed"]))
         if not unchanged:
             self.store.bump_project(pid)
             self._project_changed(pid, "mappings.save", {"rev": mx + 1, "note": note, "merged_with": merged_with, **self.mapping_diff(current, clean)})
@@ -1845,6 +1871,7 @@ class App:
                     raise ServiceError(400, "nothing_to_undo", "没有可撤销的映射修改")
                 target = row["parent_rev"]
             c.execute("UPDATE projects SET mapping_rev=? WHERE id=?", (target, pid))
+            self.audit("mappings.redo" if redo else "mappings.undo", "project", pid, rev=target, previous_rev=cur)
         self.store.bump_project(pid)
 
     def mappings_undo(self, pid: str, base_rev: int | None = None) -> dict:

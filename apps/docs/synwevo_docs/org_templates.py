@@ -174,7 +174,7 @@ class OrgTemplates:
         self.store.insert("organization_templates", row)
         self.store.insert("organization_template_releases", {"publication_id": pid, "release_no": 1, "version_no": v["version_no"], "working_blob": v["working_blob"],
                                                              "slots": v["slots"] or [], "info": info, "note": v.get("note"), "released_by": uid, "released_at": ts})
-        self._audit("docs.template.publish", uid, pid, template_id=tid, organization_id=org["id"], version_no=v["version_no"], release_no=1)
+        self._audit("docs.shared_template.publish", uid, pid, template_id=tid, organization_id=org["id"], version_no=v["version_no"], release_no=1)
         return self._out(self.store.one("SELECT * FROM organization_templates WHERE id=?", (pid,)), uid, member)
 
     def update(self, pid: str, uid: str, description: str | None = None, *, set_description: bool = False,
@@ -213,7 +213,7 @@ class OrgTemplates:
         self.store.update("organization_templates", {"id": pid}, changes)
         out = self._out(self.store.one("SELECT * FROM organization_templates WHERE id=?", (pid,)), uid, member)
         out["released"] = released
-        self._audit("docs.template.release", uid, pid, template_id=pub["template_id"], organization_id=pub["organization_id"],
+        self._audit("docs.shared_template.release", uid, pid, template_id=pub["template_id"], organization_id=pub["organization_id"],
                     release_no=out["release_no"], version_no=out["version_no"], released=released,
                     description_changed=True if set_description else None)
         return out
@@ -228,7 +228,7 @@ class OrgTemplates:
             self.store.update("organization_templates", {"id": pid}, {"deprecated_at": now() if deprecated else None, "deprecated_by": uid if deprecated else None,
                                                                        "deprecation_note": (str(note).strip()[:MAX_DESCRIPTION] or None) if deprecated and note else None,
                                                                        "updated_by": uid, "updated_at": now()})
-            self._audit("docs.template.deprecate" if deprecated else "docs.template.restore", uid, pid,
+            self._audit("docs.shared_template.deprecate" if deprecated else "docs.shared_template.restore", uid, pid,
                         template_id=pub["template_id"], organization_id=pub["organization_id"], note_given=True if deprecated and note else None)
         return self._out(self.store.one("SELECT * FROM organization_templates WHERE id=?", (pid,)), uid, member)
 
@@ -274,6 +274,6 @@ class OrgTemplates:
             self.store.insert("template_versions", {"template_id": tid, "version_no": 1, "parent_no": None, "working_blob": pub["working_blob"], "slots": slots,
                                                     "note": f"来自组织共享模板「{pub['name']}」第 {pub['release_no']} 次发布", "created_at": ts})
             self.store.execute("UPDATE organization_templates SET use_count=use_count+1 WHERE id=?", (pid,))
-            self._audit("docs.template.use_shared", uid, pid, template_id=tid, organization_id=pub["organization_id"],
+            self._audit("docs.shared_template.use", uid, pid, template_id=tid, organization_id=pub["organization_id"],
                         release_no=pub["release_no"], version_no=pub["version_no"])
         return self.app.template_detail(tid)

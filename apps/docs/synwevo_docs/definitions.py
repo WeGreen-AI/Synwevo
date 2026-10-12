@@ -378,7 +378,7 @@ def import_template_fields(app: App, tid: str, doc: dict) -> dict:
             label = spec.get("name", "") if isinstance(spec, dict) else ""
             try:
                 req = resolve_field(app, tid, spec)
-                detail = app.add_slot(tid, req)
+                detail = app.add_slot(tid, req, audit=False)      # one row for the import, below
             except ServiceError as e:
                 raise ServiceError(e.status, e.code, f"第 {i + 1} 个字段「{label}」：{e.message}", e.detail) from e
             created.append(detail["created_slot"])
@@ -392,6 +392,9 @@ def import_template_fields(app: App, tid: str, doc: dict) -> dict:
                       "VALUES (?,?,?,?,?,?,?,?)", (tid, max0 + 1, head0, final["working_blob"], final["slots"], final["editor"],
                                                    f"按定义添加 {len(created)} 个字段：{names}", now()))
             c.execute("UPDATE templates SET head=?, updated_at=? WHERE id=?", (max0 + 1, now(), tid))
+        head_now = c.execute("SELECT head FROM templates WHERE id=?", (tid,)).fetchone()["head"]
+        app.audit("template.fields.import", "template", tid, count=len(created), version_no=head_now, previous_head=head0,
+                  folded=len(created) > 1)
     return {"template": app.template_detail(tid)["version"]["no"],
             "created": [{"id": x["id"], "name": x["name"], "kind": x["kind"]} for x in created]}
 
@@ -488,4 +491,7 @@ def import_project(app: App, pid: str, doc: dict, base_rev: int | None = None) -
             app.update_project(pid, {"output": output})
         if maps is not None:
             app.save_mappings(pid, maps, "导入定义", base_rev)
+        # The import's own row; the settings and mapping changes it made have theirs (same request).
+        app.audit("project.import", "project", pid, binding=bool(binding), rule=rule is not None, output=output is not None,
+                  mappings=len(maps) if maps is not None else None, base_rev=base_rev)
     return export_project(app, pid)
