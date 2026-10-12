@@ -863,3 +863,8 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 审查：workflow `wf_766e2d36`，64 个只读代理（7 名审查者 + 每条发现 3 名反驳者），对 `origin/main..HEAD` 24 个提交；19 条原始发现，14 条成立（4 中 10 低），5 条驳回（结论见 CODE_REVIEW CR-108 表）。全部成立项已修复。
 修复验证：account-web typecheck + 178 项（新增访问解释翻译、宽限期保存、分隔符、模拟拒绝句、审计变化列等 SSR 测试）；六个前端工作区共 613 项通过；根 typecheck/build 通过（五个外壳）；五守卫通过；`test_platform_access.py` 48 项、`test_external_identity.py` 等 61 项、`test_admin.py` 全文件（含新增 5 项与故障注入 8 路由）通过；`test_admin_operations.py`/`test_admin_settings.py` 新增 `changed` 断言通过；Docs 契约同步测试通过（`openapi.yaml` 由 CLI 重新生成）。推送前清单：仓库根 `pytest` 全量 5791 通过、2 跳过（37 分钟）；`SYNWEVO_SHEET_CLIENTS=required` sheet 客户端测试 98 通过；infra/production unittest 12 通过；SDK Python 55、TypeScript 48 通过；根 typecheck/build（五个外壳）与六个工作区测试 613 通过；五守卫通过。
 浏览器（隔离合成实例 127.0.0.1:33954，重建后的账户外壳）：重跑 2026-10-12-admin-audit-changes 的证明——冻结/解冻/注册策略变更仍按键显示前后值，且英文审计页按 `admin.workspace.freeze` 筛选只列冻结行（精确匹配，C4）。
+
+## 2026-10-12 CR-109 G26 WP1 一个审计写入口（本地）
+
+`synwevo_core.auth.audit_event` 成为平台与应用共用的唯一审计写入口（D7）：按 `authority.describe*` 描述符映射操作者（人 / 委托客户端后的人 / 机器凭据 / 系统），网关把当前主体放进 `context.principal()`，服务层写行时不必拿着 request 也能说清是谁、是哪次请求；`Platform.audit` 与 `Capabilities._audit` 都委托给它，行内容不变（meta 统一为规范 JSON）。
+测试：`tests/integration/test_audit_actor_mapping.py` 3 例（五种身份映射与无身份回落、上下文主体/请求 ID 与显式参数的优先级、与写入同事务回滚）；连同账户服务 test_admin/test_platform_access/test_admin_unclaim、集成 test_api_platform/test_credentials_keys、Docs 的 governance/rescan/scan_recovery、Suite 的 capabilities/machine_api/machine_webhooks/agent 系列共 527 通过；五守卫通过。全量：仓库根 `pytest` 全量 5794 通过、2 跳过（24 分钟，含新增 3 例）。

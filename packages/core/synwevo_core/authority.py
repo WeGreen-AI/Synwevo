@@ -81,6 +81,31 @@ def describe_request(request) -> dict:
     return describe(user=getattr(state, "user", None), tenant=current_tenant())
 
 
+def audit_actor(desc: dict | None) -> tuple[str, str | None, dict | None]:
+    """How an audit row names the holder of a descriptor (admin coverage G26, decision D7):
+    ``(actor_kind, actor_id, delegation)``.
+
+    * ``user`` → ``("user", user_id, None)``;
+    * ``delegated`` → ``("user", user_id, {"kind": "oauth_client", "client_id", "grant"})`` — the
+      person acts, the client is named beside them, as `Capabilities` already records it;
+    * ``service_account`` / ``api_key`` → ``("machine", label(desc), None)`` — ``service:<client>``
+      or ``api:<key id>``, never a secret;
+    * ``operator`` (a command line, a background runner), ``invalid`` or none →
+      ``("system", desc.get("label") or "operator", None)``: the caller may name itself
+      (``cli:<os user>``) but cannot borrow a person's identity.
+    """
+    d = desc or {}
+    kind = d.get("kind")
+    if kind == "user":
+        return "user", d.get("user_id"), None
+    if kind == "delegated":
+        return "user", d.get("user_id"), {"kind": "oauth_client", "client_id": d.get("client_id"),
+                                          "grant": d.get("family_id")}
+    if kind in ("service_account", "api_key"):
+        return "machine", label(d), None
+    return "system", d.get("label") or "operator", None
+
+
 def dumps(desc: dict | None) -> str | None:
     return json.dumps(desc, ensure_ascii=False, sort_keys=True) if desc is not None else None
 

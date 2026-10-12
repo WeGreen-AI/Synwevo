@@ -102,28 +102,55 @@ def _public(row: dict) -> dict:
     return out
 
 
-def audit_event(store: Store, action: str, *, actor_kind: str, actor_id: str | None = None,
-                workspace_id: str | None = None, object_kind: str | None = None,
+def audit_event(store: Store, action: str, *, actor_kind: str | None = None, actor_id: str | None = None,
+                actor: dict | None = None, workspace_id: str | None = None, object_kind: str | None = None,
                 object_id: str | None = None, result: str = "ok", meta: dict | None = None,
-                request=None) -> None:
-    """Append a security event from code that has no `Platform.audit` at hand (the CLIs, and the
-    machine-API governance routes). Same row shape and the same rule: identifiers and metadata
-    only — never a key, a secret, a token or a hash.
+                request=None, request_id: str | None = None) -> None:
+    """Append a security event: the one writer every application and the platform use (admin
+    coverage G26, decision D7). Same row shape everywhere and the same rule: identifiers and
+    metadata only — never a key, a secret, a token, a hash or a person's content.
 
-    The address comes from `http.client_ip`, the same as `Platform.audit`: behind the
-    recommended reverse proxy (`SYNWEVO_TRUST_PROXY`) the socket peer is the proxy, and a row
-    that records the proxy for every caller says nothing about who called."""
+    Who acted, in order of precedence: an explicit ``actor_kind``/``actor_id`` (the account
+    service names its administrators this way); else ``actor``, an authority descriptor
+    (`authority.describe` / `describe_request`), mapped by `authority.audit_actor` — a person,
+    a person behind a delegated client (named in ``meta.delegation``), a machine credential
+    (``service:…`` / ``api:…``) or the system; else the request's principal the gate recorded
+    (`context.principal()`), so a service needs no request in hand to say who wrote; else the
+    system. An ``actor_id`` given without a kind is a person.
+
+    The request id comes from the request, else from ``request_id``, else from the gate's
+    context (`context.request_id()`), so a row written deep in a service still names the call.
+    The address comes from `http.client_ip`, the same as before: behind the recommended reverse
+    proxy (`SYNWEVO_TRUST_PROXY`) the socket peer is the proxy, and a row that records the proxy
+    for every caller says nothing about who called.
+
+    ``meta`` is stored as canonical JSON (sorted keys, no padding, non-JSON values as text),
+    the one shape every reader parses and every test can match.
+
+    A failure to write is raised, never swallowed: inside a `Store.tx()` it undoes the write it
+    belongs to (the caller's transaction), which is the rule for every state change."""
+    from . import context
+    from .authority import audit_actor
+    meta = dict(meta or {})
+    if actor_kind is None and actor_id is None:
+        desc = actor if actor is not None else context.principal()
+        if desc is not None:
+            actor_kind, actor_id, delegation = audit_actor(desc)
+            if delegation and "delegation" not in meta:
+                meta["delegation"] = delegation
+    if actor_kind is None:
+        actor_kind = "user" if actor_id is not None else "system"
     state = getattr(request, "state", None)
     ip = None
     if request is not None:
         from .http import client_ip           # imported here: http imports this module
         ip = client_ip(request) or None
+    rid = getattr(state, "request_id", None) or request_id or context.request_id()
     store.execute(
         "INSERT INTO audit_events (id,at,actor_kind,actor_id,workspace_id,action,object_kind,"
         "object_id,result,request_id,ip,meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (new_id("ae"), time.time(), actor_kind, actor_id, workspace_id, action, object_kind, object_id,
-         result, getattr(state, "request_id", None), ip,
-         json.dumps(meta or {}, ensure_ascii=False)))
+         result, rid, ip, json.dumps(meta, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)))
 
 UI_AUTH_MODES = ("none", "basic", "proxy", "session")
 

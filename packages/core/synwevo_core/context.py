@@ -60,6 +60,29 @@ def reset_actor(token) -> None:
         pass
 
 
+# The authority descriptor of whoever acts in this request (authority.describe_request): the
+# session's person, a delegated client with its person, a service account or an API key. Set by
+# the gate beside `_actor`; read by `auth.audit_event` so a service records who did a write
+# without every call site threading the request through. Background runners and command lines
+# set it themselves. Never an authorization input.
+_principal: ContextVar[dict | None] = ContextVar("synwevo_principal", default=None)
+
+
+def principal() -> dict | None:
+    return _principal.get()
+
+
+def set_principal(desc: dict | None):
+    return _principal.set(desc)
+
+
+def reset_principal(token) -> None:
+    try:
+        _principal.reset(token)
+    except (ValueError, LookupError):
+        pass
+
+
 # The request's trace id (the gate's validated X-Request-ID), for records that outlive the request:
 # a job remembers the request that submitted it, and its first event says so, so an integrator can
 # follow one id from the call log to the job and its webhooks. Never an authorization input.

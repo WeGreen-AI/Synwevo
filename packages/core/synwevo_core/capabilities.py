@@ -915,12 +915,13 @@ class Capabilities:
             meta["delegation"] = call.delegation
         if call.correlation_id != call.run_id:
             meta["correlation_id"] = call.correlation_id
-        state = getattr(getattr(call.request, "state", None), "request_id", None)
-        t.execute("INSERT INTO audit_events (id,at,actor_kind,actor_id,workspace_id,action,object_kind,"
-                  "object_id,result,request_id,ip,meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                  (new_id("ae"), now(), "user", call.user_id, call.workspace_id, call.op.id,
-                   call.object_kind, call.object_id, "ok" if status != "failed" else "error", state, None,
-                   canonical(meta)))
+        # The one writer (G26): `store.execute` joins the open transaction `t` belongs to, so the
+        # row still commits or rolls back with the operation. The actor stays the person for now
+        # (`via` and `delegation` say how they called); the machine actor kinds come with WP8.
+        from .auth import audit_event
+        audit_event(self.store, call.op.id, actor_kind="user", actor_id=call.user_id,
+                    workspace_id=call.workspace_id, object_kind=call.object_kind, object_id=call.object_id,
+                    result="ok" if status != "failed" else "error", meta=meta, request=call.request)
 
     def _after(self, call: Call) -> None:
         # Listeners (flow wake-ups) act for whoever owns what they wake, never for this caller:

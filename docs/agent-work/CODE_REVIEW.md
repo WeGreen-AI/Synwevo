@@ -467,3 +467,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查者确认稳妥的部分（摘要）：14 条新 `/api/admin` 路由全部在权限矩阵且危险写入先做严格重认证；全部新写入在 `_write()/store.tx()` 内与审计同事务；限流列表不含 IP 与原始桶名；成员/模板事件负载与 SDK 类型逐字段一致且只含标识符；新增测试断言拒绝路径而非只有成功路径。
 - 修复分工：三个子代理（前端 C3/C9/C11/C12；契约 C14；核心 C1/C6）在互不相交的文件上并行，协调者处理 admin 路由、限流分类、注册审计、终结删除事务与统一前后值覆盖；提交由协调者按明确路径一次完成。
 - 验证：见 EVIDENCE 同名节（六个前端工作区 613 项、account-web 178 项含新增 SSR 测试、五守卫、infra unittest、SDK 测试、三个 Python 套件、隔离浏览器重验收）。
+
+## CR-109 · G26 WP1 一个审计写入口、按身份描述符归因（2026-10-12，本轮新增，本地已验证）
+
+- 位置：packages/core/synwevo_core/authority.py（`audit_actor(desc)`：user→(user, user_id)；delegated→(user, user_id)+`meta.delegation={kind: oauth_client, client_id, grant}`；service_account/api_key→(machine, `service:…`/`api:…`)；operator/无→(system, 自报标签或 operator)）；packages/core/synwevo_core/context.py（`_principal` 上下文变量与 `principal/set_principal/reset_principal`）；packages/core/synwevo_core/auth.py（`audit_event` 成为唯一写入口：显式 actor_kind/actor_id > `actor` 描述符 > `context.principal()` > system；仅给 actor_id 视为人；request_id 取请求 > 显式参数 > `context.request_id()`；meta 以规范 JSON 存储）；packages/core/synwevo_core/http.py（网关在设置 `_actor` 处同时设置/复位 principal，匿名请求为 None；`Platform.audit` 保留签名与 `workspace_given` 语义、新增 `actor=`，INSERT 委托给 `audit_event`）；packages/core/synwevo_core/capabilities.py（`_audit` 经 `audit_event` 写行，`store.execute` 加入同一事务；本包仍记 actor_kind=user，机器身份归 WP8）；tests/integration/test_audit_actor_mapping.py（新增 3 例）。
+- 审查要点：账户服务 50 余处 `Platform.audit` 调用全部显式给 actor_id（默认 actor_kind=user）→ 行内容不变，仅 meta 序列化改为规范形（键排序、无空格），任何读取方都用 JSON 解析；Suite 原本就用规范 JSON；审计失败仍抛出，事务回滚语义不变（新增事务共享测试）；`describe_request` 对匿名请求不再误标为 operator（网关只在有用户或主体时设置）。
+- 风险/未做：Docs 的约 80 条无审计路由（WP2–WP7）、Suite 旁路（WP9）、机器 actor_kind 与拒绝/失败/完成行（WP8）、Suite webhook 与投递列（WP10）、审计页目录（WP11）按 D7 分包推进。
+- 验证：新增 3 例 + 账户服务/集成/Docs/Suite 所有读 `audit_events` 的测试文件 527 通过；五守卫通过；全量 pytest 见 EVIDENCE 同名节。

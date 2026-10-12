@@ -615,8 +615,8 @@ def build_platform(data_dir_arg: str | None = None) -> Platform:
     # kind it got — and none of them can forget to re-check one of the three.
     machine = MachineAuth(store, identity, auth)
 
-    def audit(request: Request, action: str, *, actor_id: str | None = None, actor_kind: str = "user",
-              workspace_id: str | None = None, object_kind: str | None = None,
+    def audit(request: Request, action: str, *, actor_id: str | None = None, actor_kind: str | None = "user",
+              actor: dict | None = None, workspace_id: str | None = None, object_kind: str | None = None,
               object_id: str | None = None, result: str = "ok", meta: dict | None = None,
               workspace_given: bool = False) -> None:
         """Append a security event.
@@ -624,20 +624,19 @@ def build_platform(data_dir_arg: str | None = None) -> Platform:
         Metadata only — never a password, token, TOTP seed, recovery code or document content.
         A failure to write must not be mistaken for the action not happening, so it is raised
         rather than swallowed; callers that must not fail closed catch it deliberately.
+
+        The row is written by `auth.audit_event`, the one writer (G26): an `actor` descriptor
+        names a machine credential or a delegated person the same way an application's write
+        does; the account service keeps naming its administrators by ``actor_id``.
         """
-        import json as _json
-        store.execute(
-            "INSERT INTO audit_events (id,at,actor_kind,actor_id,workspace_id,action,object_kind,"
-            "object_id,result,request_id,ip,meta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            (new_id("ae"), time.time(), actor_kind, actor_id,
-             # workspace_given: the caller named the target (possibly none); do not substitute the
-             # actor's own session workspace, which would attribute a platform action to it.
-             workspace_id if workspace_given else (workspace_id or getattr(getattr(request, "state", None), "workspace_id", None)),
-             action, object_kind, object_id,
-             result, getattr(getattr(request, "state", None), "request_id", None),
-             # Background runners (mail, imports) audit with request=None: no request id, no address.
-             (client_ip(request) or None) if request is not None else None,
-             _json.dumps(meta or {}, ensure_ascii=False)))
+        from .auth import audit_event
+        audit_event(store, action, actor_kind=actor_kind if actor is None else None, actor_id=actor_id, actor=actor,
+                    # workspace_given: the caller named the target (possibly none); do not substitute the
+                    # actor's own session workspace, which would attribute a platform action to it.
+                    workspace_id=workspace_id if workspace_given else (workspace_id or getattr(getattr(request, "state", None), "workspace_id", None)),
+                    object_kind=object_kind, object_id=object_id, result=result, meta=meta,
+                    # Background runners (mail, imports) audit with request=None: no request id, no address.
+                    request=request)
 
     return Platform(store=store, auth=auth, identity=identity, sessions=sessions,
                     machine=machine, audit=audit)
@@ -1243,10 +1242,14 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             return await finish(await _svc_err(request, e))
         # Who acts, for attribution: the session's person, or the person a delegated machine
         # token acts for; None for service accounts and anonymous paths.
-        from .context import reset_actor, reset_request_id, set_actor, set_request_id
+        from .authority import describe_request
+        from .context import reset_actor, reset_principal, reset_request_id, set_actor, set_principal, set_request_id
         _user = getattr(request.state, "user", None)
         _principal = getattr(request.state, "principal", None)
         actor_token = set_actor((_user or {}).get("id") or (_principal or {}).get("user_id"))
+        # The full descriptor, for services that record who wrote (auth.audit_event): None for
+        # an anonymous request, so nothing is attributed to an operator by mistake.
+        principal_token = set_principal(describe_request(request) if (_user or _principal) else None)
         rid_token = set_request_id(request.state.request_id)
         try:
             resp = await call_next(request)
@@ -1254,6 +1257,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             resp = await _unexpected(request, exc)
         finally:
             reset_request_id(rid_token)
+            reset_principal(principal_token)
             reset_actor(actor_token)
             if token is not None:
                 try:
