@@ -97,3 +97,11 @@ def stopping(c, sub, unsent: int | None = None) -> tuple[int | None, float | Non
         event = c.execute("SELECT created_at FROM app_events WHERE seq=?", (first,)).fetchone()
         position, at = first - 1, min(at, event["created_at"]) if event else at
     return position, at
+
+
+#: Which secret signed an attempt (a short fingerprint, never the secret or the signature) and
+#: when the signature was made (decision D7 §8): the delivery row is the record of an attempt.
+COLUMNS = [
+    ("suite_webhook_deliveries", "signed_at", "REAL"),
+    ("suite_webhook_deliveries", "signing_key", "TEXT"),
+]

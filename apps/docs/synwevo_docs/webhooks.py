@@ -574,6 +574,9 @@ class WebhookDispatcher:
                 "X-Synwevo-Delivery": d["id"],
                 "X-Synwevo-Event": etype,
             }
+            # Which key signed this attempt and when (D7 §8): a fingerprint, never the secret.
+            self.store.execute("UPDATE webhook_deliveries SET signed_at=?, signing_key=? WHERE id=?",
+                               (ts, hashlib.sha256(str(keys[0]).encode("utf-8")).hexdigest()[:12], d["id"]))
             url = sub["url"]
         else:
             if d["endpoint"] not in endpoints():
@@ -610,6 +613,8 @@ class WebhookDispatcher:
                 "webhook-timestamp": str(ts),
                 "webhook-signature": signature_header(d["event_id"], ts, body, [key] + ([prev] if prev else [])),
             }
+            self.store.execute("UPDATE webhook_deliveries SET signed_at=?, signing_key=? WHERE id=?",
+                               (ts, hashlib.sha256(str(key).encode("utf-8")).hexdigest()[:12], d["id"]))
             url = d["endpoint"]
 
         attempts = (d.get("attempts") or 0) + 1

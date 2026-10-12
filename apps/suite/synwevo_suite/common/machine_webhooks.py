@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -70,6 +71,8 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Body, Request, Response
 
+from synwevo_core import auth as _auth
+from synwevo_core.audit_change import change as audit_change
 from synwevo_core import authority, env, journal, sealed, sealed_token
 from synwevo_core import webhook_delivery as delivery
 from synwevo_core.errors import ServiceError
@@ -279,6 +282,16 @@ def _public(store, row: dict, at: float, p: dict) -> dict:
             "consecutive_failures": row["consecutive_failures"], "last_success_at": row["last_success_at"],
             "last_failure_at": row["last_failure_at"],
             "previous_secret_expires_at": prev if row.get("secret_prev_enc") and prev and prev > at else None}
+
+
+def _delegation_of(p: dict) -> dict:
+    return {"kind": "oauth_client", "client_id": p["client_id"], "grant": p.get("grant_family")}
+
+
+def _key_fingerprint(key) -> str:
+    """A short, one-way name for a signing secret: enough to say which key signed, useless to sign."""
+    raw = key if isinstance(key, (bytes, bytearray)) else str(key).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:12]
 
 
 def delivery_public(row: dict) -> dict:
@@ -656,7 +669,7 @@ class Webhooks:
             raise ServiceError(409, "version_conflict", "订阅已被修改，请重新读取后再轮换")
         return {**self.get(p, sid), "secret": plain}
 
-    def ping(self, p: dict, sid: str) -> dict:
+    def ping(self, p: dict, sid: str, note=None) -> dict:
         """One signed ``webhook.ping`` now, through the same checks and the same connection as a
         real delivery. It carries no event, is not retried and does not count for or against the
         subscription's health — and it is rationed: the destination never proved it wants these.
@@ -696,6 +709,9 @@ class Webhooks:
                           "VALUES (?,?,?,?,?,'pending',1,?,?,?,?)",
                           (did, sid, row["workspace_id"], new_id("evt"), PING_EVENT, t + LEASE_S, t, self.worker_id,
                            t + LEASE_S))
+                if note is not None:
+                    note("suite.webhook.ping", sid, {"subscription_id": sid, "delegation": _delegation_of(p)},
+                         object_kind="webhook_delivery", object_id=did)
             self.send_one(self.store.one("SELECT * FROM suite_webhook_deliveries WHERE id=?", (did,)))
         return delivery_public(self.store.one("SELECT * FROM suite_webhook_deliveries WHERE id=?", (did,)))
 
@@ -734,7 +750,7 @@ class Webhooks:
             raise ServiceError(404, "delivery_not_found", "投递记录不存在")
         return delivery_public(row)
 
-    def redeliver(self, p: dict, sid: str, did: str) -> dict:
+    def redeliver(self, p: dict, sid: str, did: str, note=None) -> dict:
         """Queue one more delivery of an event this subscription was sent before. It is not a way
         around anything: the new delivery goes through the same checks before it is sent, and an
         event older than the feed serves is not sent again."""
@@ -770,6 +786,10 @@ class Webhooks:
             c.execute("INSERT INTO suite_webhook_deliveries (id, subscription_id, workspace_id, event_id, event_seq, event_type, "
                       "status, attempts, next_attempt_at, created_at, redelivery_of) VALUES (?,?,?,?,?,?,'pending',0,?,?,?)",
                       (new, sid, sub["workspace_id"], orig["event_id"], orig["event_seq"], orig["event_type"], t, t, did))
+            if note is not None:
+                note("suite.webhook.redeliver", sid, {"subscription_id": sid, "redelivery_of": did, "event_type": orig["event_type"],
+                                                      "delegation": _delegation_of(p)},
+                     object_kind="webhook_delivery", object_id=new)
         return delivery_public(self.store.one("SELECT * FROM suite_webhook_deliveries WHERE id=?", (new,)))
 
     # ------------------------------------------------------------------ disabling
@@ -795,8 +815,15 @@ class Webhooks:
                 n = c.execute("UPDATE suite_webhook_subscriptions SET status='disabled', disabled_reason=?, status_changed_at=?, "
                               "updated_at=?, gap_cursor=?, gap_at=?, version=version+1 WHERE id=?" + judged,
                               (reason, t, t, *self._stopping(c, current, unsent), sid, *args)).rowcount
-            c.execute("UPDATE suite_webhook_deliveries SET status='dropped', last_error=?, next_attempt_at=NULL "
-                      "WHERE subscription_id=? AND status='pending'", (f"subscription_disabled:{reason}", sid))
+            dropped = c.execute("UPDATE suite_webhook_deliveries SET status='dropped', last_error=?, next_attempt_at=NULL "
+                                "WHERE subscription_id=? AND status='pending'", (f"subscription_disabled:{reason}", sid)).rowcount
+            if n:
+                # The dispatcher's own decision (a receiver gone, failing too long, a grant revoked), in
+                # the transaction that stops the subscription (D7 §8); the journal stays beside it.
+                _auth.audit_event(self.store, "suite.webhook.disable", actor={"kind": "operator", "label": "webhook-dispatcher"},
+                                  workspace_id=current["workspace_id"], object_kind="webhook_subscription", object_id=sid,
+                                  meta={"reason": reason, "unsent": unsent, "dropped": dropped,
+                                        **audit_change({"status": current["status"]}, {"status": "disabled"})})
         if n:
             try:
                 journal.record(self.store, "webhook_disabled", subscription_id=sid)
@@ -1083,6 +1110,10 @@ class Webhooks:
                    # it too, under the signature: one receiver may serve several people's grants.
                    "X-Synwevo-Subscription": sub["id"],
                    "X-Synwevo-Delivery": d["id"], "X-Synwevo-Event": d["event_type"]}
+        # Which key signed this attempt and when (D7 §8), on the delivery row: a fingerprint of the
+        # current secret, never the secret or the signature.
+        self.store.execute("UPDATE suite_webhook_deliveries SET signed_at=?, signing_key=? WHERE id=?",
+                           (ts, _key_fingerprint(keys[0]), d["id"]))
         url = sub["url"]
         started = time.monotonic()
         deadline = None
@@ -1329,9 +1360,9 @@ def build_router(service: Webhooks, audit=None):
     def noting(request: Request, p: dict):
         if audit is None:
             return None
-        return lambda action, sid, meta: audit(request, action, actor_id=p["user_id"], workspace_id=p["tenant"],
-                                               workspace_given=True, object_kind="webhook_subscription", object_id=sid,
-                                               meta=meta)
+        return lambda action, sid, meta, object_kind="webhook_subscription", object_id=None: audit(
+            request, action, actor_id=p["user_id"], workspace_id=p["tenant"], workspace_given=True,
+            object_kind=object_kind, object_id=object_id or sid, meta=meta)
 
     def caller(request: Request) -> dict:
         p = getattr(request.state, "principal", None)
@@ -1412,7 +1443,7 @@ def build_router(service: Webhooks, audit=None):
     def ping(sid: str, request: Request):
         p = caller(request)
         no_key(request)
-        return service.ping(p, sid)
+        return service.ping(p, sid, note=noting(request, p))
 
     @r.get("/{sid}/deliveries")
     def deliveries(sid: str, request: Request, status: str | None = None, cursor: str | None = None,
@@ -1427,7 +1458,7 @@ def build_router(service: Webhooks, audit=None):
     def redeliver(sid: str, did: str, request: Request):
         p = caller(request)
         no_key(request)
-        return service.redeliver(p, sid, did)
+        return service.redeliver(p, sid, did, note=noting(request, p))
 
     return r
 

@@ -509,3 +509,33 @@ def test_the_cursor_does_not_advance_past_a_failed_enqueue(hub, monkeypatch):
         d.enqueue_new_events()
     assert hub.store.one("SELECT value FROM meta WHERE key=?", (W.LAST_SEQ_KEY,))["value"] == before
     assert hub.store.one("SELECT COUNT(*) AS n FROM webhook_deliveries")["n"] == 0
+
+
+# ------------------------------------------------------------------ signing metadata (G26 / D7 §8)
+def test_each_attempt_records_which_key_signed_it_and_when(hub):
+    """The delivery row says which secret signed an attempt — a short fingerprint, never the secret
+    or the signature — and when; the public views say neither; a rotation changes the fingerprint
+    of later attempts only, and the receiver can tell nothing from it."""
+    import re
+    from .test_webhook_support import sub_rows
+    rx = hub.receiver()
+    sub = hub.create(rx.url, events=["*"])
+    d = hub.dispatcher()
+    fixture_event(hub.store, "default")
+    assert d.run_once() == 1
+    first = sub_rows(hub.store, sub["id"])[0]
+    h = rx.received[0]["headers"]
+    assert re.fullmatch(r"[0-9a-f]{12}", first["signing_key"]) and int(first["signed_at"]) == int(h["webhook-timestamp"])
+    assert first["signing_key"] not in sub["secret"] and first["signing_key"] not in h["webhook-signature"]
+    assert sub["secret"] not in json.dumps(dict(first), default=str)
+    listed = hub.c.get(f"{BASE}/{sub['id']}/deliveries", headers=hub.keys["admin"]).json()
+    one = hub.c.get(f"{BASE}/{sub['id']}/deliveries/{first['id']}", headers=hub.keys["admin"]).json()
+    for view in (listed, one):
+        text = json.dumps(view)
+        assert "signing_key" not in text and "signed_at" not in text and first["signing_key"] not in text
+    hub.c.post(f"{BASE}/{sub['id']}/rotate-secret", json={"overlap_s": 600}, headers=hub.keys["admin"])
+    fixture_event(hub.store, "default")
+    assert d.run_once() == 1
+    rows = sub_rows(hub.store, sub["id"])
+    assert rows[0]["signing_key"] == first["signing_key"] and rows[1]["signing_key"] != first["signing_key"]
+    assert re.fullmatch(r"[0-9a-f]{12}", rows[1]["signing_key"]) and rows[1]["signed_at"] >= first["signed_at"]
