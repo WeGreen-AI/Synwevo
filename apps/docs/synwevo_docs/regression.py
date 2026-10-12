@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 
+from synwevo_core import auth as _auth
 from synwevo_core import env
 import re
 import shutil
@@ -183,6 +184,12 @@ def capture(app, pid: str, name: str, note: str = "", sample_keys: list[str] | N
     # A key saved before the per-group key format changed still names its sample.
     chosen = [r for r in recs if not wanted or r["key"] in wanted or R.legacy_record_key(r) in wanted][:MAX_SAMPLES]
     cid = time.strftime("%Y%m%d-%H%M%S") + "-" + hashlib.sha1(f"{pid}{time.time()}".encode()).hexdigest()[:6]
+    # A case lives on the filesystem and cannot roll back with a row, so the row comes first
+    # (decision D7 §7): a capture that then fails half-way is a recorded attempt, never an
+    # unexplained directory. Counts and the project id only; names and sample text stay in the case.
+    with app.store.tx():
+        _auth.audit_event(app.store, "docs.regression_case.create", workspace_id=tenant, object_kind="regression_case", object_id=cid,
+                          meta={"project_id": pid, "records_total": len(recs), "samples": len(chosen), "sources": len(ctx.source_rows)})
     d = cases_dir(tenant, app.store.root, create=True) / cid
     (d / "sources").mkdir(parents=True)
     tpl_fmt = ctx.template["format"]
@@ -288,8 +295,14 @@ def load_builtin(cid: str) -> tuple[dict, Path]:
     return _load_from(builtin_dir() / cid)
 
 
-def delete(cid: str, tenant: str, data_root: Path | str | None = None) -> None:
+def delete(cid: str, tenant: str, data_root: Path | str | None = None, *, store=None) -> None:
+    """``store``: where the audit row goes. It is written before the directory is removed, so a
+    removal that fails half-way still has a record of who asked; a caller without a store (a
+    maintenance script on a copied data directory) leaves none."""
     _, d = load(cid, tenant, data_root)
+    if store is not None:
+        with store.tx():
+            _auth.audit_event(store, "docs.regression_case.delete", workspace_id=tenant, object_kind="regression_case", object_id=cid)
     shutil.rmtree(d)
 
 

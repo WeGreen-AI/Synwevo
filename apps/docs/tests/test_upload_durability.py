@@ -85,20 +85,22 @@ from synwevo_docs.api import v1_uploads as U
 p = json.load(sys.stdin)
 app = create_app(p["root"], start_jobs=False)
 store = app.state.app.store
-execute, write = store.execute, U._write_all
+execute, write, unlink = store.execute, U._write_all, U._unlink_part
 def interrupted_execute(sql, args=()):
-    completing = "UPDATE uploads SET status='complete'" in sql
-    if completing and p["phase"] == "before_commit":
+    if "UPDATE uploads SET status='complete'" in sql and p["phase"] == "before_commit":
         os._exit(88)
-    result = execute(sql, args)
-    if completing and p["phase"] == "after_commit":
-        os._exit(88)
-    return result
+    return execute(sql, args)
 def interrupted_write(fd, data):
     write(fd, data)
     if p["phase"] == "copying_blob":
         os._exit(88)
-store.execute, U._write_all = interrupted_execute, interrupted_write
+def interrupted_unlink(store_, uid_):
+    # The completion and its audit row commit together; the first statement after that commit
+    # is the staging file's removal, so a crash here is "committed, not yet cleaned up".
+    if p["phase"] == "after_commit":
+        os._exit(88)
+    unlink(store_, uid_)
+store.execute, U._write_all, U._unlink_part = interrupted_execute, interrupted_write, interrupted_unlink
 TestClient(app).post("/api/v1/uploads/" + p["uid"] + "/complete", json={}, headers=p["headers"])
 raise SystemExit("completion did not reach the injected interruption")
 '''

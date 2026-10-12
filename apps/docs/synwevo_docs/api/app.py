@@ -298,7 +298,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     def regression_delete(cid: str):
         from ..regression import RegressionError, delete
         try:
-            delete(cid, current_tenant(), store.root)
+            delete(cid, current_tenant(), store.root, store=store)
         except RegressionError as e:
             raise ServiceError(404 if e.code == "not_found" else 400, e.code, str(e)) from e
         return {"ok": True}

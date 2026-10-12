@@ -61,6 +61,8 @@ from fastapi import APIRouter, Body, Request
 from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 
+from synwevo_core import auth as _auth
+from synwevo_core.audit_change import change as audit_change
 from synwevo_core import authority, env
 from synwevo_core import quarantine
 from synwevo_core.context import tenant as current_tenant
@@ -322,8 +324,13 @@ def use_upload(store: Store, upload_id, make, kind: str, check_size=None) -> dic
         store.execute("UPDATE uploads SET status='complete', consumed_by=NULL, updated_at=? "
                       "WHERE id=? AND status='consumed' AND consumed_by=?", (now(), upload_id, f"{kind}:pending"))
         raise
-    store.execute("UPDATE uploads SET consumed_by=?, updated_at=? WHERE id=?",
-                  (f"{kind}:{out.get('id')}", now(), upload_id))
+    with store.tx():
+        store.execute("UPDATE uploads SET consumed_by=?, updated_at=? WHERE id=?",
+                      (f"{kind}:{out.get('id')}", now(), upload_id))
+        # The object made from the upload has its own row (source.add / template.upload); this one
+        # says which upload became it.
+        _auth.audit_event(store, "docs.upload.consume", workspace_id=current_tenant(), object_kind="upload", object_id=upload_id,
+                          meta={"kind": kind, "object_id": out.get("id"), **audit_change({"status": "complete"}, {"status": "consumed"})})
     return out
 
 
@@ -401,7 +408,11 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
                    "filename": name.strip(), "size": size, "sha256": sha, "purpose": purpose,
                    "received": 0, "status": "open",
                    "created_at": t, "updated_at": t, "expires_at": t + UPLOAD_TTL_S}
-            store.insert("uploads", row)
+            with store.tx():
+                store.insert("uploads", row)
+                # The upload's own row (G26 / D7): size and purpose, never the file name or the digest.
+                _auth.audit_event(store, "docs.upload.create", workspace_id=current_tenant(), object_kind="upload", object_id=uid,
+                                  meta={"size": size, "purpose": purpose, "sha256_declared": sha is not None})
             part_path(store, uid).touch(mode=0o600)
             return _view(row, public_base(request))
 
@@ -569,13 +580,21 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
             if quarantine.verdict(store, actual):
                 # Bytes a quarantine verdict took out of the store are not written back by a
                 # completed upload (CI-90): the upload ends here, its staging bytes deleted.
-                store.execute("UPDATE uploads SET status='aborted', received=0, updated_at=? WHERE id=? AND status='open'", (now(), uid))
+                with store.tx():
+                    if store.execute("UPDATE uploads SET status='aborted', received=0, updated_at=? WHERE id=? AND status='open'", (now(), uid)) == 1:
+                        _auth.audit_event(store, "docs.upload.abort", workspace_id=current_tenant(), object_kind="upload", object_id=uid,
+                                          meta={"reason": "malware_verdict", **audit_change({"status": "open"}, {"status": "aborted"})})
                 _unlink_part(store, uid)
                 from ..services import earlier_malicious
                 raise earlier_malicious(row.get("filename") or "upload")
             _copy_completed_blob(store, uid, fd, actual)
-            done = store.execute("UPDATE uploads SET status='complete', blob=?, sha256=?, updated_at=? "
-                                 "WHERE id=? AND status='open'", (actual, actual, now(), uid))
+            with store.tx():
+                done = store.execute("UPDATE uploads SET status='complete', blob=?, sha256=?, updated_at=? "
+                                     "WHERE id=? AND status='open'", (actual, actual, now(), uid))
+                if done == 1:
+                    _auth.audit_event(store, "docs.upload.complete", workspace_id=current_tenant(), object_kind="upload", object_id=uid,
+                                      meta={"size": int(row["size"]), "purpose": row.get("purpose"), "checksum_given": given is not None,
+                                            **audit_change({"status": "open"}, {"status": "complete"})})
             if done != 1:
                 # Report a competing lifecycle change instead of claiming completion.
                 now_row = _load(store, uid)
@@ -596,8 +615,11 @@ def build_router(app_, auth, idem, scope, public_base) -> APIRouter:
             # Under the upload's lock: aborting while a PUT or complete holds it used to delete
             # the file under them (a 500 from complete, or a 200 "aborted" beside a stored blob).
             with _Locked(part_path(store, uid)):
-                store.execute("UPDATE uploads SET status='aborted', updated_at=? WHERE id=? "
-                              "AND status IN ('open','complete')", (now(), uid))
+                with store.tx():
+                    if store.execute("UPDATE uploads SET status='aborted', updated_at=? WHERE id=? "
+                                     "AND status IN ('open','complete')", (now(), uid)) == 1:
+                        _auth.audit_event(store, "docs.upload.abort", workspace_id=current_tenant(), object_kind="upload", object_id=uid,
+                                          meta={"reason": "requested", **audit_change({"status": row["status"]}, {"status": "aborted"})})
                 _unlink_part(store, uid)
         return _view(visible_upload(uid), public_base(request))
 

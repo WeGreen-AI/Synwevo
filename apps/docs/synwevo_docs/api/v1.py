@@ -29,6 +29,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, File, Form, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 
+from synwevo_core import auth as _auth
 from synwevo_core import authority, env
 from synwevo_core.context import UI_TENANT, as_tenant
 from synwevo_core.context import tenant as current_tenant
@@ -1071,6 +1072,9 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
             a = _artifact_meta(store, aid)
             token, exp = auth.sign_link("artifact", aid, p["tenant"], LINK_TTL_S,
                                         principal=authority.describe_request(request))
+            # Minting a link is an export (G26 / D7): the row names the artifact and the expiry, never the token.
+            _auth.audit_event(store, "docs.artifact.link", actor=authority.describe_request(request), workspace_id=p["tenant"],
+                              object_kind="artifact", object_id=aid, meta={"expires_at": exp, "ttl_s": LINK_TTL_S})
             return {"url": public_base(request) + f"/api/v1/download/{token}", "expires_at": exp,
                     "filename": a["filename"], "sha256": a["blob"], "size": a["size"]}
 
@@ -1095,6 +1099,8 @@ def build_router(app_, views, jobs, auth, attachment) -> APIRouter:
             ident = jid if not fmt else f"{jid}|{fmt}"
             token, exp = auth.sign_link("archive", ident, p["tenant"], LINK_TTL_S,
                                         principal=authority.describe_request(request))
+            _auth.audit_event(store, "docs.job.archive_link", actor=authority.describe_request(request), workspace_id=p["tenant"],
+                              object_kind="job", object_id=jid, meta={"expires_at": exp, "ttl_s": LINK_TTL_S, "format": fmt})
             return {"url": public_base(request) + f"/api/v1/download/{token}", "expires_at": exp}
 
         return idem.run(request, "/api/v1/jobs/{jid}/archive-link", {"jid": jid, "format": fmt}, make,
