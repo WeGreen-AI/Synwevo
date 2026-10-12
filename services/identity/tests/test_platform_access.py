@@ -499,7 +499,8 @@ def test_a_super_administrator_grants_and_revokes_through_the_routes(world):
     ev = store.one("SELECT * FROM audit_events WHERE action='admin.platform.grant' AND object_id=?", (target["id"],))
     meta = json.loads(ev["meta"])
     assert ev["actor_id"] == world["root"]["id"] and ev["request_id"] and meta["reason"] == REASON
-    assert meta["before"] == [] and meta["after"] == ["support"] and meta["role"] == "support"
+    assert meta["before"] == {"roles": []} and meta["after"] == {"roles": ["support"]} and meta["changed"] == ["roles"] \
+        and meta["role"] == "support"
     explained = root.get(f"/api/admin/users/{target['id']}/platform-access").json()
     assert explained["roles"] == ["support"] and explained["grants"][0]["granted_by_email"] == "root@example.test"
     assert {p["permission"] for p in explained["permissions"]} == ROLES["support"]
@@ -509,7 +510,7 @@ def test_a_super_administrator_grants_and_revokes_through_the_routes(world):
     r = post(root, f"/api/admin/platform-grants/{body['grant']['id']}/revoke", {"reason": REASON})
     assert r.status_code == 200 and r.json()["after"] == []
     ev = store.one("SELECT meta FROM audit_events WHERE action='admin.platform.revoke' AND object_id=?", (target["id"],))
-    assert json.loads(ev["meta"])["before"] == ["support"]
+    assert json.loads(ev["meta"])["before"] == {"roles": ["support"]}
     assert post(root, f"/api/admin/platform-grants/{body['grant']['id']}/revoke", {"reason": REASON}).json()["error"] == "grant_revoked"
 
 
@@ -886,7 +887,7 @@ def test_the_audit_names_what_a_change_did_even_on_an_account_whose_grants_do_no
     assert r.status_code == 200 and r.json()["before"] == ["support"] and r.json()["after"] == []
     meta = json.loads(store.one("SELECT meta FROM audit_events WHERE action='admin.platform.revoke' AND object_id=?",
                                 (target["id"],))["meta"])
-    assert meta["before"] == ["support"] and meta["after"] == []
+    assert meta["before"] == {"roles": ["support"]} and meta["after"] == {"roles": []} and meta["changed"] == ["roles"]
 
 
 def test_a_finalized_deletion_records_each_grant_it_ends(world):
@@ -902,7 +903,7 @@ def test_a_finalized_deletion_records_each_grant_it_ends(world):
     metas = [json.loads(r["meta"]) for r in rows]
     assert sorted(m["role"] for m in metas) == ["auditor", "support"]
     assert all(m["source"] == "system:account_deleted" and m["reason"] == "账户已删除" for m in metas)
-    assert metas[-1]["after"] == [] and all(r["actor_kind"] == "system" for r in rows)
+    assert metas[-1]["after"] == {"roles": []} and all(r["actor_kind"] == "system" for r in rows)
 
 
 def test_a_replayed_deletion_ends_the_grants_with_the_account(world, tmp_path):
@@ -981,7 +982,7 @@ def test_migration_26_to_27_makes_admins_super_admins_and_clears_operators(tmp_p
     assert users == {admin["id"]: "admin", operator["id"]: "none", plain["id"]: "none"}
     assert access.effective_permissions(operator["id"]) == frozenset()
     audit = {r["action"]: r for r in migrated.all("SELECT * FROM audit_events WHERE actor_kind='system'")}
-    assert json.loads(audit["admin.platform.operator_cleared"]["meta"])["before"] == "operator"
+    assert json.loads(audit["admin.platform.operator_cleared"]["meta"])["before"] == {"platform_role": "operator"}
     assert json.loads(audit["admin.platform.grant"]["meta"])["source"] == "migration:v27"
     # opening again changes nothing
     Store(tmp_path / "d")

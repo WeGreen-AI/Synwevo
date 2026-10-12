@@ -1070,3 +1070,87 @@ def test_an_administration_write_is_undone_when_its_audit_cannot_be_written(env,
     assert store.one("SELECT COUNT(*) AS n FROM audit_events WHERE action=? AND result='ok'", (action,))["n"] == audits_before, route
     assert "fixture: audit storage unavailable" not in r.text, "the failure's wording never reaches the caller"
     assert json.loads(r.text).get("request_id"), "the caller gets a request id to quote"
+
+
+def test_a_change_record_covers_both_snapshots_and_names_what_differs():
+    """G24: the unified before/after record — the union of keys on both sides, a missing key read
+    as None, and `changed` listing the keys whose value differs (empty for a no-op)."""
+    from synwevo_core.audit_change import change
+    assert change({"mode": "off"}, {"mode": "required", "grace_until": 5.0}) == {
+        "before": {"grace_until": None, "mode": "off"}, "after": {"grace_until": 5.0, "mode": "required"},
+        "changed": ["grace_until", "mode"]}
+    assert change({"frozen": True}, {"frozen": True}) == {"before": {"frozen": True}, "after": {"frozen": True}, "changed": []}
+
+
+def test_state_changing_administration_actions_record_unified_before_and_after(env, monkeypatch, tmp_path):
+    """G24 统一前后值: every state-changing administration action puts the same three keys in its
+    audit record — `before` and `after` over the same keys and `changed` naming the keys that
+    differ — so the audit page shows a change the same way for every action. Exercised through
+    the real routes, in an order that keeps the synthetic member usable until the end."""
+    import base64
+    import json
+    import pyotp
+    from synwevo_core.push import PushSubscriptions
+    c, store, ident, alice, api = env["c"], env["store"], env["ident"], env["alice"], env["api"]
+    monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "http://testserver")
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
+    monkeypatch.setenv("SYNWEVO_MAIL_DIR", str(tmp_path / "fixture-mail"))
+    monkeypatch.setenv("SYNWEVO_REGISTRATION", "invite")
+    _reauth(c)
+    expect: dict[str, tuple[dict, dict]] = {}
+    assert post(c, "/api/admin/registration", {"mode": "open", "expected_mode": "invite", "reason": REASON}).status_code == 200
+    expect["admin.registration.update"] = ({"mode": "invite"}, {"mode": "open"})
+    stranger = TestClient(api)
+    for _ in range(3):
+        post(stranger, "/api/auth/login", {"email": "alice@example.com", "password": "not-the-passphrase"})
+    handle = c.get(f"/api/admin/users/{alice['id']}").json()["backoff"]["throttle_id"]
+    count = store.one("SELECT count FROM auth_attempts WHERE bucket=?", ("user:" + ident.get_user(alice["id"])["email_key"],))["count"]
+    assert post(c, "/api/admin/security/throttles/lift", {"id": handle, "reason": REASON}).status_code == 200
+    expect["admin.security.throttle_lift"] = ({"count": count}, {"active": False, "count": 0})
+    b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()  # noqa: E731
+    PushSubscriptions(store).add(alice["id"], None, {"endpoint": "https://push.example.test/fixture-g24-values",
+                                                     "keys": {"p256dh": b64(b"\x04" + b"\x01" * 64), "auth": b64(b"\x02" * 16)}})
+    assert post(c, f"/api/admin/users/{alice['id']}/push-subscriptions/revoke", {"reason": REASON}).status_code == 200
+    expect["admin.user.push_revoke"] = ({"subscriptions": 1}, {"subscriptions": 0})
+    # Owned by another synthetic account: a sole owner cannot request deletion (ownership continuity).
+    owner = ident.create_user("owner-g24@example.com", PW, status="active")
+    wid = ident.create_workspace("G24 synthetic workspace", owner_id=owner["id"])["id"]
+    r = post(c, f"/api/admin/workspaces/{wid}/freeze", {"reason": REASON})
+    assert r.status_code == 200, r.text
+    r = post(c, f"/api/admin/workspaces/{wid}/unfreeze", {"reason": REASON})
+    assert r.status_code == 200, r.text
+    expect["admin.workspace.freeze"] = ({"frozen": False}, {"frozen": True})
+    expect["admin.workspace.unfreeze"] = ({"frozen": True}, {"frozen": False})
+    r = post(c, f"/api/admin/agent-safety/users/{alice['id']}/suspend", {"reason": REASON})
+    assert r.status_code == 200, r.text
+    assert post(c, f"/api/admin/agent-safety/users/{alice['id']}/lift", {"reason": REASON}).status_code == 200
+    expect["admin.agent_safety.suspend"] = ({"suspended": False}, {"suspended": True})
+    expect["admin.agent_safety.lift"] = ({"suspended": True}, {"suspended": False})
+    assert post(c, f"/api/admin/users/{alice['id']}/revoke-sessions", {"reason": REASON}).status_code == 200
+    expect["admin.user.revoke_sessions"] = ({}, {"sessions": 0, "tokens": 0})
+    # Signed in again to ask for the deletion herself (a deletion request ends the sessions too).
+    assert post(env["plain"], "/api/auth/login", {"email": "alice@example.com", "password": PW}).status_code == 200
+    assert post(env["plain"], "/api/auth/deletion", {"password": PW}).status_code == 200
+    store.execute("UPDATE users SET deletion_due_at=? WHERE id=?", (now() - 1, alice["id"]))
+    r = post(c, "/api/admin/account-deletions/finalize", {"reason": REASON})
+    assert r.status_code == 200, r.text
+    expect["admin.accounts.finalize_deletions"] = ({"overdue": 1}, {"overdue": 0})
+    assert post(c, "/api/auth/mfa/reauth", {"password": PW}).status_code == 200
+    secret = post(c, "/api/auth/mfa/totp/begin").json()["secret"]
+    assert post(c, "/api/auth/mfa/totp/confirm", {"code": pyotp.TOTP(secret).now()}).status_code == 200
+    _reauth(c)
+    r = post(c, "/api/admin/security/second-factor", {"mode": "required", "expected_mode": "off", "grace_days": 7, "reason": REASON})
+    assert r.status_code == 200, r.text
+    expect["admin.security.second_factor"] = ({"mode": "off", "grace_until": None}, {"mode": "required", "grace_until": r.json()["grace_until"]})
+    for action, (before, after) in expect.items():
+        ev = store.one("SELECT meta FROM audit_events WHERE action=? AND result='ok' ORDER BY rowid DESC LIMIT 1", (action,))
+        assert ev, action
+        meta = json.loads(ev["meta"])
+        assert isinstance(meta["before"], dict) and isinstance(meta["after"], dict), action
+        assert set(meta["before"]) == set(meta["after"]), (action, meta["before"], meta["after"])
+        assert meta["changed"] == sorted(k for k in meta["after"] if meta["before"][k] != meta["after"][k]), action
+        assert meta["changed"], (action, "a state-changing action records what changed")
+        assert all(meta["before"][k] == v for k, v in before.items()), (action, meta["before"])
+        assert all(meta["after"][k] == v for k, v in after.items()), (action, meta["after"])
+    assert expect["admin.user.revoke_sessions"] and json.loads(store.one(
+        "SELECT meta FROM audit_events WHERE action='admin.user.revoke_sessions' ORDER BY rowid DESC LIMIT 1")["meta"])["before"]["sessions"] >= 1

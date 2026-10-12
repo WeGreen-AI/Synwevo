@@ -10,6 +10,7 @@ import { AppRunsTab, FlowRunsTab } from "./governance/RunsTab";
 import { SuperAdminOffersAdmin, SuperAdminReadiness } from "./governance/SuperAdminHandover";
 import { MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
 import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
+import { auditChanges } from "./governance/audit";
 import { PlatformAccessDialog, PlatformAdminsTab, platformRoleLabel, platformRolesText, ROLE_ORDER, systemReasonText } from "./governance/PlatformAccess";
 import { AUDIT_SCOPES, mayClaim, permitted, userOffers, type Held, type Tab } from "./governance/access";
 import { useAdminData, useAdminPage } from "./governance/data";
@@ -473,12 +474,13 @@ function AuditTab({ onDenied }: { onDenied: () => void }) {
     {err && <div className="notice err" role="alert">{err} <button className="btn sm" onClick={reload}>{tr("重试")}</button></div>}
     {loading && <p role="status">{tr("正在加载审计记录…")}</p>}
     <div className="list-wrap"><table className="gov" aria-label={tr("审计记录")} aria-busy={loading}>
-      <thead><tr><th scope="col">{tr("时间")}</th><th scope="col" className="act">{tr("操作")}</th><th scope="col">{tr("操作者")}</th><th scope="col">{tr("对象")}</th><th scope="col">{tr("结果")}</th><th scope="col">{tr("理由")}</th></tr></thead>
+      <thead><tr><th scope="col">{tr("时间")}</th><th scope="col" className="act">{tr("操作")}</th><th scope="col">{tr("操作者")}</th><th scope="col">{tr("对象")}</th><th scope="col">{tr("结果")}</th><th scope="col">{tr("变化")}</th><th scope="col">{tr("理由")}</th></tr></thead>
       <tbody>{items.map((a) => <tr key={a.id}>
         <td>{fmtTime(a.at)}</td><td>{named(a.action) ? <>{named(a.action)}<div className="tiny muted"><code>{a.action}</code></div></> : a.action}</td><td>{a.actor_email || "—"}</td>
         <td>{a.object_id || "—"}</td><td>{a.result === "ok" ? tr("成功") : a.result === "denied" ? tr("被拒绝") : a.result}</td>
+        <td>{auditChanges(a.meta).length ? auditChanges(a.meta).map((ch) => <div key={ch.key} className="tiny nowrap"><code>{ch.key}</code> {ch.before} → {ch.after}</div>) : "—"}</td>
         <td>{a.actor_kind === "system" ? systemReasonText(String(a.meta.reason || "")) : String(a.meta.reason || "")}</td>
-      </tr>)}{!loading && !err && !items.length && <tr className="empty-row"><td colSpan={6}>{tr("没有匹配的记录。")}</td></tr>}</tbody>
+      </tr>)}{!loading && !err && !items.length && <tr className="empty-row"><td colSpan={7}>{tr("没有匹配的记录。")}</td></tr>}</tbody>
     </table></div>
     <PageControls offset={offset} total={data?.total || 0} busy={loading || !!err} onPage={setOffset} />
   </section>;

@@ -12,6 +12,7 @@ import hashlib
 import json
 import unicodedata
 
+from .audit_change import change
 from .errors import ServiceError
 from .journal import record_organization
 from .store import Store, new_id, now
@@ -522,7 +523,7 @@ class Organizations:
             # SQL can commit without fsync; later failure leaves a fail-closed
             # restore intent rather than allowing an old archive to revive access.
             self._record(actor_id, oid, "organization." + action,
-                         {"reason": reason, "before": org["status"], "after": values["status"]})
+                         {"reason": reason, **change({"status": org["status"]}, {"status": values["status"]})})
             if action in ("freeze", "delete"):
                 lifecycle = {k: values[k] for k in ("deleted_at", "recover_until", "previous_status")} if action == "delete" else {}
                 record_organization(self.store, "organization_" + ("frozen" if action == "freeze" else "deleted"),

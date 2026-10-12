@@ -1,0 +1,79 @@
+{
+ "base": "http://127.0.0.1:33953",
+ "engine": "chrome",
+ "steps": {
+  "writes": {
+   "freeze": 200,
+   "unfreeze": 200,
+   "registration": 200,
+   "registration_restored": 200,
+   "freeze_body": {
+    "ok": true,
+    "status": "frozen",
+    "tokens_revoked": 0,
+    "sessions_moved": 0,
+    "workspace": {
+     "id": "w_8c98d209fa36",
+     "name": "Synthetic shared workspace",
+     "kind": "org",
+     "status": "frozen",
+     "created_at": 1791783838.024565,
+     "members": 2,
+     "projects": 0,
+     "apps": [
+      "docweave"
+     ]
+    },
+    "journaled": true
+   }
+  },
+  "zh_hans": {
+   "headers": [
+    "时间",
+    "操作",
+    "操作者",
+    "对象",
+    "结果",
+    "变化",
+    "理由"
+   ],
+   "change_column": true,
+   "freeze_rows": [
+    "2026/10/12 13:44\t冻结工作空间 | admin.workspace.freeze | \tadmin-fixture@example.test\tw_8c98d209fa36\t成功\t | frozen false → true | \t合成验收：核对审计页前后值列（冻结）"
+   ],
+   "unfreeze_rows": [
+    "2026/10/12 13:44\t解冻工作空间 | admin.workspace.unfreeze | \tadmin-fixture@example.test\tw_8c98d209fa36\t成功\t | frozen true → false | \t合成验收：核对审计页前后值列（解冻）"
+   ],
+   "registration_rows": [
+    "2026/10/12 13:44\t修改注册策略 | admin.registration.update | \tadmin-fixture@example.test\tregistration.mode\t成功\t | mode open → invite | \t合成验收：恢复注册策略",
+    "2026/10/12 13:44\t修改注册策略 | admin.registration.update | \tadmin-fixture@example.test\tregistration.mode\t成功\t | mode invite → open | \t合成验收：核对审计页前后值列（注册策略）"
+   ],
+   "freeze_shows_change": true,
+   "unfreeze_shows_change": true,
+   "registration_shows_change": true
+  },
+  "en": {
+   "headers": [
+    "Time",
+    "Actions",
+    "Actor",
+    "Object",
+    "Result",
+    "Change",
+    "Reason"
+   ],
+   "change_column": true,
+   "freeze_rows": [
+    "10/12/2026, 01:44 PM\tFreeze a workspace | admin.workspace.freeze | \tadmin-fixture@example.test\tw_8c98d209fa36\tSuccess\t | frozen false → true | \t合成验收：核对审计页前后值列（冻结）"
+   ],
+   "freeze_shows_change": true,
+   "han_outside_reasons": [
+    "简体中文",
+    "繁體中文"
+   ]
+  },
+  "console_errors": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ]
+ }
+}

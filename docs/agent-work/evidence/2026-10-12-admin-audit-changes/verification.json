@@ -1,0 +1,25 @@
+{
+  "id": "CR-107",
+  "scope": "Admin G24 统一前后值: every state-changing administration action records before/after/changed the same way; the audit page shows the change",
+  "date": "2026-10-12",
+  "instance": "isolated synwevo_server role=all on 127.0.0.1:33953 (MAIL_MODE=file, synthetic accounts only; data dir under the session scratchpad, never data/)",
+  "engine": "system Chrome via Playwright (channel=chrome), viewport 1440x900",
+  "proof": "scratchpad a13/a37_proof.py; browser-report.json in this directory is its output",
+  "flow": "super administrator signs in, re-authenticates for administration (POST /api/auth/reauth scope=admin), freezes and unfreezes the synthetic shared workspace and flips the registration policy twice through the real routes with reasons; then the audit page (zh-Hans, then en) is filtered to each action and the change column is read",
+  "results": {
+    "writes": {"freeze": 200, "unfreeze": 200, "registration": 200, "registration_restored": 200},
+    "zh-Hans": {"headers": ["时间", "操作", "操作者", "对象", "结果", "变化", "理由"], "freeze_row_change": "frozen false → true", "unfreeze_row_change": "frozen true → false", "registration_row_changes": ["mode invite → open", "mode open → invite"]},
+    "en": {"headers": ["Time", "Actions", "Actor", "Object", "Result", "Change", "Reason"], "freeze_row_change": "frozen false → true", "han_outside_data": "only the language autonyms and the administrator's own Chinese reasons"},
+    "console": "one 401 on /api/auth/me from the anonymous session probe on the sign-in page (expected); no page errors"
+  },
+  "verification": {
+    "python": "305 passed, 0 failed（进度行计数；-q 汇总行未输出） (test_admin, test_platform_access, test_organizations, test_organization_extras, test_admin_agent_safety, integration api_platform_quotas / model_cost_admission / organization_restore / platform_settings)",
+    "account-web": "typecheck clean; 177 tests passed (new admin-audit-changes.test.mjs)",
+    "guards": "check_boundaries, check_brand, check_design, check_component_names, brand_assets --check: all passed",
+    "not run": "Docs and Suite Python suites (no change there); full identity suite beyond the files above"
+  },
+  "notes": [
+    "The new test found a true no-op on the way: revoking the sessions of an account that had just requested deletion changed nothing (the request had already ended them), and the record said so (changed: []). The test now revokes while a session is live; a no-op is still recorded truthfully.",
+    "Model provider / cost / price publications already record full before/after snapshots of their own shape; they were left as they are and have no changed list."
+  ]
+}

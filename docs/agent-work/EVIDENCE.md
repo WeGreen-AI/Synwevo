@@ -851,3 +851,9 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 检查项：表单标题可见（标题或编辑器标题输入框）、三个分区标签为该语言、`scrollWidth` 不超视口、英文页在数据之外无汉字（个人空间名「… 的空间」是账户创建时按 zh-Hans 生成的数据，语言菜单项为各语言自称）。控制台仅登录页匿名探测 `/api/auth/me` 的一次 401，属预期。
 走查发现 3 处并修正后重跑取证：英文表单库标题「Form」→「Forms」（源文改用「表单库」；Forms 目录「表单」改为单数「Form」与其他目录一致）；「1 submissions」→「1 submission」（拆两条复数消息；`packages/ui` 翻译器无 `count` 时按唯一数字参数选形，新增测试）；空间切换器无组织名时不再以「 · 」开头。
 验证：packages/ui 20、auth-client 41、docs-web 145、messages-web 25、suite-web 206、account-web 175 全部通过；根 typecheck/build 通过；五守卫通过；Python 套件未跑（无 Python 改动）。证据：evidence/2026-10-12-forms-wide-locales/（15 张截图、browser-report.json、verification.json）。
+
+## 2026-10-12 CR-107 Admin G24 统一前后值（本地+隔离浏览器）
+
+`synwevo_core.audit_change.change(before, after)` 产出审计 meta 的三个固定键：同键快照 `before`/`after`（一侧缺的键记为空）与差异键列表 `changed`（空操作为空列表，照实记录）。应用于账户服务的注册策略、第二因素策略（含宽限期截止）、解除限流、冻结/解冻、认领/撤回历史数据、终结删除、撤销全部/单设备会话、移除安全密钥、解除外部身份、撤销推送、Agent 暂停/恢复，以及核心的平台角色授予/撤销（含系统路径、运维角色清除）与组织状态变更。审计页新增「变化」列按 `changed` 逐键显示「键 前 → 后」，没有记录的动作显示「—」。
+测试：`test_admin.py` 新增 2 例——纯函数形状；经真实路由做 11 种变更后逐动作断言三键结构与期望前后值（过程中发现一次真实空操作：刚申请注销的账户再撤销会话时 `changed` 为空，测试改为在会话存活时撤销）；`test_platform_access.py` 3 处既有断言改为新结构；account-web 新增 `admin-audit-changes.test.mjs`（变化行、旧标量形状不视为变化记录、结构值以 JSON 打印）。相关 Python 套件 305 passed, 0 failed（进度行计数；-q 汇总行未输出）；account-web typecheck + 177 通过；五守卫通过。
+浏览器（隔离合成实例 127.0.0.1:33953，系统 Chrome，1440×900）：最高管理员经 `/api/auth/reauth`（scope=admin）后以真实路由冻结→解冻合成共享空间、两次切换注册策略；审计页（简体/English）表头含「变化」/「Change」，按动作筛选后各行显示 `frozen false → true`、`frozen true → false`、`mode invite → open`、`mode open → invite`；英文页数据之外无中文。证据：evidence/2026-10-12-admin-audit-changes/（3 张截图、browser-report.json、verification.json）。

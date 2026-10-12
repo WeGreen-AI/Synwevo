@@ -18,6 +18,7 @@ from fastapi import APIRouter, Body, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from synwevo_core.agent_safety import AgentAccess, AgentReports, SafetyEvents, SafetyRules
+from synwevo_core.audit_change import change
 from synwevo_core.errors import ServiceError
 from synwevo_core.platform_access import require_platform
 
@@ -108,11 +109,13 @@ def build_router(store, audit) -> APIRouter:
             who = actor(request, "platform.users.manage")
             if not store.one("SELECT 1 FROM users WHERE id=? AND deleted_at IS NULL", (user_id,)):
                 raise ServiceError(404, "user_not_found", "账户不存在")
+            was = bool(store.one("SELECT 1 FROM agent_access_suspensions WHERE user_id=? AND lifted_at IS NULL", (user_id,)))
             out = access.suspend(user_id, who["id"], reason=body.reason, report_id=body.report_id)
             # The administrator's reason is audited like every other account action's (the
             # account detail's timeline shows it); it is the administrator's words, not a message.
             record(request, who, "admin.agent_safety.suspend", "user", user_id,
-                   {"suspension_id": out["id"], "report_id": body.report_id, "reason": body.reason})
+                   {**change({"suspended": was}, {"suspended": True}),
+                    "suspension_id": out["id"], "report_id": body.report_id, "reason": body.reason})
         return out
 
     @r.post("/users/{user_id}/lift")
@@ -121,7 +124,8 @@ def build_router(store, audit) -> APIRouter:
         with store.tx():
             who = actor(request, "platform.users.manage")
             out = access.lift(user_id, who["id"], reason=body.reason)
-            record(request, who, "admin.agent_safety.lift", "user", user_id, {"suspension_id": out["id"], "reason": body.reason})
+            record(request, who, "admin.agent_safety.lift", "user", user_id,
+                   {**change({"suspended": True}, {"suspended": False}), "suspension_id": out["id"], "reason": body.reason})
         return out
 
     return r

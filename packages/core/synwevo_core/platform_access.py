@@ -100,6 +100,7 @@ import logging
 import sqlite3
 import time
 
+from .audit_change import change
 from .errors import ServiceError
 from .store import Store, new_id
 
@@ -535,7 +536,7 @@ class PlatformAccess:
             after = self.live_roles(target_id)
             tightened = self._tighten_sessions(target_id)
             self._audit("admin.platform.grant", actor_id=target_id if offer_id else actor_id, target=target_id,
-                        meta={"grant_id": gid, "role": role, "before": before, "after": after,
+                        meta={"grant_id": gid, "role": role, **change({"roles": before}, {"roles": after}),
                               "reason": reason, "expires_at": expires_at, "sessions_tightened": tightened,
                               **({"offer_id": offer_id, "authorized_by": actor_id} if offer_id else {}),
                               **({"replaced_expired_grant": replaced} if replaced else {})})
@@ -619,7 +620,7 @@ class PlatformAccess:
         self._sync_mirror(uid, ts)
         after = self.live_roles(uid)
         self._audit("admin.platform.revoke", actor_id=actor_id, target=uid,
-                    meta={"grant_id": g["id"], "role": g["role"], "before": before, "after": after,
+                    meta={"grant_id": g["id"], "role": g["role"], **change({"roles": before}, {"roles": after}),
                           "reason": reason})
         if journal:
             from .journal import record_platform_revocation
@@ -652,7 +653,7 @@ class PlatformAccess:
             self._tighten_sessions(uid)
             _system_audit(self.store, "admin.platform.grant", uid,
                           {"grant_id": gid, "role": role, "source": source, "reason": reason,
-                           "before": before, "after": self.live_roles(uid),
+                           **change({"roles": before}, {"roles": self.live_roles(uid)}),
                            **({"replaced_expired_grant": replaced[0]} if replaced else {})})
         return {"grant": self.grant_row(gid)}
 
@@ -671,7 +672,7 @@ class PlatformAccess:
                                    "WHERE id=? AND revoked_at IS NULL", (ts, source, reason, g["id"]))
                 _system_audit(self.store, "admin.platform.revoke", uid,
                               {"grant_id": g["id"], "role": g["role"], "source": source, "reason": reason,
-                               "before": before, "after": self.live_roles(uid)})
+                               **change({"roles": before}, {"roles": self.live_roles(uid)})})
             self._sync_mirror(uid, ts)
         return len(rows)
 
@@ -701,7 +702,7 @@ def reconcile_mirror(store: Store, *, source: str) -> int:
     for row in store.all("SELECT id FROM users WHERE platform_role='operator'"):
         store.execute("UPDATE users SET platform_role='none', updated_at=? WHERE id=?", (ts, row["id"]))
         _system_audit(store, "admin.platform.operator_cleared", row["id"],
-                      {"source": source, "before": "operator", "after": "none",
+                      {"source": source, **change({"platform_role": "operator"}, {"platform_role": "none"}),
                        "reason": SYSTEM_REASONS["operator_cleared"]})
         changed += 1
     for row in store.all(

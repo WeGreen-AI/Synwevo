@@ -24,6 +24,7 @@ from fastapi import APIRouter, Body, Query, Request
 
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity, REGISTRATION_MODES, registration_mode
+from synwevo_core.audit_change import change
 from synwevo_core.platform_access import (ADMIN_SECOND_FACTOR_GRACE_KEY, ADMIN_SECOND_FACTOR_GRACE_MAX_DAYS, ADMIN_SECOND_FACTOR_KEY,
                                           ADMIN_SECOND_FACTOR_MODES, ASSIGN, ASSIGN_SUPER, PlatformAccess,
                                           ROLES, SUPER_ADMIN, admin_second_factor_grace_until, admin_second_factor_mode,
@@ -149,7 +150,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                           "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (mode,))
             audit(request, "admin.registration.update", actor_id=actor["id"],
                   object_kind="setting", object_id="registration.mode", result="ok",
-                  meta={"before": before, "mode": mode, "reason": reason})
+                  meta={**change({"mode": before}, {"mode": mode}), "mode": mode, "reason": reason})
         return _policy()
 
     # ------------------------------------------------------------------ administrator second factor (A11)
@@ -192,6 +193,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         with _write(request, "platform.config.manage", object_kind="setting", object_id=ADMIN_SECOND_FACTOR_KEY):
             actor = _admin(request, "platform.config.manage", dangerous=True)
             before = admin_second_factor_mode(store)
+            grace_before = admin_second_factor_grace_until(store)
             if body.get("expected_mode", before) != before:
                 raise ServiceError(409, "policy_changed", "第二因素策略已更改，请刷新后重试")
             access = PlatformAccess(store)
@@ -209,7 +211,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                 store.execute("DELETE FROM meta WHERE key=?", (ADMIN_SECOND_FACTOR_GRACE_KEY,))
             audit(request, "admin.security.second_factor", actor_id=actor["id"], object_kind="setting",
                   object_id=ADMIN_SECOND_FACTOR_KEY, result="ok",
-                  meta={"before": before, "mode": mode, "reason": reason, "enrolled_super_admins": enrolled,
+                  meta={**change({"mode": before, "grace_until": grace_before}, {"mode": mode, "grace_until": grace_until}),
+                        "mode": mode, "reason": reason, "enrolled_super_admins": enrolled,
                         "grace_days": grace_days if mode == "required" else 0, "grace_until": grace_until})
         return _second_factor_policy(request, actor)
 
@@ -323,7 +326,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             audit(request, "admin.security.throttle_lift", actor_id=actor["id"],
                   object_kind="user" if row and row["user_id"] else "throttle",
                   object_id=(row["user_id"] if row and row["user_id"] else handle), result="ok",
-                  meta={"reason": reason, "kind": row["kind"] if row else "other", "count": match["count"],
+                  meta={**change({"active": bool(row and row["active"]), "count": match["count"]}, {"active": False, "count": 0}),
+                        "reason": reason, "kind": row["kind"] if row else "other", "count": match["count"],
                         "was_active": bool(row and row["active"])})
         return {"ok": True, "kind": row["kind"] if row else "other", "lifted": True}
 
@@ -628,7 +632,9 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                       (wid, DOCS_APP_ID, target_id, ts, actor["id"]))
             audit(request, "admin.workspace.claim", actor_id=actor["id"], workspace_id=wid,
                   object_kind="workspace", object_id=wid, result="ok",
-                  meta={"target_user": target_id, "target_email": target["email"], "role": role,
+                  meta={**change({"status": live["status"], "name": name_before, "members": 0},
+                                 {"status": "active", "name": name_after, "members": 1}),
+                        "target_user": target_id, "target_email": target["email"], "role": role,
                         "reason": reason[:500], "projects": n_projects,
                         "name_before": name_before, "name_after": name_after})
         return {"ok": True, "workspace": _workspace_row(ident.get_workspace(wid)),
@@ -935,7 +941,9 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                            "projects": plan["projects"], "templates": plan["templates"]}
                 audit(request, "admin.workspace.unclaim", actor_id=actor["id"], workspace_id=wid,
                       object_kind="workspace", object_id=wid, result="ok",
-                      meta={**outcome, "reason": reason, "journaled": True,
+                      meta={**outcome, **change({"status": w["status"], "name": w["name"], "members": len(members)},
+                                                {"status": "pending_claim", "name": plan["name_after"], "members": 0}),
+                            "reason": reason, "journaled": True,
                             "assigned_at": (plan["assigned"] or {}).get("at"),
                             "assigned_by": (plan["assigned"] or {}).get("by_id")})
         except ServiceError:
@@ -1146,7 +1154,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                 after = deletion_counts(store)
                 audit(request, "admin.accounts.finalize_deletions", actor_id=actor["id"], object_kind="platform",
                       object_id="account_deletions", result="ok",
-                      meta={"reason": reason, "finalized": finalized, "before": before, "after": after})
+                      meta={**change(before, after), "reason": reason, "finalized": finalized})
         except Exception as e:  # noqa: BLE001 - the sweep's failure is what this route reports
             audit(request, "admin.accounts.finalize_deletions", actor_id=actor["id"], object_kind="platform",
                   object_id="account_deletions", result="error", meta={"reason": reason, "code": type(e).__name__})
@@ -1339,7 +1347,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             invalidate_access(store, uid, "admin_revoked")
             audit(request, "admin.user.revoke_sessions", actor_id=actor["id"], object_kind="user",
                   object_id=uid, workspace_given=True, result="ok",
-                  meta={"reason": reason, "sessions": n, "tokens": tokens, "journaled": True})
+                  meta={**change({"sessions": n, "tokens": tokens}, {"sessions": 0, "tokens": 0}),
+                        "reason": reason, "sessions": n, "tokens": tokens, "journaled": True})
             try:
                 journal.record_account(store, "sessions_revoked", user_id=uid, event_id=new_id("ao"))
             except (OSError, ValueError):
@@ -1382,7 +1391,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             out = sessions.revoke_device(sid, "admin_revoked")
             audit(request, "admin.user.revoke_session", actor_id=actor["id"], object_kind="user",
                   object_id=uid, workspace_given=True, result="ok",
-                  meta={"reason": reason, "sessions": out["sessions_revoked"], "tokens": out["tokens_revoked"]})
+                  meta={**change({"sessions": out["sessions_revoked"], "tokens": out["tokens_revoked"]}, {"sessions": 0, "tokens": 0}),
+                        "reason": reason, "sessions": out["sessions_revoked"], "tokens": out["tokens_revoked"]})
         notified = _security_notice(request, uid, "sessions_revoked")
         return {"ok": True, **out, "notified": notified}
 
@@ -1401,9 +1411,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             if not ident.get_user(uid):
                 raise ServiceError(404, "no_user", "找不到该账户")
             _not_outranked(request, actor, uid)
-            Passkeys(store).remove(uid, pid)
+            passkeys = Passkeys(store)
+            n_before = passkeys.count(uid)
+            passkeys.remove(uid, pid)
             audit(request, "admin.user.passkey_remove", actor_id=actor["id"], object_kind="user",
-                  object_id=uid, workspace_given=True, result="ok", meta={"reason": reason, "passkey_id": pid})
+                  object_id=uid, workspace_given=True, result="ok",
+                  meta={**change({"passkeys": n_before}, {"passkeys": passkeys.count(uid)}), "reason": reason, "passkey_id": pid})
         notified = _security_notice(request, uid, "passkey_removed")
         return {"ok": True, "notified": notified}
 
@@ -1428,7 +1441,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                 raise ServiceError(409, "last_sign_in_method", "这是该账户唯一的登录方式，不能解除关联；需要停止访问请停用账户")
             store.execute("DELETE FROM external_identities WHERE id=? AND user_id=?", (iid, uid))
             audit(request, "admin.user.external_unlink", actor_id=actor["id"], object_kind="user",
-                  object_id=uid, workspace_given=True, result="ok", meta={"reason": reason, "provider": row["provider"]})
+                  object_id=uid, workspace_given=True, result="ok",
+                  meta={**change({"linked": True}, {"linked": False}), "reason": reason, "provider": row["provider"]})
         providers = ExternalIdentities(store, load_providers()).providers
         label = providers[row["provider"]].label if row["provider"] in providers else row["provider"]
         notified = _security_notice(request, uid, f"解除了外部登录方式（{label}）")
@@ -1447,7 +1461,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             extra = {} if frozen else {"restore_note": UNFREEZE_RESTORE_NOTE}
             audit(request, "admin.workspace.freeze" if frozen else "admin.workspace.unfreeze",
                   actor_id=actor["id"], workspace_id=wid, object_kind="workspace", object_id=wid,
-                  result="ok", meta={**out, "reason": reason[:500], "journaled": journaled})
+                  result="ok", meta={**out, **change({"frozen": not frozen}, {"frozen": frozen}),
+                                     "reason": reason[:500], "journaled": journaled})
             if frozen:
                 from synwevo_core import journal
                 try:
@@ -1487,7 +1502,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             _not_outranked(request, actor, uid)
             n = PushSubscriptions(store).revoke_all_for_user(uid, "admin_revoked")
             audit(request, "admin.user.push_revoke", actor_id=actor["id"], object_kind="user", object_id=uid,
-                  result="ok", meta={"reason": reason, "revoked": n})
+                  result="ok", meta={**change({"subscriptions": n}, {"subscriptions": 0}), "reason": reason, "revoked": n})
         notified = _security_notice(request, uid, "push_revoked") if n else False
         return {"ok": True, "revoked": n, "notified": notified}
 

@@ -424,3 +424,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：目录「先注册者胜」意味着通用源文在多个应用间共享，页面标题应使用专属源文；复数选形此前只看 `count`，而现有调用全部以 `{n}` 传数，修正为按唯一数字参数选形不改变任何带 `count` 的现有行为（显式 `count` 仍优先），多数字参数无 `count` 时保持 other；
 - 风险/未做：`check_design`/`check_component_names` 对此无影响；窄屏与 Docs/Message 适配（WP7）不在本轮；走查为 Forms 应用，Tables/Approvals 等其他 Suite 应用的英文/繁体宽屏走查仍待做；
 - 验证：六个前端工作区测试 612 通过（含 account-web 刷新门禁 175）；根 typecheck/build 通过；五守卫通过；隔离浏览器三语言走查重跑通过（evidence/2026-10-12-forms-wide-locales）。
+
+## CR-107 · Admin G24 统一前后值（2026-10-12，本轮新增，本地已验证）
+
+- 位置：packages/core/synwevo_core/audit_change.py（`change`）；services/identity/synwevo_identity/admin_routes.py（14 处审计 meta 加入三键，第二因素路由在写入前读取宽限期截止；移除安全密钥前后计数经 `Passkeys.count`）；admin_agent_safety.py（暂停前先读是否已暂停）；packages/core/synwevo_core/platform_access.py（授予/撤销/系统授予/系统撤销/运维角色清除：`before`/`after` 由角色列表改为 `{"roles": […]}` 快照，响应体不变）；packages/core/synwevo_core/organizations.py（状态变更）；services/identity/web/src/governance/audit.ts + Admin.tsx（「变化」列，colSpan 7）；
+- 审查要点：三键只加不减——各路由原有的 `mode`/`sessions`/`revoked` 等键保留，读旧记录的代码不受影响；平台角色审计的形状变化只影响 meta（三处测试断言随之更新），HTTP 响应仍返回列表；`change` 在写入之前读取旧值的地方（宽限期、是否已暂停、安全密钥数）都在同一事务内；前端对缺少 `changed` 的旧记录按键值差异推导，对旧的标量 `before`/`after` 不显示为变化；
+- 风险/未做：模型提供方/成本/价格发布保留各自完整快照（无 `changed`）；API 控制台 `api_platform.*` 的 meta 由各动作自带，未纳入；Docs/Suite 的管理写入（G26）不在本轮；「变化」列的值为原始值（`true`/`frozen`），未做本地化；
+- 验证：相关 Python 套件 305 passed, 0 failed（进度行计数；-q 汇总行未输出）；account-web typecheck + 177 通过；五守卫通过；隔离浏览器中英文审计页验收通过（evidence/2026-10-12-admin-audit-changes）。
