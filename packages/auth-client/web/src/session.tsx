@@ -32,6 +32,8 @@ export interface Me {
   admin_locked?: boolean;
   /** why platform administration is locked for this session (synwevo_core.platform_access.admin_session_shortfall) */
   admin_lock?: { reason: "one_factor" | "second_factor"; second_factor_enrolled: boolean } | null;
+  /** the A11 grace window: this session will be locked out of administration once `until` passes */
+  admin_grace?: { until: number; second_factor_enrolled: boolean } | null;
   /** Where "back to my work" may go from the account pages: the portal and each application
    *  this person can open, as the server lists them. */
   return_targets?: { id: string; name: string; url: string; workspace_id?: string | null; workspace_name?: string | null }[];

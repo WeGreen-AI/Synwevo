@@ -821,3 +821,9 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 
 网关解析 W3C `traceparent`，trace-id 记入 `api_platform_calls.trace_id`（追加列），控制台 `/calls?trace_id=` 可筛选并在行内显示；非法值忽略。
 测试：tests/integration/test_api_platform.py 新增 1 例（合法 traceparent → 记录 trace_id 并可按大写查询；garbage/全零 trace/版本 ff/全零 parent 四种非法值 → 请求 200 且 trace_id 为空；未知 trace 查询为空）；integration 相关子集 355、Docs API 子集 71 通过；account-web 173/typecheck/build、五守卫通过。未做浏览器验收。
+
+## 2026-10-12 CR-102 Admin A11 第二因素宽限期（本地+隔离浏览器）
+
+要求第二因素时可设 0–30 天宽限期：期内未登记/会话不强的管理员只在账户页看到到期提醒并可继续管理，期满锁定；策略卡显示宽限期至何时；`/api/auth/me` `admin_grace`、`/api/admin/session` `step_up.grace_until`。
+测试：A11 测试扩展（40 天 → 400；7 天 → required 且 grace_until 在 6–7 天间；仅口令会话仍 200；`admin_grace` 对未登记者给出、对强会话为空；期满回拨 → 403 且 admin_grace 为空；off 清除键；审计序列 required/required/off）；identity 相关子集 975、integration 相关子集 182 通过；根 typecheck、account-web 173/build、五守卫通过。
+浏览器（隔离合成实例 127.0.0.1:33944，系统 Chrome）：最高管理员真实登记动态验证码 → 平台配置页选择「要求管理员使用第二因素」、宽限期 7 天、保存（理由+重认证）→ 策略行「宽限期至 2026/10/19 …：期内只提醒，不锁定」，概览仍 200，`admin_grace` 返回 → 其账户页显示「平台将从 … 起要求管理员使用第二因素」与已登记文案 → support（未登记）`/api/admin/users` 200、账户页提醒含「前往账户安全页登记」按钮、英文提醒 → 夹具回拨到期后 `/api/admin/users` 403、`admin_lock.reason=second_factor`。证据 `evidence/2026-10-12-admin-second-factor-grace/`（browser-report.json、verification.json、4 张截图）。

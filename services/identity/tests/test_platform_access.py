@@ -14,6 +14,7 @@ Isolated data directory and file mail only; the grants in fixtures go through th
 from __future__ import annotations
 
 import json
+import time
 import re
 import threading
 from pathlib import Path
@@ -1066,10 +1067,26 @@ def test_the_admin_second_factor_policy_locks_password_only_administrators_until
     assert denied.status_code == 403 and denied.json()["detail"]["second_factor_enrolled"] is False
     assert other.get("/api/auth/me").json()["admin_lock"] == {"reason": "second_factor", "second_factor_enrolled": False}
     assert other.get("/api/admin/session").status_code == 200, "a locked administrator still learns what is missing"
+    # A grace window (CR-102): the requirement stays on, the lock waits; the account page warns instead.
+    reauth(strong)
+    assert post(strong, "/api/admin/security/second-factor", {"mode": "required", "expected_mode": "required", "grace_days": 40, "reason": REASON}).json()["error"] == "bad_grace_days"
+    graced = post(strong, "/api/admin/security/second-factor", {"mode": "required", "expected_mode": "required", "grace_days": 7, "reason": REASON})
+    assert graced.status_code == 200 and graced.json()["mode"] == "required", graced.text
+    assert 6 * 86400 < graced.json()["grace_until"] - time.time() <= 7 * 86400 and graced.json()["grace_max_days"] == 30
+    assert root.get("/api/admin/overview").status_code == 200 and other.get("/api/admin/users").status_code == 200, "warned, not locked"
+    warned = other.get("/api/auth/me").json()
+    assert warned["admin_locked"] is False and warned["admin_lock"] is None
+    assert warned["admin_grace"] == {"until": graced.json()["grace_until"], "second_factor_enrolled": False}
+    assert strong.get("/api/auth/me").json()["admin_grace"] is None, "a strong session has nothing to be warned about"
+    step = other.get("/api/admin/session").json()["step_up"]
+    assert step["required"] is False and step["grace_until"] == graced.json()["grace_until"] and step["policy"] == "required"
+    store.execute("UPDATE meta SET value=? WHERE key='security.admin_second_factor_grace_until'", (str(time.time() - 1),))
+    assert other.get("/api/admin/users").status_code == 403 and other.get("/api/auth/me").json()["admin_grace"] is None, "the window ended: locked"
     # Off again restores the standing rule for everyone.
     reauth(strong)
     assert post(strong, "/api/admin/security/second-factor", {"mode": "off", "expected_mode": "required", "reason": REASON}).status_code == 200
+    assert store.one("SELECT value FROM meta WHERE key='security.admin_second_factor_grace_until'") is None
     assert other.get("/api/admin/users").status_code == 200 and root.get("/api/admin/overview").status_code == 200
     stale = post(strong, "/api/admin/security/second-factor", {"mode": "required", "expected_mode": "required", "reason": REASON})
     assert stale.status_code == 409 and stale.json()["error"] == "policy_changed"
-    assert [json.loads(r["meta"])["mode"] for r in store.all("SELECT meta FROM audit_events WHERE action='admin.security.second_factor' ORDER BY seq")] == ["required", "off"]
+    assert [json.loads(r["meta"])["mode"] for r in store.all("SELECT meta FROM audit_events WHERE action='admin.security.second_factor' ORDER BY seq")] == ["required", "required", "off"]

@@ -1,0 +1,52 @@
+{
+ "base": "http://127.0.0.1:33944",
+ "engine": "chrome",
+ "steps": {
+  "enrol": 200,
+  "policy": {
+   "required": true,
+   "grace_line": [
+    "当前策略：要求管理员使用第二因素；来源：平台设置 · 宽限期至 2026/10/19 10:30：期内只提醒，不锁定"
+   ],
+   "overview_still_200": 200,
+   "me_grace": {
+    "until": 1792377043.4496682,
+    "second_factor_enrolled": true
+   }
+  },
+  "admin_account_notice": {
+   "shown": true,
+   "text": "平台将从 2026/10/19 10:30 起要求管理员使用第二因素\n你已登记第二因素；届时请用安全密钥确认身份，或用口令和动态验证码登录。在此之前管理功能照常可用。"
+  },
+  "console_errors_admin": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+   "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+  ],
+  "support_before": {
+   "admin_users_status": 200,
+   "me": {
+    "admin_locked": false,
+    "admin_grace": {
+     "until": 1792377043.4496682,
+     "second_factor_enrolled": false
+    }
+   }
+  },
+  "support_notice": {
+   "shown": true,
+   "enrol_button": 1
+  },
+  "support_notice_en": {
+   "shown": true,
+   "text": "From 10/19/2026, 10:30 AM the platform will require administrators to use a second factor\nEnrol a passkey or an authenticator on the account security page befor"
+  },
+  "after_window": {
+   "admin_users_status": 403,
+   "admin_locked": true,
+   "admin_lock": {
+    "reason": "second_factor",
+    "second_factor_enrolled": false
+   }
+  }
+ }
+}

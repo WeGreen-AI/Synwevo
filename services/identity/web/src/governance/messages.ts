@@ -1851,5 +1851,12 @@ export const governanceMessages = {
   "其中可验证身份": { en: "Of which user-verifying", "zh-Hant": "其中可驗證身分" },
   "恢复码已用尽": { en: "Recovery codes exhausted", "zh-Hant": "復原碼已用盡" },
   "可用最高管理员 {total} 人，其中 {enrolled} 人已登记第二因素。只统计正常的个人账户，不含应用身份；这里只有数量，没有任何密钥或验证码。": { en: "{total} usable super administrators, {enrolled} of them with a second factor. Only active person accounts are counted, not application identities; these are counts only, never a key or a code.", "zh-Hant": "可用最高管理員 {total} 人，其中 {enrolled} 人已登記第二因素。只統計正常的個人帳戶，不含應用身分；這裡只有數量，沒有任何金鑰或驗證碼。" },
+  // A11: grace period
+  "宽限期至 {time}：期内只提醒，不锁定": { en: "Grace period until {time}: a warning only until then, no lock", "zh-Hant": "寬限期至 {time}：期內只提醒，不鎖定" },
+  "宽限期（天，0 表示立即生效，最多 {max} 天）": { en: "Grace period (days; 0 applies at once; at most {max} days)", "zh-Hant": "寬限期（天，0 表示立即生效，最多 {max} 天）" },
+  "宽限期内，未登记第二因素的管理员只会在账户页看到提醒；到期后才被锁在管理之外。再次保存可重设宽限期。": { en: "During the grace period administrators without a second factor only see a reminder on their account page; the lock applies when it ends. Saving again resets the period.", "zh-Hant": "寬限期內，未登記第二因素的管理員只會在帳戶頁看到提醒；到期後才被鎖在管理之外。再次儲存可重設寬限期。" },
+  "宽限期 {days} 天：期内只提醒，不锁定。": { en: "Grace period {days} days: a warning only until then, no lock.", "zh-Hant": "寬限期 {days} 天：期內只提醒，不鎖定。" },
+  "没有宽限期：保存后立即生效。": { en: "No grace period: applies as soon as it is saved.", "zh-Hant": "沒有寬限期：儲存後立即生效。" },
+  "宽限期须为 0 到 30 的整数天。": { en: "The grace period must be a whole number of days from 0 to 30.", "zh-Hant": "寬限期須為 0 到 30 的整數天。" },
 };
 registerMessages(governanceMessages);

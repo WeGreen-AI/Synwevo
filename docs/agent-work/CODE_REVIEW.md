@@ -389,3 +389,10 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：非法 traceparent 不改变请求结果也不落库（只影响元数据）；trace_id 与平台自己的 `X-Request-ID` 并存、互不替代；列为回滚安全的追加列；筛选仍是对存储元数据的精确匹配，不对用户输入做 LIKE；任务与事件仍只带 `request_id`（文档写明）。
 - 风险/未做：不回传 `traceresponse`；任务/事件不带 trace_id；无浏览器验收（控制台只多一个筛选框与一行小字，类型检查与前端测试覆盖）。
 - 验证：integration 相关子集 355 通过（含新例）；Docs API 子集 71 通过；account-web typecheck/173 测试/build 通过；五守卫通过。
+
+## CR-102 · Admin A11 第二因素策略的宽限期（2026-10-12，本轮新增，本地+隔离浏览器已验证）
+
+- 位置：packages/core/synwevo_core/platform_access.py（`ADMIN_SECOND_FACTOR_GRACE_KEY`、`ADMIN_SECOND_FACTOR_GRACE_MAX_DAYS=30`、`admin_second_factor_grace_until`；`admin_session_shortfall` 在宽限期内不返回 `second_factor`）；services/identity/synwevo_identity/admin_routes.py（策略 GET 带 `grace_until/grace_max_days`，POST 接受 `grace_days`（整数 0–30，否则 400 `bad_grace_days`），required 且 >0 时写 `grace_until=now+days`，否则删除；审计 meta 带 grace；`/api/admin/session` 的 `step_up.grace_until`）；packages/auth-client/python `describe_user` 新增 `admin_grace`（仅对会被锁的会话）；account-web：策略卡宽限期输入与当前宽限期行、步骤卡（AdminStepUp）宽限提醒（已登记/未登记两种文案 + 登记入口）、session.tsx 类型、labels/messages；tests：A11 测试扩展、email-code 精确形状更新。
+- 审查要点：宽限期只推迟锁定，不改变「至少一名可用最高管理员已登记」的开启前提；提醒只对 required 且会话不强的管理员出现（强会话不打扰）；期满立刻按原规则锁定（无额外状态机）；关闭策略同时清除宽限期；再次保存 required 可重设宽限（UI 的保存按钮按此启用）。
+- 风险/未做：组织级/全体用户策略仍未做；宽限提醒只在账户页步骤卡（管理页顶栏不另加横幅）。
+- 验证：identity 策略/步骤子集 36 通过，`me/session/login` 子集 975 通过，integration 登录/会话子集 182 通过；根 typecheck、account-web 173 测试/build 通过；五守卫通过；浏览器验收见 evidence/2026-10-12-admin-second-factor-grace。

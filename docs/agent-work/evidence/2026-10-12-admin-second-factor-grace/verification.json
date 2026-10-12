@@ -1,0 +1,76 @@
+{
+ "package": "CR-102 · Admin A11 管理员第二因素策略的宽限期",
+ "written_at": "2026-10-12T02:31:48+00:00",
+ "worktree": ".claude/worktrees/agent-billing (branch claude/agent-billing)",
+ "environment": "http://127.0.0.1:33944 — isolated synthetic instance (synwevo_server create_app role=all, start_jobs=False) in the session scratchpad; SYNWEVO_TEST_INSTANCE=1; synthetic accounts; the super administrator enrols an authenticator through the real self-service path (pyotp inside the proof process); the grace window's end backdated by SQL (the real one is seven days away); no production data, model, payment or outbound network; Playwright Chrome",
+ "backend_tests": {
+  "services/identity/tests/test_platform_access.py + test_email_code_login.py + test_external_identity.py (policy/step-up subset)": "36 passed (A11 test extended: bad grace 400, 7-day grace → warned not locked, /auth/me admin_grace, /admin/session grace_until, window end → locked, off clears)",
+  "services/identity/tests -k 'me or session or login or admin_lock or step_up or platform_access'": "975 passed",
+  "tests/integration -k 'sso or login or session or identity or shell'": "182 passed"
+ },
+ "frontend": {
+  "root npm run typecheck": "exit 0",
+  "account-web npm test": "173 passed (refusals gate catalogued bad_grace_days)",
+  "account-web build": "ok"
+ },
+ "guards": "check_boundaries, check_brand, check_design, check_component_names, brand_assets --check: ok",
+ "browser_steps": {
+  "enrol": 200,
+  "policy": {
+   "required": true,
+   "grace_line": [
+    "当前策略：要求管理员使用第二因素；来源：平台设置 · 宽限期至 2026/10/19 10:30：期内只提醒，不锁定"
+   ],
+   "overview_still_200": 200,
+   "me_grace": {
+    "until": 1792377043.4496682,
+    "second_factor_enrolled": true
+   }
+  },
+  "admin_account_notice": {
+   "shown": true,
+   "text": "平台将从 2026/10/19 10:30 起要求管理员使用第二因素\n你已登记第二因素；届时请用安全密钥确认身份，或用口令和动态验证码登录。在此之前管理功能照常可用。"
+  },
+  "console_errors_admin": [
+   "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+   "Failed to load resource: the server responded with a status of 403 (Forbidden)"
+  ],
+  "support_before": {
+   "admin_users_status": 200,
+   "me": {
+    "admin_locked": false,
+    "admin_grace": {
+     "until": 1792377043.4496682,
+     "second_factor_enrolled": false
+    }
+   }
+  },
+  "support_notice": {
+   "shown": true,
+   "enrol_button": 1
+  },
+  "support_notice_en": {
+   "shown": true,
+   "text": "From 10/19/2026, 10:30 AM the platform will require administrators to use a second factor\nEnrol a passkey or an authenticator on the account security page befor"
+  },
+  "after_window": {
+   "admin_users_status": 403,
+   "admin_locked": true,
+   "admin_lock": {
+    "reason": "second_factor",
+    "second_factor_enrolled": false
+   }
+  }
+ },
+ "screenshots": [
+  "a11-grace-account-en.png",
+  "a11-grace-account-enrolled-zh-hans.png",
+  "a11-grace-account-not-enrolled-zh-hans.png",
+  "a11-grace-policy-zh-hans.png"
+ ],
+ "console_errors_note": "401 is the login page's session probe, 403 the strict re-authentication the dialog asks for; no script errors",
+ "not_done": [
+  "organization-level or all-users second-factor policies (the catalogue still says these are not offered)",
+  "deployment (GitHub Actions billing block)"
+ ]
+}

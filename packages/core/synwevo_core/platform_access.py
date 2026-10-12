@@ -775,6 +775,10 @@ def require_outranking(request, actor: dict, target_id: str, *, store: Store, au
 #: rule (sessions.admin_capable) stays. "all" and per-organization requirements are not offered.
 ADMIN_SECOND_FACTOR_KEY = "security.admin_second_factor"
 ADMIN_SECOND_FACTOR_MODES = ("off", "required")
+#: While `required` is on, administrators without a strong session are only warned until this
+#: time (seconds); after it the requirement locks them (admin coverage A11, grace period).
+ADMIN_SECOND_FACTOR_GRACE_KEY = "security.admin_second_factor_grace_until"
+ADMIN_SECOND_FACTOR_GRACE_MAX_DAYS = 30
 
 
 def admin_second_factor_mode(store: Store) -> str:
@@ -783,6 +787,16 @@ def admin_second_factor_mode(store: Store) -> str:
     except sqlite3.Error:
         return "off"
     return row["value"] if row and row["value"] in ADMIN_SECOND_FACTOR_MODES else "off"
+
+
+def admin_second_factor_grace_until(store: Store) -> float | None:
+    """The end of the grace window, if one is set and still ahead; None otherwise."""
+    try:
+        row = store.one("SELECT value FROM meta WHERE key=?", (ADMIN_SECOND_FACTOR_GRACE_KEY,))
+        until = float(row["value"]) if row and row["value"] else None
+    except (sqlite3.Error, TypeError, ValueError):
+        return None
+    return until if until and until > clock() else None
 
 
 def session_strong(amr: str) -> bool:
@@ -799,7 +813,9 @@ def admin_session_shortfall(store: Store, amr: str) -> str | None:
     if not admin_capable(amr or ""):
         return "one_factor"
     if admin_second_factor_mode(store) == "required" and not session_strong(amr or ""):
-        return "second_factor"
+        # The grace window only postpones the lock; the warning is the account page's business.
+        if admin_second_factor_grace_until(store) is None:
+            return "second_factor"
     return None
 
 

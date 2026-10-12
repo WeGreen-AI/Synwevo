@@ -24,8 +24,10 @@ from fastapi import APIRouter, Body, Query, Request
 
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity, REGISTRATION_MODES, registration_mode
-from synwevo_core.platform_access import (ADMIN_SECOND_FACTOR_KEY, ADMIN_SECOND_FACTOR_MODES, ASSIGN, ASSIGN_SUPER, PlatformAccess,
-                                          ROLES, SUPER_ADMIN, admin_second_factor_mode, admin_session_shortfall, catalogue, clock,
+from synwevo_core.platform_access import (ADMIN_SECOND_FACTOR_GRACE_KEY, ADMIN_SECOND_FACTOR_GRACE_MAX_DAYS, ADMIN_SECOND_FACTOR_KEY,
+                                          ADMIN_SECOND_FACTOR_MODES, ASSIGN, ASSIGN_SUPER, PlatformAccess,
+                                          ROLES, SUPER_ADMIN, admin_second_factor_grace_until, admin_second_factor_mode,
+                                          admin_session_shortfall, catalogue, clock,
                                           require_outranking, require_platform, session_strong, sorted_permissions, sorted_roles)
 from synwevo_core.organizations import Organizations
 from synwevo_core.sessions import admin_capable, Sessions
@@ -159,6 +161,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         s = request.state.session
         return {"mode": admin_second_factor_mode(store),
                 "source": "database" if row and row["value"] in ADMIN_SECOND_FACTOR_MODES else "default",
+                "grace_until": admin_second_factor_grace_until(store), "grace_max_days": ADMIN_SECOND_FACTOR_GRACE_MAX_DAYS,
                 "usable_super_admins": len(supers), "enrolled_super_admins": enrolled,
                 "caller_second_factor": access.step_up(actor["id"])["second_factor"],
                 "caller_session_strong": session_strong(s.get("amr") or "")}
@@ -181,6 +184,11 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         mode = body.get("mode")
         if mode not in ADMIN_SECOND_FACTOR_MODES:
             raise ServiceError(400, "bad_second_factor_mode", "请选择有效的第二因素策略")
+        # `grace_days` (0–30, default 0): while `required`, administrators without a strong session are
+        # only warned until then; 0 locks at once. Ignored for `off`.
+        grace_days = body.get("grace_days", 0)
+        if isinstance(grace_days, bool) or not isinstance(grace_days, int) or not 0 <= grace_days <= ADMIN_SECOND_FACTOR_GRACE_MAX_DAYS:
+            raise ServiceError(400, "bad_grace_days", f"宽限期须为 0 到 {ADMIN_SECOND_FACTOR_GRACE_MAX_DAYS} 的整数天")
         with _write(request, "platform.config.manage", object_kind="setting", object_id=ADMIN_SECOND_FACTOR_KEY):
             actor = _admin(request, "platform.config.manage", dangerous=True)
             before = admin_second_factor_mode(store)
@@ -193,9 +201,16 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                                    "至少需要一名可用的最高管理员已登记安全密钥或动态验证码，才能要求管理员使用第二因素")
             store.execute("INSERT INTO meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                           (ADMIN_SECOND_FACTOR_KEY, mode))
+            grace_until = clock() + grace_days * 86400 if mode == "required" and grace_days else None
+            if grace_until:
+                store.execute("INSERT INTO meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                              (ADMIN_SECOND_FACTOR_GRACE_KEY, str(grace_until)))
+            else:
+                store.execute("DELETE FROM meta WHERE key=?", (ADMIN_SECOND_FACTOR_GRACE_KEY,))
             audit(request, "admin.security.second_factor", actor_id=actor["id"], object_kind="setting",
                   object_id=ADMIN_SECOND_FACTOR_KEY, result="ok",
-                  meta={"before": before, "mode": mode, "reason": reason, "enrolled_super_admins": enrolled})
+                  meta={"before": before, "mode": mode, "reason": reason, "enrolled_super_admins": enrolled,
+                        "grace_days": grace_days if mode == "required" else 0, "grace_until": grace_until})
         return _second_factor_policy(request, actor)
 
     # ------------------------------------------------------------------ delivery metadata / recovery
@@ -1543,7 +1558,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                 "roles": explained["roles"], "permissions": explained["permissions"],
                 "step_up": {"required": admin_session_shortfall(store, s.get("amr") or "") is not None, "amr": s.get("amr") or "",
                             "reason": admin_session_shortfall(store, s.get("amr") or ""),
-                            "policy": admin_second_factor_mode(store),
+                            "policy": admin_second_factor_mode(store), "grace_until": admin_second_factor_grace_until(store),
                             "second_factor_enrolled": PlatformAccess(store).step_up(user["id"])["second_factor"]},
                 "reauth": {"scope": REAUTH_SCOPE, "seconds_left": left, "window_s": REAUTH_SECONDS},
                 "environment": {"instance": store.instance_kind()},

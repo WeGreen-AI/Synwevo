@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { ApiError, post, useSession } from "@synwevo/auth-client";
-import { registerMessages, useI18n } from "@synwevo/ui";
+import { fmtTime, registerMessages, useI18n } from "@synwevo/ui";
 import { refusalText } from "../lib/refusals";
 import { ReauthClientError, reauthenticateWithPasskey, useReauthMethods, type ReauthMethod } from "../lib/reauth";
 
@@ -29,6 +29,13 @@ registerMessages({
     "zh-Hant": "你尚未登記安全金鑰或動態驗證碼。請先在帳戶安全頁登記，再重新登入；帳戶功能不受影響。" },
   "前往账户安全页登记": { en: "Enrol on the account security page", "zh-Hant": "前往帳戶安全頁登記" },
   "重新输入口令不能满足第二因素要求。": { en: "Re-entering the password does not meet the second-factor requirement.", "zh-Hant": "重新輸入口令不能滿足第二因素要求。" },
+  "平台将从 {time} 起要求管理员使用第二因素": { en: "From {time} the platform will require administrators to use a second factor", "zh-Hant": "平台將從 {time} 起要求管理員使用第二因素" },
+  "你已登记第二因素；届时请用安全密钥确认身份，或用口令和动态验证码登录。在此之前管理功能照常可用。": {
+    en: "You have enrolled a second factor; from then on confirm with your passkey or sign in with the password and the authenticator code. Until then administration works as usual.",
+    "zh-Hant": "你已登記第二因素；屆時請用安全金鑰確認身分，或用口令和動態驗證碼登入。在此之前管理功能照常可用。" },
+  "请在此之前在账户安全页登记安全密钥或动态验证码，否则届时将被锁在平台管理之外；账户功能不受影响。": {
+    en: "Enrol a passkey or an authenticator on the account security page before then, or you will be locked out of platform administration; ordinary account features are unaffected.",
+    "zh-Hant": "請在此之前在帳戶安全頁登記安全金鑰或動態驗證碼，否則屆時將被鎖在平台管理之外；帳戶功能不受影響。" },
 });
 
 /** The step-up prompt for a platform administrator whose session proved one factor.
@@ -48,6 +55,16 @@ export default function AdminStepUp({ compact = false }: { compact?: boolean }) 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  if (!me?.admin_locked && me?.admin_grace) {
+    // A11 grace window: not locked yet; the deadline and what to do before it.
+    const grace = me.admin_grace;
+    return <section className="notice info col gap8" role="region" aria-label={t("平台将从 {time} 起要求管理员使用第二因素", { time: fmtTime(grace.until) })}>
+      <b>{t("平台将从 {time} 起要求管理员使用第二因素", { time: fmtTime(grace.until) })}</b>
+      <span>{grace.second_factor_enrolled ? t("你已登记第二因素；届时请用安全密钥确认身份，或用口令和动态验证码登录。在此之前管理功能照常可用。")
+        : t("请在此之前在账户安全页登记安全密钥或动态验证码，否则届时将被锁在平台管理之外；账户功能不受影响。")}</span>
+      {!grace.second_factor_enrolled && <a className="btn primary" href={compact ? "/account#security" : "#security"} style={{ alignSelf: "flex-start" }}>{t("前往账户安全页登记")}</a>}
+    </section>;
+  }
   if (!me?.admin_locked) return done ? <p className="notice ok" role="status">{t("已确认，平台管理已可使用。")}</p> : null;
   const amr = me.session?.amr || "";
   const method = amr.startsWith("idp:") ? t("外部账户登录") : t("邮箱验证码");
