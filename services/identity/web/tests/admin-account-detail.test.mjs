@@ -56,7 +56,9 @@ const FIXTURE = {
   audit: { permitted: true, limit: 50, items: [{ id: "ae_fixture_1", at: T, action: "auth.login", actor_kind: "anonymous", actor_email: null,
     object_kind: "user", object_id: "u_fixture_detail", result: "denied", reason: "bad_password" }] },
 };
-const HAN = /[㐀-鿿]/;
+// Han characters, and the Chinese enumeration and full-width commas: a list joined with 、 or ，
+// in an English sentence is untranslated punctuation.
+const HAN = /[㐀-鿿、，]/;
 const FIXTURE_TEXT = /detail-fixture@example\.test|Fixture (workspace|Person|key)|u_fixture_detail/g;
 
 /** Static markup with the entities React escapes in text turned back into characters. */
@@ -102,7 +104,10 @@ test("what the server withholds is explained, and the quiet states are sentences
   assert.ok(lost.includes("no longer valid; it can be re-sent"), lost);
   const refused = render("en", { ...FIXTURE, deletion: { pending: false, requested_at: null, due_at: null, overdue: false, cancellation_link_valid: false,
     blockers: ["last_super_admin", "ownership_required"] } });
-  assert.ok(refused.includes("would be refused: the last usable super administrator、ownership or administration of a shared workspace not yet handed over."), refused);
+  assert.ok(refused.includes("would be refused: the last usable super administrator, ownership or administration of a shared workspace not yet handed over."), refused);
+  assert.ok(!HAN.test(refused.replace(FIXTURE_TEXT, "")), `untranslated text or punctuation in English:\n${refused}`);
+  assert.ok(render("zh-Hant", { ...FIXTURE, deletion: { pending: false, requested_at: null, due_at: null, overdue: false, cancellation_link_valid: false,
+    blockers: ["last_super_admin", "ownership_required"] } }).includes("最後一名可用的最高管理員、共享工作空間的所有權或管理權未移交"), "the enumeration comma for a Chinese reader");
   const free = render("en", { ...FIXTURE, deletion: { pending: false, requested_at: null, due_at: null, overdue: false, cancellation_link_valid: false, blockers: [] } });
   assert.ok(free.includes("the person could request one now"), free);
   assert.ok(!render("en", { ...FIXTURE, deletion: undefined }).includes("Deletion request"), "an older server without the block: no section");
@@ -150,9 +155,24 @@ test("the access explanation names each gate with its result, in the reader's la
   let html;
   try { html = renderToStaticMarkup(React.createElement(detail.AccessExplanationBody, { d: EXPLANATION })).replace(/&quot;/g, '"').replace(/&#x27;/g, "'"); }
   finally { ui.setLocale("zh-Hans"); }
-  for (const expected of ["Cannot open:", "Account status", "Workspace membership", "Organization active and the person is a member", "Application enabled in the workspace",
+  for (const expected of ["Cannot open: Your access to “Synwevo Docs” in this workspace has been revoked. Contact the workspace administrator.", "Account status", "Workspace membership",
+    "Organization active and the person is a member", "Application enabled in the workspace",
     "Entitlement", "Revoked", "Members may use it", "Failed", "Passed", "never acts as the person"]) assert.ok(html.includes(expected), `missing: ${expected}\n${html}`);
-  assert.ok(!HAN.test(html.replace(/你在该工作空间使用「Synwevo Docs」的资格已被撤销，请联系工作空间管理员/g, "")), `untranslated in English:\n${html}`);
+  assert.ok(!HAN.test(html), `untranslated in English:\n${html}`);
+  // C3: the verdict's reason is the server's Simplified-Chinese sentence for the person; the
+  // administrator reads it translated, and an uncatalogued sentence still shows as sent.
+  const refusedIn = (locale, reason) => {
+    ui.setLocale(locale);
+    try { return renderToStaticMarkup(React.createElement(detail.AccessExplanationBody, { d: { ...EXPLANATION, verdict: { allowed: false, workspace_id: null, reason } } })).replace(/&quot;/g, '"').replace(/&#x27;/g, "'"); }
+    finally { ui.setLocale("zh-Hans"); }
+  };
+  const member = refusedIn("en", "你不是该工作空间的成员");
+  assert.ok(member.includes("Cannot open: You are not a member of this workspace."), member);
+  assert.doesNotMatch(member, /[一-鿿]/, `untranslated in English:\n${member}`);
+  assert.ok(refusedIn("zh-Hant", "你不是该工作空间的成员").includes("不能開啟：你不是該工作空間的成員"));
+  assert.ok(refusedIn("en", "你所在的工作空间尚未启用「Synwevo Docs」，或你没有使用它的资格").includes("Cannot open: Your workspace has not enabled “Synwevo Docs”, or you are not entitled to use it."));
+  assert.ok(refusedIn("en", "服务器新增的一句话").includes("Cannot open: 服务器新增的一句话"), "an uncatalogued reason falls back to the source");
+  assert.ok(refusedIn("en", null).includes("Cannot open: —"));
   ui.setLocale("en");
   try {
     const skip = renderToStaticMarkup(React.createElement(detail.AccessExplanationBody, { d: { ...EXPLANATION, app: { ...EXPLANATION.app, scope: "personal" },
@@ -167,6 +187,7 @@ test("every sentence of the dialog is catalogued in English and Traditional Chin
   const sentences = new Set([...src.matchAll(/\btr\("([^"]+)"/g)].map((m) => m[1]));
   for (const map of [detail.AMR_LABELS, detail.FACTOR_SUFFIX_LABELS, detail.ORG_ROLE_LABELS, detail.DELETION_BLOCKER_LABELS, detail.GATE_LABELS, detail.GATE_STATE_LABELS]) for (const text of Object.values(map)) sentences.add(text);
   for (const text of detail.GATE_DETAIL_SENTENCES) sentences.add(text);
+  for (const text of [...detail.ACCESS_REASON_SENTENCES, ...detail.ACCESS_REASON_TEMPLATES]) sentences.add(text);
   for (const text of detail.ACCOUNT_ACTION_SENTENCES) sentences.add(text);
   sentences.add("查看详情"); // the row-menu item in Admin.tsx that opens the dialog
   assert.ok(sentences.size > 40, `expected the dialog's sentences, found ${sentences.size}`);

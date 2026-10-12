@@ -230,6 +230,7 @@ def test_suspension_withdraws_every_old_credential_and_restore_does_not_revive_t
     audits = operation_audits(world)
     assert [json.loads(row["meta"])["before"]["status"] for row in audits] == ["active", "suspended"]
     assert [json.loads(row["meta"])["after"]["status"] for row in audits] == ["suspended", "active"]
+    assert [json.loads(row["meta"])["changed"] for row in audits] == [["status"], ["status"]], "G24: the unified change record"
     assert all(row["actor_id"] == world["root"]["id"] and row["object_id"] == uid and row["workspace_id"] is None for row in audits)
     records = store.all("SELECT * FROM admin_operations ORDER BY created_at")
     assert {row["id"] for row in records} == {json.loads(row["meta"])["operation_id"] for row in audits}

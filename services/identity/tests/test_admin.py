@@ -1067,6 +1067,15 @@ def test_an_administration_write_is_undone_when_its_audit_cannot_be_written(env,
     restore()
     assert r.status_code >= 500, (route, r.status_code, r.text[:200])
     assert state() == before_state, route
+    if route == "finalize_deletions":
+        # The rolled-back sweep left no retry marker and no security-journal line: the journal
+        # must never describe a deletion that did not commit.
+        from synwevo_core import journal
+        assert store.one("SELECT COUNT(*) AS n FROM meta WHERE key GLOB 'account-deletion-journal:*'")["n"] == 0
+        journal_file = journal.path(store.root)
+        deleted_lines = [line for line in (journal_file.read_text().splitlines() if journal_file.exists() else [])
+                         if '"user_deleted"' in line and alice["id"] in line]
+        assert deleted_lines == [], deleted_lines
     assert store.one("SELECT COUNT(*) AS n FROM audit_events WHERE action=? AND result='ok'", (action,))["n"] == audits_before, route
     assert "fixture: audit storage unavailable" not in r.text, "the failure's wording never reaches the caller"
     assert json.loads(r.text).get("request_id"), "the caller gets a request id to quote"
@@ -1154,3 +1163,78 @@ def test_state_changing_administration_actions_record_unified_before_and_after(e
         assert all(meta["after"][k] == v for k, v in after.items()), (action, meta["after"])
     assert expect["admin.user.revoke_sessions"] and json.loads(store.one(
         "SELECT meta FROM audit_events WHERE action='admin.user.revoke_sessions' ORDER BY rowid DESC LIMIT 1")["meta"])["before"]["sessions"] >= 1
+
+
+def test_mailed_code_and_second_factor_throttles_are_listed_as_the_accounts_own(env, monkeypatch, tmp_path):
+    """G19: the slow-backoff buckets written by the mailed-code and second-factor proofs follow
+    their own schedule and belong to an account; the throttle list shows them as that account's,
+    active while the wait runs, and a release with a reason lets the person try again at once."""
+    monkeypatch.setenv("SYNWEVO_MAIL_MODE", "file")
+    monkeypatch.setenv("SYNWEVO_MAIL_DIR", str(tmp_path / "fixture-mail"))
+    monkeypatch.setenv("SYNWEVO_PUBLIC_URL", "http://testserver")
+    c, store, alice, api = env["c"], env["store"], env["alice"], env["api"]
+    store.execute("UPDATE users SET email_verified_at=? WHERE id=?", (now(), alice["id"]))  # mailed codes need a verified address
+    stranger = TestClient(api)
+    assert post(stranger, "/api/auth/login/email/start", {"email": "alice@example.com"}).status_code in (200, 202)
+    statuses = [post(stranger, "/api/auth/login/email/verify", {"email": "alice@example.com", "code": "000000"}).status_code
+                for _ in range(8)]
+    assert 401 in statuses and statuses[-1] == 429, statuses
+    listed = c.get("/api/admin/security/throttles?active=true").json()
+    assert "account_second_factor" in listed["kinds"] and "login_code_account" in listed["kinds"]
+    rows = [row for row in listed["items"] if row["kind"] == "login_code_account"]
+    assert rows and rows[0]["user_id"] == alice["id"] and rows[0]["subject"] == "alice@example.com", listed
+    assert rows[0]["active"] is True and rows[0]["retry_after"] >= 1 and rows[0]["count"] >= 5
+    _reauth(c)
+    r = post(c, "/api/admin/security/throttles/lift", {"id": rows[0]["id"], "reason": "用户来电：验证码被他人反复猜测"})
+    assert r.status_code == 200 and r.json()["kind"] == "login_code_account", r.text
+    assert post(stranger, "/api/auth/login/email/verify", {"email": "alice@example.com", "code": "000000"}).status_code == 401
+
+
+def test_audit_filter_by_a_catalogue_code_is_exact_and_by_a_scope_is_a_prefix(env):
+    """G24: the audit page sends a catalogue code, which names one action; a scope ends with a
+    dot and matches by prefix. `admin.user.revoke_session` must not list the revoke-all rows."""
+    c, alice, api = env["c"], env["alice"], env["api"]
+    other = TestClient(api)
+    assert post(other, "/api/auth/login", {"email": "alice@example.com", "password": PW}).status_code == 200
+    detail = c.get(f"/api/admin/users/{alice['id']}").json()
+    _reauth(c)
+    assert post(c, f"/api/admin/users/{alice['id']}/sessions/{detail['sessions'][0]['id']}/revoke",
+                {"reason": "审计筛选测试：结束一台设备的登录"}).status_code == 200
+    assert post(c, f"/api/admin/users/{alice['id']}/revoke-sessions", {"reason": "审计筛选测试：撤销全部会话"}).status_code == 200
+    one = c.get("/api/admin/audit?action=admin.user.revoke_session").json()["items"]
+    assert one and {row["action"] for row in one} == {"admin.user.revoke_session"}
+    scope = c.get("/api/admin/audit?action=admin.user.").json()["items"]
+    assert {"admin.user.revoke_session", "admin.user.revoke_sessions"} <= {row["action"] for row in scope}
+    assert c.get("/api/admin/audit?action=admin.user.revoke").json()["items"] == []
+
+
+def test_platform_access_simulation_answers_with_the_grant_routes_preconditions(env):
+    """A5: the simulation refuses what the grant route would refuse — the super administrator
+    role lands only through the person's own acceptance, and an unverified address receives no
+    role — instead of reporting those grants as feasible."""
+    c, store, alice = env["c"], env["store"], env["alice"]
+    store.execute("UPDATE users SET email_verified_at=? WHERE id=?", (now(), alice["id"]))
+    sim = c.get(f"/api/admin/users/{alice['id']}/platform-access/simulate?change=grant&role=super_admin").json()
+    assert sim["feasible"] is False and sim["refusal"] == "super_admin_acceptance_required", sim
+    store.execute("UPDATE users SET email_verified_at=NULL WHERE id=?", (alice["id"],))
+    sim = c.get(f"/api/admin/users/{alice['id']}/platform-access/simulate?change=grant&role=support").json()
+    assert sim["feasible"] is False and sim["refusal"] == "target_unverified" and sim["counts"] is False, sim
+
+
+def test_refused_registration_requests_are_recorded_once_per_window_by_digest(env):
+    """A27 / G23: a refused anonymous request goes on record once per limiter window, under the
+    limiter's own digest of the address (never the raw address of someone who never registered),
+    and a string that is not an address is refused before anything is written."""
+    import hashlib
+    import json
+    store, api = env["store"], env["api"]
+    anonymous = TestClient(api)
+    for _ in range(5):
+        assert post(anonymous, "/api/auth/email/resend", {"email": "<script>alert(1)</script> not an address"}).status_code == 400
+    assert store.one("SELECT COUNT(*) AS n FROM audit_events WHERE action='auth.registration.throttled'")["n"] == 0
+    address = "never-registered-person@example.test"
+    statuses = [post(anonymous, "/api/auth/email/resend", {"email": address}).status_code for _ in range(8)]
+    assert statuses == [202] * 8, statuses
+    rows = store.all("SELECT object_id, meta FROM audit_events WHERE action='auth.registration.throttled'")
+    assert len(rows) == 1 and rows[0]["object_id"] == hashlib.sha256(address.encode()).hexdigest(), rows
+    assert "@" not in rows[0]["object_id"] and json.loads(rows[0]["meta"])["scope"] == "email"

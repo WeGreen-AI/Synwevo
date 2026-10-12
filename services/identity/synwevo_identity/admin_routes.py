@@ -247,11 +247,17 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             "error_code": code, "retryable": retryable}
 
     # ------------------------------------------------------------------ throttles (G19)
-    THROTTLE_KINDS = (("user:", "account_login"), ("ip:", "address_login"), ("reauth:", "session_reauth"),
-                      ("registration-email:", "registration_address"), ("registration:", "registration_source"),
-                      ("login-code-email:", "login_code_address"), ("login-code:", "login_code_source"),
-                      ("forgot:", "recovery_source"), ("bootstrap:", "bootstrap_source"), ("pkbegin:", "passkey_source"),
-                      ("pkreauth:", "passkey_reauth"), ("account:", "account_action"), ("push-", "push"))
+    from .auth_routes import MFA_BACKOFF
+    # (bucket prefix, kind, backoff schedule): a schedule marks a slow-backoff bucket whose recorder
+    # waits by it (`Identity.backoff_wait(bucket, schedule)`); None means the login schedule for
+    # `user:`/`reauth:` and a fixed window for the rest. Longer prefixes come before their prefixes.
+    THROTTLE_KINDS = (("user:", "account_login", None), ("mfa:", "account_second_factor", MFA_BACKOFF),
+                      ("ip:", "address_login", None), ("reauth:", "session_reauth", None),
+                      ("registration-email:", "registration_address", None), ("registration:", "registration_source", None),
+                      ("login-code-email:", "login_code_address", None), ("login-code:", "login_code_account", MFA_BACKOFF),
+                      ("forgot:", "recovery_source", None), ("bootstrap:", "bootstrap_source", None),
+                      ("pkbegin:", "passkey_source", None), ("pkreauth:", "passkey_reauth", None),
+                      ("account:", "account_action", None), ("push-", "push", None))
 
     def _throttle_subject(name: str, kind: str, held) -> tuple[str | None, str | None]:
         """What the row is about, as administration may see it: an account's address only for a
@@ -264,7 +270,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             if not user:
                 return None, None
             return (user["email"] if "platform.users.view" in held else None), user["id"]
-        if kind in ("account_action", "push"):
+        if kind in ("account_action", "push", "account_second_factor", "login_code_account"):
             uid = name.rsplit(":", 1)[-1]
             user = store.one("SELECT id,email FROM users WHERE id=? AND deleted_at IS NULL", (uid,))
             if not user:
@@ -277,8 +283,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     def _throttle_row(b: dict, held) -> dict | None:
         from synwevo_core.identity import throttle_id
         name = b["bucket"]
-        kind = next((k for prefix, k in THROTTLE_KINDS if name.startswith(prefix)), "other")
-        state = ident.throttle_state(name)
+        kind, schedule = next(((k, s) for prefix, k, s in THROTTLE_KINDS if name.startswith(prefix)), ("other", None))
+        state = ident.throttle_state(name, schedule)
         if not state:
             return None
         subject, uid = _throttle_subject(name, kind, held)
@@ -299,7 +305,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             "SELECT bucket,count,first_at,last_at,blocked_until FROM auth_attempts ORDER BY last_at DESC LIMIT 500")) if row]
         if active:
             rows = [row for row in rows if row["active"]]
-        return {"items": rows, "kinds": [k for _, k in THROTTLE_KINDS]}
+        return {"items": rows, "kinds": [k for _, k, _ in THROTTLE_KINDS]}
 
     @r.post("/security/throttles/lift")
     def lift_throttle(request: Request, body: dict = Body(...)):
@@ -1144,17 +1150,23 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         the fact reported (503) rather than a silent retry."""
         actor = _admin(request, "platform.users.manage", dangerous=True)
         reason = _reason(body)
-        from .profile import finalize_deletions
-        before = deletion_counts(store)
+        from .profile import finalize_deletions, record_deletion_withdrawals
         try:
             # One transaction for the sweep and its audit (G24): a failed audit undoes the sweep,
-            # which the next hourly pass then repeats — never a deletion without its record.
+            # which the next hourly pass then repeats — never a deletion without its record. The
+            # withdrawal records (the fsync'd security journal) are appended only after that
+            # commit: a journal line must never describe a deletion that was rolled back.
             with store.tx():
-                finalized = finalize_deletions(store)
+                before = deletion_counts(store)
+                finalized = finalize_deletions(store, withdrawals=False)
                 after = deletion_counts(store)
                 audit(request, "admin.accounts.finalize_deletions", actor_id=actor["id"], object_kind="platform",
                       object_id="account_deletions", result="ok",
                       meta={**change(before, after), "reason": reason, "finalized": finalized})
+            # The withdrawal records follow the commit; the answer reports the state they leave,
+            # the audit row the state the transaction committed.
+            record_deletion_withdrawals(store)
+            after = deletion_counts(store)
         except Exception as e:  # noqa: BLE001 - the sweep's failure is what this route reports
             audit(request, "admin.accounts.finalize_deletions", actor_id=actor["id"], object_kind="platform",
                   object_id="account_deletions", result="error", meta={"reason": reason, "code": type(e).__name__})
@@ -1263,8 +1275,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             events = []
             for row in store.all(
                     f"SELECT id,at,action,result,ip,meta FROM audit_events WHERE (actor_id=? AND action IN ({marks})) "
-                    "OR (object_kind='registration' AND object_id=?) ORDER BY at DESC LIMIT 100",
-                    (uid or "", *REGISTRATION_EVENTS, key)):
+                    "OR (object_kind='registration' AND object_id IN (?,?)) ORDER BY at DESC LIMIT 100",
+                    (uid or "", *REGISTRATION_EVENTS, key, hashlib.sha256(key.encode()).hexdigest())):
                 try:
                     meta = json.loads(row.pop("meta") or "{}")
                 except ValueError:
@@ -1654,6 +1666,16 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         before = frozenset().union(*(ROLES[r] for r in before_roles)) if before_roles else frozenset()
         after = (frozenset().union(*(ROLES[r] for r in after_roles)) if after_roles else frozenset()) if counts else before
         refusal = _assign_refusal(held, actor["id"], uid, role)
+        if refusal is None and change == "grant":
+            # The same order as PlatformAccess._grant: what the account must be, then the super
+            # administrator rule (a grant of that role only lands through the person's own
+            # acceptance of a handover offer), then whether the role is already held.
+            try:
+                access._precondition(uid, role)
+            except ServiceError as e:
+                refusal = e.code
+            if refusal is None and role == SUPER_ADMIN:
+                refusal = "super_admin_acceptance_required"
         if refusal is None and change == "grant" and role in before_roles:
             refusal = "already_held"
         if refusal is None and change == "revoke" and role not in before_roles:
@@ -1713,9 +1735,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         _admin(request, "platform.audit.view")
         page = _page("audit_events", columns="audit_events.*, u.email AS actor_email",
                      join="LEFT JOIN users u ON u.id=audit_events.actor_id",
-                     where="(?='' OR audit_events.action LIKE ?) "
+                     # A value names one action exactly, or a scope on a dot boundary: admin.user and
+                     # admin.user. both list every admin.user.* action, while admin.user.revoke_session
+                     # never lists admin.user.revoke_sessions.
+                     where="(?='' OR audit_events.action=? OR audit_events.action LIKE ?) "
                            "AND (?='' OR u.email LIKE ? OR audit_events.object_id LIKE ?)",
-                     params=(action, f"{action}%", q, f"%{q}%", f"%{q}%"),
+                     params=(action, action, f"{action.rstrip('.')}.%", q, f"%{q}%", f"%{q}%"),
                      order="audit_events.at DESC, audit_events.seq DESC",
                      limit=max(1, min(limit, 500)), offset=offset, snapshot=snapshot)
         rows = page["items"]

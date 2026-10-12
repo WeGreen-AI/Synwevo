@@ -857,3 +857,9 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 `synwevo_core.audit_change.change(before, after)` 产出审计 meta 的三个固定键：同键快照 `before`/`after`（一侧缺的键记为空）与差异键列表 `changed`（空操作为空列表，照实记录）。应用于账户服务的注册策略、第二因素策略（含宽限期截止）、解除限流、冻结/解冻、认领/撤回历史数据、终结删除、撤销全部/单设备会话、移除安全密钥、解除外部身份、撤销推送、Agent 暂停/恢复，以及核心的平台角色授予/撤销（含系统路径、运维角色清除）与组织状态变更。审计页新增「变化」列按 `changed` 逐键显示「键 前 → 后」，没有记录的动作显示「—」。
 测试：`test_admin.py` 新增 2 例——纯函数形状；经真实路由做 11 种变更后逐动作断言三键结构与期望前后值（过程中发现一次真实空操作：刚申请注销的账户再撤销会话时 `changed` 为空，测试改为在会话存活时撤销）；`test_platform_access.py` 3 处既有断言改为新结构；account-web 新增 `admin-audit-changes.test.mjs`（变化行、旧标量形状不视为变化记录、结构值以 JSON 打印）。相关 Python 套件 305 passed, 0 failed（进度行计数；-q 汇总行未输出）；account-web typecheck + 177 通过；五守卫通过。
 浏览器（隔离合成实例 127.0.0.1:33953，系统 Chrome，1440×900）：最高管理员经 `/api/auth/reauth`（scope=admin）后以真实路由冻结→解冻合成共享空间、两次切换注册策略；审计页（简体/English）表头含「变化」/「Change」，按动作筛选后各行显示 `frozen false → true`、`frozen true → false`、`mode invite → open`、`mode open → invite`；英文页数据之外无中文。证据：evidence/2026-10-12-admin-audit-changes/（3 张截图、browser-report.json、verification.json）。
+
+## 2026-10-12 CR-108 推送前对抗式审查与修复（本地+隔离浏览器）
+
+审查：workflow `wf_766e2d36`，64 个只读代理（7 名审查者 + 每条发现 3 名反驳者），对 `origin/main..HEAD` 24 个提交；19 条原始发现，14 条成立（4 中 10 低），5 条驳回（结论见 CODE_REVIEW CR-108 表）。全部成立项已修复。
+修复验证：account-web typecheck + 178 项（新增访问解释翻译、宽限期保存、分隔符、模拟拒绝句、审计变化列等 SSR 测试）；六个前端工作区共 613 项通过；根 typecheck/build 通过（五个外壳）；五守卫通过；`test_platform_access.py` 48 项、`test_external_identity.py` 等 61 项、`test_admin.py` 全文件（含新增 5 项与故障注入 8 路由）通过；`test_admin_operations.py`/`test_admin_settings.py` 新增 `changed` 断言通过；Docs 契约同步测试通过（`openapi.yaml` 由 CLI 重新生成）。推送前清单：仓库根 `pytest` 全量 5791 通过、2 跳过（37 分钟）；`SYNWEVO_SHEET_CLIENTS=required` sheet 客户端测试 98 通过；infra/production unittest 12 通过；SDK Python 55、TypeScript 48 通过；根 typecheck/build（五个外壳）与六个工作区测试 613 通过；五守卫通过。
+浏览器（隔离合成实例 127.0.0.1:33954，重建后的账户外壳）：重跑 2026-10-12-admin-audit-changes 的证明——冻结/解冻/注册策略变更仍按键显示前后值，且英文审计页按 `admin.workspace.freeze` 筛选只列冻结行（精确匹配，C4）。

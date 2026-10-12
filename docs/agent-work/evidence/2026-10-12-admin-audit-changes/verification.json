@@ -7,9 +7,42 @@
   "proof": "scratchpad a13/a37_proof.py; browser-report.json in this directory is its output",
   "flow": "super administrator signs in, re-authenticates for administration (POST /api/auth/reauth scope=admin), freezes and unfreezes the synthetic shared workspace and flips the registration policy twice through the real routes with reasons; then the audit page (zh-Hans, then en) is filtered to each action and the change column is read",
   "results": {
-    "writes": {"freeze": 200, "unfreeze": 200, "registration": 200, "registration_restored": 200},
-    "zh-Hans": {"headers": ["时间", "操作", "操作者", "对象", "结果", "变化", "理由"], "freeze_row_change": "frozen false → true", "unfreeze_row_change": "frozen true → false", "registration_row_changes": ["mode invite → open", "mode open → invite"]},
-    "en": {"headers": ["Time", "Actions", "Actor", "Object", "Result", "Change", "Reason"], "freeze_row_change": "frozen false → true", "han_outside_data": "only the language autonyms and the administrator's own Chinese reasons"},
+    "writes": {
+      "freeze": 200,
+      "unfreeze": 200,
+      "registration": 200,
+      "registration_restored": 200
+    },
+    "zh-Hans": {
+      "headers": [
+        "时间",
+        "操作",
+        "操作者",
+        "对象",
+        "结果",
+        "变化",
+        "理由"
+      ],
+      "freeze_row_change": "frozen false → true",
+      "unfreeze_row_change": "frozen true → false",
+      "registration_row_changes": [
+        "mode invite → open",
+        "mode open → invite"
+      ]
+    },
+    "en": {
+      "headers": [
+        "Time",
+        "Actions",
+        "Actor",
+        "Object",
+        "Result",
+        "Change",
+        "Reason"
+      ],
+      "freeze_row_change": "frozen false → true",
+      "han_outside_data": "only the language autonyms and the administrator's own Chinese reasons"
+    },
     "console": "one 401 on /api/auth/me from the anonymous session probe on the sign-in page (expected); no page errors"
   },
   "verification": {
@@ -21,5 +54,10 @@
   "notes": [
     "The new test found a true no-op on the way: revoking the sessions of an account that had just requested deletion changed nothing (the request had already ended them), and the record said so (changed: []). The test now revokes while a session is live; a no-op is still recorded truthfully.",
     "Model provider / cost / price publications already record full before/after snapshots of their own shape; they were left as they are and have no changed list."
-  ]
+  ],
+  "re_run_2026_10_12_after_cr_108": {
+    "instance": "127.0.0.1:33954 (rebuilt account shell)",
+    "result": "same assertions pass; the English freeze filter lists only admin.workspace.freeze rows (exact catalogue-code match, CR-108 C4)",
+    "browser_report": "browser-report.json in this directory is from this re-run"
+  }
 }

@@ -131,7 +131,7 @@ export function AccountDetailBody({ detail: d, held, onAct, onExplain }: { detai
         <dt>{tr("平台角色")}</dt><dd>{d.platform_grants.length
           ? d.platform_grants.map((g) => g.expires_at
             ? tr("{role}（到期：{time}）", { role: platformRoleLabel(g.role), time: fmtTime(g.expires_at) })
-            : platformRoleLabel(g.role)).join("、")
+            : platformRoleLabel(g.role)).join(tr("、"))
           : tr("无平台权限")}</dd>
       </dl></section>
 
@@ -150,7 +150,7 @@ export function AccountDetailBody({ detail: d, held, onAct, onExplain }: { detai
         {d.deletion.overdue ? <p className="notice" role="note">{tr("已过到期时间，等待后台任务终结；可在平台概览页立即处理。")}</p>
           : <p className="muted small">{d.deletion.cancellation_link_valid ? tr("取消注销的链接仍然有效，到期前本人可随时取消。") : tr("取消注销的链接已失效；可在账户行的菜单里重发。")}</p>}
       </> : d.deletion.blockers.length
-        ? <p>{tr("没有注销申请。若本人现在申请注销，将被拒绝：{rules}。", { rules: d.deletion.blockers.map((b) => tr(DELETION_BLOCKER_LABELS[b] || b)).join("、") })}</p>
+        ? <p>{tr("没有注销申请。若本人现在申请注销，将被拒绝：{rules}。", { rules: d.deletion.blockers.map((b) => tr(DELETION_BLOCKER_LABELS[b] || b)).join(tr("、")) })}</p>
         : <p className="muted small">{tr("没有注销申请；本人现在可以申请注销。")}</p>}
     </section>}
 
@@ -278,6 +278,29 @@ const ENTITLEMENT_LABELS: Record<string, string> = { granted: "已授予", revok
 const ORG_REASON_LABELS: Record<string, string> = { organization_unavailable: "组织不可用", not_an_organization_member: "不是该组织的成员" };
 const APP_SCOPE_LABELS: Record<string, string> = { workspace: "按工作空间", organization: "按组织", personal: "个人应用", platform: "平台门户" };
 export const GATE_DETAIL_SENTENCES = [...Object.values(POLICY_LABELS), ...Object.values(ENTITLEMENT_LABELS), ...Object.values(ORG_REASON_LABELS), ...Object.values(APP_SCOPE_LABELS)];
+/** The verdict's reason is the sentence `Apps.check_access` (with `_check_platform` and
+ *  `check_access_for_workspace`, synwevo_core/apps.py) writes for the person who was refused. The
+ *  server sends it in the source language; catalogued here, `tr(reason)` words it for the reader,
+ *  and a sentence a later server adds still shows as sent rather than disappearing. */
+export const ACCESS_REASON_SENTENCES = [
+  "该应用不存在", "该应用已停用", "账户不可用", "你不是该工作空间的成员", "你还不属于任何工作空间，请联系管理员邀请你加入",
+  "该工作空间不可用", "该组织当前不可用",
+];
+/** The reasons that carry the application's name in 「」: matched back to their template so the
+ *  name stays a parameter and the sentence translates. */
+export const ACCESS_REASON_TEMPLATES = [
+  "你在该工作空间使用「{app}」的资格已被撤销，请联系工作空间管理员", "你所在的工作空间尚未启用「{app}」，或你没有使用它的资格", "该工作空间尚未启用「{app}」",
+];
+
+export function accessReasonText(reason: string): string {
+  for (const template of ACCESS_REASON_TEMPLATES) {
+    const [head, tail] = template.split("{app}");
+    if (reason.length > head.length + tail.length && reason.startsWith(head) && reason.endsWith(tail)) {
+      return tr(template, { app: reason.slice(head.length, reason.length - tail.length) });
+    }
+  }
+  return tr(reason);
+}
 
 function gateDetail(gate: string, detail: Record<string, unknown>): string {
   const s = (v: unknown) => (v === null || v === undefined ? DASH : String(v));
@@ -298,7 +321,7 @@ export function AccessExplanationBody({ d }: { d: AccessExplanation }) {
   return <div className="col gap12">
     <p className={`notice ${d.verdict.allowed ? "ok" : "warn"}`} role="status">{d.verdict.allowed
       ? tr("可以打开：{app}（{workspace}）", { app: d.app.name, workspace: d.workspace.name || d.workspace.id })
-      : tr("不能打开：{reason}", { reason: d.verdict.reason || DASH })}</p>
+      : tr("不能打开：{reason}", { reason: d.verdict.reason ? accessReasonText(d.verdict.reason) : DASH })}</p>
     <div className="list-wrap"><table className="gov" aria-label={tr("访问闸门")}>
       <thead><tr><th scope="col">{tr("闸门")}</th><th scope="col">{tr("结果")}</th><th scope="col">{tr("说明")}</th></tr></thead>
       <tbody>{d.gates.map((g) => <tr key={g.gate}>

@@ -55,6 +55,7 @@ from synwevo_core.store import Store, new_id, now
 
 from .auth_routes import client_ip, cookies_secure, issue_session
 from .mail import security_notice
+from .passkeys import rp_id
 
 REQUEST_TTL_S = 600
 OFFER_TTL_S = 600
@@ -443,11 +444,23 @@ class ExternalIdentities:
 
 
 def other_sign_in_methods(store: Store, user_id: str, *, except_identity: str | None = None) -> int:
-    """How many ways into the account remain besides the identity being removed."""
+    """How many ways into the account remain besides the identity being removed: a password, a
+    passkey that can still sign in here, another external identity.
+
+    A passkey counts the way `Passkeys.remove` counts a remaining one: live (`deleted_at IS NULL`
+    — a removed key is gone, however recently) and bound to the current RP ID (one registered
+    under an earlier domain is never offered by the browser again), and user-verifying when a
+    platform grant gives the account a permission, since such an account's passkey sign-in
+    refuses a possession-only key (auth_routes.login_passkey). Anything else would let the
+    unlink remove the account's only live way in.
+    """
+    from synwevo_core.platform_access import PlatformAccess
     n = 0
     if store.one("SELECT 1 FROM user_passwords WHERE user_id=?", (user_id,)):
         n += 1
-    n += store.one("SELECT COUNT(*) AS n FROM passkeys WHERE user_id=?", (user_id,))["n"]
+    uv = " AND uv_capable=1" if PlatformAccess(store).effective_permissions(user_id) else ""
+    n += store.one("SELECT COUNT(*) AS n FROM passkeys WHERE user_id=? AND deleted_at IS NULL AND rp_id=?" + uv,
+                   (user_id, rp_id()))["n"]
     n += store.one("SELECT COUNT(*) AS n FROM external_identities WHERE user_id=? AND id<>?",
                    (user_id, except_identity or ""))["n"]
     return n

@@ -268,15 +268,23 @@ class Identity:
         return {"failures": int(b["count"]), "first_failure_at": b["first_at"], "last_failure_at": b["last_at"],
                 "retry_after": int(math.ceil(self._backoff_remaining(name))), "throttle_id": throttle_id(name)}
 
-    def throttle_state(self, bucket: str) -> dict | None:
+    def throttle_state(self, bucket: str, schedule: list[int] | tuple[int, ...] | None = None) -> dict | None:
         """Read-only: one bucket as administration sees it (admin coverage G19). Slow-backoff
-        buckets (an account's or a session's failed proofs) wait by their count; fixed-window
-        buckets are blocked while `blocked_until` lies ahead. Never consumes an attempt."""
+        buckets (an account's or a session's failed proofs) wait by their count — the login
+        schedule for `user:`/`reauth:` buckets, `schedule` for the buckets whose recorder waits
+        by another one (the second-factor and mailed-code buckets, `backoff_wait(schedule)`);
+        fixed-window buckets are blocked while `blocked_until` lies ahead. Never consumes an
+        attempt."""
         b = self._bucket(bucket)
         if not b:
             return None
-        slow = bucket.startswith(("user:", "reauth:"))
-        wait = self._backoff_remaining(bucket) if slow else max(0.0, (b.get("blocked_until") or 0) - now())
+        slow = schedule is not None or bucket.startswith(("user:", "reauth:"))
+        if schedule is not None:
+            wait = self.backoff_wait(bucket, schedule)
+        elif slow:
+            wait = self._backoff_remaining(bucket)
+        else:
+            wait = max(0.0, (b.get("blocked_until") or 0) - now())
         return {"count": int(b["count"]), "first_at": b["first_at"], "last_at": b["last_at"],
                 "blocked_until": b.get("blocked_until"), "retry_after": int(math.ceil(wait)), "slow": slow}
 

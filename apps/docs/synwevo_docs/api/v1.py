@@ -1394,6 +1394,30 @@ def _hdr(name: str) -> dict:
     return {"$ref": f"#/components/headers/{name}"}
 
 
+# What the member, invitation and template events carry in `data` — the exact keys of the trigger
+# payloads in synwevo_core.member_events / synwevo_core.template_events (job is null for all of
+# them). Identifiers and version numbers only: never an e-mail address, a name, an invitation
+# token, a template's name, file or fields. Keep in step with those two modules.
+_IDENTIFIER_EVENT_FIELDS = {
+    "member.added": ("workspace_id", "user_id", "role", "can_export"),
+    "member.changed": ("workspace_id", "user_id", "role", "can_export", "previous_role", "previous_can_export"),
+    "member.removed": ("workspace_id", "user_id", "role"),
+    "invitation.created": ("workspace_id", "invitation_id", "role", "can_export", "expires_at"),
+    "invitation.accepted": ("workspace_id", "invitation_id", "user_id", "role"),
+    "invitation.revoked": ("workspace_id", "invitation_id"),
+    "template.created": ("template_id", "kind", "format", "head"),
+    "template.updated": ("template_id", "head", "previous_head"),
+    "template.deleted": ("template_id", "head"),
+    "template.published": ("template_id", "publication_id", "organization_id", "release_no", "version_no"),
+    "template.released": ("template_id", "publication_id", "organization_id", "release_no", "version_no"),
+    "template.deprecated": ("template_id", "publication_id", "organization_id", "release_no"),
+}
+
+
+def _identifier_fields(etype: str) -> str:
+    return "、".join(_IDENTIFIER_EVENT_FIELDS[etype])
+
+
 def _components() -> dict:
     """Shared pieces of the contract that FastAPI cannot derive from the handlers."""
     from ..editor_contract import editor_schemas
@@ -1420,11 +1444,14 @@ def _components() -> dict:
         "version": {"type": "integer", "example": 1},
         "occurred_at": {"type": "number", "description": "Unix 秒"},
         "tenant": {"type": "string", "description": "工作空间 id"},
-        "job": {**job_ref, "type": ["object", "null"], "description": "任务摘要；测试事件与文件事件为 null"},
+        "job": {**job_ref, "type": ["object", "null"],
+                "description": "任务摘要；测试事件、文件事件、复制事件、成员与邀请事件、模板事件为 null"},
         "data": {"type": "object", "additionalProperties": True,
                  "description": "任务事件：status、run_no、counts；被平台停止的任务带 halt_reason。"
                                 "文件事件：file_id、project_id、status、reason（安全检查结论）、version。"
-                                "复制事件：copy_id、source_project_id、target_workspace_id、status、version"}},
+                                "复制事件：copy_id、source_project_id、target_workspace_id、status、version。"
+                                "成员、邀请与模板事件只有标识与版本号，不含邮箱、姓名、邀请令牌、模板名、文件或字段："
+                                + "；".join(f"{t}：{_identifier_fields(t)}" for t in _IDENTIFIER_EVENT_FIELDS)}},
         "additionalProperties": True}
     s = {"type": "string"}
     headers = {
@@ -1508,7 +1535,13 @@ def _webhooks() -> dict:
                                "status、reason、version，文件名与内容请用凭据另行读取。" if etype.startswith("file.") else "")
                             + ("复制申请的状态变化（发往来源个人工作空间的订阅），与状态变化同一事务写入；job 为 null，"
                                "data 只有 copy_id、source_project_id、target_workspace_id、status、version；"
-                               "清单与审批理由请用本人授权的凭据读取 /copy-requests/{cid}。" if etype.startswith("copy.") else ""))
+                               "清单与审批理由请用本人授权的凭据读取 /copy-requests/{cid}。" if etype.startswith("copy.") else "")
+                            + ("工作空间成员关系或邀请的变化（发往该工作空间的订阅），与行变化同一事务写入；job 为 null，"
+                               f"data 只有 {_identifier_fields(etype)}，不含邮箱、姓名或邀请令牌；"
+                               "需要更多信息请用凭据读取目录接口。" if etype.startswith(("member.", "invitation.")) else "")
+                            + ("模板或组织模板库的变化（发往模板所在工作空间，发布事件发往发布它的工作空间），与行变化同一事务写入；"
+                               f"job 为 null，data 只有 {_identifier_fields(etype)}，不含模板名、文件或字段；"
+                               "需要请用凭据读取 /templates/{tid}。" if etype.startswith("template.") else ""))
                            + "接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。",
             "operationId": "webhook_" + etype.replace(".", "_"),
             "parameters": params,

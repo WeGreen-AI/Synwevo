@@ -431,3 +431,39 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 审查要点：三键只加不减——各路由原有的 `mode`/`sessions`/`revoked` 等键保留，读旧记录的代码不受影响；平台角色审计的形状变化只影响 meta（三处测试断言随之更新），HTTP 响应仍返回列表；`change` 在写入之前读取旧值的地方（宽限期、是否已暂停、安全密钥数）都在同一事务内；前端对缺少 `changed` 的旧记录按键值差异推导，对旧的标量 `before`/`after` 不显示为变化；
 - 风险/未做：模型提供方/成本/价格发布保留各自完整快照（无 `changed`）；API 控制台 `api_platform.*` 的 meta 由各动作自带，未纳入；Docs/Suite 的管理写入（G26）不在本轮；「变化」列的值为原始值（`true`/`frozen`），未做本地化；
 - 验证：相关 Python 套件 305 passed, 0 failed（进度行计数；-q 汇总行未输出）；account-web typecheck + 177 通过；五守卫通过；隔离浏览器中英文审计页验收通过（evidence/2026-10-12-admin-audit-changes）。
+
+## CR-108 · 推送前的对抗式多代理审查与修复（2026-10-12，本轮新增，本地已验证）
+
+- 方法：workflow `wf_766e2d36`（64 个只读代理）：7 个维度（授权与平台边界、数据一致性与事务、信息暴露与隐私、界面/i18n/拒绝门禁、测试诚实度、滥用与运维安全、API/SDK/事件契约）各一名审查者对 `origin/main..HEAD`（24 个提交）出具带 file:line 的发现；去重后每条由 3 名不同视角（复现、影响、设计意图）的反驳者核验，≥2 票不被反驳才成立。19 条原始发现 → 14 条成立（4 中、10 低）、5 条驳回。
+- 处置（成立项全部已修，代码在本节对应提交中）：
+
+| # | 严重度 | 维度 | 位置 | 发现 | 处置 |
+|---|---|---|---|---|---|
+| C1 | medium | authz | `packages/core/synwevo_core/platform_access.py:807` | Admin second-factor policy is satisfied by a mailed code plus the re-entered password, with nothing enrolled | 已修（子代理）：`platform_access.py` `session_strong()` 只认 `STRONG_SECOND_FACTORS={totp, recovery, user_verification}`，`email+password`、`idp:*+password` 不再算强会话；`test_platform_access.py` 新增 16 组 amr 参数化与邮件验证码+口令仍被锁的全链路测试；admin-coverage A11 口径改正 |
+| C2 | medium | integrity | `packages/core/synwevo_core/identity.py:278` | throttle_state misclassifies MFA and e-mail-code backoff buckets as inactive 'other' rows with no account link | 已修：`identity.throttle_state(bucket, schedule)` 按记录方的退避表计算等待；`THROTTLE_KINDS` 携带退避表，新增 `account_second_factor`（`mfa:`）、`login-code:{uid}` 改为 `login_code_account` 并关联账户；前端标签与目录同步；`test_admin.py` 新增邮件验证码退避被列出、关联账户、可解除的测试 |
+| C3 | medium | i18n-ui | `services/identity/web/src/governance/AccountDetail.tsx:301` | Access explanation shows the server's Simplified-Chinese, second-person verdict reason untranslated | 已修（子代理）：`AccountDetail.tsx` 以目录化句子渲染 `verdict.reason`（含「{app}」模板匹配），`check_access`/`workspace_access_failure` 的 9 句入目录；测试断言英文无汉字 |
+| C4 | medium | contracts | `services/identity/synwevo_identity/admin_routes.py:1718` | Audit filter treats a catalogue code as a prefix, so one action's option also returns another action's rows | 已修：`/api/admin/audit` 的 `action` 精确匹配或按点边界前缀（`admin.user`/`admin.user.` 列出全部，`admin.user.revoke_session` 不含 `_sessions`）；新增测试；浏览器重验收冻结筛选只含 freeze 行 |
+| C5 | low | authz | `services/identity/synwevo_identity/admin_routes.py:1656` | Platform-grant simulation reports feasible for grants the grant route always refuses | 已修：模拟在 `_assign_refusal` 之后调用 `access._precondition` 并对 `super_admin` 回答 `super_admin_acceptance_required`；`SIMULATION_REFUSALS` 增补 8 个代码的目录化句子；新增 Python 与 SSR 测试 |
+| C6 | low | integrity | `services/identity/synwevo_identity/admin_routes.py:1440` | Admin external-identity unlink counts soft-deleted passkeys as a way in and can remove the last sign-in method | 已修（子代理）：`external.other_sign_in_methods` 只数 `deleted_at IS NULL AND rp_id=<当前>` 的安全密钥（平台权限持有者另要求 uv_capable，与 `Passkeys.remove` 同口径）；`test_external_identity.py` 新增软删除/他域/在用三种情形 |
+| C7 | low | integrity | `services/identity/synwevo_identity/admin_routes.py:1152` | Admin finalize wraps finalize_deletions in a transaction, so the security journal records user_deleted before the deletion commits | 已修：`finalize_deletions(store, withdrawals=False)` 拆出 `record_deletion_withdrawals`；管理路由在事务提交后才写安全日志与撤回记录，`before` 在事务内读取；故障注入测试断言回滚后无重试标记、日志无 user_deleted 行 |
+| C8 | low | exposure | `services/identity/synwevo_identity/registration.py:60` | Throttled registration audit stores raw addresses (and arbitrary strings) of non-users, one row per anonymous request | 已修：`auth.registration.throttled` 的 object_id 改为限流器自身的 SHA-256 摘要，诊断接口按摘要匹配；`/api/auth/email/resend` 先 `valid_email` |
+| C9 | low | i18n-ui | `services/identity/web/src/governance/GovernanceTabs.tsx:67` | Second-factor policy card cannot end a grace window early while the policy stays required | 已修（子代理）：`secondFactorSaveChanges`（有在途宽限期时允许以 0 天保存）与 `secondFactorGraceSentence`（确认文案说明宽限期结束）；SSR 测试六种脏状态 |
+| C10 | low | tests | `services/identity/tests/test_admin.py:1085` | Unified before/after test claims 'every' state-changing action but omits account status and settings publish, which lack `changed` | 已修：`AccountOperations`（账户状态）与 `SettingsOperations`（设置发布）审计 meta 经 `change()` 携带 `changed`；对应测试断言 |
+| C11 | low | tests | `services/identity/web/tests/admin-account-detail.test.mjs:105` | English deletion-blocker sentence is asserted with a CJK enumeration comma | 已修（子代理）：列表分隔符改为目录化 `tr("、")`（en 为 ", "），测试正则加入 U+3001/U+FF0C |
+| C12 | low | tests | `services/identity/web/tests/admin-registration-diagnostics.test.mjs:52` | Expected string 'Refused' is listed and then filtered out of the assertion | 已修（子代理）：测试期望改为 "Denied" 并删除过滤 |
+| C13 | low | abuse | `services/identity/synwevo_identity/registration.py:60` | Anonymous callers can flood the security log with attacker-chosen content once IP-throttled | 已修：每个限流窗口只记一行（地址摘要每小时一行、来源地址每 15 分钟一行），匿名调用方无法以重复请求增长日志；与第 8 条合并测试 |
+| C14 | low | contracts | `apps/docs/synwevo_docs/api/v1.py:1423` | OpenAPI WebhookEvent descriptions were not extended for the six new event families | 已修（子代理）：`api/v1.py` 的 `WebhookEvent.job/data` 描述与逐事件描述覆盖成员/邀请/模板 12 种事件（`job` 为 null、`data` 仅标识符），`openapi.yaml` 由 CLI 重新生成，契约同步测试通过 |
+
+- 驳回项（记录理由，不改代码）：
+
+| # | 严重度 | 维度 | 位置 | 发现 | 结论 |
+|---|---|---|---|---|---|
+| — | low | authz | `admin_routes.py:206` | The second-factor grace window can be renewed without limit by a session that has not met the requirement | 驳回（1/3 票成立）：The mechanics are as described: services/identity/synwevo_identity/admin_routes.py:177-212 gates POST /security/second-factor only on _admin(..., "platform.config.manage", dangerous=True) and recomputes grace_until = clo |
+| — | low | authz | `external.py:450` | The administrator's external-identity unlink relies on a 'last sign-in method' count that includes removed passkeys | 驳回（0/3 票成立）：The claim's scenario rests on a misreading of Passkeys.remove: services/identity/synwevo_identity/passkeys.py:113-121 refuses with 409 last_factor whenever the account has no password and no other live passkey on the cur |
+| — | medium | integrity | `registration.py:66` | Refused registration attempts now write one unbounded audit row per request, outside any transaction | 驳回（1/3 票成立）：The reviewer's facts reproduce (scratch probe on this branch: 10x202 then 30 refused /register -> 30 `auth.registration.throttled` rows, auth_attempts unchanged, 429 still answered; an injected audit-insert failure turns |
+| — | low | tests | `test_admin.py:597` | Device-revoke test does not pin which session was ended | 驳回（1/3 票成立）：The claim isolates line 597 and ignores line 598, which is what pins the target. I replayed lines 588-598 of services/identity/tests/test_admin.py under patched `Sessions.revoke_device` regressions (scratchpad probe, fix |
+| — | low | contracts | `api_platform.py:74` | `trace_id` filter on /calls has no index while the analogous request_id lookup does | 驳回（0/3 票成立）：The factual half of the claim holds (packages/core/synwevo_core/api_platform.py:64-67 creates indexes on at, (workspace_id,at) and request_id only; line 74 adds trace_id via the generic ALTER loop at store.py:934 with no |
+
+- 审查者确认稳妥的部分（摘要）：14 条新 `/api/admin` 路由全部在权限矩阵且危险写入先做严格重认证；全部新写入在 `_write()/store.tx()` 内与审计同事务；限流列表不含 IP 与原始桶名；成员/模板事件负载与 SDK 类型逐字段一致且只含标识符；新增测试断言拒绝路径而非只有成功路径。
+- 修复分工：三个子代理（前端 C3/C9/C11/C12；契约 C14；核心 C1/C6）在互不相交的文件上并行，协调者处理 admin 路由、限流分类、注册审计、终结删除事务与统一前后值覆盖；提交由协调者按明确路径一次完成。
+- 验证：见 EVIDENCE 同名节（六个前端工作区 613 项、account-web 178 项含新增 SSR 测试、五守卫、infra unittest、SDK 测试、三个 Python 套件、隔离浏览器重验收）。

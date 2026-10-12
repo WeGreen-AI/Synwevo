@@ -800,11 +800,34 @@ def admin_second_factor_grace_until(store: Store) -> float | None:
     return until if until and until > clock() else None
 
 
+#: The factor kinds (sessions.factor_kinds) that are the second factor the admin second-factor
+#: policy means: a TOTP code, a recovery code of that TOTP enrolment, or a passkey ceremony in
+#: which the authenticator verified the person. Named here so the policy, step_up()["second_factor"]
+#: and the lock message cannot drift apart again.
+STRONG_SECOND_FACTORS = frozenset({"totp", "recovery", "user_verification"})
+
+
 def session_strong(amr: str) -> bool:
-    """Two distinct factor kinds on the session, or a user-verifying passkey ceremony."""
+    """Has this session proved the second factor the admin second-factor policy (A11) requires?
+
+    Only the account's own second-factor material counts, whatever came before it:
+      * `totp` — a code from the enrolled authenticator app (`password+totp`, `email+totp`,
+        `idp:…+totp`);
+      * `recovery` — one of the single-use recovery codes minted at that TOTP enrolment. They
+        exist only on an account with TOTP, are spent at the same MFA step, and are the designed
+        way back in when the phone is lost, so they count as the enrolment they belong to;
+      * `user_verification` — a passkey ceremony in which the authenticator verified the person
+        (`passkey_uv`, at sign-in or as a scoped re-authentication).
+
+    Two *different* one-factor proofs are not a second factor: a mailed code or an external
+    provider followed by the password re-entered (`email+password`, `idp:…+password`) satisfies
+    the standing rule (sessions.admin_capable, which keeps its two-kinds test) but not this
+    policy, which step_up()["second_factor"], the lock message and the account page all state as
+    "a TOTP code or a user-verified passkey". A possession-only passkey (`passkey`) proves no
+    verification and does not count either.
+    """
     from .sessions import factor_kinds
-    kinds = factor_kinds(amr)
-    return "user_verification" in kinds or len(kinds) >= 2
+    return bool(factor_kinds(amr) & STRONG_SECOND_FACTORS)
 
 
 def admin_session_shortfall(store: Store, amr: str) -> str | None:

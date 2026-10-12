@@ -158,8 +158,14 @@ def depart_deleted_accounts(store) -> int:
     return sum(messaging.depart(r["user_id"], reason="account_deleted") for r in rows)
 
 
-def finalize_deletions(store) -> int:
-    """Idempotent expiry: preserve immutable user IDs and organization contributions."""
+def finalize_deletions(store, *, withdrawals: bool = True) -> int:
+    """Idempotent expiry: preserve immutable user IDs and organization contributions.
+
+    Two halves: the deletions themselves, committed with a retry marker each, and then the
+    withdrawal records (`record_deletion_withdrawals`, the fsync'd security journal). A caller
+    that wraps the first half in its own transaction (the administration route, which commits
+    the sweep together with its audit) passes `withdrawals=False` and records them after its
+    commit: the journal must never name a deletion that was rolled back."""
     removed = []
     with store.tx():
         for user in store.all("SELECT id FROM users WHERE status='pending_delete' AND deletion_due_at<=?", (now(),)):
@@ -186,6 +192,14 @@ def finalize_deletions(store) -> int:
             store.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)",
                           (f"account-deletion-journal:{uid}", uid))
             removed.append(uid)
+    if withdrawals:
+        record_deletion_withdrawals(store)
+    return len(removed)
+
+
+def record_deletion_withdrawals(store) -> None:
+    """The second half of `finalize_deletions`: the departed accounts leave their conversations,
+    and every committed deletion still owing a withdrawal record (its retry marker) gets one."""
     depart_deleted_accounts(store)
     from .withdrawals import record
     for pending in store.all("SELECT key,value FROM meta WHERE key GLOB 'account-deletion-journal:*'"):
@@ -193,4 +207,3 @@ def finalize_deletions(store) -> int:
             # A crash before this removal can append a duplicate withdrawal; journal replay
             # is idempotent. Losing an unrecorded withdrawal is the unsafe alternative.
             store.execute("DELETE FROM meta WHERE key=? AND value=?", (pending["key"], pending["value"]))
-    return len(removed)

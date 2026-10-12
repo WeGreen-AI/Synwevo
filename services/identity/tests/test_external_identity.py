@@ -342,6 +342,44 @@ def test_unlinking_needs_reauth_and_never_removes_the_last_way_in(env):
     assert len(notices) == 2
 
 
+def test_a_removed_passkey_does_not_keep_the_last_way_in_open(env):
+    """Review C6: the passkey count behind `last_sign_in_method` sees only passkeys that can
+    still sign in here. A soft-deleted key, or one bound to an earlier domain, is no way in and
+    the unlink is refused; a live key bound to this RP ID is, and the unlink goes through."""
+    from synwevo_identity.passkeys import rp_id
+    c = TestClient(env["api"])
+    code, state = env["idp"].accept(_start(c), subject="idp-only-passkey", email="only-passkey@example.com")
+    _callback(c, code, state)
+    user = env["ident"].by_email("only-passkey@example.com")
+    assert env["store"].one("SELECT 1 FROM user_passwords WHERE user_id=?", (user["id"],)) is None
+    iid = c.get("/api/auth/external/identities").json()["items"][0]["id"]
+    env["store"].execute("UPDATE sessions SET reauth_at=?, reauth_scope='mfa' WHERE user_id=?", (now(), user["id"]))
+
+    def passkey(pid: str, *, deleted: bool, rp: str | None = None) -> None:
+        """A passkey row (fixture: public material only, never used to sign)."""
+        env["store"].execute(
+            "INSERT INTO passkeys (id,user_id,credential_id,public_key,rp_id,uv_capable,name,created_at,deleted_at) "
+            "VALUES (?,?,?,?,?,1,'fixture key',?,?)",
+            (pid, user["id"], f"cred-{pid}", "fixture-public-key", rp or rp_id(), now(), now() if deleted else None))
+
+    # The listing counts every way in, the identity itself included (1 here); the delete route
+    # counts the ways that would remain without it.
+    passkey("pk_removed_fixture", deleted=True)
+    assert c.get("/api/auth/external/identities").json()["other_methods"] == 1
+    r = c.delete(f"/api/auth/external/identities/{iid}", headers=_csrf(c))
+    assert r.status_code == 409 and r.json()["error"] == "last_sign_in_method", r.text
+    passkey("pk_elsewhere_fixture", deleted=False, rp="old-accounts.example.test")
+    assert c.get("/api/auth/external/identities").json()["other_methods"] == 1
+    r = c.delete(f"/api/auth/external/identities/{iid}", headers=_csrf(c))
+    assert r.status_code == 409 and r.json()["error"] == "last_sign_in_method", r.text
+    assert env["store"].one("SELECT COUNT(*) AS n FROM external_identities WHERE user_id=?", (user["id"],))["n"] == 1
+    passkey("pk_live_fixture", deleted=False)
+    assert c.get("/api/auth/external/identities").json()["other_methods"] == 2
+    r = c.delete(f"/api/auth/external/identities/{iid}", headers=_csrf(c))
+    assert r.status_code == 200, r.text
+    assert c.get("/api/auth/external/identities").json()["items"] == []
+
+
 def test_platform_administrators_through_a_provider_are_restricted_until_a_second_factor(env):
     root = make_platform_admin(env["ident"].store, env["ident"].create_user("root@example.com", PW, status="active"))
     env["store"].execute("UPDATE users SET email_verified_at=? WHERE id=?", (now(), root["id"]))

@@ -8798,11 +8798,11 @@ components:
             tenant: {}
             created_at: {}
             finished_at: {}
-          description: 任务摘要；测试事件与文件事件为 null
+          description: 任务摘要；测试事件、文件事件、复制事件、成员与邀请事件、模板事件为 null
         data:
           type: object
           additionalProperties: true
-          description: 任务事件：status、run_no、counts；被平台停止的任务带 halt_reason。文件事件：file_id、project_id、status、reason（安全检查结论）、version。复制事件：copy_id、source_project_id、target_workspace_id、status、version
+          description: 任务事件：status、run_no、counts；被平台停止的任务带 halt_reason。文件事件：file_id、project_id、status、reason（安全检查结论）、version。复制事件：copy_id、source_project_id、target_workspace_id、status、version。成员、邀请与模板事件只有标识与版本号，不含邮箱、姓名、邀请令牌、模板名、文件或字段：member.added：workspace_id、user_id、role、can_export；member.changed：workspace_id、user_id、role、can_export、previous_role、previous_can_export；member.removed：workspace_id、user_id、role；invitation.created：workspace_id、invitation_id、role、can_export、expires_at；invitation.accepted：workspace_id、invitation_id、user_id、role；invitation.revoked：workspace_id、invitation_id；template.created：template_id、kind、format、head；template.updated：template_id、head、previous_head；template.deleted：template_id、head；template.published：template_id、publication_id、organization_id、release_no、version_no；template.released：template_id、publication_id、organization_id、release_no、version_no；template.deprecated：template_id、publication_id、organization_id、release_no
       additionalProperties: true
     EditorNode:
       type: object
@@ -10895,7 +10895,7 @@ webhooks:
   member.added:
     post:
       summary: member.added 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: 订阅时在 events 中列出才会投递。工作空间成员关系或邀请的变化（发往该工作空间的订阅），与行变化同一事务写入；job 为 null，data 只有 workspace_id、user_id、role、can_export，不含邮箱、姓名或邀请令牌；需要更多信息请用凭据读取目录接口。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
       operationId: webhook_member_added
       parameters:
         - name: webhook-id
@@ -10970,7 +10970,7 @@ webhooks:
   member.changed:
     post:
       summary: member.changed 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: 订阅时在 events 中列出才会投递。工作空间成员关系或邀请的变化（发往该工作空间的订阅），与行变化同一事务写入；job 为 null，data 只有 workspace_id、user_id、role、can_export、previous_role、previous_can_export，不含邮箱、姓名或邀请令牌；需要更多信息请用凭据读取目录接口。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
       operationId: webhook_member_changed
       parameters:
         - name: webhook-id
@@ -11045,7 +11045,7 @@ webhooks:
   member.removed:
     post:
       summary: member.removed 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: 订阅时在 events 中列出才会投递。工作空间成员关系或邀请的变化（发往该工作空间的订阅），与行变化同一事务写入；job 为 null，data 只有 workspace_id、user_id、role，不含邮箱、姓名或邀请令牌；需要更多信息请用凭据读取目录接口。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
       operationId: webhook_member_removed
       parameters:
         - name: webhook-id
@@ -11120,7 +11120,7 @@ webhooks:
   invitation.created:
     post:
       summary: invitation.created 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: 订阅时在 events 中列出才会投递。工作空间成员关系或邀请的变化（发往该工作空间的订阅），与行变化同一事务写入；job 为 null，data 只有 workspace_id、invitation_id、role、can_export、expires_at，不含邮箱、姓名或邀请令牌；需要更多信息请用凭据读取目录接口。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
       operationId: webhook_invitation_created
       parameters:
         - name: webhook-id
@@ -11195,7 +11195,7 @@ webhooks:
   invitation.accepted:
     post:
       summary: invitation.accepted 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: 订阅时在 events 中列出才会投递。工作空间成员关系或邀请的变化（发往该工作空间的订阅），与行变化同一事务写入；job 为 null，data 只有 workspace_id、invitation_id、user_id、role，不含邮箱、姓名或邀请令牌；需要更多信息请用凭据读取目录接口。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
       operationId: webhook_invitation_accepted
       parameters:
         - name: webhook-id
@@ -11270,7 +11270,7 @@ webhooks:
   invitation.revoked:
     post:
       summary: invitation.revoked 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: 订阅时在 events 中列出才会投递。工作空间成员关系或邀请的变化（发往该工作空间的订阅），与行变化同一事务写入；job 为 null，data 只有 workspace_id、invitation_id，不含邮箱、姓名或邀请令牌；需要更多信息请用凭据读取目录接口。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
       operationId: webhook_invitation_revoked
       parameters:
         - name: webhook-id
@@ -11345,7 +11345,7 @@ webhooks:
   template.created:
     post:
       summary: template.created 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: "订阅时在 events 中列出才会投递。模板或组织模板库的变化（发往模板所在工作空间，发布事件发往发布它的工作空间），与行变化同一事务写入；job 为 null，data 只有 template_id、kind、format、head，不含模板名、文件或字段；需要请用凭据读取 /templates/{tid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
       operationId: webhook_template_created
       parameters:
         - name: webhook-id
@@ -11420,7 +11420,7 @@ webhooks:
   template.updated:
     post:
       summary: template.updated 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: "订阅时在 events 中列出才会投递。模板或组织模板库的变化（发往模板所在工作空间，发布事件发往发布它的工作空间），与行变化同一事务写入；job 为 null，data 只有 template_id、head、previous_head，不含模板名、文件或字段；需要请用凭据读取 /templates/{tid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
       operationId: webhook_template_updated
       parameters:
         - name: webhook-id
@@ -11495,7 +11495,7 @@ webhooks:
   template.deleted:
     post:
       summary: template.deleted 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: "订阅时在 events 中列出才会投递。模板或组织模板库的变化（发往模板所在工作空间，发布事件发往发布它的工作空间），与行变化同一事务写入；job 为 null，data 只有 template_id、head，不含模板名、文件或字段；需要请用凭据读取 /templates/{tid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
       operationId: webhook_template_deleted
       parameters:
         - name: webhook-id
@@ -11570,7 +11570,7 @@ webhooks:
   template.published:
     post:
       summary: template.published 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: "订阅时在 events 中列出才会投递。模板或组织模板库的变化（发往模板所在工作空间，发布事件发往发布它的工作空间），与行变化同一事务写入；job 为 null，data 只有 template_id、publication_id、organization_id、release_no、version_no，不含模板名、文件或字段；需要请用凭据读取 /templates/{tid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
       operationId: webhook_template_published
       parameters:
         - name: webhook-id
@@ -11645,7 +11645,7 @@ webhooks:
   template.released:
     post:
       summary: template.released 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: "订阅时在 events 中列出才会投递。模板或组织模板库的变化（发往模板所在工作空间，发布事件发往发布它的工作空间），与行变化同一事务写入；job 为 null，data 只有 template_id、publication_id、organization_id、release_no、version_no，不含模板名、文件或字段；需要请用凭据读取 /templates/{tid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
       operationId: webhook_template_released
       parameters:
         - name: webhook-id
@@ -11720,7 +11720,7 @@ webhooks:
   template.deprecated:
     post:
       summary: template.deprecated 事件回调
-      description: 订阅时在 events 中列出才会投递。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。
+      description: "订阅时在 events 中列出才会投递。模板或组织模板库的变化（发往模板所在工作空间，发布事件发往发布它的工作空间），与行变化同一事务写入；job 为 null，data 只有 template_id、publication_id、organization_id、release_no，不含模板名、文件或字段；需要请用凭据读取 /templates/{tid}。接收端先校验签名与时间戳，再按 webhook-id 去重；投递可能重复、顺序不保证。"
       operationId: webhook_template_deprecated
       parameters:
         - name: webhook-id

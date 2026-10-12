@@ -55,10 +55,21 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
     def _throttled(request: Request, email: str, scope: str, wait: float) -> None:
         """The answer to the caller stays the same (a refusal must not confirm an address); the
         refusal itself goes on record so support can see it when the person asks why nothing
-        arrived (admin coverage A27). The address is the object, never a token or password."""
+        arrived (admin coverage A27). The object is the limiter's own digest of the address —
+        the log never keeps the raw address of someone who never registered — and the record
+        is written once per limiter window (the address's hour, the source's quarter hour): a
+        refused caller cannot grow the log by repeating the request."""
+        digest = hashlib.sha256(normalise_email(email).encode()).hexdigest()
+        if scope == "email":
+            recent = ident.store.one("SELECT 1 AS x FROM audit_events WHERE action='auth.registration.throttled' "
+                                     "AND object_id=? AND at>? LIMIT 1", (digest, now() - 3600))
+        else:
+            recent = ident.store.one("SELECT 1 AS x FROM audit_events WHERE action='auth.registration.throttled' "
+                                     "AND ip=? AND at>? LIMIT 1", (client_ip(request), now() - 900))
+        if recent:
+            return
         audit(request, "auth.registration.throttled", actor_kind="anonymous", object_kind="registration",
-              object_id=normalise_email(email)[:254], result="denied",
-              meta={"scope": scope, "retry_after": max(1, int(wait or 0))})
+              object_id=digest, result="denied", meta={"scope": scope, "retry_after": max(1, int(wait or 0))})
 
     def _limited(request: Request, email: str):
         allowed, wait = ident.window_allows(f"registration:{client_ip(request)}", limit=10, window_s=900)
@@ -133,7 +144,7 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
     @router.post("/email/resend", status_code=202)
     def resend(request: Request, body: dict = Body(...)):
         email = body.get("email", "")
-        if not isinstance(email, str) or len(email) > 254:
+        if not isinstance(email, str) or len(email) > 254 or not valid_email(email):
             raise ServiceError(400, "bad_email", "邮箱格式不正确", {"field": "email"})
         _challenge(request).require(request, body, "resend", audit=audit)
         if not _limited(request, email):

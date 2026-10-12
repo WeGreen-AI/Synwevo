@@ -163,6 +163,12 @@ export type Simulation = { user_id: string; change: "grant" | "revoke"; role: st
 export const SIMULATION_REFUSALS: Record<string, string> = {
   already_held: "该账户已持有这个角色", not_held: "该账户并未持有这个角色", last_super_admin: "必须保留至少一位可用的最高管理员。",
   platform_permission_denied: "你的平台角色不包含这项操作", role_exceeds_own: "不能授予自己没有的权限", self_assignment: "不能更改自己的授予权限",
+  // The grant route's own preconditions, answered by the simulation in the same words.
+  super_admin_acceptance_required: "最高管理员须由本人通过安全密钥接受提议", target_unverified: "该账户的邮箱尚未验证，不能获得平台权限",
+  target_pending: "该账户还没有完成邮箱验证，不能获得平台权限", target_unavailable: "该账户已停用或正在删除，不能获得平台权限",
+  target_cannot_step_up: "该账户没有口令、可验证身份的安全密钥或动态验证码，无法完成管理员身份确认",
+  target_cannot_reauth: "该账户没有口令或可验证身份的安全密钥，无法完成危险操作要求的重新验证",
+  application_identity: "请通过应用身份管理操作该账户。", no_user: "找不到该账户",
 };
 export function SimulationSummary({ sim }: { sim: Simulation }) {
   useI18n();

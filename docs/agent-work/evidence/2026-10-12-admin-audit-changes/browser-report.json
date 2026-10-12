@@ -1,5 +1,5 @@
 {
- "base": "http://127.0.0.1:33953",
+ "base": "http://127.0.0.1:33954",
  "engine": "chrome",
  "steps": {
   "writes": {
@@ -13,11 +13,11 @@
     "tokens_revoked": 0,
     "sessions_moved": 0,
     "workspace": {
-     "id": "w_8c98d209fa36",
+     "id": "w_28b4eaffb90b",
      "name": "Synthetic shared workspace",
      "kind": "org",
      "status": "frozen",
-     "created_at": 1791783838.024565,
+     "created_at": 1791802455.9625258,
      "members": 2,
      "projects": 0,
      "apps": [
@@ -39,14 +39,14 @@
    ],
    "change_column": true,
    "freeze_rows": [
-    "2026/10/12 13:44\t冻结工作空间 | admin.workspace.freeze | \tadmin-fixture@example.test\tw_8c98d209fa36\t成功\t | frozen false → true | \t合成验收：核对审计页前后值列（冻结）"
+    "2026/10/12 18:54\t冻结工作空间 | admin.workspace.freeze | \tadmin-fixture@example.test\tw_28b4eaffb90b\t成功\t | frozen false → true | \t合成验收：核对审计页前后值列（冻结）"
    ],
    "unfreeze_rows": [
-    "2026/10/12 13:44\t解冻工作空间 | admin.workspace.unfreeze | \tadmin-fixture@example.test\tw_8c98d209fa36\t成功\t | frozen true → false | \t合成验收：核对审计页前后值列（解冻）"
+    "2026/10/12 18:54\t解冻工作空间 | admin.workspace.unfreeze | \tadmin-fixture@example.test\tw_28b4eaffb90b\t成功\t | frozen true → false | \t合成验收：核对审计页前后值列（解冻）"
    ],
    "registration_rows": [
-    "2026/10/12 13:44\t修改注册策略 | admin.registration.update | \tadmin-fixture@example.test\tregistration.mode\t成功\t | mode open → invite | \t合成验收：恢复注册策略",
-    "2026/10/12 13:44\t修改注册策略 | admin.registration.update | \tadmin-fixture@example.test\tregistration.mode\t成功\t | mode invite → open | \t合成验收：核对审计页前后值列（注册策略）"
+    "2026/10/12 18:54\t修改注册策略 | admin.registration.update | \tadmin-fixture@example.test\tregistration.mode\t成功\t | mode open → invite | \t合成验收：恢复注册策略",
+    "2026/10/12 18:54\t修改注册策略 | admin.registration.update | \tadmin-fixture@example.test\tregistration.mode\t成功\t | mode invite → open | \t合成验收：核对审计页前后值列（注册策略）"
    ],
    "freeze_shows_change": true,
    "unfreeze_shows_change": true,
@@ -64,13 +64,19 @@
    ],
    "change_column": true,
    "freeze_rows": [
-    "10/12/2026, 01:44 PM\tFreeze a workspace | admin.workspace.freeze | \tadmin-fixture@example.test\tw_8c98d209fa36\tSuccess\t | frozen false → true | \t合成验收：核对审计页前后值列（冻结）"
+    "10/12/2026, 06:54 PM\tFreeze a workspace | admin.workspace.freeze | \tadmin-fixture@example.test\tw_28b4eaffb90b\tSuccess\t | frozen false → true | \t合成验收：核对审计页前后值列（冻结）"
    ],
    "freeze_shows_change": true,
    "han_outside_reasons": [
     "简体中文",
     "繁體中文"
    ]
+  },
+  "exact_filter": {
+   "freeze_rows_actions": [
+    "admin.workspace.freeze"
+   ],
+   "no_unfreeze_under_freeze": true
   },
   "console_errors": [
    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"

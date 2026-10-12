@@ -35,13 +35,14 @@ const storage = new Map();
 globalThis.window ??= { location: new URL("http://127.0.0.1/"), history: { state: null, replaceState() {} }, addEventListener() {}, removeEventListener() {} };
 globalThis.sessionStorage ??= { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: (k) => storage.delete(k) };
 
-let server, ui, access, dialog;
+let server, ui, access, dialog, tabs;
 before(async () => {
   server = await testServer({ root: WEB, configFile: false, logLevel: "error", appType: "custom",
     server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   ui = await server.ssrLoadModule("@synwevo/ui");
   access = await server.ssrLoadModule("/src/governance/access.ts");
   dialog = await server.ssrLoadModule("/src/governance/PlatformAccess.tsx");
+  tabs = await server.ssrLoadModule("/src/governance/GovernanceTabs.tsx");
   await server.ssrLoadModule("/src/Admin.tsx");
 });
 after(async () => { await server?.close(); });
@@ -165,6 +166,27 @@ test("why a grant cannot be revoked, or nothing granted, is a visible sentence f
       assert.equal(text(null), "");
     }
   });
+});
+
+test("the second-factor policy can be saved whenever the server would change something, including ending a grace window", () => {
+  const T = 1_760_000_000;
+  const changes = tabs.secondFactorSaveChanges;
+  // the mode changes: always a save
+  assert.equal(changes({ mode: "off", grace_until: null }, "required", 0), true);
+  assert.equal(changes({ mode: "required", grace_until: T }, "off", 0), true);
+  // `required` stays: a new window, or 0 days while a window is running (the server deletes it)
+  assert.equal(changes({ mode: "required", grace_until: null }, "required", 7), true);
+  assert.equal(changes({ mode: "required", grace_until: T }, "required", 0), true, "grace 0 ends the running window");
+  // nothing would change
+  assert.equal(changes({ mode: "required", grace_until: null }, "required", 0), false);
+  assert.equal(changes({ mode: "off", grace_until: null }, "off", 0), false);
+  // the confirmation says what the save does to the window
+  inEnglish(() => {
+    assert.equal(tabs.secondFactorGraceSentence(0, T), "The current grace period ends: the requirement applies at once.");
+    assert.equal(tabs.secondFactorGraceSentence(0, null), "No grace period: applies as soon as it is saved.");
+    assert.equal(tabs.secondFactorGraceSentence(7, T), "Grace period 7 days: a warning only until then, no lock.");
+  });
+  translated("现有宽限期将结束：要求立即生效。");
 });
 
 test("money pages are offered to exactly the roles that hold platform.billing.view", () => {

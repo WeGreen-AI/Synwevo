@@ -49,7 +49,7 @@ test("the stages, throttle, link, mail and events read as sentences in the reade
   const html = render("en", FIXTURE);
   for (const expected of ["Address validation", "Address format accepted", "Human verification", "Passed", "Throttled now", "Pending activation", "Issued, unused",
     "Queued", "Not activated yet", "made 4 requests in the last hour (limit 3)", "Account u_fixture_reg", "issued", "expires", "Events (2)", "auth.registration.throttled",
-    "scope=email", "Refused", "same source address within 15 minutes"].filter((s) => s !== "Refused")) {
+    "scope=email", "Denied", "same source address within 15 minutes"]) {
     assert.ok(html.includes(expected), `missing in English: ${expected}\n${html}`);
   }
   assert.ok(!HAN.test(html.replace(/1155000000@link\.example\.test|u_fixture_reg/g, "")), `untranslated text in English:\n${html}`);

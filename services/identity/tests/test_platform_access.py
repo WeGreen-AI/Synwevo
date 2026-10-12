@@ -1096,6 +1096,88 @@ def test_the_admin_second_factor_policy_locks_password_only_administrators_until
     assert [json.loads(r["meta"])["mode"] for r in store.all("SELECT meta FROM audit_events WHERE action='admin.security.second_factor' ORDER BY seq")] == ["required", "required", "off"]
 
 
+#: The six digits in a sign-in code mail, in any of the three languages (test_email_code_login).
+EMAIL_CODE = re.compile(r"(?:登录验证码|登入驗證碼|Sign-in code)[:：]\s*(\d{6})")
+
+
+def _login_with_email_code(api, store, email):
+    """A sign-in by mailed code: the code is read from the file mail sink's outbox row, as
+    test_email_code_login does. Returns the client and the verify answer — a session, or the
+    MFA step (`mfa_required`, `ticket`) when the account has TOTP."""
+    from synwevo_identity.email_login import START_MIN_GAP_S
+    c = TestClient(api)
+    # A second request within the minimum gap is acknowledged without a new code; the test
+    # stands in for the wait by ageing the account's earlier requests.
+    store.execute("UPDATE login_codes SET created_at=created_at-? WHERE user_id=(SELECT id FROM users WHERE email=?)",
+                  (START_MIN_GAP_S + 1, email))
+    assert c.post("/api/auth/login/email/start", json={"email": email}).status_code == 202
+    row = store.one("SELECT body FROM mail_outbox WHERE kind='login_code' AND to_addr=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                    (email,))
+    assert row, "no sign-in code mail was queued"
+    code = EMAIL_CODE.search(row["body"])
+    assert code, row["body"]
+    r = c.post("/api/auth/login/email/verify", json={"email": email, "code": code.group(1)})
+    assert r.status_code == 200, r.text
+    return c, r.json()
+
+
+@pytest.mark.parametrize("amr, strong", [
+    ("password+totp", True), ("email+totp", True), ("idp:google+totp", True), ("passkey_uv", True),
+    ("email+passkey_uv", True), ("password+recovery", True), ("email+recovery", True),
+    ("password", False), ("email", False), ("idp:google", False), ("passkey", False), ("", False),
+    # two different one-factor proofs: admin-capable under the standing rule, not the A11 second factor
+    ("email+password", False), ("idp:google+password", False), ("password+email", False), ("passkey+password", False),
+])
+def test_a_strong_session_proved_totp_or_a_user_verified_passkey_not_any_two_factors(amr, strong):
+    from synwevo_core.sessions import admin_capable
+    assert platform_access.session_strong(amr) is strong
+    if strong:
+        assert admin_capable(amr), "every strong session is also admin-capable under the standing rule"
+
+
+def test_the_admin_second_factor_policy_is_not_met_by_a_mailed_code_plus_the_password(world):
+    """A11 (review C1): an administrator with neither TOTP nor a passkey signs in by mailed code
+    and re-enters the password — `email+password` is two one-factor proofs, admin-capable under
+    the standing rule but not the second factor the policy requires — and stays locked with the
+    reason and "not enrolled". The same sign-in finished with a TOTP code (`email+totp`) is let in."""
+    w, store = world, world["store"]
+    root = w["login"](w["root"])
+    _enable_totp(root)
+    reauth(root)
+    enabled = post(root, "/api/admin/security/second-factor", {"mode": "required", "expected_mode": "off", "reason": REASON})
+    assert enabled.status_code == 200 and enabled.json()["mode"] == "required", enabled.text
+    admin = holder(w, "access_admin")
+    assert PlatformAccess(store).step_up(admin["id"])["second_factor"] is False
+    c, issued = _login_with_email_code(w["api"], store, admin["email"])
+    assert issued["session"]["amr"] == "email"
+    one = c.get("/api/admin/users")
+    assert one.status_code == 403 and one.json()["error"] == "step_up_required" and one.json()["detail"] == {"scope": "admin"}
+    stepped = post(c, "/api/auth/reauth", {"password": PW, "scope": "admin"})
+    assert stepped.status_code == 200 and stepped.json()["amr"] == "email+password", stepped.text
+    denied = c.get("/api/admin/users")
+    assert denied.status_code == 403 and denied.json()["error"] == "step_up_required", denied.text
+    assert denied.json()["detail"] == {"scope": "admin", "policy": "admin_second_factor", "second_factor_enrolled": False}
+    me = c.get("/api/auth/me").json()
+    assert me["admin_locked"] is True and me["admin_lock"] == {"reason": "second_factor", "second_factor_enrolled": False}
+    assert me["permissions"] == [] and me["platform_roles"] == ["access_admin"]
+    step = c.get("/api/admin/session").json()["step_up"]
+    assert step["required"] is True and step["reason"] == "second_factor" and step["amr"] == "email+password"
+    assert post(c, "/api/auth/reauth", {"password": PW, "scope": "admin"}).status_code == 200
+    assert c.get("/api/admin/users").status_code == 403, "the password again is still the same kind of proof"
+    # The account page stays open to them: TOTP enrolled there, the next mailed-code sign-in asks
+    # for the code, and `email+totp` is the second factor the policy means.
+    import pyotp
+    secret = _enable_totp(c)
+    again, mfa = _login_with_email_code(w["api"], store, admin["email"])
+    assert mfa.get("mfa_required") and mfa.get("ticket"), mfa
+    r = post(again, "/api/auth/login/mfa", {"ticket": mfa["ticket"], "code": pyotp.TOTP(secret).at(int(time.time()) + 30)})
+    assert r.status_code == 200 and r.json()["session"]["amr"] == "email+totp", r.text
+    assert again.get("/api/admin/users").status_code == 200
+    assert again.get("/api/auth/me").json()["admin_locked"] is False
+    assert again.get("/api/admin/session").json()["step_up"]["required"] is False
+    assert c.get("/api/admin/users").status_code == 403, "enrolling does not strengthen the session that only re-entered the password"
+
+
 def test_platform_access_simulation_computes_the_change_without_making_it(world):
     """A5, simulation: what an account's effective permissions would be after one hypothetical
     grant or revocation, from the catalogue and the counting rules, plus whether the caller could

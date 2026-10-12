@@ -38,6 +38,10 @@ test("the simulation summary says what would change and whether the caller could
   assert.ok(!HAN.test(html), `untranslated in English:\n${html}`);
   const refused = render("en", { ...SIM, change: "revoke", role: "super_admin", feasible: false, refusal: "last_super_admin", gained: [], lost: ["platform.audit.view"], counts: false });
   assert.ok(refused.includes("were revoked") && refused.includes("You could not make this change now: At least one usable super administrator must remain.") && refused.includes("do not count at present") && refused.includes("Would lose:"), refused);
+  for (const [refusal, expected] of [["super_admin_acceptance_required", "must accept the offer in person"], ["target_unverified", "is not verified yet"], ["target_cannot_reauth", "re-authentication that dangerous operations require"]]) {
+    const html = render("en", { ...SIM, feasible: false, refusal, gained: [], lost: [] });
+    assert.ok(html.includes(expected) && !HAN.test(html), `${refusal}:\n${html}`);
+  }
   const hant = render("zh-Hant", SIM);
   assert.ok(hant.includes("若授予") && hant.includes("你現在可以執行這一變化。"), hant);
 });

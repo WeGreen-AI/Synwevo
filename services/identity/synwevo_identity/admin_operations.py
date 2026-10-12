@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass
 
 from synwevo_core.auth import Auth
+from synwevo_core.audit_change import change
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
 from synwevo_core.oidc import Grants
@@ -213,7 +214,7 @@ class AccountOperations(SignedPreview):
                           "journaled": True if status == "suspended" else None}
                 self.audit(request, self.action, actor_id=actor["id"], object_kind="user", object_id=uid,
                            workspace_given=True, result="ok", meta={**result, "reason": reason,
-                           "before": {"status": target["status"]}, "after": {"status": result_status},
+                           **change({"status": target["status"]}, {"status": result_status}),
                            "environment": self._environment(request)})
                 tx.execute("INSERT INTO admin_operations (id,actor_id,action,target_id,idempotency_key,request_hash,"
                            "result_json,created_at) VALUES (?,?,?,?,?,?,?,?)",

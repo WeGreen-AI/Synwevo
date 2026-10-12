@@ -76,6 +76,8 @@ def test_publish_commits_one_result_snapshot_and_audit_and_retries_return_it(wor
     success = audits(world, "ok")
     assert len(success) == 1 and json.loads(success[0]["meta"])["operation_id"] == result["operation_id"]
     assert world["store"].one("SELECT COUNT(*) n FROM admin_operations WHERE action='admin.settings.publish'")["n"] == 1
+    published = json.loads(audits(world, "ok")[-1]["meta"])
+    assert published["changed"] and set(published["before"]) == set(published["after"]), "G24: the unified change record"
     for field, changed in (("reason", REASON + " changed"), ("changes", {INTERVAL_KEY: 120})):
         response = publish(world, {**body, field: changed})
         assert response.status_code == 409 and response.json()["error"] == "idempotency_conflict"

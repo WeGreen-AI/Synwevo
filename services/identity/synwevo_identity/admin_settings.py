@@ -8,6 +8,7 @@ import time
 
 from fastapi import APIRouter, Body, Query, Request
 
+from synwevo_core.audit_change import change
 from synwevo_core.errors import ServiceError
 from synwevo_core.platform_access import require_platform
 from synwevo_core.platform_settings import PlatformSettings
@@ -110,7 +111,7 @@ class SettingsOperations(SignedPreview):
                 result = {"operation_id": operation_id, "status": "succeeded", "revision": saved["revision"], "state": state}
                 self.audit(request, self.action, actor_id=actor["id"], object_kind="platform_settings", object_id=self.target,
                            workspace_given=True, result="ok", meta={"operation_id": operation_id, "reason": reason,
-                               "before": plan["before"], "after": state, "changes": plan["changes"],
+                               **change(plan["before"], state), "changes": plan["changes"],
                                "rollback_revision": plan["rollback_revision"], "environment": origin})
                 transaction.execute("INSERT INTO admin_operations (id,actor_id,action,target_id,idempotency_key,request_hash,"
                                     "result_json,created_at) VALUES (?,?,?,?,?,?,?,?)",

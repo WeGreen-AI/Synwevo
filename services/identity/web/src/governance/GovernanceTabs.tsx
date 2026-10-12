@@ -47,6 +47,17 @@ export function RegistrationTab({ onDenied, held }: Props) {
 
 type SecondFactorPolicy = { mode: "off" | "required"; source: "database" | "default"; usable_super_admins: number; enrolled_super_admins: number;
   caller_second_factor: boolean; caller_session_strong: boolean; grace_until?: number | null; grace_max_days?: number };
+/** Whether saving would change anything: the mode changes, or `required` stays and the save sets a
+ *  grace window — or, with 0 days, ends the window still running (the server deletes it and the
+ *  requirement applies at once). Unchanged `required` with no window and 0 days changes nothing. */
+export function secondFactorSaveChanges(d: Pick<SecondFactorPolicy, "mode" | "grace_until">, mode: SecondFactorPolicy["mode"], graceDays: number): boolean {
+  return mode !== d.mode || (mode === "required" && (graceDays > 0 || !!d.grace_until));
+}
+/** The confirmation's grace sentence: a new window, the end of the running one, or none at all. */
+export function secondFactorGraceSentence(graceDays: number, graceBefore: number | null | undefined): string {
+  if (graceDays > 0) return tr("宽限期 {days} 天：期内只提醒，不锁定。", { days: graceDays });
+  return graceBefore ? tr("现有宽限期将结束：要求立即生效。") : tr("没有宽限期：保存后立即生效。");
+}
 /** Admin coverage A11: whether platform administrators must prove a second factor. The server
  *  refuses to require it while no usable super administrator could meet it. */
 export function AdminSecondFactorTab({ onDenied, held }: Props) {
@@ -55,7 +66,7 @@ export function AdminSecondFactorTab({ onDenied, held }: Props) {
   const load = useAdminData<SecondFactorPolicy>("/api/admin/security/second-factor", onDenied);
   const [mode, setMode] = useState<SecondFactorPolicy["mode"]>("off");
   const [graceDays, setGraceDays] = useState("0");
-  const [change, setChange] = useState<{ mode: SecondFactorPolicy["mode"]; before: SecondFactorPolicy["mode"]; graceDays: number } | null>(null);
+  const [change, setChange] = useState<{ mode: SecondFactorPolicy["mode"]; before: SecondFactorPolicy["mode"]; graceDays: number; graceBefore: number | null } | null>(null);
   const toast = useToast();
   useEffect(() => { if (load.data) { setMode(load.data.mode); setGraceDays("0"); } }, [load.data]);
   const names = { off: t("不要求（沿用现有规则）"), required: t("要求管理员使用第二因素") };
@@ -63,8 +74,7 @@ export function AdminSecondFactorTab({ onDenied, held }: Props) {
   const graceMax = d?.grace_max_days ?? 30;
   const graceValue = Number(graceDays);
   const graceValid = Number.isInteger(graceValue) && graceValue >= 0 && graceValue <= graceMax;
-  // A save is meaningful when the mode changes, or when `required` stays and a grace window is set.
-  const dirty = !!d && (mode !== d.mode || (mode === "required" && graceValue > 0));
+  const dirty = !!d && secondFactorSaveChanges(d, mode, graceValue);
   return <section className="card card-b col gap12">
     <h2>{t("管理员第二因素")}</h2>
     <p className="muted">{t("要求后，平台管理员的登录必须包含第二个因素（动态验证码或经用户验证的安全密钥）才能使用平台管理与 API 管理；只验证口令的登录会被锁在管理之外，账户本身不受影响。")}</p>
@@ -84,11 +94,11 @@ export function AdminSecondFactorTab({ onDenied, held }: Props) {
       <p className="small muted">{t("只有至少一名可用的最高管理员已登记第二因素时才能开启；策略只约束平台管理，不改变账户登录本身。")}</p>
       <p className="small muted">{t("宽限期内，未登记第二因素的管理员只会在账户页看到提醒；到期后才被锁在管理之外。再次保存可重设宽限期。")}</p>
       {manage.hint && <p className="notice" role="note">{t("你的平台角色可以查看第二因素策略，但不能修改。")}</p>}
-      <button className="btn primary" disabled={!!load.err || !dirty || !graceValid || manage.disabled} onClick={() => setChange({ mode, before: d.mode, graceDays: mode === "required" ? graceValue : 0 })}>{t("保存第二因素策略")}</button>
+      <button className="btn primary" disabled={!!load.err || !dirty || !graceValid || manage.disabled} onClick={() => setChange({ mode, before: d.mode, graceDays: mode === "required" ? graceValue : 0, graceBefore: d.grace_until ?? null })}>{t("保存第二因素策略")}</button>
     </>}
     {change && <ActionDialog title={t("保存第二因素策略")} confirmLabel={t("保存策略")} reason="required" danger={change.mode === "required"}
       impact={<>{t("第二因素策略将从「{before}」改为「{after}」。", { before: names[change.before], after: names[change.mode] })}
-        {change.mode === "required" && (change.graceDays > 0 ? ` ${t("宽限期 {days} 天：期内只提醒，不锁定。", { days: change.graceDays })}` : ` ${t("没有宽限期：保存后立即生效。")}`)}</>}
+        {change.mode === "required" && ` ${secondFactorGraceSentence(change.graceDays, change.graceBefore)}`}</>}
       run={reason => post<SecondFactorPolicy>("/api/admin/security/second-factor", { mode: change.mode, expected_mode: change.before, grace_days: change.graceDays, reason })}
       onClose={() => setChange(null)} onDone={() => { setChange(null); load.reload(); toast(t("第二因素策略已保存"), "ok"); }} />}
   </section>;
@@ -170,7 +180,8 @@ export type Throttle = { id: string; kind: string; subject: string | null; user_
   blocked_until: number | null; retry_after: number; active: boolean };
 export const THROTTLE_KIND_LABELS: Record<string, string> = {
   account_login: "账户登录退避", address_login: "来源地址登录窗口", session_reauth: "会话重认证失败", registration_address: "注册（按地址）",
-  registration_source: "注册（按来源地址）", login_code_address: "邮箱验证码登录（按地址）", login_code_source: "邮箱验证码登录（按来源地址）",
+  registration_source: "注册（按来源地址）", login_code_address: "邮箱验证码登录（按地址）", login_code_account: "邮箱验证码登录（按账户）",
+  account_second_factor: "第二因素验证退避",
   recovery_source: "找回口令（按来源地址）", bootstrap_source: "初始化（按来源地址）", passkey_source: "安全密钥登录（按来源地址）",
   passkey_reauth: "安全密钥重认证", account_action: "账户敏感操作", push: "推送订阅", other: "其他",
 };
