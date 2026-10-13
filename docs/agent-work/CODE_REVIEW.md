@@ -538,6 +538,12 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 风险/未做：指纹按当前密钥，重叠期内由旧密钥验签的接收方看到的是新密钥指纹（行记"用哪把签"，当前+旧两把都签在头里）。
 - 验证：新增 4 例 + 两应用 webhook 契约/投递/加固/重投/CLI/示例 254 项与迁移测试通过。
 
+## CR-122 · A18 批量停用账户与批量撤销会话：一组单账户操作，一次预览一次确认（2026-10-13，本轮新增，本地已验证）
+
+- 位置：services/identity/synwevo_identity/admin_operations.py（单账户停用写体抽为 `AccountOperations._apply`；单账户撤销会话抽为 `revoke_account_sessions`；`OPERATIONS["admin.user.bulk"]` 按操作解析权限；`SignedPreview.token_limit`）；admin_bulk.py（新：`BulkAccountOperations`，预览与执行、逐项事务、逐项回执与重试续做、批次记录）；admin_routes.py（单账户撤销会话路由改调共享函数；批量子路由先于 `/users/{uid}` 声明）；admin_actions.py（`admin.user.bulk`）；前端 governance/BulkAccountDialog.tsx、bulk-accounts.messages.ts、BulkResult.tsx（`retryFailed`）、components/selection.ts（`usePagedSelection`）、Admin.tsx UsersTab 勾选与选择栏、labels.ts、admin.css / account.css 窄屏卡片。
+- 审查要点：批量不另立一套规则——每个账户在自己的写事务里走与单账户路径完全相同的检查（包括 D11 唯一拥有者与权限高低），所以同一空间最后两名拥有者放在同一批里时，第二个会看到第一个已提交的停用而被拒；签名计划只绑定预览时可处理账户的有序 [账户, 版本摘要]，预览时不可处理的账户以后也不会被处理；逐项回执与单项写同事务，超时重试只续做未完成的账户且不重复写安全日志；操作者自己的会话在撤销批次中最后处理；操作者在批次中途失去权限则停止并逐项报告。前端只作用于显式选中的账户，预览列出每个账户及原因后才能写理由与重认证。
+- 验证：定向账户服务测试 229 项通过（含新文件 14 项）、跨模块 7 项通过（后端子代理）；账户前端 199 项、六个前端工作区 636 项 node 测试、五守卫 + 图标与 Logo 检查、根 typecheck/build 通过（01:29Z）；账户服务 + 集成套件 3052 通过；对抗性审查一项中级（批次内前序停用使后续共同拥有者变为陈旧）、一项低中级（幂等键过晚占用）与六项低级发现已修正并补测试（见 EVIDENCE 2026-10-13 条目）；修正后的完整验证同条目。
+
 ## CR-121 · A35 组织生命周期的平台作用域路径：预览、理由、重认证、幂等、平台审计（2026-10-12，本轮新增，本地已验证）
 
 - 位置：packages/core/synwevo_core/organizations.py（`LIFECYCLE_ACTIONS`、`platform_view`、`lifecycle_values` 单一状态机、私有 `_transition` 共用体：记录 → 日志 → 撤销 → 版本自增；`transition` 保持 `require(owner=True)` 与原返回值；新 `platform_transition` 只要求组织存在，组织审计 meta 带 `by: platform`，返回平台视图 + 撤销计数）；organization_audit.py（`DETAIL_KEYS` 加 `by`）；services/identity/synwevo_identity/admin_organizations.py（新：`OrganizationLifecycle(SignedPreview)`，`preview` / `execute` / `_impact` / `_digest` / `_failure` 镜像 A14 `AccountOperations`；`POST /organizations/{oid}/preview` 先于 `{action}` 声明）；admin_routes.py（移除旧 `govern_organization`，include 新子路由于 A37 之后、父路由之前）；admin_actions.py（`admin.organization.lifecycle`）；前端 governance/OrganizationLifecycleDialog.tsx、organization-lifecycle.messages.ts、GovernanceTabs.tsx（按钮按 `platform.orgs.manage`）、labels.ts。

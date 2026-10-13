@@ -1,5 +1,6 @@
 /**
- * Multi-select for the member and invitation tables.
+ * Multi-select for the member and invitation tables, and (`usePagedSelection`) for the
+ * platform account list.
  *
  * The conventions people already have from file managers and mail clients:
  *   - click a checkbox (or Space on it) toggles one row and makes it the anchor;
@@ -57,6 +58,59 @@ export function useSelection(selectable: string[]) {
 }
 
 export type Selection = ReturnType<typeof useSelection>;
+
+/**
+ * The same conventions for a list whose selection outlives its page (the platform account list,
+ * A18): rows chosen on one page stay chosen while the reader pages or searches on, up to `limit`
+ * rows in all — the size of one server-side batch. `ids` is the whole selection in the order it
+ * was made; `all`/`some` describe the page on screen, which the header checkbox selects or
+ * clears; `full` says the cap is reached, and rows not yet chosen are then not offered.
+ * Shift+click and Shift+↑/↓ still select within the page on screen.
+ */
+export function usePagedSelection(pageIds: string[], limit: number) {
+  const [sel, setSel] = useState<Set<string>>(() => new Set());
+  const anchor = useRef<string | null>(null);
+  const idsRef = useRef(pageIds);
+  idsRef.current = pageIds;
+  /** Adds in order and stops at the cap; what was chosen first stays chosen. */
+  const grow = (prev: Set<string>, more: string[]) => {
+    const n = new Set(prev);
+    for (const x of more) { if (n.size >= limit) break; n.add(x); }
+    return n;
+  };
+
+  const pick = useCallback((id: string, mods: { shift?: boolean }) => {
+    const ids = idsRef.current;
+    if (!ids.includes(id)) return;
+    if (mods.shift && anchor.current && ids.includes(anchor.current)) {
+      const a = ids.indexOf(anchor.current), b = ids.indexOf(id);
+      const span = ids.slice(Math.min(a, b), Math.max(a, b) + 1);
+      setSel((prev) => grow(prev, span));
+      return;
+    }
+    setSel((prev) => { if (prev.has(id)) { const n = new Set(prev); n.delete(id); return n; } return grow(prev, [id]); });
+    anchor.current = id;
+  }, [limit]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const add = useCallback((ids: string[]) => {
+    setSel((prev) => grow(prev, ids.filter((x) => idsRef.current.includes(x))));
+  }, [limit]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** "Select this page": adds the page's rows to what is already chosen elsewhere. */
+  const selectAll = useCallback(() => setSel((prev) => grow(prev, idsRef.current)), [limit]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** Unticks the page's rows only; the rows chosen on other pages stay. */
+  const clearPage = useCallback(() => {
+    setSel((prev) => { const n = new Set(prev); idsRef.current.forEach((x) => n.delete(x)); return n; });
+  }, []);
+  const clear = useCallback(() => { setSel(new Set()); anchor.current = null; }, []);
+  const replace = useCallback((ids: string[]) => { setSel(grow(new Set(), ids)); anchor.current = null; }, [limit]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const all = pageIds.length > 0 && pageIds.every((x) => sel.has(x));
+  const some = !all && pageIds.some((x) => sel.has(x));
+  const ids = useMemo(() => [...sel], [sel]);
+  return { sel, ids, count: sel.size, all, some, full: sel.size >= limit, pick, add, selectAll, clearPage, clear, replace, anchor };
+}
+
+export type PagedSelection = ReturnType<typeof usePagedSelection>;
 
 /** Keyboard handling for a table whose row checkboxes carry `data-pick="<id>"`. */
 export function selectionKeys(e: React.KeyboardEvent, s: Selection) {

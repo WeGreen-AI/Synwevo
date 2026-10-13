@@ -54,6 +54,8 @@ const SERVER = [
   { file: ID + "admin_notification_recovery.py", surfaces: ["admin"] },
   // A37: the orphan list and the platform-controlled ownership handover (governance/OwnershipRecovery.tsx)
   { file: ID + "admin_ownership.py", surfaces: ["admin"] },
+  // A18: bulk suspension and session revocation — preview and batch (governance/BulkAccountDialog.tsx)
+  { file: ID + "admin_bulk.py", surfaces: ["admin"] },
   { file: ID + "ownership.py", surfaces: ["account", "admin"] },
   { file: ID + "admin_settings.py", surfaces: ["admin"] },
   { file: ID + "admin_model_prices.py", surfaces: ["admin"] },

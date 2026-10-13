@@ -31,7 +31,20 @@ from .ownership import check_ownership_continuity
 class Operation:
     permission: str
     risk: str
+    #: A batch that carries several single-account acts (admin.user.bulk) names each act's own
+    #: permission here, as `(operation, permission)` pairs read through `permission_for`. Its
+    #: `permission` is then the admission for an operation outside the table — the lesser of the
+    #: acts' permissions, refused as `bad_operation` right after — so a caller without either still
+    #: meets the platform's 404 or 403 first and never the request's own validation.
+    per_operation: tuple[tuple[str, str], ...] = ()
 
+    def permission_for(self, operation=None) -> str:
+        return dict(self.per_operation).get(operation, self.permission) if isinstance(operation, str) else self.permission
+
+
+#: The single route `POST /api/admin/users/{uid}/revoke-sessions` (admin_routes.py) and each
+#: account of a bulk revocation (admin_bulk.py) need this permission.
+REVOKE_SESSIONS_PERMISSION = "platform.users.support"
 
 OPERATIONS = {
     "admin.user.status": Operation("platform.users.manage", "high"),
@@ -42,6 +55,13 @@ OPERATIONS = {
     "admin.super_admin.cancel": Operation("platform.roles.assign_super", "high"),
     "admin.super_admin.ready": Operation("platform.roles.assign_super", "high"),
 }
+#: A18: one preview and one confirmation over up to 100 accounts (admin_bulk.py). Each account is
+#: the single act with the single act's permission: suspension is admin.user.status's, the session
+#: revocation the single revoke-sessions route's.
+OPERATIONS["admin.user.bulk"] = Operation(
+    REVOKE_SESSIONS_PERMISSION, "high",
+    per_operation=(("suspend", OPERATIONS["admin.user.status"].permission),
+                   ("revoke_sessions", REVOKE_SESSIONS_PERMISSION)))
 PREVIEW_SECONDS = 300
 
 
@@ -55,6 +75,8 @@ class SignedPreview:
     Callers bind their own action, actor, scope, origin, inputs and current resource version.
     The signature is proof of a preview, never authorization to execute it.
     """
+    #: The longest token `_verify` reads. A batch (admin_bulk) binds up to 100 accounts and raises it.
+    token_limit = 8192
 
     @staticmethod
     def _environment(request):
@@ -70,7 +92,7 @@ class SignedPreview:
 
     def _verify(self, token):
         try:
-            if not isinstance(token, str) or len(token) > 8192:
+            if not isinstance(token, str) or len(token) > self.token_limit:
                 raise ValueError()
             data, sig = token.split(".")
             if not hmac.compare_digest(sig, hmac.new(self._key(), data.encode(), hashlib.sha256).hexdigest()):
@@ -195,42 +217,54 @@ class AccountOperations(SignedPreview):
                     raise ServiceError(409, "admin_preview_invalid", "操作目标已变化，请重新预览")
                 if plan.get("expires_at", 0) <= time.time():
                     raise ServiceError(409, "admin_preview_expired", "操作预览已过期，请重新预览")
-                version, _ = self._snapshot(target, status)
-                if plan.get("version") != version:
-                    raise ServiceError(409, "admin_preview_stale", "账户或访问权限已变化，请重新预览")
-                operation_id = new_id("ao")
-                revoked = tokens = 0
-                result_status = "suspended" if status == "suspended" else "active" if target["email_verified_at"] else "pending"
-                ts = time.time()
-                tx.execute("UPDATE users SET status=?,updated_at=? WHERE id=?", (result_status, ts, uid))
-                if status == "suspended":
-                    revoked = Sessions(self.store).revoke_all_for_user(uid, "admin_suspended")
-                    tokens = Grants(self.store).revoke_for_user(uid, "admin_suspended")
-                    from .profile import invalidate_access
-                    invalidate_access(self.store, uid, "admin_suspended")
-                    tx.execute("UPDATE account_recoveries SET used_at=COALESCE(used_at,?) WHERE user_id=?", (ts, uid))
-                result = {"ok": True, "operation_id": operation_id, "state": "succeeded", "status": result_status,
-                          "sessions_revoked": revoked, "tokens_revoked": tokens,
-                          "journaled": True if status == "suspended" else None}
-                self.audit(request, self.action, actor_id=actor["id"], object_kind="user", object_id=uid,
-                           workspace_given=True, result="ok", meta={**result, "reason": reason,
-                           **change({"status": target["status"]}, {"status": result_status}),
-                           "environment": self._environment(request)})
-                tx.execute("INSERT INTO admin_operations (id,actor_id,action,target_id,idempotency_key,request_hash,"
-                           "result_json,created_at) VALUES (?,?,?,?,?,?,?,?)",
-                           (operation_id, actor["id"], self.action, uid, key, request_hash, canonical(result), ts))
-                if status == "suspended":
-                    from synwevo_core import journal
-                    try:
-                        journal.record_account(self.store, "user_suspended", user_id=uid, event_id=operation_id)
-                    except (OSError, ValueError):
-                        raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
-                return result
+                return self._apply(tx, request, actor, target, status, version=plan.get("version"),
+                                   reason=reason, key=key, request_hash=request_hash)
         except Exception as exc:
             self._failure(request, actor, uid, exc, phase="execute", reason=reason)
             raise
 
-    def _failure(self, request, actor, uid, exc, *, phase, reason=""):
+    def _apply(self, tx, request, actor, target, status, *, version, reason, key, request_hash, batch_id=None):
+        """The account's change once `_target` has admitted it, under the writer lock the caller
+        holds: the confirmed version against the account as it is now, the withdrawals, the audit
+        row, the durable result under `key` and — last — the security journal. Shared by the single
+        confirmation (`execute`) and each account of a confirmed batch (admin_bulk.py), which passes
+        its per-account receipt key and its `batch_id` (then also in the audit row and the result)."""
+        uid = target["id"]
+        current, _ = self._snapshot(target, status)
+        if version != current:
+            raise ServiceError(409, "admin_preview_stale", "账户或访问权限已变化，请重新预览")
+        operation_id = new_id("ao")
+        revoked = tokens = 0
+        result_status = "suspended" if status == "suspended" else "active" if target["email_verified_at"] else "pending"
+        ts = time.time()
+        tx.execute("UPDATE users SET status=?,updated_at=? WHERE id=?", (result_status, ts, uid))
+        if status == "suspended":
+            revoked = Sessions(self.store).revoke_all_for_user(uid, "admin_suspended")
+            tokens = Grants(self.store).revoke_for_user(uid, "admin_suspended")
+            from .profile import invalidate_access
+            invalidate_access(self.store, uid, "admin_suspended")
+            tx.execute("UPDATE account_recoveries SET used_at=COALESCE(used_at,?) WHERE user_id=?", (ts, uid))
+        result = {"ok": True, "operation_id": operation_id, "state": "succeeded", "status": result_status,
+                  "sessions_revoked": revoked, "tokens_revoked": tokens,
+                  "journaled": True if status == "suspended" else None}
+        if batch_id:
+            result["batch_id"] = batch_id
+        self.audit(request, self.action, actor_id=actor["id"], object_kind="user", object_id=uid,
+                   workspace_given=True, result="ok", meta={**result, "reason": reason,
+                   **change({"status": target["status"]}, {"status": result_status}),
+                   "environment": self._environment(request)})
+        tx.execute("INSERT INTO admin_operations (id,actor_id,action,target_id,idempotency_key,request_hash,"
+                   "result_json,created_at) VALUES (?,?,?,?,?,?,?,?)",
+                   (operation_id, actor["id"], self.action, uid, key, request_hash, canonical(result), ts))
+        if status == "suspended":
+            from synwevo_core import journal
+            try:
+                journal.record_account(self.store, "user_suspended", user_id=uid, event_id=operation_id)
+            except (OSError, ValueError):
+                raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
+        return result
+
+    def _failure(self, request, actor, uid, exc, *, phase, reason="", batch_id=None):
         # Outside the failed transaction. Invalid inputs and exception messages can contain
         # arbitrary data; audit only a stable code, phase and a validated operation reason.
         code = exc.code if isinstance(exc, ServiceError) else "admin_operation_failed"
@@ -241,6 +275,45 @@ class AccountOperations(SignedPreview):
         meta = {"code": code, "phase": phase, "environment": self._environment(request)}
         if 8 <= len(reason) <= 500:
             meta["reason"] = reason
+        if batch_id:
+            meta["batch_id"] = batch_id
         self.audit(request, self.action, actor_id=actor["id"], object_kind="user", object_id=uid,
                    workspace_given=True, result="denied" if isinstance(exc, ServiceError) and exc.status < 500 else "error",
                    meta=meta)
+
+
+def revoke_account_sessions(store, sessions, audit, request, actor, uid, reason, *, version=None,
+                            version_of=None, batch_id=None, event_id=None, before_journal=None) -> dict:
+    """End every session and token of one account, under the writer lock the caller holds, after
+    the caller re-admitted `actor` there with REVOKE_SESSIONS_PERMISSION and strict
+    re-authentication: the account must exist and must not outrank the actor; then the sessions,
+    the tokens and every pending credential (`invalidate_access`), the `admin.user.revoke_sessions`
+    audit row and — last — the `sessions_revoked` journal entry. The body of the single route
+    `POST /api/admin/users/{uid}/revoke-sessions`; a confirmed batch (admin_bulk.py) also passes the
+    account's confirmed `version` (compared with `version_of(uid)` before anything is written,
+    `admin_preview_stale`), its `batch_id` for the audit row, the journal `event_id` and
+    `before_journal(result)`, which writes the account's receipt ahead of the journal entry."""
+    from synwevo_core import journal
+    from .profile import invalidate_access
+    if not Identity(store).get_user(uid):
+        raise ServiceError(404, "no_user", "找不到该账户")
+    require_outranking(request, actor, uid, store=store, audit=audit)
+    if version is not None and version_of(uid) != version:
+        raise ServiceError(409, "admin_preview_stale", "账户的会话或平台权限已变化，请重新预览")
+    n = sessions.revoke_all_for_user(uid, "admin_revoked")
+    tokens = Grants(store).revoke_for_user(uid, "admin_revoked")
+    invalidate_access(store, uid, "admin_revoked")
+    meta = {**change({"sessions": n, "tokens": tokens}, {"sessions": 0, "tokens": 0}),
+            "reason": reason, "sessions": n, "tokens": tokens, "journaled": True}
+    if batch_id:
+        meta["batch_id"] = batch_id
+    audit(request, "admin.user.revoke_sessions", actor_id=actor["id"], object_kind="user",
+          object_id=uid, workspace_given=True, result="ok", meta=meta)
+    result = {"sessions_revoked": n, "tokens_revoked": tokens}
+    if before_journal is not None:
+        before_journal(result)
+    try:
+        journal.record_account(store, "sessions_revoked", user_id=uid, event_id=event_id or new_id("ao"))
+    except (OSError, ValueError):
+        raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
+    return result

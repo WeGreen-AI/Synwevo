@@ -49,6 +49,13 @@ ROUTES = [
     ("GET", "/api/admin/users/{uid}/access", "platform.roles.view", False),
     ("POST", "/api/admin/users/{uid}/status-preview", "platform.users.manage", False),
     ("POST", "/api/admin/users/{uid}/status", "platform.users.manage", True),
+    # A18: a batch needs its operation's permission (admin_bulk.py); the matrix sends a session
+    # revocation (`platform.users.support`). A suspension's `platform.users.manage` is proved in
+    # test_admin_bulk_accounts. The preview changes nothing; the act is dangerous. The preview also
+    # needs `platform.users.view`, checked after the operation's permission; every built-in role
+    # holding `platform.users.support` holds it, so the expectation below is the operation's.
+    ("POST", "/api/admin/users/bulk-preview", "platform.users.support", False),
+    ("POST", "/api/admin/users/bulk", "platform.users.support", True),
     ("POST", "/api/admin/users/{uid}/recovery", "platform.users.support", True),
     ("POST", "/api/admin/users/{uid}/revoke-sessions", "platform.users.support", True),
     ("POST", "/api/admin/users/{uid}/sessions/{sid}/revoke", "platform.users.manage", True),
@@ -315,6 +322,13 @@ def _call(client, method, path, w):
     if path.startswith("/api/admin/organizations/") and path.endswith("/preview"):
         # The fixture organization is active: a permitted role gets the freeze preview, 200.
         return post(client, path, {"action": "freeze"})
+    if path in ("/api/admin/users/bulk-preview", "/api/admin/users/bulk"):
+        # A session revocation of the plain account: a permitted role gets the preview (200,
+        # nothing changes) while the act stops at the strict re-authentication.
+        return post(client, path, {"operation": "revoke_sessions", "user_ids": [w["plain"]["id"]]}
+                    if path.endswith("-preview") else
+                    {"operation": "revoke_sessions", "reason": REASON, "preview_token": "matrix-not-confirmed",
+                     "idempotency_key": "matrix_bulk_accounts_0001"})
     if path.startswith("/api/admin/notification-recovery/"):
         return post(client, path, {"reason": REASON, "preview_token": "matrix-not-confirmed",
                                    "idempotency_key": "matrix_notification_recovery_0001"}
@@ -431,6 +445,7 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
     assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action='admin.notification.recover_enqueue'")
     assert world["store"].one("SELECT status FROM organizations WHERE id=?", (world["oid"],))["status"] == "active"
     assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action='admin.organization.lifecycle'")
+    assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action='admin.user.bulk'")
 
 
 def test_no_platform_permission_sees_404_everywhere_including_owners_and_workspace_admins(world):

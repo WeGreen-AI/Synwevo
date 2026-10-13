@@ -63,6 +63,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     # declares its own `/organizations/{oid}/preview` first for the same reason.
     r.include_router(build_ownership_recovery_router(store, ident, audit))
     r.include_router(build_organization_lifecycle_router(store, ident, audit))
+    # A18: `/users/bulk-preview` and `/users/bulk` are declared ahead of every `/users/{uid}…`
+    # route below, so neither literal segment is ever read as an account id.
+    from .admin_bulk import build_router as build_bulk_accounts_router
+    r.include_router(build_bulk_accounts_router(store, ident, sessions, audit))
 
     def _admin(request: Request, permission=_UNNAMED, *, dangerous: bool = False,
                step_up: bool = True) -> dict:
@@ -1346,27 +1350,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     def revoke_sessions(request: Request, uid: str, body: dict = Body(...)):
         actor = _admin(request, "platform.users.support", dangerous=True)
         reason = _reason(body)
-        from synwevo_core import journal
-        from synwevo_core.oidc import Grants
-        from synwevo_core.store import new_id
-        from .profile import invalidate_access
+        # The re-check and the writes are shared with each account of a bulk revocation (A18).
+        from .admin_operations import revoke_account_sessions
         with _write(request, "platform.users.support", object_kind="user", object_id=uid):
             actor = _admin(request, "platform.users.support", dangerous=True)
-            if not ident.get_user(uid):
-                raise ServiceError(404, "no_user", "找不到该账户")
-            _not_outranked(request, actor, uid)
-            n = sessions.revoke_all_for_user(uid, "admin_revoked")
-            tokens = Grants(store).revoke_for_user(uid, "admin_revoked")
-            invalidate_access(store, uid, "admin_revoked")
-            audit(request, "admin.user.revoke_sessions", actor_id=actor["id"], object_kind="user",
-                  object_id=uid, workspace_given=True, result="ok",
-                  meta={**change({"sessions": n, "tokens": tokens}, {"sessions": 0, "tokens": 0}),
-                        "reason": reason, "sessions": n, "tokens": tokens, "journaled": True})
-            try:
-                journal.record_account(store, "sessions_revoked", user_id=uid, event_id=new_id("ao"))
-            except (OSError, ValueError):
-                raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
-        return {"ok": True, "sessions_revoked": n, "tokens_revoked": tokens, "journaled": True}
+            out = revoke_account_sessions(store, sessions, audit, request, actor, uid, reason)
+        return {"ok": True, **out, "journaled": True}
 
     def _security_notice(request: Request, uid: str, what: str) -> bool:
         """The inbox item the person gets about a sign-in method or device the platform acted on

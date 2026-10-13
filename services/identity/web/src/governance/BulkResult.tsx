@@ -32,7 +32,7 @@ export function bulkToast(r: BulkResponse, what: string): [string, "ok" | "err"]
   return [tr("{p0}：{p1} 项成功，{p2} 项失败，详情见结果列表", {p0: what, p1: r.succeeded, p2: r.failed}), "err"];
 }
 
-export function BulkResultDialog({ title, response, labelOf, detailOf, onClose, onSelectFailed }: {
+export function BulkResultDialog({ title, response, labelOf, detailOf, onClose, onSelectFailed, retryFailed }: {
   title: string;
   response: BulkResponse;
   /** Human name for a result id (a member's name, an invitation's address). */
@@ -42,6 +42,9 @@ export function BulkResultDialog({ title, response, labelOf, detailOf, onClose, 
   onClose: () => void;
   /** Re-select what failed, so it can be retried or dealt with one by one. */
   onSelectFailed?: (ids: string[]) => void;
+  /** Start again with only what failed (A18: a new preview of the failed accounts). The caller
+   *  replaces this dialog with the new step, so it is not closed here. */
+  retryFailed?: { label: string; run: (ids: string[]) => void };
 }) {
   const failed = response.results.filter((r) => !r.ok);
   // Failures first: they are the part that needs someone to do something.
@@ -52,6 +55,9 @@ export function BulkResultDialog({ title, response, labelOf, detailOf, onClose, 
         <>
           {onSelectFailed && failed.length > 0 && (
             <button type="button" className="btn" onClick={() => { onSelectFailed(failed.map((r) => r.id)); onClose(); }}>{tr("只选中失败的{p0}项", {p0: failed.length})}</button>
+          )}
+          {retryFailed && failed.length > 0 && (
+            <button type="button" className="btn" onClick={() => retryFailed.run(failed.map((r) => r.id))}>{retryFailed.label}</button>
           )}
           <span className="spacer" />
           <button type="button" className="btn primary" data-autofocus onClick={onClose}>{tr("关闭")}</button>

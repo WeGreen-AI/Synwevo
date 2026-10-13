@@ -65,6 +65,7 @@ ADMIN_ACTIONS: dict[str, dict] = {
     "admin.super_admin.cancel": _a("platform", "取消最高管理员交接", "取消最高管理員交接", "Cancel a super-administrator handover"),
     "admin.super_admin.offer": _a("platform", "发起最高管理员交接", "發起最高管理員交接", "Offer a super-administrator handover"),
     "admin.super_admin.ready": _a("platform", "确认最高管理员就绪", "確認最高管理員就緒", "Confirm super-administrator readiness"),
+    "admin.user.bulk": _a("user", "批量停用账户或撤销会话", "批次停用帳戶或撤銷工作階段", "Suspend accounts or revoke their sessions in bulk"),
     "admin.user.deletion_cancellation_mail": _a("user", "重发取消注销链接", "重發取消註銷連結", "Re-send a deletion cancellation link"),
     "admin.user.external_unlink": _a("user", "解除外部身份", "解除外部身分", "Unlink an external identity"),
     "admin.user.passkey_remove": _a("user", "移除安全密钥", "移除安全金鑰", "Remove a passkey"),

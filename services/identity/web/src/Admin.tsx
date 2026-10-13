@@ -28,8 +28,11 @@ import "./governance/messages";
  * for scoped identity verification again. The server enforces all three; this screen is the explanation, not
  * the control.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { AccountStatusDialog } from "./governance/AccountStatusDialog";
+import { BULK_LIMIT, BULK_OPERATION_LABELS, BulkAccountDialog, BulkAccountsBar, SelectAccountsPage, type BulkOperation } from "./governance/BulkAccountDialog";
+import { bulkToast } from "./governance/BulkResult";
+import { escapeClears, selectionKeys, usePagedSelection } from "./components/selection";
 import { ActionDialog } from "./governance/ActionDialog";
 import { AdminLayout } from "./admin/AdminLayout";
 import { RowMenu } from "./governance/RowMenu";
@@ -354,15 +357,30 @@ function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void
   const { me, refresh } = useSession();
   const toast = useToast();
   const [resultNotice, setResultNotice] = useState("");
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+  const [noticeFocus, setNoticeFocus] = useState(0);
   const [action, setAction] = useState<{ user: User; kind: "status" | "revoke" | "recovery" | "cancellation" } | null>(null);
   // Read-only: the account's facts (A13). Every change stays in the items below, with its own reason.
   const [detail, setDetail] = useState<User | null>(null);
   // A grant or revocation in the platform-access dialog changes this list's platform column.
   useEffect(() => { if (revision) reload(); }, [revision]); // eslint-disable-line react-hooks/exhaustive-deps
   const items = loading || err ? [] : data?.items || [];
+  // A18: the selection for a bulk act. It outlives the page and the filters (one batch is at most
+  // BULK_LIMIT accounts) and is offered only to a role that holds one of the bulk operations.
+  const canBulk = held.has("platform.users.manage") || held.has("platform.users.support");
+  const selection = usePagedSelection(items.map((user) => user.id), BULK_LIMIT);
+  const [bulk, setBulk] = useState<{ operation: BulkOperation; ids: string[] } | null>(null);
+  const bulkCompleted = useRef(false);
+  // The bar whose button opened the bulk dialog is gone once the batch clears the selection, so
+  // focus goes to the outcome, which is then read out.
+  useEffect(() => { if (noticeFocus) noticeRef.current?.focus(); }, [noticeFocus]);
   const u = action?.user;
   const title = action?.kind === "cancellation" ? tr("重发取消注销链接") : action?.kind === "recovery" ? tr("发送找回邮件") : action?.kind === "revoke" ? tr("撤销全部会话") : u?.status !== "suspended" ? tr("停用账户") : tr("恢复账户");
-  return <section className="card card-b col gap12">
+  // Escape in the search box or a filter clears that field (the browser's own behaviour), never the
+  // selection of up to 100 accounts across pages; elsewhere in the section it clears the selection.
+  const clearsSelection = (e: ReactKeyboardEvent) => !(e.target instanceof HTMLElement
+    && e.target.closest('input[type="search"], input[type="text"], select, textarea'));
+  return <section className="card card-b col gap12" onKeyDown={(e) => { if (canBulk && clearsSelection(e)) escapeClears(e, selection, (m) => setResultNotice(tr(m))); }}>
     <div className="row gap12 wrap"><h2 className="grow">{tr("账户")}</h2>
       <input type="search" className="input" value={q} maxLength={100} onChange={(e) => setQ(e.target.value)} placeholder={tr("搜索邮箱或姓名")} aria-label={tr("搜索账户")} />
       <button className="btn sm" disabled={loading} onClick={reload}>{tr("刷新账户")}</button></div>
@@ -375,13 +393,17 @@ function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void
         {ROLE_ORDER.map((r) => <option key={r} value={r}>{platformRoleLabel(r)}</option>)}
       </select></label>
     </div>
-    {resultNotice && <p className="notice" role="status">{resultNotice}</p>}
+    <div role="status" aria-live="polite">{resultNotice && <p className="notice" ref={noticeRef} tabIndex={-1}>{resultNotice}</p>}</div>
     {err && <div className="notice err" role="alert">{err} <button className="btn sm" onClick={reload}>{tr("重试")}</button></div>}
     {loading && <p role="status">{tr("正在加载账户…")}</p>}
-    <div className="list-wrap admin-users-wrap"><table className="gov admin-users-table" aria-label={tr("平台账户")} aria-busy={loading}>
-      <thead><tr><th scope="col">{tr("账户")}</th><th scope="col">{tr("状态")}</th><th scope="col">{tr("平台权限")}</th><th scope="col">{tr("工作空间")}</th><th scope="col">{tr("在线会话")}</th><th scope="col" className="act">{tr("操作")}</th></tr></thead>
+    <div className="list-wrap admin-users-wrap"><table className={`gov admin-users-table${canBulk ? " selectable" : ""}`} aria-label={tr("平台账户")} aria-busy={loading}
+      onKeyDown={(e) => { if (canBulk) selectionKeys(e, selection); }}>
+      <thead><tr>{canBulk && <th scope="col" className="pick"><SelectAccountsPage selection={selection} disabled={loading || !!err || !items.length} /></th>}<th scope="col">{tr("账户")}</th><th scope="col">{tr("状态")}</th><th scope="col">{tr("平台权限")}</th><th scope="col">{tr("工作空间")}</th><th scope="col">{tr("在线会话")}</th><th scope="col" className="act">{tr("操作")}</th></tr></thead>
       <tbody>{items.map((user) => { const o = userOffers(held, user, me?.id); const hint = (h?: string) => h && tr(h);
-        return <tr key={user.id}>
+        const picked = selection.sel.has(user.id);
+        return <tr key={user.id} className={picked ? "sel" : undefined}>
+        {canBulk && <td className="pick"><input type="checkbox" data-pick={user.id} checked={picked} disabled={loading || !!err || (selection.full && !picked)}
+          aria-label={tr("选择 {p0}", { p0: user.email })} onChange={() => {}} onClick={(e) => selection.pick(user.id, { shift: e.shiftKey })} /></td>}
         <th scope="row">{user.display_name || "—"}<div className="who2">{user.email}</div></th>
         <td data-label={tr("状态")}>{ACCOUNT_STATUS[user.status] || user.status}{user.status === "pending_delete" && user.deletion_due_at ? <div className="who2">{tr("到期：{time}", { time: fmtTime(user.deletion_due_at) })}</div> : null}</td><td data-label={tr("平台权限")}>{platformRolesText(user.platform_roles)}</td><td data-label={tr("工作空间")}>{user.workspaces}</td><td data-label={tr("在线会话")}>{user.sessions}</td>
         <td className="act" data-label={tr("操作")}><RowMenu label={tr("{p0} 的账户操作", {p0: user.email})} items={[
@@ -393,11 +415,22 @@ function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void
           { label: tr("撤销全部会话"), danger: true, disabled: loading || !!err || o.revoke.disabled, hint: hint(o.revoke.hint), onSelect: () => setAction({ user, kind: "revoke" }) },
           { label: tr("平台权限"), disabled: loading || !!err || o.access.disabled, hint: hint(o.access.hint), onSelect: () => onAccess(user) },
         ]} /></td></tr>; })}
-      {!loading && !err && !items.length && <tr className="empty-row"><td colSpan={6}>{tr("没有匹配的账户。")}</td></tr>}</tbody>
+      {!loading && !err && !items.length && <tr className="empty-row"><td colSpan={canBulk ? 7 : 6}>{tr("没有匹配的账户。")}</td></tr>}</tbody>
     </table></div>
     <PageControls offset={offset} total={data?.total || 0} busy={loading || !!err} onPage={setOffset} />
+    {canBulk && selection.count > 0 && <BulkAccountsBar held={held} count={selection.count} full={selection.full}
+      onStart={(operation) => setBulk({ operation, ids: selection.ids })} onClear={selection.clear} />}
     <RegistrationDiagnostics />
     {detail && <AccountDetailDialog user={detail} held={held} onClose={() => setDetail(null)} onChanged={reload} />}
+    {bulk && <BulkAccountDialog operation={bulk.operation} userIds={bulk.ids}
+      onClose={() => { setBulk(null); if (bulkCompleted.current) { bulkCompleted.current = false; setNoticeFocus((n) => n + 1); } }}
+      onDone={(response) => {
+        // A completed batch clears the selection; the result dialog keeps every item on screen.
+        bulkCompleted.current = true; selection.clear(); reload();
+        const [message, tone] = bulkToast(response, tr(BULK_OPERATION_LABELS[bulk.operation]));
+        setResultNotice(message); toast(message, tone);
+        if (me && response.results.some((r) => r.ok && r.id === me.id)) void refresh();
+      }} />}
     {action?.kind === "status" && u && <AccountStatusDialog user={u} onClose={() => setAction(null)} onDone={(out) => {
       setAction(null); reload(); setResultNotice(tr("操作 {id} 已完成，账户状态为「{status}」。", {
         id: out.operation_id, status: ACCOUNT_STATUS[out.status] || out.status,

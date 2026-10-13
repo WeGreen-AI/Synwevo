@@ -7,6 +7,7 @@ import "./platform.messages";
 import "./account-operations.messages";
 import "./ownership.messages";
 import "./organization-lifecycle.messages";
+import "./bulk-accounts.messages";
 export { ROLES, ROLE_RANK, canExport, isAbort } from "../lib/labels";
 export type { Role } from "../lib/labels";
 // Read translations at render time; imported enum labels must not freeze the initial locale.
@@ -89,6 +90,17 @@ const errors: Record<string, string> = {
   self_assignment: "不能指定自己，请由另一位管理员操作。",
   target_is_platform_admin: "所选账户持有平台权限：平台管理与业务数据须由不同账户持有。",
   missing_user: "请选择一位成员。",
+  // A18: bulk suspension and session revocation (/api/admin/users/bulk-preview, /bulk). The
+  // preview names each account's refusal by code only, so the single-account codes it can carry
+  // are worded here for an administrator reading about someone else's account.
+  bad_operation: "不支持的批量操作，请刷新页面后重试。",
+  missing_users: "请至少选择一个账户。",
+  // `too_many` with its limit is worded by the template in lib/refusals.ts; this is the fallback
+  too_many: "一次选择的项目过多，请减少后分批处理。",
+  already_applied: "此前已完成，本次未重复执行。",
+  ownership_required: "该账户是共享工作空间唯一可用的拥有者或管理者，需先为该空间另设拥有者或管理者。",
+  organization_ownership_required: "该账户是组织唯一可用的拥有者或管理者，需先为该组织另设拥有者或管理者。",
+  admin_operation_failed: "操作未能完成，已记录失败；请稍后重新预览。",
 };
 /** One item of a batch the server refused: its sentence when catalogued, else this page's wording
  *  for its code (lib/refusals.ts) — a mixed batch answers 200, so the item carries no status. */
