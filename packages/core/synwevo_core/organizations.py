@@ -19,6 +19,11 @@ from .store import Store, new_id, now
 
 ROLES = ("member", "admin", "owner")
 RECOVERY_SECONDS = 7 * 24 * 3600
+#: The lifecycle acts, in the owner's tenant route and the platform's console path alike.
+LIFECYCLE_ACTIONS = ("freeze", "unfreeze", "delete", "recover")
+#: The organization as platform governance sees it (A35): lifecycle columns only — no role,
+#: usage, policies or avatar, which are the members' view (`Organizations.get`).
+PLATFORM_VIEW_COLUMNS = ("id", "name", "status", "deleted_at", "recover_until", "previous_status", "version")
 #: An organization owner who can act (`_keep_owner`'s rule, shared with the platform's orphan list
 #: and `recover_owner`): the membership's role is owner and the account is active and undeleted.
 #: Written against the aliases `m` (organization_memberships) and `u` (users).
@@ -147,6 +152,33 @@ def audit_reason(value) -> str:
         raise ServiceError(400, "missing_reason", "请写明理由（8 至 500 个字），它会写入审计记录",
                            {"field": "reason"})
     return value.strip()
+
+
+def platform_view(store: Store, oid: str) -> dict | None:
+    """The PLATFORM_VIEW_COLUMNS of one organization, or None when there is no such row."""
+    return store.one(f"SELECT {','.join(PLATFORM_VIEW_COLUMNS)} FROM organizations WHERE id=?", (oid,))
+
+
+def lifecycle_values(org: dict, action: str, ts: float) -> dict:
+    """The column values `action` writes from the organization's current row — or the refusal:
+    409 `organization_recovery_expired` for a recovery past `recover_until`, 409
+    `organization_state_conflict` for every other act the status does not allow (an unknown
+    action included). The one state machine behind `Organizations.transition` and
+    `Organizations.platform_transition`; the platform's preview asks it the same question
+    without writing anything."""
+    if action == "freeze" and org["status"] == "active":
+        return {"status": "frozen"}
+    if action == "unfreeze" and org["status"] == "frozen":
+        return {"status": "active"}
+    if action == "delete" and org["status"] in ("active", "frozen"):
+        return {"status": "deleted", "deleted_at": ts, "recover_until": ts + RECOVERY_SECONDS,
+                "previous_status": org["status"]}
+    if action == "recover" and org["status"] == "deleted":
+        if not org["recover_until"] or ts >= org["recover_until"]:
+            raise ServiceError(409, "organization_recovery_expired", "该组织的七天恢复期限已过")
+        return {"status": org["previous_status"] or "frozen", "deleted_at": None,
+                "recover_until": None, "previous_status": None}
+    raise ServiceError(409, "organization_state_conflict", "组织当前状态不允许此操作")
 
 
 class Organizations:
@@ -554,35 +586,50 @@ class Organizations:
         # recovery cannot un-revoke sessions/tokens/approvals, or rotate old keys.
         return out
 
+    def _transition(self, org, actor_id, action, reason, *, meta=None):
+        """The lifecycle write shared by `transition` (an owner's act) and `platform_transition`
+        (the platform's, A35), so the two cannot drift: called inside the mutation transaction
+        with the organization's current row, after the caller's own authority check. `meta`
+        adds to the organization's audit record. Returns the revocation counts (empty for
+        unfreeze and recover)."""
+        oid, ts, revoked = org["id"], now(), {}
+        values = lifecycle_values(org, action, ts)
+        # Audit is transactional and precedes the durable intent. No security
+        # SQL can commit without fsync; later failure leaves a fail-closed
+        # restore intent rather than allowing an old archive to revive access.
+        self._record(actor_id, oid, "organization." + action,
+                     {"reason": reason, **change({"status": org["status"]}, {"status": values["status"]}), **(meta or {})})
+        if action in ("freeze", "delete"):
+            lifecycle = {k: values[k] for k in ("deleted_at", "recover_until", "previous_status")} if action == "delete" else {}
+            record_organization(self.store, "organization_" + ("frozen" if action == "freeze" else "deleted"),
+                                organization_id=oid, **lifecycle)
+            revoked = self._revoke_workspace_authority(oid)
+        values.update(updated_at=ts, version=org["version"] + 1)
+        self.store.update("organizations", {"id": oid}, values)
+        return revoked
+
     def transition(self, oid, actor_id, action, *, reason):
         reason = audit_reason(reason)
         with self.store.tx():
             org, _ = self.require(oid, actor_id, owner=True)
-            ts, revoked = now(), {}
-            if action == "freeze" and org["status"] == "active":
-                values = {"status": "frozen"}
-            elif action == "unfreeze" and org["status"] == "frozen":
-                values = {"status": "active"}
-            elif action == "delete" and org["status"] in ("active", "frozen"):
-                values = {"status": "deleted", "deleted_at": ts, "recover_until": ts + RECOVERY_SECONDS,
-                          "previous_status": org["status"]}
-            elif action == "recover" and org["status"] == "deleted":
-                if not org["recover_until"] or ts >= org["recover_until"]:
-                    raise ServiceError(409, "organization_recovery_expired", "该组织的七天恢复期限已过")
-                values = {"status": org["previous_status"] or "frozen", "deleted_at": None,
-                          "recover_until": None, "previous_status": None}
-            else:
-                raise ServiceError(409, "organization_state_conflict", "组织当前状态不允许此操作")
-            # Audit is transactional and precedes the durable intent. No security
-            # SQL can commit without fsync; later failure leaves a fail-closed
-            # restore intent rather than allowing an old archive to revive access.
-            self._record(actor_id, oid, "organization." + action,
-                         {"reason": reason, **change({"status": org["status"]}, {"status": values["status"]})})
-            if action in ("freeze", "delete"):
-                lifecycle = {k: values[k] for k in ("deleted_at", "recover_until", "previous_status")} if action == "delete" else {}
-                record_organization(self.store, "organization_" + ("frozen" if action == "freeze" else "deleted"),
-                                    organization_id=oid, **lifecycle)
-                revoked = self._revoke_workspace_authority(oid)
-            values.update(updated_at=ts, version=org["version"] + 1)
-            self.store.update("organizations", {"id": oid}, values)
+            revoked = self._transition(org, actor_id, action, reason)
             return {"organization": self.get(oid, actor_id), **revoked}
+
+    def platform_transition(self, oid, actor_id, action, *, reason):
+        """The platform's lifecycle act on any organization (A35): `actor_id` is a platform
+        administrator who need not be a member and gains no membership, workspace access or
+        entitlement here. The same state machine, journal entry and revocations as `transition`
+        (`_transition`); only the authority differs — the organization has to exist (404
+        `no_organization`), nothing else — and the organization's own audit record carries
+        `"by": "platform"`, so its governance log shows platform governance. 400 `bad_action`
+        outside LIFECYCLE_ACTIONS. Returns the platform view (PLATFORM_VIEW_COLUMNS) and the
+        revocation counts, never the members' view."""
+        reason = audit_reason(reason)
+        if action not in LIFECYCLE_ACTIONS:
+            raise ServiceError(400, "bad_action", "请选择有效的组织生命周期操作", {"field": "action"})
+        with self.store.tx():
+            org = self.store.one("SELECT * FROM organizations WHERE id=?", (oid,))
+            if not org:
+                raise ServiceError(404, "no_organization", "找不到该组织")
+            revoked = self._transition(org, actor_id, action, reason, meta={"by": "platform"})
+            return {"organization": platform_view(self.store, oid), **revoked}

@@ -55,11 +55,14 @@ TIMELINE_LIMIT = 50
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, mailer=None) -> APIRouter:
     r = APIRouter(prefix="/api/admin", tags=["admin"])
     from .admin_notification_recovery import build_router as build_notification_recovery_router
+    from .admin_organizations import build_router as build_organization_lifecycle_router
     from .admin_ownership import build_router as build_ownership_recovery_router
     r.include_router(build_notification_recovery_router(store, audit))
-    # Before this router's own routes: its `/organizations/{oid}/recover-owner` must be matched
-    # ahead of the generic `/organizations/{oid}/{action}` declared below (A37).
+    # In this order: the ownership router's `/organizations/{oid}/recover-owner` (A37) must be
+    # matched ahead of the lifecycle router's generic `/organizations/{oid}/{action}` (A35), which
+    # declares its own `/organizations/{oid}/preview` first for the same reason.
     r.include_router(build_ownership_recovery_router(store, ident, audit))
+    r.include_router(build_organization_lifecycle_router(store, ident, audit))
 
     def _admin(request: Request, permission=_UNNAMED, *, dangerous: bool = False,
                step_up: bool = True) -> dict:
@@ -436,15 +439,9 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                                           "AND deleted_at IS NULL", (org["id"],))["n"]
         return page
 
-    @r.post("/organizations/{oid}/{action}")
-    def govern_organization(request: Request, oid: str, action: str, body: dict = Body(...)):
-        actor = _admin(request, "platform.orgs.manage", dangerous=True)
-        reason = _reason(body)
-        # Use the core lifecycle and the real actor. Platform governance does not add an
-        # organization membership, impersonate its owner, or bypass its ownership checks.
-        with _write(request, "platform.orgs.manage", object_kind="organization", object_id=oid) as actor:
-            return Organizations(store, ident, lambda event, **kw: audit(request, event, **kw)).transition(
-                oid, actor["id"], action, reason=reason)
+    # The lifecycle acts (`POST /organizations/{oid}/preview` and `/{action}`) are the platform-scope
+    # path of admin_organizations.py, included above: a confirmed operation by any holder of
+    # `platform.orgs.manage`, member of the organization or not (A35).
 
     # ------------------------------------------------------------------ overview
     @r.get("/identity-providers")

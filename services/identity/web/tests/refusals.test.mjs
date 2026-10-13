@@ -49,6 +49,8 @@ const SERVER = [
   { file: ID + "account_routes.py", surfaces: ["account"] },
   { file: ID + "admin_routes.py", surfaces: ["admin"] },
   { file: ID + "admin_operations.py", surfaces: ["admin"] },
+  // A35: the platform-scope organization lifecycle — preview and transition (governance/OrganizationLifecycleDialog.tsx)
+  { file: ID + "admin_organizations.py", surfaces: ["admin"] },
   { file: ID + "admin_notification_recovery.py", surfaces: ["admin"] },
   // A37: the orphan list and the platform-controlled ownership handover (governance/OwnershipRecovery.tsx)
   { file: ID + "admin_ownership.py", surfaces: ["admin"] },
@@ -129,6 +131,9 @@ const SERVER = [
   { file: CORE + "organizations.py", fns: ["accept_workspace_invitation"], surfaces: ["signin"] },
   { file: CORE + "organizations.py", fns: ["require_invitation_permission"], surfaces: ["members", "org"] },
   { file: CORE + "organizations.py", fns: ["recover_owner", "usable_owners"], surfaces: ["admin"] },
+  // A35: the platform-scope lifecycle transition is reached from the administration page only
+  // (governance/OrganizationLifecycleDialog.tsx); owners' tenant route keeps `transition`.
+  { file: CORE + "organizations.py", fns: ["platform_transition"], surfaces: ["admin"] },
   { file: CORE + "organizations.py", surfaces: ["org"] },
   { file: CORE + "org_roles.py", surfaces: ["org"] },
   { file: CORE + "data_flow.py", surfaces: [], why: "transfer refusals are met in the business applications (Agent, Forms, flows), which word them; the organization page reaches only the cap setter, after Organizations.update has refused an invalid value in its own words" },

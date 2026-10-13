@@ -6,6 +6,7 @@ import "./messages";
 import "./platform.messages";
 import "./account-operations.messages";
 import "./ownership.messages";
+import "./organization-lifecycle.messages";
 export { ROLES, ROLE_RANK, canExport, isAbort } from "../lib/labels";
 export type { Role } from "../lib/labels";
 // Read translations at render time; imported enum labels must not freeze the initial locale.
@@ -71,6 +72,8 @@ const errors: Record<string, string> = {
   mail_not_retryable: "该邮件不能安全重试。", no_mail: "找不到该邮件。", already_verified: "该邮箱已经验证。",
   organization_state_conflict: "组织当前状态不允许此操作，请刷新。",
   organization_recovery_expired: "组织的七天恢复期限已过。",
+  // A35: the platform-scope lifecycle path names its transition in the address
+  bad_action: "不支持的组织操作，请刷新页面后重试。",
   workspace_frozen: "工作空间已冻结，不能增加权限。", already_member: "该账户已经是工作空间成员。",
   invitation_rate_limited: "邀请过于频繁，请稍后重试。", invite_rate_limited: "邀请过于频繁，请稍后重试。",
   already_invited: "已有待接受的邀请。", invite_not_pending: "邀请已接受或已撤销，请刷新。",

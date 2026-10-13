@@ -84,6 +84,9 @@ export default function OrganizationAudit({ organization, mine }: { organization
     if (typeof d.reviewed === "number" && d.reviewed) out.push(t("已核对识别行 {n}", { n: d.reviewed }));
     if (d.action === "approve") out.push(t("批准")); else if (d.action === "reject") out.push(t("拒绝"));
     if (d.self_approved === true) out.push(t("申请人自行批准"));
+    // A35/A37: an act the platform performed on this organization (`by: platform`). The actor may
+    // also be a member, whose name alone would read as the member's own act.
+    if (d.by === "platform") out.push(t("由平台管理执行"));
     if (typeof d.reason === "string" && d.reason) out.push(t("原因：{reason}", { reason: d.reason }));
     return out;
   };

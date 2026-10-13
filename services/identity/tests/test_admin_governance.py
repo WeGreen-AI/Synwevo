@@ -172,18 +172,36 @@ def test_disabled_delivery_rolls_back_token_rotation_and_audit(fixture, monkeypa
     assert not f["store"].one("SELECT id FROM mail_outbox")
 
 
-def test_org_governance_preserves_actual_ownership_and_no_document_access(fixture):
+def govern(c, oid, action):
+    """The console's platform path (A35): the impact preview, then the confirmed act."""
+    import uuid
+    plan = post(c, f"/api/admin/organizations/{oid}/preview", {"action": action})
+    assert plan.status_code == 200, plan.text
+    return post(c, f"/api/admin/organizations/{oid}/{action}",
+                {"reason": REASON, "preview_token": plan.json()["preview_token"], "idempotency_key": uuid.uuid4().hex})
+
+
+def test_org_governance_is_the_platforms_and_grants_no_membership_or_document_access(fixture):
+    """A platform administrator who is not a member governs an organization from the console
+    (A35): a confirmed platform act, recorded as the platform's — never an owner's — and the
+    administrator is still not a member of it."""
     f = fixture
     row = f["c"].get("/api/admin/organizations?q=Fixture").json()["items"][0]
     assert row["role"] is None and row["members"] == 1 and row["workspaces"] == 1
     reauth(f["c"])
-    assert post(f["c"], f"/api/admin/organizations/{row['id']}/freeze", {"reason": REASON}).status_code == 404
-    own = Organizations(f["store"], f["ident"]).create(f["admin"]["id"], "Admin fixture org", "Owner space", "fixture-admin-001")
-    oid = own["organization"]["id"]
-    assert post(f["c"], f"/api/admin/organizations/{oid}/freeze", {"reason": REASON}).status_code == 200
-    assert f["store"].one("SELECT status FROM organizations WHERE id=?", (oid,))["status"] == "frozen"
+    # the console path is confirmed: a bare reason is not enough, from a member or not
+    assert post(f["c"], f"/api/admin/organizations/{row['id']}/freeze", {"reason": REASON}).json()["error"] == "admin_confirmation_required"
+    r = govern(f["c"], row["id"], "freeze")
+    assert r.status_code == 200, r.text
+    assert r.json()["organization"]["status"] == "frozen" and r.json()["sessions_revoked"] == 0
+    assert f["store"].one("SELECT status FROM organizations WHERE id=?", (row["id"],))["status"] == "frozen"
     assert f["c"].get("/api/admin/organizations?status=frozen").json()["total"] == 1
     assert not f["store"].one("SELECT 1 FROM organization_memberships WHERE organization_id=? AND user_id=?", (row["id"], f["admin"]["id"]))
+    assert f["ident"].membership(f["org"]["workspace"]["id"], f["admin"]["id"]) is None
+    own = json.loads(f["store"].one("SELECT meta FROM audit_events WHERE action='organization.freeze' AND object_id=?", (row["id"],))["meta"])
+    assert own["by"] == "platform" and own["reason"] == REASON
+    platform = f["store"].one("SELECT actor_id,meta FROM audit_events WHERE action='admin.organization.lifecycle' AND result='ok'")
+    assert platform["actor_id"] == f["admin"]["id"] and json.loads(platform["meta"])["changed"] == ["status"]
 
 
 def test_mail_search_paging_is_bounded_and_keeps_insertion_snapshot(fixture):
@@ -214,11 +232,23 @@ def test_real_org_and_workspace_admin_roles_do_not_grant_platform_management(fix
     for path in ("/api/admin/registration", "/api/admin/mail", "/api/admin/organizations"):
         assert c.get(path).status_code == 404
     assert post(c, "/api/admin/users/" + f["user"]["id"] + "/recovery", {"reason": REASON}).status_code == 404
-    # Even a platform administrator who is an organization admin cannot impersonate its owner.
+    # A platform administrator who is an organization admin does not become its owner: from the
+    # console the act is the platform's (A35) — the actor is written as who they are, the
+    # organization's own record says `by: platform`, and the membership they had is all they keep.
     make_platform_admin(f["store"], candidate["id"])
     reauth(c)
-    assert post(c, f"/api/admin/organizations/{oid}/freeze", {"reason": REASON}).status_code == 403
+    assert post(c, f"/api/admin/organizations/{oid}/freeze", {"reason": REASON}).json()["error"] == "admin_confirmation_required"
     assert f["store"].one("SELECT status FROM organizations WHERE id=?", (oid,))["status"] == "active"
+    r = govern(c, oid, "freeze")
+    assert r.status_code == 200, r.text
+    assert f["store"].one("SELECT status FROM organizations WHERE id=?", (oid,))["status"] == "frozen"
+    own = f["store"].one("SELECT actor_id,meta FROM audit_events WHERE action='organization.freeze' AND object_id=?", (oid,))
+    assert own["actor_id"] == candidate["id"] and json.loads(own["meta"])["by"] == "platform"
+    platform = f["store"].one("SELECT actor_id FROM audit_events WHERE action='admin.organization.lifecycle' AND result='ok'")
+    assert platform["actor_id"] == candidate["id"]
+    assert f["store"].one("SELECT role FROM organization_memberships WHERE organization_id=? AND user_id=?",
+                          (oid, candidate["id"]))["role"] == "admin"
+    assert f["ident"].membership(wid, candidate["id"])["role"] == "admin"
     c.close()
 
 
@@ -234,12 +264,18 @@ def test_org_lifecycle_checks_reauth_reason_and_never_adds_workspace_access(fixt
     assert post(f["c"], path + "/freeze", {"reason": REASON}).json()["error"] == "reauth_required"
     reauth(f["c"])
     assert post(f["c"], path + "/freeze", {"reason": "short"}).status_code == 400
+    # An owner in the console still takes the platform path (A35): confirmed, and `by: platform`.
     for action, expected in (("freeze", "frozen"), ("delete", "deleted"), ("recover", "frozen"), ("unfreeze", "active")):
-        result = post(f["c"], path + "/" + action, {"reason": REASON})
+        result = govern(f["c"], oid, action)
         assert result.status_code == 200, result.text
         assert result.json()["organization"]["status"] == expected
         assert f["ident"].membership(wid, f["admin"]["id"]) is None
         assert not Apps(f["store"], f["ident"]).check_access(f["admin"]["id"], "docweave", wid)[0]
+    rows = f["store"].all("SELECT action, meta FROM audit_events WHERE action LIKE 'organization.%' AND object_id=? "
+                          "AND action<>'organization.create' ORDER BY seq", (oid,))
+    assert [row["action"] for row in rows] == ["organization.freeze", "organization.delete", "organization.recover",
+                                               "organization.unfreeze"], rows
+    assert all(json.loads(row["meta"])["by"] == "platform" for row in rows)
 
 
 def test_verification_retry_regenerates_only_for_unverified_accounts(fixture):

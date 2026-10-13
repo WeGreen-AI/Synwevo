@@ -23,7 +23,9 @@ for each (the brief asks that each be written here):
 * `platform.orgs.manage` is added. `POST /api/admin/organizations/{oid}/{action}` is a write
   (freeze, delete, recover) and mapping it to `platform.orgs.view` would let a read-only role reach
   a write path. It is held by `super_admin` and `access_admin`, the two roles that already manage
-  workspaces; the route still also requires organization ownership, as before.
+  workspaces. Since A35 (DECISIONS D9) the console's lifecycle is a platform-scope operation —
+  impact preview, reason, strict re-authentication, no organization membership needed or
+  granted (synwevo_identity.admin_organizations); owners keep their own tenant route.
 * `platform.config.view` also covers the read-only external sign-in provider status
   (`GET /api/admin/identity-providers`): it is configuration, and it never returns a secret.
 * `platform.workspaces.claim` is split from `platform.workspaces.manage`. Assigning the historical

@@ -612,9 +612,9 @@ def test_organization_refusals(governed, code):
 
 def test_the_specific_route_wins_over_the_generic_organization_action(governed):
     """`/organizations/{oid}/recover-owner` is declared by the ownership sub-router, included
-    before the admin router's generic `/organizations/{oid}/{action}`; the generic route would
-    answer the non-member administrator 404 `no_organization` (core `require`) or 409
-    `organization_state_conflict` — never a handover."""
+    before the lifecycle router's generic `/organizations/{oid}/{action}` (A35); the generic route
+    would answer 404 `no_organization` or 409 `organization_state_conflict` (a recovery of an
+    organization that is not deleted) — never a handover."""
     w = governed
     paths = list(w["api"].openapi()["paths"])
     specific, generic = "/api/admin/organizations/{oid}/recover-owner", "/api/admin/organizations/{oid}/{action}"

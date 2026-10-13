@@ -6,11 +6,13 @@ import { useAdminData, useAdminPage } from "./data";
 import { ActionDialog } from "./ActionDialog";
 import { NotificationRecovery } from "./NotificationRecovery";
 import { OwnershipRecovery } from "./OwnershipRecovery";
+import { OrganizationLifecycleDialog, LIFECYCLE_ACTION_LABELS, type LifecycleAction } from "./OrganizationLifecycleDialog";
 import { PageControls } from "./ListControls";
 import { MAIL_STATE, fmtDuration } from "./labels";
 import { permitted, type Held } from "./access";
 import "./messages";
 import "./platform.messages";
+import "./organization-lifecycle.messages";
 
 /** `held`: the caller's platform permissions (access.ts). Writes the caller's role does not reach
  *  are disabled with the reason, so they neither dead-end nor fill the audit log with refusals. */
@@ -144,20 +146,26 @@ export function MailTab({ onDenied, held }: Props) {
 }
 
 type Organization = { id: string; name: string; status: string; role: string | null; members: number; workspaces: number; recover_until: number | null };
+/** A35: the transitions the platform path offers from each status. `recover` is offered for a
+ *  deleted organization and disabled once its window has closed (the server refuses it too). */
+export function lifecycleActions(status: string): LifecycleAction[] {
+  return status === "deleted" ? ["recover"] : [status === "active" ? "freeze" : "unfreeze", "delete"];
+}
+export const recoverable = (org: { recover_until: number | null }, now = Date.now()) => !!org.recover_until && org.recover_until * 1000 > now;
 export function OrganizationsTab({ onDenied, held }: Props) {
-  const { t } = useI18n();
+  useI18n();
+  const t = tr;
   const manage = permitted(held, "platform.orgs.manage");
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const query = useDebounced(q.trim());
   const load = useAdminPage<Organization>(`/api/admin/organizations${qs({ q: query, status })}`, onDenied);
-  const [action, setAction] = useState<{ org: Organization; kind: string } | null>(null);
+  const [action, setAction] = useState<{ org: Organization; kind: LifecycleAction } | null>(null);
   const toast = useToast();
   const names: Record<string, string> = { active: t("正常"), frozen: t("已冻结"), deleted: t("已删除") };
-  const actions: Record<string, string> = { freeze: t("冻结组织"), unfreeze: t("解冻组织"), delete: t("删除组织"), recover: t("恢复组织") };
   return <><section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{t("组织治理")}</h2><button className="btn sm" onClick={load.reload} disabled={load.loading}>{t("刷新")}</button></div>
-    <p className="muted">{t("平台管理员可查看组织元数据与数量。只有组织所有者可执行生命周期操作；平台管理不会授予成员身份或业务文档访问权。")}</p>
+    <p className="muted">{t("平台管理员可查看组织元数据与数量。持有组织管理权限的平台管理员可以在这里冻结、解冻、删除或恢复任何组织：先预览影响，再写明理由并重新验证身份；这不会授予成员身份或业务文档访问权。")}</p>
     {manage.hint && <p className="notice" role="note">{t("你的平台角色可以查看组织，但不能在管理后台执行组织的生命周期操作。")}</p>}
     <div className="row gap12 wrap"><label className="field grow">{t("搜索组织名称或编号")}<input className="input" type="search" maxLength={100} value={q} onChange={e => setQ(e.target.value)} /></label>
       <label className="field">{t("状态")}<select className="input" value={status} onChange={e => setStatus(e.target.value)}><option value="">{t("全部状态")}</option>{Object.entries(names).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label></div>
@@ -166,12 +174,12 @@ export function OrganizationsTab({ onDenied, held }: Props) {
       <tbody>{!load.loading && !load.err && load.data?.items.map(org => <tr key={org.id}>
         <th scope="row">{org.name}<div className="who2 mono">{org.id}</div></th><td>{names[org.status]}{org.recover_until && <span className="cell-note">{t("恢复期限：{time}", { time: fmtTime(org.recover_until) })}</span>}</td><td>{org.members}</td><td>{org.workspaces}</td>
         <td className="act"><div className="row gap4 wrap">{org.role && <a className="btn sm" href={`/organizations/${encodeURIComponent(org.id)}`}>{t("组织设置")}</a>}
-          {org.role === "owner" ? (org.status === "deleted" ? ["recover"] : [org.status === "active" ? "freeze" : "unfreeze", "delete"]).map(kind => <button className="btn sm" key={kind} disabled={manage.disabled || (kind === "recover" && (!org.recover_until || org.recover_until * 1000 <= Date.now()))} onClick={() => setAction({ org, kind })}>{actions[kind]}</button>) : <span className="muted small">{t("生命周期操作需要组织所有者权限")}</span>}</div></td>
+          {/* The platform path (A35): offered by the caller's permission, not by a membership role. */}
+          {!manage.disabled && lifecycleActions(org.status).map(kind => <button type="button" className="btn sm" key={kind} disabled={kind === "recover" && !recoverable(org)} onClick={() => setAction({ org, kind })}>{t(LIFECYCLE_ACTION_LABELS[kind])}</button>)}
+          {!manage.disabled && org.status === "deleted" && !recoverable(org) && <span className="muted small">{t("恢复期限已过，不能再恢复。")}</span>}</div></td>
       </tr>)}{!load.loading && !load.err && !load.data?.items.length && <tr><td colSpan={5}>{t("没有匹配的组织。")}</td></tr>}</tbody>
     </table></div><PageControls offset={load.offset} total={load.data?.total || 0} busy={load.loading || !!load.err} onPage={load.setOffset} />
-    {action && <ActionDialog title={actions[action.kind]} confirmLabel={actions[action.kind]} danger reason="required"
-      impact={<><b>{action.org.name}</b><p>{action.kind === "delete" ? t("组织将停止使用，并保留七天恢复期限。所属工作空间的访问会被收回，内容不会因此提供给管理员。") : action.kind === "freeze" ? t("组织及其工作空间将停止应用访问，已有会话和令牌会被撤销。") : t("组织将按原有成员关系恢复可用。已撤销的会话和令牌不会恢复；删除前已冻结的组织恢复后仍为冻结状态。")}</p></>}
-      run={reason => post(`/api/admin/organizations/${encodeURIComponent(action.org.id)}/${action.kind}`, { reason })}
+    {action && <OrganizationLifecycleDialog org={action.org} action={action.kind}
       onClose={() => setAction(null)} onDone={() => { setAction(null); load.reload(); toast(t("组织状态已更新"), "ok"); }} />}
   </section>
   {/* A37: the organizations without a usable owner, and the handover to one of their members */}

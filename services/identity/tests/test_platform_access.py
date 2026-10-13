@@ -69,6 +69,8 @@ ROUTES = [
     ("GET", "/api/admin/ownership/orphans", "platform.workspaces.view", False),
     ("POST", "/api/admin/workspaces/{wid}/recover-owner", "platform.workspaces.manage", True),
     ("GET", "/api/admin/organizations", "platform.orgs.view", False),
+    # The lifecycle preview changes nothing; the act is confirmed and dangerous (A35).
+    ("POST", "/api/admin/organizations/{oid}/preview", "platform.orgs.manage", False),
     ("POST", "/api/admin/organizations/{oid}/{action}", "platform.orgs.manage", True),
     ("POST", "/api/admin/organizations/{oid}/recover-owner", "platform.orgs.manage", True),
     ("GET", "/api/admin/super-admin-offers", "platform.roles.assign_super", False),
@@ -223,6 +225,10 @@ def world(tmp_path, monkeypatch):
     from synwevo_core.agent_safety import AgentReports
     report = AgentReports(store).create(plain["id"], conversation_id="conv_000000000fix", message_id="msg_000000000fix",
                                         category="wrong", note=None, excerpt=None)
+    # FIXTURE: an active organization owned by an ordinary account, so a permitted role reaches
+    # the lifecycle preview (200, nothing changes) while the act stops at the re-authentication.
+    matrix_org = Organizations(store, ident).create(verified(store, ident, "matrix-org-owner@example.test")["id"],
+                                                    "Matrix fixture organization", "Matrix fixture workspace", "matrix-org-fixture")
     clients: list[TestClient] = []
 
     def login(user, *, remember=False):
@@ -233,7 +239,7 @@ def world(tmp_path, monkeypatch):
         return c
 
     w = {"api": api, "store": store, "ident": ident, "root": root, "plain": plain, "login": login,
-         "nid": notification["id"],
+         "nid": notification["id"], "oid": matrix_org["organization"]["id"],
          "draft_id": draft["id"], "cost_price_id": cost_price_id, "report_id": report["id"],
          "wid": ident.workspaces_for(plain["id"])[0]["id"]}
     yield w
@@ -271,7 +277,7 @@ def _path(template, w, *, legacy: str | None = None):
     wid = legacy if legacy and template.endswith(HISTORICAL) else w["wid"]
     return template.format(uid=w["plain"]["id"], wid=wid, mid="mail_fixture_missing", nid=w["nid"],
                            draft_id=w["draft_id"], run_id="run_matrix_fixture", flow_run_id="fr_matrix_fixture",
-                           oid="org_fixture_missing", action="freeze", gid="pg_fixture_missing",
+                           oid=w["oid"], action="freeze", gid="pg_fixture_missing",
                            freeze_id="freeze_fixture_missing",
                            suspension_id="rsus_fixture_missing", entry_id="rallow_fixture_missing",
                            report_id=w.get("report_id", "arp_fixture_missing"), user_id=w["plain"]["id"],
@@ -306,6 +312,9 @@ def _risk_body(path):
 def _call(client, method, path, w):
     if method == "GET":
         return client.get(path)
+    if path.startswith("/api/admin/organizations/") and path.endswith("/preview"):
+        # The fixture organization is active: a permitted role gets the freeze preview, 200.
+        return post(client, path, {"action": "freeze"})
     if path.startswith("/api/admin/notification-recovery/"):
         return post(client, path, {"reason": REASON, "preview_token": "matrix-not-confirmed",
                                    "idempotency_key": "matrix_notification_recovery_0001"}
@@ -420,6 +429,8 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
                                                      (LEGACY_WID,))} == {legacy_owner["id"]}
     assert Notifier(world["store"]).email_recovery_row(world["nid"]) == notification_before
     assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action='admin.notification.recover_enqueue'")
+    assert world["store"].one("SELECT status FROM organizations WHERE id=?", (world["oid"],))["status"] == "active"
+    assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action='admin.organization.lifecycle'")
 
 
 def test_no_platform_permission_sees_404_everywhere_including_owners_and_workspace_admins(world):

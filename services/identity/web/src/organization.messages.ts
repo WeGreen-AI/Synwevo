@@ -529,6 +529,7 @@ export const messages = {
   "交接了工作空间所有权": { en: "transferred workspace ownership", "zh-Hant": "交接了工作空間所有權" },
   "交接了组织所有权": { en: "transferred organization ownership", "zh-Hant": "交接了組織所有權" },
   "由平台指定了组织所有者": { en: "organization owner named by platform administration", "zh-Hant": "由平台指定了組織所有者" },
+  "由平台管理执行": { en: "performed by platform administration", "zh-Hant": "由平台管理執行" },
   "从工作空间移除了成员": { en: "removed a member from a workspace", "zh-Hant": "從工作空間移除了成員" },
   "修改了组织设置": { en: "changed organization settings", "zh-Hant": "修改了組織設定" },
   "修改了自定义角色": { en: "changed a custom role", "zh-Hant": "修改了自訂角色" },

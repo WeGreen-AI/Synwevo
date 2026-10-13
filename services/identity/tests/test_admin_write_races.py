@@ -97,8 +97,12 @@ def test_withdrawn_admission_cannot_commit_an_admin_write(world, monkeypatch, op
     assert scheduled == [True]
     assert response.status_code in (401, 403, 404) and response.json()["error"] == error, response.text
     assert_unchanged(world, operation, object_id)
-    denied = world["store"].one("SELECT meta FROM audit_events WHERE action='admin.access.denied' "
-                                 "AND object_id=? ORDER BY seq DESC", (object_id,))
+    # The historical-data routes keep the refusal as `admin.access.denied` (`_write`); the
+    # organization lifecycle is a confirmed operation and records it the way AccountOperations
+    # does — its own action, result denied, the code in the metadata (A35).
+    denied_action = "admin.organization.lifecycle" if operation == "organization" else "admin.access.denied"
+    denied = world["store"].one("SELECT meta FROM audit_events WHERE action=? AND result='denied' "
+                                 "AND object_id=? ORDER BY seq DESC", (denied_action, object_id))
     assert denied and json.loads(denied["meta"])["code"] == error
 
 
@@ -117,17 +121,28 @@ def test_claim_rechecks_target_availability_after_waiting_for_the_writer(world, 
     assert_unchanged(world, "claim", object_id)
 
 
-def test_organization_owner_is_rechecked_inside_the_same_admin_transaction(world, monkeypatch):
-    path, body, oid = prepare(world, "organization")
+def test_organization_state_is_reread_inside_the_same_admin_transaction(world, monkeypatch):
+    """The console path is the platform's (A35): membership no longer decides it, so what the
+    writer lock must re-read is the organization itself. The plan — previewed, signed, still
+    unexpired — was for an active organization; the owner's own freeze commits between the
+    administrator's admission and the lock, and the confirmation is judged by the row as it is
+    now, not by the preview the administrator looked at."""
+    path, _, oid = prepare(world, "organization")
+    path = path.rsplit("/", 1)[0] + "/delete"
+    plan = post(world["admin"], f"/api/admin/organizations/{oid}/preview", {"action": "delete"})
+    assert plan.status_code == 200, plan.text
+    body = {"reason": REASON, "preview_token": plan.json()["preview_token"], "idempotency_key": "race_fixture_delete_0001"}
 
-    def demote(store):
-        # Fixture: the ownership change is committed by a separate transaction before this one.
-        store.execute("UPDATE organization_memberships SET role='member',updated_at=? "
-                      "WHERE organization_id=? AND user_id=?", (now(), oid, world["root"]["id"]))
+    def owner_freezes(store):
+        # The owner's act, through core, committed by a separate transaction before this one.
+        Organizations(store).transition(oid, world["root"]["id"], "freeze", reason=REASON)
 
-    scheduled = interleave_before_writer(monkeypatch, world, demote)
+    scheduled = interleave_before_writer(monkeypatch, world, owner_freezes)
     response = post(world["admin"], path, body)
     assert scheduled == [True]
-    assert response.status_code == 403 and response.json()["error"] == "forbidden", response.text
+    assert response.status_code == 409 and response.json()["error"] == "admin_preview_stale", response.text
     assert PlatformAccess(world["store"]).is_usable_super_admin(world["root"]["id"])
-    assert_unchanged(world, "organization", oid)
+    assert world["store"].one("SELECT status FROM organizations WHERE id=?", (oid,))["status"] == "frozen", "the owner's freeze stands"
+    assert not world["store"].one("SELECT 1 FROM audit_events WHERE action='admin.organization.lifecycle' AND result='ok'")
+    assert not world["store"].one("SELECT 1 FROM admin_operations")
+    assert [entry["kind"] for entry in journal.read(world["store"].root) if entry.get("organization_id") == oid] == ["organization_frozen"]

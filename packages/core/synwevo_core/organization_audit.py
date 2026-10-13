@@ -41,7 +41,8 @@ CATEGORIES = {
 }
 #: Detail keys shown as they are (scalars, or the small before/after objects of a role change).
 DETAIL_KEYS = ("reason", "role", "before", "after", "status", "only_valid", "invite", "update", "unchanged", "skip", "blocked",
-               "reviewed", "name", "self_role", "result", "action", "self_approved", "invited", "updated", "app_id", "enabled")
+               "reviewed", "name", "self_role", "result", "action", "self_approved", "invited", "updated", "app_id", "enabled",
+               "by")   # "platform": the lifecycle act was the platform's, not an owner's (A35)
 #: Lists of custom-role ids, shown as the roles' current names.
 ROLE_LISTS = ("added", "removed")
 _SMALL = ("role", "status", "can_export", "name")
@@ -102,7 +103,12 @@ def read(store: Store, oid: str, *, before: int | None = None, limit: int = 50, 
     cat_sql, cat_args = _category_sql(category)
     page_sql, page_args = (" AND seq<?", [int(before)]) if before else ("", [])
     parts: list[tuple[str, list]] = [
-        (f"SELECT {cols} FROM audit_events WHERE object_kind='organization' AND object_id=?", [oid]),
+        # The platform's own records about this organization (`admin.*`: the console's lifecycle,
+        # ownership recovery and refused attempts, with the operator's reasons) are platform
+        # administration, not the organization's governance; the act itself is already here as
+        # `organization.<action>` with `by: platform`.
+        (f"SELECT {cols} FROM audit_events WHERE object_kind='organization' AND object_id=? "
+         "AND action NOT LIKE 'admin.%'", [oid]),
         # `organization.*` by prefix — an index range on `action` — then the organization it names
         (f"SELECT {cols} FROM audit_events WHERE action>='organization.' AND action<'organization/' "
          "AND object_kind<>'organization' AND json_extract(meta,'$.organization_id')=?", [oid]),

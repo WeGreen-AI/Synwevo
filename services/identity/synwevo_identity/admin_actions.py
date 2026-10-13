@@ -53,6 +53,7 @@ ADMIN_ACTIONS: dict[str, dict] = {
     "admin.model_risk.suspension_lift": _a("model", "解除付费风险暂停", "解除付費風險暫停", "Lift a billing-risk suspension"),
     "admin.model_risk.upstream_topup": _a("model", "记录上游充值", "記錄上游儲值", "Record an upstream top-up"),
     "admin.notification.recover_enqueue": _a("mail", "补发通知邮件", "補發通知郵件", "Re-enqueue a notification mail"),
+    "admin.organization.lifecycle": _a("organization", "冻结、解冻、删除或恢复组织", "凍結、解凍、刪除或恢復組織", "Freeze, unfreeze, delete or recover an organization"),
     "admin.organization.recover_owner": _a("organization", "恢复组织所有者", "恢復組織所有者", "Recover an organization's owner"),
     "admin.platform.grant": _a("platform", "授予平台角色", "授予平台角色", "Grant a platform role"),
     "admin.platform.operator_cleared": _a("platform", "清除已停用的运维角色", "清除已停用的運維角色", "Clear the retired operator role"),
