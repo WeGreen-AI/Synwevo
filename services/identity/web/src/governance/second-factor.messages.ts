@@ -33,7 +33,7 @@ export const secondFactorMessages = {
     en: "For a person who lost both the authenticator and every recovery code: confirm their identity first, then request it. It takes effect after {hours} hours, and the person can cancel it until then.",
     "zh-Hant": "用於本人同時遺失了動態驗證碼和全部復原碼：先核驗本人身分再申請，{hours} 小時後生效，期間本人可以取消。" },
   "你的平台角色不能重置第二因素。": { en: "Your platform role cannot reset a second factor.", "zh-Hant": "你的平台角色不能重設第二因素。" },
-  "请通过应用身份管理操作该账户。": { en: "Manage this account through application identities.", "zh-Hant": "請透過應用程式身分管理操作該帳戶。" },
+  "这是应用身份（例如 Docs 卡片的发送者），不是人：不能对它执行这项操作。": { en: "This is an application identity (such as the sender of Docs cards), not a person: this action does not apply to it.", "zh-Hant": "這是應用身分（例如 Docs 卡片的寄件者），不是人：不能對它執行這項操作。" },
   "不能为自己的账户申请重置第二因素。": { en: "You cannot request a second-factor reset for your own account.", "zh-Hant": "不能為自己的帳戶申請重設第二因素。" },
   "该账户持有平台权限：管理员找回访问走最高管理员交接流程，不能在这里重置第二因素": {
     en: "This account holds platform access: an administrator regains access through the super administrator handover, so its second factor cannot be reset here.",

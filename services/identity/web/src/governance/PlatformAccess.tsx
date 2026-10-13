@@ -169,7 +169,7 @@ export const SIMULATION_REFUSALS: Record<string, string> = {
   target_pending: "该账户还没有完成邮箱验证，不能获得平台权限", target_unavailable: "该账户已停用或正在删除，不能获得平台权限",
   target_cannot_step_up: "该账户没有口令、可验证身份的安全密钥或动态验证码，无法完成管理员身份确认",
   target_cannot_reauth: "该账户没有口令或可验证身份的安全密钥，无法完成危险操作要求的重新验证",
-  application_identity: "请通过应用身份管理操作该账户。", no_user: "找不到该账户",
+  application_identity: "这是应用身份（例如 Docs 卡片的发送者），不是人：不能对它执行这项操作。", no_user: "找不到该账户",
 };
 export function SimulationSummary({ sim }: { sim: Simulation }) {
   useI18n();

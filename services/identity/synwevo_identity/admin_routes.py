@@ -374,6 +374,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         user = ident.get_user(uid)
         if not user or user["status"] not in ("active", "pending") or user.get("deleted_at"):
             raise ServiceError(409, "bad_target", "目标账户不存在或不可用")
+        if store.one("SELECT 1 FROM app_accounts WHERE user_id=?", (uid,)):
+            raise ServiceError(409, "application_identity", "应用身份不是人，不能接收找回或验证邮件")
         if kind == "verify" and user.get("email_verified_at"):
             raise ServiceError(409, "already_verified", "该邮箱已经验证")
         recent = store.one("SELECT COUNT(*) AS n, MAX(created_at) AS last FROM email_tokens "
@@ -468,7 +470,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         _admin(request, "platform.overview.view")
         legacy = store.one("SELECT * FROM workspaces WHERE kind='legacy' AND deleted_at IS NULL")
         out = {
-            "users": store.one("SELECT COUNT(*) AS n FROM users WHERE deleted_at IS NULL")["n"],
+            "users": store.one("SELECT COUNT(*) AS n FROM users WHERE deleted_at IS NULL "
+                               "AND NOT EXISTS (SELECT 1 FROM app_accounts a WHERE a.user_id=users.id)")["n"],
             "suspended": store.one("SELECT COUNT(*) AS n FROM users WHERE status='suspended' "
                                    "AND deleted_at IS NULL")["n"],
             "workspaces": store.one("SELECT COUNT(*) AS n FROM workspaces WHERE deleted_at IS NULL")["n"],
@@ -595,6 +598,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             target = ident.get_user(target_id)
             if not target or target["status"] != "active":
                 raise ServiceError(400, "bad_target", "目标账户不存在或不可用")
+            if t.execute("SELECT 1 FROM app_accounts WHERE user_id=?", (target_id,)).fetchone():
+                raise ServiceError(409, "application_identity", "应用身份不是人，不能接收历史数据")
             # Taken under the write lock, not before waiting for it: an undo's security-journal
             # entry is replayed "as of" its own time (journal.UNCLAIM_KIND), and a claim that
             # queued behind that undo must not carry a time from before it.
@@ -989,8 +994,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         ts = clock()
         live = ("SELECT 1 FROM platform_role_grants g WHERE g.user_id=users.id AND g.revoked_at IS NULL "
                 "AND (g.expires_at IS NULL OR g.expires_at>?)")
+        # A22: application identities (`app_accounts`, e.g. the Docs card sender) are not people:
+        # they cannot sign in, hold platform roles, be suspended or receive recovery mail, so they
+        # are not listed with the people the administration governs. Their row stays readable by id.
         page = _page("users", columns="id,email,display_name,status,platform_role,created_at,deletion_due_at",
-                     where="deleted_at IS NULL AND (?='' OR email LIKE ? OR display_name LIKE ?) "
+                     where="deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM app_accounts a WHERE a.user_id=users.id) "
+                           "AND (?='' OR email LIKE ? OR display_name LIKE ?) "
                            f"AND (?='' OR status=?) AND (?='' OR (?='none' AND NOT EXISTS ({live})) "
                            f"OR (?='any' AND EXISTS ({live})) OR (?='admin' AND platform_role='admin') "
                            f"OR EXISTS ({live} AND g.role=?))",

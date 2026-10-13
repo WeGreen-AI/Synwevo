@@ -42,7 +42,7 @@ const errors: Record<string, string> = {
   no_passkey: "找不到该账户的这个安全密钥，可能已经移除。",
   last_sign_in_method: "这是该账户唯一的登录方式，不能解除关联；需要停止访问请停用账户。",
   last_factor: "这是该账户唯一的登录方式，不能移除；需要停止访问请停用账户。",
-  application_identity: "请通过应用身份管理操作该账户。",
+  application_identity: "这是应用身份（例如 Docs 卡片的发送者），不是人：不能对它执行这项操作。",
   idempotency_conflict: "操作编号已用于其他请求，请重新预览影响。",
   journal_unavailable: "安全记录暂不可用，操作未提交，请稍后重试。",
   mail_config_invalid: "邮件服务配置无效，请联系部署管理员。",

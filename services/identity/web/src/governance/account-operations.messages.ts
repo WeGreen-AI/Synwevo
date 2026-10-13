@@ -5,7 +5,7 @@ export const accountOperationMessages = {
   "账户或访问权限已变化，请重新预览影响。": { en: "The account or its access has changed. Review the impact again.", "zh-Hant": "帳戶或存取權限已變更，請重新預覽影響。" },
   "请先预览操作影响，再确认执行。": { en: "Review the impact before confirming this action.", "zh-Hant": "請先預覽操作影響，再確認執行。" },
   "账户状态已变化，请刷新后重试。": { en: "The account status changed. Refresh and try again.", "zh-Hant": "帳戶狀態已變更，請重新整理後重試。" },
-  "请通过应用身份管理操作该账户。": { en: "Manage this account through application identities.", "zh-Hant": "請透過應用程式身分管理操作該帳戶。" },
+  "这是应用身份（例如 Docs 卡片的发送者），不是人：不能对它执行这项操作。": { en: "This is an application identity (such as the sender of Docs cards), not a person: this action does not apply to it.", "zh-Hant": "這是應用身分（例如 Docs 卡片的寄件者），不是人：不能對它執行這項操作。" },
   "操作编号已用于其他请求，请重新预览影响。": { en: "This operation ID was used for a different request. Review the impact again.", "zh-Hant": "操作編號已用於其他請求，請重新預覽影響。" },
   "安全记录暂不可用，操作未提交，请稍后重试。": { en: "Security recording is unavailable. The action was not committed. Try again later.", "zh-Hant": "安全記錄暫不可用，操作未提交，請稍後重試。" },
   "此操作仅影响这个账户；不会授予管理员任何文档或私信内容访问权。": { en: "This action affects only this account. It grants no access to documents or private messages.", "zh-Hant": "此操作僅影響這個帳戶；不會授予管理員任何文件或私訊內容存取權。" },

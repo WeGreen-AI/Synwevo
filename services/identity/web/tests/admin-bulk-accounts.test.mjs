@@ -89,7 +89,7 @@ const REFUSAL = {
   account_state_conflict: "账户状态已变化，请刷新后重试。",
   target_outranks_actor: "该账户持有你没有的平台权限",
   last_super_admin: "必须保留至少一位可用的最高管理员。",
-  application_identity: "请通过应用身份管理操作该账户。",
+  application_identity: "这是应用身份（例如 Docs 卡片的发送者），不是人：不能对它执行这项操作。",
   no_user: "找不到该账户。",
 };
 const STATUS = { active: "正常", pending: "待激活", suspended: "已停用" };

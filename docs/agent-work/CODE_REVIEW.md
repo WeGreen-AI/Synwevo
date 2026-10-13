@@ -538,6 +538,13 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 风险/未做：指纹按当前密钥，重叠期内由旧密钥验签的接收方看到的是新密钥指纹（行记"用哪把签"，当前+旧两把都签在头里）。
 - 验证：新增 4 例 + 两应用 webhook 契约/投递/加固/重投/CLI/示例 254 项与迁移测试通过。
 
+## CR-124 · A22 应用身份排除出人员治理（2026-10-13，线上原有问题，本地已验证）
+
+- 位置：services/identity/synwevo_identity/admin_routes.py（`list_users` 与概览计数排除 `app_accounts`；`_dispatch` 找回/验证邮件与 `claim` 认领拒绝 `application_identity`）；前端 governance/labels.ts、PlatformAccess.tsx、SecondFactorResetDialog.tsx 与两个消息文件的拒绝文案。
+- 证据与影响（线上原有）：应用身份（Docs 卡片发送者，`ensure_app_account` 创建的无口令 `users` 行）与人一起出现在 `/api/admin/users`、批量勾选与认领选择器中，计入概览“账户”数；找回邮件路由会向其占位地址签发重置令牌；历史数据认领只查 `status='active'`，可把全部历史文档指派给它。平台角色、停用、批量停用、第二因素重置、超级管理员交接此前已拒绝。前端兜底文案“请通过应用身份管理操作该账户”指向不存在的界面。
+- 决定：列表与计数只含人；按 ID 的详情保留（标明应用身份）；找回/验证邮件与认领在写入前拒绝，认领在写锁内复核；文案说明“这是应用身份，不是人”。
+- 验证：新测试 4 项通过；账户前端 210 项、五守卫、根 typecheck/build 通过；账户服务 + 集成套件 3100 通过（03:52Z）。
+
 ## CR-123 · A26 第二因素的受控重置：身份核验、72 小时延迟、本人可取消（2026-10-13，本轮新增，本地已验证）
 
 - 位置：services/identity/synwevo_identity/admin_second_factor.py（新：延迟常量、四条管理路由、共享取消、清扫执行函数）；account_routes.py（免登录预览/取消）；admin_routes.py（子路由先于 `/users/{uid}`）；app.py（清扫线程每轮执行到期重置）；admin_operations.py（`revoke_account_sessions` 拆为“结束全部访问”与“写安全日志”两个共享助手，单账户与批量行为不变）；mail.py（请求/取消/完成三语言邮件，只称“Synwevo 平台管理员”）；admin_actions.py；packages/core：platform_access.py（`platform.users.recover`）、store.py（`second_factor_resets` 表、待生效唯一部分索引）、notifications.py、http.py（两条免登录路径）、blob_refs.py；apps/docs/scripts/snapshot.py（恢复备份作废待生效重置）；前端 governance/SecondFactorResetDialog.tsx、second-factor.messages.ts、AccountDetail.tsx 区块、pages/account/SecondFactorReset.tsx、main.tsx 路由、labels.ts、PlatformAccess.tsx、ActivitySection.tsx。

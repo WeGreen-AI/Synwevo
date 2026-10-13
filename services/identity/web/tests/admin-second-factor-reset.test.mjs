@@ -146,7 +146,7 @@ test("the reset is not offered where the server's preview would refuse it, and t
     ["self", free, { selfId: TARGET.id }, "不能为自己的账户申请重置第二因素。"],
     ["platform administrator", free, { target: { ...TARGET, platform_access: true } }, sf.RESET_PLATFORM_ADMIN],
     ["not active", free, { target: { ...TARGET, status: "suspended" } }, "只能为状态正常的账户重置第二因素。"],
-    ["application identity", free, { target: { ...TARGET, application_identity: true } }, "请通过应用身份管理操作该账户。"],
+    ["application identity", free, { target: { ...TARGET, application_identity: true } }, "这是应用身份（例如 Docs 卡片的发送者），不是人：不能对它执行这项操作。"],
     ["nothing to reset", { ...QUIET, totp: false }, {}, "该账户没有动态验证码、恢复码或安全密钥，无需重置。"],
   ];
   for (const locale of LOCALES) {

@@ -88,7 +88,7 @@ export const hasResettable = (s: SecondFactorState) => s.totp || s.recovery_rema
 /** Why no reset is offered for this account, said before the click (the preview's refusals), or
  *  null when one can be asked for. A pending reset is shown on its own. */
 export function resetUnavailable(s: SecondFactorState, target: ResetTarget, selfId?: string): string | null {
-  if (target.application_identity) return "请通过应用身份管理操作该账户。";
+  if (target.application_identity) return "这是应用身份（例如 Docs 卡片的发送者），不是人：不能对它执行这项操作。";
   if (selfId && target.id === selfId) return "不能为自己的账户申请重置第二因素。";
   if (target.platform_access) return RESET_PLATFORM_ADMIN;
   if (target.status !== "active") return "只能为状态正常的账户重置第二因素。";
@@ -311,6 +311,6 @@ export function SecondFactorPanel({ target, held, onChanged }: { target: ResetTa
 export const SECOND_FACTOR_SENTENCES = [
   ...Object.values(RESET_METHOD_LABELS), ...Object.values(RESET_STATUS_LABELS), ...Object.values(VOID_REASON_LABELS),
   RESET_DELAY_NOTE, RESET_PLATFORM_NOTE, RESET_MAIL_NOTE, CANCEL_IMPACT, RESET_PLATFORM_ADMIN, RESET_STALE,
-  "请通过应用身份管理操作该账户。", "不能为自己的账户申请重置第二因素。", "只能为状态正常的账户重置第二因素。",
+  "这是应用身份（例如 Docs 卡片的发送者），不是人：不能对它执行这项操作。", "不能为自己的账户申请重置第二因素。", "只能为状态正常的账户重置第二因素。",
   "该账户没有动态验证码、恢复码或安全密钥，无需重置。",
 ];
