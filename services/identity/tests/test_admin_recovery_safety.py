@@ -41,7 +41,19 @@ def test_session_revocation_restore_ends_old_pending_authentication_and_preserve
     assert Tickets(restored).load(new_ticket)
 
 
+def _succession(world):
+    """The target becomes the super administrator and ends the root's grant (both receipted)."""
+    store, root, target = world["store"], world["root"], world["target"]
+    access = PlatformAccess(store)
+    access.host_grant(target["id"], "super_admin", source="fixture:restore", reason=REASON)
+    root_grant = access.live_grants(root["id"])[0]
+    access.revoke(target["id"], root_grant["id"], REASON)
+    return root_grant
+
+
 def test_failed_suspension_intent_cannot_lock_out_a_later_authorized_successor(world, tmp_path, monkeypatch):
+    """The suspension's transaction failed after its line: the rollback voids the line, so a
+    restore taken after a legitimate succession applies nothing to the successor."""
     body = command(preview(world))
     original = journal.record_account
 
@@ -49,19 +61,35 @@ def test_failed_suspension_intent_cannot_lock_out_a_later_authorized_successor(w
         original(*args, **kwargs)
         raise OSError("fixture failure after fsync")
 
-    with monkeypatch.context() as failing:
-        failing.setattr(journal, "record_account", fail_after_fsync)
-        response = execute(world, body)
+    monkeypatch.setattr(journal, "record_account", fail_after_fsync)
+    response = execute(world, body)
+    monkeypatch.setattr(journal, "record_account", original)
     assert response.status_code == 503 and response.json()["error"] == "journal_unavailable"
-    store, root, target = world["store"], world["root"], world["target"]
+    store, target = world["store"], world["target"]
     assert world["ident"].get_user(target["id"])["status"] == "active"
-    intent = journal.read(store.root)[0]
+    intent, void = journal.read(store.root)
+    assert (void["kind"], void["attempt_id"]) == (journal.VOID_KIND, intent["attempt_id"])
     receipt = "account_withdrawal:" + intent["account_event_id"]
     assert not store.one("SELECT value FROM meta WHERE key=?", (receipt,))
-    access = PlatformAccess(store)
-    access.host_grant(target["id"], "super_admin", source="fixture:restore", reason=REASON)
-    root_grant = access.live_grants(root["id"])[0]
-    access.revoke(target["id"], root_grant["id"], REASON)
+    root_grant = _succession(world)
+    restored = Store(backup(store, tmp_path, "after-legitimate-succession"))
+    before = restored.all("SELECT * FROM users ORDER BY id")
+    assert journal.apply(restored, journal.read(store.root, since=now()+86400)) == {
+        journal.VOID_KIND: 1, journal.PLATFORM_GRANT_KIND: 0}
+    assert restored.all("SELECT * FROM users ORDER BY id") == before
+    assert [u["id"] for u in PlatformAccess(restored).usable_super_admins()] == [target["id"]]
+    assert restored.one("SELECT revoked_at FROM platform_role_grants WHERE id=?", (root_grant["id"],))["revoked_at"]
+    assert not restored.one("SELECT value FROM meta WHERE key=?", (receipt,))
+    assert not restored.all("SELECT * FROM admin_operations")
+
+
+def test_an_unvoided_suspension_intent_refuses_the_restore_instead_of_locking_out_the_successor(world, tmp_path):
+    """Nobody voided the line (FIXTURE: as `_intent` appends it, the process stopped before its
+    COMMIT): replaying it would suspend the only usable administrator, so the restore is refused."""
+    store, target = world["store"], world["target"]
+    journal.record(store, "user_suspended", user_id=target["id"], account_event_id="ao_fixture_unvoided",
+                   attempt_id="ja_fixture_unvoided")
+    root_grant = _succession(world)
     restored = Store(backup(store, tmp_path, "after-legitimate-succession"))
     before = restored.all("SELECT * FROM users ORDER BY id")
     with pytest.raises(ValueError, match="no usable super administrator"):
@@ -69,8 +97,7 @@ def test_failed_suspension_intent_cannot_lock_out_a_later_authorized_successor(w
     assert restored.all("SELECT * FROM users ORDER BY id") == before
     assert [u["id"] for u in PlatformAccess(restored).usable_super_admins()] == [target["id"]]
     assert restored.one("SELECT revoked_at FROM platform_role_grants WHERE id=?", (root_grant["id"],))["revoked_at"]
-    assert not restored.one("SELECT value FROM meta WHERE key=?", (receipt,))
-    assert not restored.all("SELECT * FROM admin_operations")
+    assert not restored.one("SELECT value FROM meta WHERE key='account_withdrawal:ao_fixture_unvoided'")
 
 
 @pytest.mark.parametrize("kind", ["user_suspended", "user_deleted"])

@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import secrets
 import sqlite3
 import time
 from pathlib import Path
@@ -34,6 +35,10 @@ FILENAME = "security-journal.jsonl"
 # taken between fsync and COMMIT, so read() must include these even before its
 # time cutoff; apply() skips only receipts actually present in that backup.
 # This also preserves explicit recovery/regrant completed before the backup.
+# An attempt whose transaction did not commit in this process is voided after
+# its rollback (_intent/_void: proven by a later committed transaction that
+# found no receipt); only an unproven one — the process stopped between the line
+# and its COMMIT, or before the void — is replayed by later restores (fail-closed).
 # No historical journal line or tenant association is rewritten.
 ORGANIZATION_KINDS = {
     "organization_frozen", "organization_deleted", "organization_member_removed",
@@ -100,13 +105,40 @@ _APP_POLICY_RECEIPT = "app_policy_tightened:"
 # between the entry and its COMMIT) deletes it again. A freeze replayed onto a row that is deleted
 # by then (_replay_freeze) is kept for its recovery: `previous_status='frozen'`. Like the
 # organization withdrawals, an attempt that fails after its line was appended (a directory fsync,
-# a full disk at the SQL or the COMMIT) leaves an intent without a receipt, which every later
-# restore applies — fail-closed; the console says so in its 503. Older restore code refuses the
-# unknown kind.
+# a full disk at the SQL or the COMMIT) leaves an intent without a receipt; its rollback voids it
+# (`intent_voided`, VOID_KIND) once a later committed transaction has found no receipt, so no
+# restore applies it. Only when the process stops before that proof does the intent stay
+# unvoided, and every later restore applies it — fail-closed; the console's 503 says the attempt
+# could still count. Older restore code refuses the unknown kind.
 WORKSPACE_DELETED_KIND = "workspace_deleted"
 _WORKSPACE_RECEIPT = "workspace_withdrawal:"
+# A workspace frozen by the platform (Identity.set_workspace_frozen): written ahead, inside the
+# freeze's transaction and before its UPDATE, with a receipt in `meta` keyed by the line's own
+# `attempt_id` (record_workspace_frozen). A line with an `attempt_id` is replayed whatever the
+# backup's time into a database without its receipt — one taken between the line and its COMMIT
+# included — and skipped by one that holds it (it then holds the freeze and any unfreeze after it).
+# A line without `attempt_id` (written before this release) keeps the old rule: replayed only when
+# newer than the backup. Older restore code accepts the new lines and filters them by time.
+WORKSPACE_FROZEN_KIND = "workspace_frozen"
+# The proof that an attempt's transaction never committed: {attempt_id, voided_kind}. Written only
+# after a later, committed write transaction found the attempt's receipt absent (_void), first as
+# `meta['journal_void:'+attempt_id]` (synchronous=FULL), then as this line. apply() skips a line
+# whose `attempt_id` either names, when the void names the line's own kind. Older restore code
+# refuses the unknown kind (as it refuses `workspace_deleted`): a restore needs this release or a
+# newer one.
+VOID_KIND = "intent_voided"
+_RECEIPT = "journal_receipt:"
+_VOID = "journal_void:"
+#: The kinds this release writes through _intent: each line carries a fresh `attempt_id` (128
+#: random bits, and never one this database already holds a receipt or a void for — unlike
+#: `account_event_id`, which a retry repeats) and a receipt that commits with its transaction.
+#: Reading is wider than writing: `_validate` accepts an `attempt_id` on any kind, and a void of any
+#: kind, so a journal written by a release that moves more kinds onto _intent is still read here —
+#: replayed by its receipt, skipped by its void (apply's generic path) — rather than refused.
+ATTEMPTED = ORGANIZATION_KINDS | {WORKSPACE_DELETED_KIND, WORKSPACE_FROZEN_KIND, PLATFORM_GRANT_KIND,
+                                  "ai_policy_narrowed", APP_POLICY_KIND, "user_suspended", "sessions_revoked"}
 ALWAYS_REPLAYED = (ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND} | RISK_KINDS | AGENT_MODEL_KINDS
-                   | {PAYER_FREEZE_KIND, APP_POLICY_KIND, WORKSPACE_DELETED_KIND})
+                   | {PAYER_FREEZE_KIND, APP_POLICY_KIND, WORKSPACE_DELETED_KIND, VOID_KIND})
 
 KINDS = {
     "api_platform_approval_revoked",  # {approval_id}, including unconsumed approvals
@@ -121,7 +153,8 @@ KINDS = {
     "member_removed",           # {workspace_id, user_id}
     "role_changed",             # {workspace_id, user_id, role}  — only recorded for downgrades
     "entitlement_revoked",      # {workspace_id, app_id, user_id}
-    "workspace_frozen",         # {workspace_id}
+    WORKSPACE_FROZEN_KIND,      # {workspace_id, attempt_id?} — with attempt_id: written ahead, by receipt
+    VOID_KIND,                  # {attempt_id, voided_kind} — that attempt never committed
     WORKSPACE_DELETED_KIND,     # {event_id, workspace_id, deleted_at, recover_until, previous_status}
     "webhook_disabled",         # {subscription_id}
     "passkey_removed",          # {credential_id}
@@ -178,6 +211,7 @@ _REQUIRED = {
     "model_credential_withdrawn": ("event_id", "environment"),
     "model_provider_disabled": ("event_id", "environment"),
     PAYER_FREEZE_KIND: ("freeze_id", "environment", "account_id", "payer_kind", "payer_id", "chargeback_id"),
+    VOID_KIND: ("attempt_id", "voided_kind"),
     **{kind: ("event_id", "organization_id") for kind in ORGANIZATION_KINDS},
     "organization_member_removed": ("event_id", "organization_id", "user_id"),
     "organization_role_changed": ("event_id", "organization_id", "user_id", "role"),
@@ -196,6 +230,9 @@ def _validate(entry, line: int) -> None:
     if "account_event_id" in entry and (kind not in {"user_suspended", "sessions_revoked"}
             or not isinstance(entry["account_event_id"], str) or not entry["account_event_id"].strip()):
         bad()
+    # On any kind (see ATTEMPTED): a later release's attempted lines stay readable here.
+    if "attempt_id" in entry and (not isinstance(entry["attempt_id"], str) or not entry["attempt_id"].strip()):
+        bad()
     required = _REQUIRED[kind]
     if kind == "tokens_revoked":
         required = tuple(k for k in ("client_id", "user_id", "family_id") if k in entry)
@@ -210,6 +247,8 @@ def _validate(entry, line: int) -> None:
                 or not math.isfinite(granted_at) or not 0 <= granted_at <= at):
             bad()
     if kind == "role_changed" and entry["role"] not in {"owner", "admin", "editor", "viewer"}:
+        bad()
+    if kind == VOID_KIND and entry["voided_kind"] not in KINDS - {VOID_KIND}:
         bad()
     if kind == UNCLAIM_KIND and type(entry.get("label_restored", False)) is not bool:
         bad()
@@ -279,27 +318,129 @@ def record(store: Store, kind: str, **fields) -> None:
     entry = {"at": time.time(), "kind": kind, **{k: v for k, v in fields.items() if v is not None}}
     _validate(entry, 1)
     p = path(store.root)
+    _append(p, (json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8"))
+    # fsync(file) alone does not make a newly created directory entry durable.
+    _fsync_dir(p.parent)
+
+
+def _append(p: Path, payload: bytes) -> None:
+    """Append one line and fsync the file (record's first durable step)."""
     fd = os.open(p, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
-        payload = (json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
         if os.write(fd, payload) != len(payload):
             raise OSError("incomplete security journal write")
         os.fsync(fd)
     finally:
         os.close(fd)
-    # fsync(file) alone does not make a newly created directory entry durable.
-    directory = os.open(p.parent, os.O_RDONLY)
+
+
+def _fsync_dir(directory: Path) -> None:
+    """fsync the journal's directory (record's last step, after the line is in the file)."""
+    fd = os.open(directory, os.O_RDONLY)
     try:
-        os.fsync(directory)
+        os.fsync(fd)
     finally:
-        os.close(directory)
+        os.close(fd)
+
+
+def _receipt(e: dict) -> str:
+    """The `meta` key that commits with an attempted line's transaction (ATTEMPTED). The kinds
+    receipted before `attempt_id` existed keep their keys — by their event id, which restores of
+    older lines still look up; every other attempted kind uses the line's own `attempt_id`."""
+    kind = e["kind"]
+    if kind in ORGANIZATION_KINDS:
+        return _ORG_RECEIPT + e["event_id"]
+    if kind == WORKSPACE_DELETED_KIND:
+        return _WORKSPACE_RECEIPT + e["event_id"]
+    if kind == PLATFORM_GRANT_KIND:
+        return _PLATFORM_RECEIPT + e["event_id"]
+    if kind == "ai_policy_narrowed":
+        return _AI_POLICY_RECEIPT + e["event_id"]
+    if kind == APP_POLICY_KIND:
+        return _APP_POLICY_RECEIPT + e["event_id"]
+    if e.get("account_event_id"):
+        return "account_withdrawal:" + e["account_event_id"]
+    return _RECEIPT + e["attempt_id"]
+
+
+def _new_attempt_id() -> str:
+    """An attempt's id: 128 random bits. A void skips every line naming its id, so an id drawn twice
+    would let an earlier failed attempt's void skip a later committed one; _intent also refuses an
+    id the database already knows."""
+    return "ja_" + secrets.token_hex(16)
+
+
+def _intent(store: Store, kind: str, *, strict: bool = True, **fields) -> bool:
+    """Write one withdrawal ahead of its SQL, inside the caller's write transaction: a fresh
+    `attempt_id`, the line's receipt in `meta` (committing with the caller's change, or not at
+    all), a void queued for the transaction's rollback (Store.after_rollback), then the line.
+
+    The `attempt_id` is drawn again, in this transaction, while the database already holds a void
+    or a generic receipt under it: a void must never name a later attempt. The receipt goes in
+    before the append, so a swallowed append failure (`strict=False`, for a writer whose withdrawal
+    stands without its line) still commits a correct receipt; `strict` raises it, which rolls the
+    caller back unless it decides otherwise. A void queued for a line that was never written is
+    harmless. Returns whether the line was written."""
+    if kind not in ATTEMPTED:
+        raise ValueError(f"not an attempted journal kind: {kind}")
+    with store.conn() as c:
+        if not c.in_transaction:
+            raise RuntimeError(f"{kind} requires a write transaction")
+        for _ in range(8):
+            attempt = _new_attempt_id()
+            if not c.execute("SELECT 1 FROM meta WHERE key IN (?,?)",
+                             (_VOID + attempt, _RECEIPT + attempt)).fetchone():
+                break
+        else:
+            raise RuntimeError("no unused security journal attempt id could be drawn")
+        receipt = _receipt({"kind": kind, **fields, "attempt_id": attempt})
+        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (receipt,))
+    store.after_rollback(lambda: _void(store, attempt, kind, receipt))
+    try:
+        record(store, kind, attempt_id=attempt, **fields)
+    except (OSError, ValueError) as e:
+        if strict:
+            raise
+        print(f"[synwevo] security journal write failed for {kind}: {type(e).__name__}: {e}", flush=True)
+        return False
+    return True
+
+
+def _void(store: Store, attempt: str, kind: str, receipt: str) -> None:
+    """After a rollback (outside the write lock, no transaction open): prove the attempt never
+    committed, then say so. The proof is a later write transaction that commits — with
+    synchronous=FULL, so its frames durably replace whatever the failed one left in the WAL —
+    after finding the receipt absent; the writer lock held by the attempt's transaction means it
+    had ended by then. Only then the `journal_void:` row (in that transaction) and the
+    `intent_voided` line. Any failure on the way leaves no proof, and the attempt is replayed
+    (fail-closed). A receipt that is present means the attempt did commit: nothing is written —
+    Store.after_rollback also runs this after a COMMIT that raised yet committed, and this check is
+    what tells the two apart.
+
+    The connection is this thread's long-lived one: its `synchronous` level is raised to FULL for
+    the proof only when it is lower, and put back to exactly what it was — never lowered below the
+    level the connection had (a connection opened at FULL or EXTRA keeps it)."""
+    c = store._c()
+    level = c.execute("PRAGMA synchronous").fetchone()[0]
+    if level < 2:
+        c.execute("PRAGMA synchronous=FULL")
+    try:
+        with store.tx() as t:
+            if t.execute("SELECT 1 FROM meta WHERE key=?", (receipt,)).fetchone():
+                return
+            t.execute("INSERT OR IGNORE INTO meta (key,value) VALUES (?,?)", (_VOID + attempt, kind))
+    finally:
+        if level < 2:
+            c.execute(f"PRAGMA synchronous={int(level)}")
+    record(store, VOID_KIND, attempt_id=attempt, voided_kind=kind)
 
 
 def record_organization(store: Store, kind: str, *, organization_id: str, **fields) -> None:
     """Authorize/audit first, then call before SQL withdrawals in a write tx.
 
-    An append/fsync failure aborts that transaction. A later SQL/commit failure
-    leaves a restrictive intent without a receipt, which restore must replay.
+    An append/fsync failure aborts that transaction. A later SQL/commit failure in this process
+    voids the intent after the rollback (_intent); one the process did not survive leaves a
+    restrictive intent without a receipt, which restore must replay.
     The receipt commits atomically with the caller's withdrawal, never separately.
     Only IDs and lifecycle timestamps go into the journal, not names or reasons.
     """
@@ -308,31 +449,34 @@ def record_organization(store: Store, kind: str, *, organization_id: str, **fiel
     with store.conn() as c:
         if not c.in_transaction:
             raise RuntimeError("organization withdrawal requires a write transaction")
-        eid = new_id("ow")
         workspace_ids = [r["id"] for r in c.execute(
             "SELECT id FROM workspaces WHERE organization_id=? ORDER BY id", (organization_id,))]
-        record(store, kind, event_id=eid, organization_id=organization_id,
-               workspace_ids=workspace_ids, **fields)
-        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_ORG_RECEIPT + eid,))
+    _intent(store, kind, event_id=new_id("ow"), organization_id=organization_id,
+            workspace_ids=workspace_ids, **fields)
 
 
 def record_workspace(store: Store, kind: str, *, workspace_id: str, **fields) -> None:
     """A workspace deletion (WORKSPACE_DELETED_KIND), written ahead in the caller's write
     transaction after its authorization and audit, before its SQL: an append/fsync failure aborts
-    the transaction; a later SQL or COMMIT failure leaves a restrictive intent without a receipt,
-    which a restore replays. So does a failure of the directory fsync after the line was written:
-    the caller sees an OSError, the transaction rolls back, and yet a later restore — from any
-    backup, even one taken after a successful retry and a recovery — deletes the workspace again
-    with this attempt's clock (record_organization's rule). The receipt commits atomically with the
-    deletion. Identifiers and lifecycle timestamps only — never a name or a reason."""
+    the transaction. A failure after the line was written — the directory fsync, the SQL, the
+    COMMIT — rolls the deletion back and, once a later committed transaction has found no receipt,
+    voids the line (_intent/_void), so no restore applies it. Only an attempt the process did not
+    survive (stopped between the line and its COMMIT, or before the void) stays an intent without
+    a receipt, which a later restore — from any backup, even one taken after a successful retry
+    and a recovery — applies with this attempt's clock (fail-closed). The receipt commits
+    atomically with the deletion. Identifiers and lifecycle timestamps only — never a name or a
+    reason."""
     if kind != WORKSPACE_DELETED_KIND:
         raise ValueError("not a workspace withdrawal")
-    with store.conn() as c:
-        if not c.in_transaction:
-            raise RuntimeError("workspace withdrawal requires a write transaction")
-        eid = new_id("wd")
-        record(store, kind, event_id=eid, workspace_id=workspace_id, **fields)
-        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_WORKSPACE_RECEIPT + eid,))
+    _intent(store, kind, event_id=new_id("wd"), workspace_id=workspace_id, **fields)
+
+
+def record_workspace_frozen(store: Store, *, workspace_id: str) -> None:
+    """A platform freeze (WORKSPACE_FROZEN_KIND), written ahead in the freeze's own transaction,
+    before its UPDATE, with its receipt keyed by the line's `attempt_id` (_intent): a backup taken
+    between the line and its COMMIT lacks the receipt and is frozen on restore; a failed attempt
+    is voided after its rollback. Raises when the line cannot be written, which refuses the freeze."""
+    _intent(store, WORKSPACE_FROZEN_KIND, workspace_id=workspace_id)
 
 
 def record_account(store: Store, kind: str, *, user_id: str, event_id: str) -> None:
@@ -340,61 +484,46 @@ def record_account(store: Store, kind: str, *, user_id: str, event_id: str) -> N
 
     Existing kinds stay readable by older releases. New restores replay an unreceipted
     intent even across the backup cutoff, and do not reapply a withdrawal already in a
-    backup after an explicit recovery. No credential or content enters this file.
+    backup after an explicit recovery. The receipt is keyed by `event_id`, which a retry may
+    reuse (a second-factor reset's sweep); the void of a failed attempt is keyed by that line's
+    own `attempt_id`, so it never voids the retry. No credential or content enters this file.
     """
     if kind not in {"user_suspended", "sessions_revoked"}:
         raise ValueError("not an account withdrawal")
-    with store.conn() as c:
-        if not c.in_transaction:
-            raise RuntimeError("account withdrawal requires a write transaction")
-        record(store, kind, user_id=user_id, account_event_id=event_id)
-        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", ("account_withdrawal:" + event_id,))
+    _intent(store, kind, user_id=user_id, account_event_id=event_id)
 
 
 def record_platform_revocation(store: Store, grant: dict, *, at: float) -> None:
     """Persist the exact grant withdrawal before COMMIT, after its authorization and audit.
 
     The receipt commits with the demotion. A failed fsync aborts the live change; a later
-    commit failure can leave a restrictive intent which recovery must honor. No mailbox,
+    commit failure in this process is voided after the rollback, and one the process did not
+    survive leaves a restrictive intent which recovery must honor. No mailbox,
     administrator-supplied reason or credential is written to the journal.
     """
-    with store.conn() as c:
-        if not c.in_transaction:
-            raise RuntimeError("platform withdrawal requires a write transaction")
-        eid = new_id("pw")
-        record(store, PLATFORM_GRANT_KIND, at=at, event_id=eid, user_id=grant["user_id"],
-               grant_id=grant["id"], role=grant["role"], granted_at=grant["granted_at"],
-               granted_by=grant["granted_by"])
-        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_PLATFORM_RECEIPT + eid,))
+    _intent(store, PLATFORM_GRANT_KIND, at=at, event_id=new_id("pw"), user_id=grant["user_id"],
+            grant_id=grant["id"], role=grant["role"], granted_at=grant["granted_at"],
+            granted_by=grant["granted_by"])
 
 
 def record_ai_policy_narrowed(store: Store, *, workspace_id: str, processing: str, providers: list[str]) -> None:
     """Journal a workspace AI-policy narrowing ahead of the change, with its receipt in the same
     transaction (the caller's): a backup holding the receipt holds the narrowing, and whatever
     the workspace decided after it, so its replay leaves that alone."""
-    with store.conn() as c:
-        if not c.in_transaction:
-            raise RuntimeError("an AI policy narrowing requires a write transaction")
-        eid = new_id("aip")
-        record(store, "ai_policy_narrowed", event_id=eid, workspace_id=workspace_id,
-               processing=processing, providers=providers)
-        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_AI_POLICY_RECEIPT + eid,))
+    _intent(store, "ai_policy_narrowed", event_id=new_id("aip"), workspace_id=workspace_id,
+            processing=processing, providers=providers)
 
 
 def record_app_policy_tightened(store: Store, *, app_id: str) -> None:
     """Journal an application's tightening to explicit grants with its receipt, in the caller's
     write transaction (Apps.set_access_policy): see APP_POLICY_KIND."""
-    with store.conn() as c:
-        if not c.in_transaction:
-            raise RuntimeError("an application policy tightening requires a write transaction")
-        eid = new_id("apt")
-        record(store, APP_POLICY_KIND, event_id=eid, app_id=app_id)
-        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_APP_POLICY_RECEIPT + eid,))
+    _intent(store, APP_POLICY_KIND, event_id=new_id("apt"), app_id=app_id)
 
 
 def read(root: str | Path, since: float = 0.0) -> list[dict]:
     return [entry for entry, _ in validated_lines(path(root))
-            if entry["at"] > since or entry["kind"] in ALWAYS_REPLAYED or entry.get("account_event_id")]
+            if entry["at"] > since or entry["kind"] in ALWAYS_REPLAYED or entry.get("account_event_id")
+            or entry.get("attempt_id")]
 
 
 def _apply_unclaim(c, e) -> int:
@@ -752,11 +881,21 @@ def apply(store: Store, entries: list[dict]) -> dict:
     """Make every withdrawal in `entries` true in `store`. Returns counts per kind.
 
     Runs in one transaction, so a restore either has every newer withdrawal re-applied or none.
+    An attempt proven never to have committed — an `intent_voided` line among `entries`, or a
+    `journal_void:` row the restored database holds, naming the line's `attempt_id` and its kind —
+    is skipped (counted under `intent_voided`) and its void row written; a void naming another kind
+    skips nothing (fail-closed). An attempt on the generic receipt (`journal_receipt:`) is skipped
+    when the restored database holds that receipt, and the receipt is written once it is applied.
     """
     for number, entry in enumerate(entries, 1):
         _validate(entry, number)
     t = time.time()
     counts: dict[str, int] = {}
+    # attempt_id → the kinds its voids name: a void skips only a line of the kind it names.
+    voided: dict[str, set[str]] = {}
+    for e in entries:
+        if e["kind"] == VOID_KIND:
+            voided.setdefault(e["attempt_id"], set()).add(e["voided_kind"])
     demoted_workspaces: set[str] = set()
     demoted_orgs: set[str] = set()
     role_rank = {"viewer": 0, "editor": 1, "admin": 2, "owner": 3}
@@ -769,6 +908,19 @@ def apply(store: Store, entries: list[dict]) -> dict:
         for e in entries:
             k = e.get("kind")
             n = 0
+            if k == VOID_KIND:
+                continue
+            attempt = e.get("attempt_id")
+            if attempt and (k in voided.get(attempt, ()) or c.execute(
+                    "SELECT 1 FROM meta WHERE key=? AND value=?", (_VOID + attempt, k)).fetchone()):
+                c.execute("INSERT OR IGNORE INTO meta (key,value) VALUES (?,?)", (_VOID + attempt, k))
+                counts[VOID_KIND] = counts.get(VOID_KIND, 0) + 1
+                continue
+            # The kinds receipted before `attempt_id` check their own receipts in their branches.
+            generic = _RECEIPT + attempt if attempt and _receipt(e) == _RECEIPT + attempt else None
+            if generic and c.execute("SELECT 1 FROM meta WHERE key=?", (generic,)).fetchone():
+                counts[k] = counts.get(k, 0)
+                continue
             account_event = e.get("account_event_id")
             if account_event and c.execute("SELECT 1 FROM meta WHERE key=?",
                                            ("account_withdrawal:" + account_event,)).fetchone():
@@ -978,6 +1130,8 @@ def apply(store: Store, entries: list[dict]) -> dict:
             if account_event:
                 c.execute("INSERT OR IGNORE INTO meta (key,value) VALUES (?, '1')",
                           ("account_withdrawal:" + account_event,))
+            if generic:
+                c.execute("INSERT OR IGNORE INTO meta (key,value) VALUES (?, '1')", (generic,))
             counts[k] = counts.get(k, 0) + n
         if had_usable_super_admin and not PlatformAccess(store).usable_super_admins():
             # Never resurrect a revoked administrator when the backup lacks its successor.

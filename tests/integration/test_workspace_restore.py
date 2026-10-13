@@ -9,10 +9,16 @@ renames are not journalled: restoring a backup taken before the deletion deletes
 freeze journalled after such a recovery (the platform's, an organization withdrawal's substitute, the
 ownerless one) is kept for the restored copy's recovery, which comes back frozen. The credentials
 bound to the approvals a deletion revokes end with them, live and on replay.
+
+The platform's freeze is written ahead too (`workspace_frozen` with an `attempt_id`, its receipt in
+`meta`): a backup taken between the line and its COMMIT is frozen on restore. An attempt whose
+transaction rolled back in this process is voided (`intent_voided`, tests/integration/
+test_journal_intents.py); a line nobody voided — the process stopped first — is still replayed.
 """
 from __future__ import annotations
 
 import json
+import tarfile
 from types import SimpleNamespace
 
 import pytest
@@ -22,7 +28,7 @@ from synwevo_core.apps import DOCS_APP_ID, Apps
 from synwevo_core.auth import Auth
 from synwevo_core.identity import Identity
 from synwevo_core.organizations import Organizations
-from synwevo_core.store import Store, now
+from synwevo_core.store import Store, new_id, now
 from synwevo_identity.invites import Invites
 from tests.integration.test_security_journal import PW, REASON, _login, _post, recovery  # noqa: F401
 
@@ -59,11 +65,17 @@ def _entries(w):
 
 
 def _freeze(w):
-    """What the platform's freeze route does (admin_routes._freeze): the row, then the journal line,
-    in one write transaction."""
-    with w.store.tx():
-        w.ident.set_workspace_frozen(w.wid, True)
-        journal.record(w.store, "workspace_frozen", workspace_id=w.wid)
+    """What the platform's freeze route does (admin_routes._freeze): Identity.set_workspace_frozen
+    writes the journal line ahead of the row, with its receipt, in one write transaction."""
+    w.ident.set_workspace_frozen(w.wid, True)
+
+
+def _frozen_lines(w):
+    return [e for e in journal.read(w.data) if e["kind"] == journal.WORKSPACE_FROZEN_KIND]
+
+
+def _status(store, wid):
+    return store.one("SELECT status FROM workspaces WHERE id=?", (wid,))["status"]
 
 
 def _recover_restored(w, restored):
@@ -290,11 +302,13 @@ def test_the_credentials_bound_to_a_revoked_approval_end_live_and_on_replay(with
         w.snapshot._close(restored)
 
 
-def test_an_entry_whose_transaction_never_committed_is_replayed(withdrawable):
-    """Write-ahead: the entry reached the journal, the transaction rolled back (or committed after
-    the backup read the database). The backup holds neither the deletion nor the receipt and the
-    entry is older than the backup — replayed anyway, failing closed."""
+def test_an_entry_whose_transaction_rolled_back_in_this_process_is_voided(withdrawable):
+    """Write-ahead: the entry reached the journal, then the transaction rolled back. The rollback
+    proves the attempt never committed (a later committed transaction found no receipt) and voids
+    it: a restore — from a backup taken before the attempt or after it — leaves the workspace
+    active."""
     w = withdrawable
+    before = _backup_into(w, "before")
     ts = now()
     with pytest.raises(RuntimeError):
         with w.store.tx():
@@ -304,6 +318,30 @@ def test_an_entry_whose_transaction_never_committed_is_replayed(withdrawable):
     assert _lifecycle(w.store, w.wid)["status"] == "active"
     (entry,) = _entries(w)
     assert not w.store.one("SELECT 1 FROM meta WHERE key=?", ("workspace_withdrawal:" + entry["event_id"],))
+    (void,) = [e for e in journal.read(w.data) if e["kind"] == journal.VOID_KIND]
+    assert void["attempt_id"] == entry["attempt_id"] and void["voided_kind"] == journal.WORKSPACE_DELETED_KIND
+    assert w.store.one("SELECT value FROM meta WHERE key=?", ("journal_void:" + entry["attempt_id"],))["value"] \
+        == journal.WORKSPACE_DELETED_KIND
+    for name, archive in (("from-before", before), ("from-after", _backup_into(w, "after"))):
+        restored = _restore_into(w, archive, name)
+        try:
+            assert _lifecycle(restored, w.wid)["status"] == "active", name
+            assert restored.one("SELECT revoked_at FROM invitations WHERE id=?", (w.invitation,))["revoked_at"] is None
+        finally:
+            w.snapshot._close(restored)
+
+
+def test_an_entry_nobody_voided_is_replayed(withdrawable):
+    """The process stopped between the line and its COMMIT (FIXTURE: the line as `_intent` appends
+    it, written with no transaction behind it, so no rollback voids it). The backup holds neither
+    the deletion nor the receipt and the entry is older than the backup — replayed anyway, failing
+    closed, with the attempt's clock."""
+    w = withdrawable
+    ts = now()
+    journal.record(w.store, journal.WORKSPACE_DELETED_KIND, attempt_id=new_id("ja"), event_id=new_id("wd"),
+                   workspace_id=w.wid, deleted_at=ts, recover_until=ts + workspace_lifecycle.RECOVERY_SECONDS,
+                   previous_status="active")
+    assert _lifecycle(w.store, w.wid)["status"] == "active"
     restored = _restore_into(w, _backup_into(w, "after"), "restored")
     try:
         assert _lifecycle(restored, w.wid) == {"status": "deleted", "deleted_at": ts,
@@ -388,3 +426,130 @@ def test_the_console_deletion_is_what_a_restore_replays(recovery):
                                                                         "previous_status")}
     finally:
         w.snapshot._close(restored)
+
+
+# ---------------------------------------------------------------- the platform's freeze, written ahead
+def _snapshot_at(archive) -> float:
+    with tarfile.open(archive) as tar:
+        return json.load(tar.extractfile("manifest.json"))["snapshot_at"]
+
+
+def test_a_backup_taken_between_the_freeze_line_and_its_commit_is_frozen_on_restore(recovery):
+    """The window the write-ahead line closes: the backup reads the database while the freeze's
+    transaction is still open — after its line, before its COMMIT — so it holds neither the freeze
+    nor its receipt, and the backup's time is later than the line's. Replayed anyway (the line has
+    an `attempt_id`), and its receipt is written with it."""
+    w = recovery
+    with w.store.tx():
+        w.ident.set_workspace_frozen(w.wid, True)
+        archive = _backup_into(w, "mid")
+    assert _status(w.store, w.wid) == "frozen"
+    (line,) = _frozen_lines(w)
+    assert line["at"] < _snapshot_at(archive), "older than the backup: the time cutoff alone would drop it"
+    assert w.store.one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + line["attempt_id"],))
+    restored = _restore_into(w, archive, "restored")
+    try:
+        assert _status(restored, w.wid) == "frozen"
+        assert restored.one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + line["attempt_id"],))
+        assert not Apps(restored, Identity(restored)).check_access(w.b["id"], DOCS_APP_ID, w.wid)[0]
+    finally:
+        w.snapshot._close(restored)
+
+
+def test_a_backup_holding_the_freeze_keeps_a_later_unfreeze(recovery):
+    """Freeze, unfreeze (not journalled), back up: the backup holds the receipt, so the line is
+    skipped and the unfreeze stands."""
+    w = recovery
+    _freeze(w)
+    w.ident.set_workspace_frozen(w.wid, False)
+    restored = _restore_into(w, _backup_into(w, "after"), "restored")
+    try:
+        assert _status(restored, w.wid) == "active"
+        assert journal.apply(restored, _frozen_lines(w)) == {"workspace_frozen": 0}
+        assert _status(restored, w.wid) == "active"
+    finally:
+        w.snapshot._close(restored)
+
+
+def test_a_backup_from_before_the_freeze_is_frozen_once(recovery):
+    w = recovery
+    archive = _backup_into(w, "before")
+    _freeze(w)
+    restored = _restore_into(w, archive, "restored")
+    try:
+        assert _status(restored, w.wid) == "frozen"
+        assert journal.apply(restored, journal.read(w.data)) == {"workspace_frozen": 0}, "applied once: its receipt"
+    finally:
+        w.snapshot._close(restored)
+
+
+def test_a_freeze_line_without_an_attempt_id_keeps_the_time_cutoff(recovery):
+    """Lines written before this release (FIXTURE: appended by hand, without `attempt_id` or a
+    receipt) keep today's rule on both sides of the backup's time: one older than the backup is
+    already in it and is not replayed; one newer is."""
+    w = recovery
+    other = w.ident.create_workspace("Second fixture workspace", owner_id=w.a["id"])["id"]
+    journal.record(w.store, "workspace_frozen", workspace_id=w.wid)
+    archive = _backup_into(w, "between")
+    journal.record(w.store, "workspace_frozen", workspace_id=other)
+    older, newer = _frozen_lines(w)
+    assert "attempt_id" not in older and older["at"] < _snapshot_at(archive) < newer["at"]
+    restored = _restore_into(w, archive, "restored")
+    try:
+        assert _status(restored, w.wid) == "active", "older than the backup: filtered out by time"
+        assert _status(restored, other) == "frozen", "newer than the backup: replayed"
+    finally:
+        w.snapshot._close(restored)
+
+
+def test_the_freeze_route_refuses_a_line_it_cannot_make_durable_and_voids_it(recovery, monkeypatch):
+    """The directory fsync fails after the line reached the journal: 503, nothing frozen, no audit
+    record — and the attempt is voided before the answer, so no restore freezes the workspace
+    from it. The answer still does not say 操作未提交 (a void that could not be written would leave
+    the line for a restore to apply). The retry freezes and journals as usual."""
+    from tests.integration.platform_fixture import make_platform_admin
+    w = recovery
+    root = make_platform_admin(w.store, w.ident.create_user("root@example.test", PW, status="active",
+                                                            with_personal_workspace=False))
+    admin = _login(w.api, root["email"])
+    assert _post(admin, "/api/auth/reauth", {"password": PW, "scope": "admin"}).status_code == 200
+    original, calls = journal._fsync_dir, []
+
+    def fails_once(directory):
+        calls.append(directory)
+        if len(calls) == 1:
+            raise OSError("fixture: directory fsync failed after the append")
+        return original(directory)
+    monkeypatch.setattr(journal, "_fsync_dir", fails_once)
+    r = _post(admin, f"/api/admin/workspaces/{w.wid}/freeze", {"reason": REASON})
+    monkeypatch.setattr(journal, "_fsync_dir", original)
+    assert r.status_code == 503 and r.json()["error"] == "journal_unavailable", r.text
+    assert "fixture" not in r.text
+    # Not 操作未提交: the line was written, and were its void not proven, a restore would apply it.
+    from synwevo_identity.admin_routes import FREEZE_JOURNAL_UNAVAILABLE
+    message = r.json()["message"]
+    assert message == FREEZE_JOURNAL_UNAVAILABLE and "备份" in message and "未提交" not in message
+    assert _status(w.store, w.wid) == "active"
+    assert not w.store.one("SELECT 1 FROM audit_events WHERE action='admin.workspace.freeze'")
+    (line,) = _frozen_lines(w)
+    assert not w.store.one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + line["attempt_id"],))
+    (void,) = [e for e in journal.read(w.data) if e["kind"] == journal.VOID_KIND]
+    assert (void["attempt_id"], void["voided_kind"]) == (line["attempt_id"], "workspace_frozen")
+    assert w.store.one("SELECT 1 FROM meta WHERE key=?", ("journal_void:" + line["attempt_id"],))
+    archive = _backup_into(w, "after")
+    restored = _restore_into(w, archive, "restored")
+    try:
+        assert _status(restored, w.wid) == "active"
+    finally:
+        w.snapshot._close(restored)
+    r = _post(admin, f"/api/admin/workspaces/{w.wid}/freeze", {"reason": REASON})
+    assert r.status_code == 200 and r.json()["journaled"] is True, r.text
+    failed, retry = _frozen_lines(w)
+    assert failed == line and w.store.one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + retry["attempt_id"],))
+    assert w.store.one("SELECT 1 FROM audit_events WHERE action='admin.workspace.freeze' AND result='ok'")
+    # The unfreeze's note also names the attempt nobody voided (the process stopped first): it
+    # freezes the workspace on a restore from any backup, a later one included.
+    from synwevo_identity.admin_routes import UNFREEZE_RESTORE_NOTE
+    r = _post(admin, f"/api/admin/workspaces/{w.wid}/unfreeze", {"reason": REASON})
+    assert r.status_code == 200 and r.json()["restore_note"] == UNFREEZE_RESTORE_NOTE, r.text
+    assert "早于此刻的备份" in UNFREEZE_RESTORE_NOTE and "冻结尝试" in UNFREEZE_RESTORE_NOTE

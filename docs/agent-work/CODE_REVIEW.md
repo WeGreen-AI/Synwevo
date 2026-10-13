@@ -538,6 +538,14 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 风险/未做：指纹按当前密钥，重叠期内由旧密钥验签的接收方看到的是新密钥指纹（行记"用哪把签"，当前+旧两把都签在头里）。
 - 验证：新增 4 例 + 两应用 webhook 契约/投递/加固/重投/CLI/示例 254 项与迁移测试通过。
 
+## CR-130 · 安全日志：工作空间冻结改为写前日志 + 回执；事务失败的写前记录经证明后作废（2026-10-13，线上原有问题，本地已验证）
+
+- 证据（A44 审查与设计代理）：冻结在 UPDATE 之后、COMMIT 之前追加日志并按时间过滤，备份的 `snapshot_at` 落在 `[at, COMMIT)` 时恢复会丢失冻结；任何写前记录在事务失败后（目录 fsync OSError、SQL 错误、COMMIT 失败、审计失败）都没有回执，之后每次恢复都会以失败尝试的时间重放（删除可能因此超过 7 天恢复期而不可恢复）。另按写入方式分类了全部日志种类（A 写前 + 回执；B 写前、按编号匹配；C 时间过滤且 COMMIT 前追加；D COMMIT 后追加），C/D 类各有窗口，留待后续阶段。
+- 修复：`Store.after_rollback`（只在未确认提交时、释放写锁后运行）；`journal._intent` 统一写前记录：每次追加一个新的 128 位 `attempt_id`、同事务写回执、登记回滚回调；回调 `_void` 在新的写事务中确认回执不存在（以 FULL 同步提交）后才写 `journal_void:` 并追加 `intent_voided` 行，任何一步失败都不作废（失败即关闭）；`apply()` 只跳过与本行种类相同的作废；既有六个 `record_*` 改走 `_intent` 且回执键不变；冻结在 UPDATE 前写前记录；旧格式行行为不变；校验接受任意种类上的 `attempt_id`（向前兼容后续阶段，仍失败即关闭）；503 与解冻说明如实说明“尝试通常已作废，否则之后的恢复仍可能生效”；恢复报告分开统计。
+- 审查（持久性与兼容两个视角）：无中高级；7 项低级（编号碰撞、同步级别还原、回调契约措辞、503 措辞、报告计数等）均已修正并补测试，包括子进程崩溃注入。
+- 未处理：C/D 类其他种类的写前化（后续阶段）；`synchronous=NORMAL` 断电时可能丢失已确认的提交（单独评估）；恢复围栏对“无回执而被重新冻结/删除”的对象尚无复核清单。
+- 验证：完整根套件 6320 通过、0 失败、2 跳过（13:16Z–13:51Z）；详见 EVIDENCE 同日条目。
+
 ## CR-129 · A44 平台工作空间生命周期：重命名、软删除（7 天恢复期）与恢复；不可用空间的依赖项暂停而非销毁（2026-10-13，本轮新增 + 线上原有问题，本地已验证）
 
 - 位置：核心 `workspace_lifecycle.py`（新：状态机、撤回、平台路径）、`workspace_availability.py`（新：AVAILABLE/PAUSED/LOST，取空间与所属组织中更差者）、`journal.py`（`workspace_deleted` 写前日志 + 回执、总是重放；冻结重放遇到已删除行时把 `previous_status` 设为 frozen）、`store.py`（`previous_status`、`recover_until` 新列）、`authority.py` / Docs `webhooks.py` / `auth.py`（阻断集合改为允许集合）、`organizations.py` / `ownership.py`（恢复期内已删除空间的唯一拥有者守卫与 `owner_of_deleted_workspace` 拒绝）、`messaging_bridge.py` / `messaging.py`（项目讨论在空间暂停时暂停、失去时立即关闭；搜索在 LIMIT 前排除）、`notifications.py`（暂停/失去空间的讨论、Docs、自动化等通知跳过）、`flows/engine.py`（运行在空间暂停时保持等待并退避）、Suite 审批（暂停期间不撤销任务、不停滞请求）；账户服务 `admin_workspaces.py`（新）、`admin_routes.py`（列表状态筛选）、`admin_actions.py`、`admin_bulk.py`；前端 `WorkspaceLifecycleDialog.tsx`、`workspace-lifecycle.messages.ts`、Admin 工作空间标签页、组织日志标签、拒绝文案。

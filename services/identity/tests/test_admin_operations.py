@@ -372,8 +372,10 @@ def test_journal_receipt_preserves_explicit_restore_but_replays_into_an_older_ba
     assert journal.apply(older, entries) == {}
 
 
-def test_durable_intent_without_a_committed_receipt_is_replayed_after_failure(world, monkeypatch):
-    """A failure after fsync may leave an intent, but no successful operation or receipt."""
+def test_durable_intent_whose_transaction_failed_is_voided_not_replayed(world, monkeypatch):
+    """A failure after fsync leaves an intent, but no successful operation or receipt. The rollback
+    proves the attempt never committed and voids it (journal._intent), so a replay leaves the
+    account as it is."""
     seed_pending_credentials(world)
     body = command(preview(world))
     original = journal.record_account
@@ -384,14 +386,35 @@ def test_durable_intent_without_a_committed_receipt_is_replayed_after_failure(wo
 
     monkeypatch.setattr(journal, "record_account", fail_after_durable_intent)
     response = execute(world, body)
+    monkeypatch.setattr(journal, "record_account", original)
     assert response.status_code == 503 and response.json()["error"] == "journal_unavailable"
     store, uid = world["store"], world["target"]["id"]
     assert world["ident"].get_user(uid)["status"] == "active"
     assert world["ordinary"].get("/api/auth/me").status_code == 200
     assert not store.all("SELECT * FROM admin_operations")
+    intent, void = journal.read(store.root, since=time.time() + 3600)
+    assert intent["kind"] == "user_suspended"
+    assert (void["kind"], void["attempt_id"], void["voided_kind"]) == (journal.VOID_KIND, intent["attempt_id"],
+                                                                       "user_suspended")
+    receipt = "account_withdrawal:" + intent["account_event_id"]
+    assert not store.one("SELECT value FROM meta WHERE key=?", (receipt,))
+    assert journal.apply(store, [intent, void]) == {journal.VOID_KIND: 1}
+    assert world["ident"].get_user(uid)["status"] == "active"
+    assert world["ordinary"].get("/api/auth/me").status_code == 200
+    assert not store.one("SELECT value FROM meta WHERE key=?", (receipt,))
+
+
+def test_durable_intent_nobody_voided_is_replayed(world):
+    """The process stopped between the line and its COMMIT (FIXTURE: the line as `_intent` appends
+    it, with no transaction behind it, so no rollback voids it): no receipt, no void — replayed,
+    fail-closed."""
+    seed_pending_credentials(world)
+    store, uid = world["store"], world["target"]["id"]
+    journal.record(store, "user_suspended", user_id=uid, account_event_id="ao_fixture_unvoided",
+                   attempt_id="ja_fixture_unvoided")
     entries = journal.read(store.root, since=time.time() + 3600)
     assert len(entries) == 1
-    receipt = "account_withdrawal:" + entries[0]["account_event_id"]
+    receipt = "account_withdrawal:ao_fixture_unvoided"
     assert not store.one("SELECT value FROM meta WHERE key=?", (receipt,))
     journal.apply(store, entries)
     assert world["ident"].get_user(uid)["status"] == "suspended"

@@ -869,7 +869,15 @@ class Identity:
         legacy workspace has its own lifecycle, and freezing a deleted one means nothing. Tokens
         acting in the workspace are revoked and sessions are moved off it in the same
         transaction; every later check (`status != 'active'`) refuses it from then on.
+
+        A freeze is a withdrawal: it is written ahead to the security journal, with its receipt,
+        before the UPDATE (`journal.record_workspace_frozen`), so a restore from a backup taken
+        before its COMMIT — even one taken between the line and the COMMIT — freezes the workspace
+        again. A journal that cannot be written raises OSError (ValueError for a malformed line)
+        and nothing is frozen; a transaction that fails after the line voids it on its rollback.
+        Unfreezing is not journalled.
         """
+        from . import journal
         ts = now()
         with self.store.tx() as t:
             ws = t.execute("SELECT status, kind FROM workspaces WHERE id=? AND deleted_at IS NULL", (wid,)).fetchone()
@@ -878,6 +886,7 @@ class Identity:
             if frozen:
                 if ws["status"] != "active":
                     raise ServiceError(409, "not_active", f"只能冻结状态正常的工作空间（当前：{ws['status']}）")
+                journal.record_workspace_frozen(self.store, workspace_id=wid)
                 t.execute("UPDATE workspaces SET status='frozen', updated_at=? WHERE id=?", (ts, wid))
                 toks = t.execute("UPDATE oauth_tokens SET revoked_at=?, revoked_reason='workspace_frozen' "
                                  "WHERE workspace_id=? AND revoked_at IS NULL", (ts, wid)).rowcount

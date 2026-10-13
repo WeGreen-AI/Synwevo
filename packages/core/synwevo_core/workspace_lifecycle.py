@@ -25,9 +25,11 @@ and hidden from the platform's default list.
   Docs webhook subscriptions (disabled at their next delivery), the business applications'
   webhooks (their grant was revoked). Written ahead to the security journal (`workspace_deleted`)
   with its receipt in `meta`. An attempt that fails after the line was appended — the directory
-  fsync, or the SQL or COMMIT behind it — rolls back here, yet leaves an intent without a receipt
-  that a later restore applies (fail-closed, as the organization withdrawals): the workspace is
-  deleted again in the restored copy, with that attempt's clock.
+  fsync, or the SQL or COMMIT behind it — rolls back here, and its rollback voids the line once a
+  later committed transaction has found no receipt (journal._intent), so no restore applies it.
+  Only an attempt the process did not survive (stopped before its COMMIT or before the void) stays
+  an intent without a receipt that a later restore applies (fail-closed, as the organization
+  withdrawals): the workspace is deleted again in the restored copy, with that attempt's clock.
 * **recover** — `deleted` and before `recover_until` → the status it had before (`previous_status`;
   frozen when unknown). Not journalled (`recover_not_journalled`): restoring a backup taken before
   the deletion deletes it again, with the original clock; a freeze journalled after the recovery
@@ -197,7 +199,8 @@ def _transition(store: Store, ws: dict, actor_id: str, action: str, reason: str,
         "reason": reason, **change({k: ws[k] for k in keys}, {k: values[k] for k in keys}), **(meta or {})})
     withdrawn = None
     if action == "delete":
-        # Write-ahead: no withdrawal commits without its fsynced intent; a later failure leaves an
+        # Write-ahead: no withdrawal commits without its fsynced intent; a later failure in this
+        # process voids the intent on rollback, and one the process did not survive leaves an
         # intent without a receipt, which a restore replays (fail-closed).
         record_workspace(store, WORKSPACE_DELETED_KIND, workspace_id=ws["id"], deleted_at=values["deleted_at"],
                          recover_until=values["recover_until"], previous_status=values["previous_status"])

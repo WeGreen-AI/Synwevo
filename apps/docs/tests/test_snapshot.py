@@ -474,6 +474,44 @@ def test_journal_entries_older_than_the_backup_are_not_replayed(instance, tmp_pa
     c.close()
 
 
+def test_the_report_counts_withdrawals_after_the_backup_and_names_voided_attempts_apart(instance, tmp_path, capsys):
+    """journal.read() returns the written-ahead lines and the voids whatever their time, for apply()
+    to check against the backup's receipts — they are not "withdrawals after the backup". A freeze
+    committed and lifted before the backup and a freeze voided before it are read, checked and
+    skipped; only the member removed after the backup is counted as such, and the voided attempt
+    is reported on a line of its own, not among the withdrawals."""
+    from synwevo_core import journal
+    from synwevo_core.identity import Identity
+    from synwevo_core.store import Store, now
+    snapshot = _snapshot()
+    live = Store(instance)
+    _people(live, now)
+    ident = Identity(live)
+    ident.set_workspace_frozen("w1", True)
+    ident.set_workspace_frozen("w1", False)
+    with pytest.raises(RuntimeError, match="fixture"):
+        with live.tx():
+            journal.record_workspace_frozen(live, workspace_id="w1")
+            raise RuntimeError("fixture failure after the line")
+    _release(live)
+    archive = _backup(snapshot, instance, tmp_path / "b")
+    live = Store(instance)
+    live.execute("DELETE FROM memberships WHERE workspace_id='w1' AND user_id='u_alice'")
+    journal.record(live, "member_removed", workspace_id="w1", user_id="u_alice")
+    _release(live)
+
+    into = tmp_path / "isolated"
+    assert _restore(snapshot, archive, into, journal_from=instance) == 0
+    out = capsys.readouterr().out
+    assert "备份之后的撤销记录 1 条（连同按回执核对的预写记录，共读取 4 条）" in out, out
+    assert "member_removed 1，workspace_frozen 0" in out and "intent_voided" not in out, out
+    assert "已作废的尝试 1 条" in out, out
+    c = _ro(into / "docweave.sqlite3")
+    assert c.execute("SELECT status FROM workspaces WHERE id='w1'").fetchone()[0] == "active"
+    assert not c.execute("SELECT 1 FROM memberships WHERE user_id='u_alice'").fetchone()
+    c.close()
+
+
 def test_restore_without_a_live_journal_is_refused_unless_said_explicitly(instance, tmp_path, capsys):
     """Silently skipping the journal would bring back every key revoked since the backup."""
     snapshot = _snapshot()

@@ -277,9 +277,12 @@ export const workspaceLifecycleMessages = {
   "工作空间当前状态不允许此操作": { en: "The workspace's current status does not allow this action.", "zh-Hant": "工作空間目前狀態不允許此操作" },
   "新名称与当前名称相同": { en: "The new name is the same as the current one.", "zh-Hant": "新名稱與目前名稱相同" },
   "该工作空间的七天恢复期限已过": { en: "This workspace's seven-day recovery deadline has passed.", "zh-Hant": "該工作空間的七天恢復期限已過" },
-  "安全记录暂不可用，删除未完成；如果之后从备份还原，这次删除仍可能生效。请重新预览并核实工作空间状态后再试": {
-    en: "Security recording is unavailable and the deletion did not complete; if a backup is restored later, this deletion may still take effect. Preview again and check the workspace's status before retrying.",
-    "zh-Hant": "安全記錄暫不可用，刪除未完成；如果之後從備份還原，這次刪除仍可能生效。請重新預覽並核實工作空間狀態後再試" },
+  "安全记录暂不可用，删除未完成；这次尝试通常会在本答复前作废，若未能作废，之后从备份还原时这次删除仍可能生效。请重新预览并核实工作空间状态后再试": {
+    en: "Security recording is unavailable and the deletion did not complete. The attempt is normally voided before this answer; if it could not be, this deletion may still take effect when a backup is restored later. Preview again and check the workspace's status before retrying.",
+    "zh-Hant": "安全記錄暫不可用，刪除未完成；這次嘗試通常會在本答覆前作廢，若未能作廢，之後從備份還原時這次刪除仍可能生效。請重新預覽並核實工作空間狀態後再試" },
+  "安全记录暂不可用，冻结未完成；这次尝试通常会在本答复前作废，若未能作废，之后从备份还原时这次冻结仍可能生效。请核实工作空间状态后再试": {
+    en: "Security recording is unavailable and the freeze did not complete. The attempt is normally voided before this answer; if it could not be, this freeze may still take effect when a backup is restored later. Check the workspace's status before retrying.",
+    "zh-Hant": "安全記錄暫不可用，凍結未完成；這次嘗試通常會在本答覆前作廢，若未能作廢，之後從備份還原時這次凍結仍可能生效。請核實工作空間狀態後再試" },
   "工作空间或其成员已变化，请重新预览": { en: "The workspace or its members changed. Preview again.", "zh-Hant": "工作空間或其成員已變更，請重新預覽" },
   "请选择有效的工作空间状态": { en: "Choose a valid workspace status.", "zh-Hant": "請選擇有效的工作空間狀態" },
 };

@@ -519,7 +519,12 @@ def fence(data_dir: Path, *, since: float | None, journal_dir: Path | None,
                     "no_journal": no_journal}
     try:
         entries = journal.read(journal_dir, since=since) if (journal_dir and since is not None) else []
-        report["journal_entries"] = len(entries)
+        # What read() returns is wider than "after the backup": the written-ahead lines (and the
+        # voids of attempts that never committed) come whatever their time, for apply() to check
+        # against the receipts the restored copy holds. The report counts the withdrawals newer
+        # than the backup, and the lines read, separately; the voids are reported on their own.
+        report["journal_entries"] = sum(1 for e in entries if e["at"] > since and e["kind"] != journal.VOID_KIND)
+        report["journal_lines_read"] = len(entries)
         report["journal"] = journal.apply(store, entries) if entries else {}
         t = time.time()
         with store.tx() as c:
@@ -630,11 +635,18 @@ def _print_fence(report: dict, *, rehearsal: bool) -> None:
     verb = "恢复时会" if rehearsal else "已"
     src = report.get("journal_source")
     n = report.get("journal_entries", 0)
+    read = report.get("journal_lines_read", n)
+    counts = report.get("journal") or {}
+    voided = counts.get("intent_voided", 0)                       # journal.VOID_KIND
+    applied = {k: v for k, v in counts.items() if k != "intent_voided"}
     if src is None:
         print(f"  {WARN} 没有可读的安全日志：无法重放备份之后的成员移除、角色变更、账户停用等撤销。")
     else:
-        print(f"  {PASS} 安全日志 {src}：备份之后的撤销记录 {n} 条，{verb}重放"
-              + (("：" + "，".join(f"{k} {v}" for k, v in sorted(report["journal"].items()))) if n else ""))
+        print(f"  {PASS} 安全日志 {src}：备份之后的撤销记录 {n} 条"
+              + (f"（连同按回执核对的预写记录，共读取 {read} 条）" if read != n else "") + f"，{verb}重放"
+              + (("：" + "，".join(f"{k} {v}" for k, v in sorted(applied.items()))) if applied else ""))
+        if voided:
+            print(f"  {PASS} 已作废的尝试 {voided} 条：其事务从未提交，{verb}跳过，不重放")
     if report.get("no_journal"):
         print(f"  {PASS} {verb}撤销全部旧 API 密钥（本次 {report['api_keys_revoked_without_journal']} 个），"
               f"停用私密及服务客户端（本次 {report['clients_disabled_without_journal']} 个）；"

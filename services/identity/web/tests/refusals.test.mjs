@@ -310,6 +310,10 @@ const INDIRECT = [
   // entry may already be written (admin_workspaces.JOURNAL_UNAVAILABLE), read from the source.
   { files: [ID + "admin_workspaces.py"], match: /"journal_unavailable", JOURNAL_UNAVAILABLE\)/, refusals: [
     { status: 503, code: "journal_unavailable", text: constant(ID + "admin_workspaces.py", "JOURNAL_UNAVAILABLE") }] },
+  // The 503 of a platform freeze whose security journal line could not be made durable — written
+  // ahead like a deletion's, so worded like it (admin_routes.FREEZE_JOURNAL_UNAVAILABLE).
+  { files: [ID + "admin_routes.py"], match: /"journal_unavailable", FREEZE_JOURNAL_UNAVAILABLE\)/, refusals: [
+    { status: 503, code: "journal_unavailable", text: constant(ID + "admin_routes.py", "FREEZE_JOURNAL_UNAVAILABLE") }] },
   // A44-L1: the sentence names the workspace and its recovery deadline (organizations.deleted_workspace_owner),
   // one for a sole owner and one for a sole manager; worded from `detail` by its code's template
   { files: [CORE + "organizations.py"], match: /ServiceError\(409, "owner_of_deleted_workspace", message,/, refusals: [

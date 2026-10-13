@@ -1153,7 +1153,11 @@ class Store:
     def tx(self):
         """A write transaction (``BEGIN IMMEDIATE``): all statements inside commit together or
         not at all.  Re-entrant within a thread; the outermost block commits, then runs what
-        ``after_commit`` queued — outside the write lock."""
+        ``after_commit`` queued — outside the write lock. When the outermost block is not known
+        to have committed (an exception inside it, or one raised by the COMMIT — which may have
+        committed all the same), it runs what ``after_rollback`` queued instead — also outside
+        the write lock, at depth 0, even when the ROLLBACK itself raised — and the original
+        exception propagates."""
         c = self._c()
         if self._local.depth:
             self._local.depth += 1
@@ -1163,18 +1167,30 @@ class Store:
                 self._local.depth -= 1
             return
         self._local.after = []
-        with self._write_lock:
-            c.execute("BEGIN IMMEDIATE")
-            self._local.depth = 1
-            try:
-                yield c
-                c.execute("COMMIT")
-            except BaseException:
-                c.execute("ROLLBACK")
-                self._local.after = []
-                raise
-            finally:
-                self._local.depth = 0
+        self._local.undo = []
+        committed = False
+        try:
+            with self._write_lock:
+                c.execute("BEGIN IMMEDIATE")
+                self._local.depth = 1
+                try:
+                    yield c
+                    c.execute("COMMIT")
+                    committed = True
+                except BaseException:
+                    self._local.after = []
+                    c.execute("ROLLBACK")
+                    raise
+                finally:
+                    self._local.depth = 0
+        finally:
+            undo, self._local.undo = self._local.undo, []
+            if not committed:
+                for fn in undo:
+                    try:
+                        fn()
+                    except Exception:                    # noqa: BLE001 — the failure that rolled back is what the caller sees
+                        logging.getLogger("synwevo.store").exception("an after-rollback callback failed")
         after, self._local.after = self._local.after, []
         for fn in after:
             try:
@@ -1192,6 +1208,23 @@ class Store:
             self._local.after.append(fn)
         else:
             fn()
+
+    def after_rollback(self, fn) -> None:
+        """Run ``fn`` once if the current outermost transaction is not known to have committed:
+        after its ROLLBACK (attempted), with the write lock released and no transaction open, so
+        ``fn`` may open one of its own. A nested block registers on the outermost transaction; a
+        COMMIT that returns drops what was queued.
+
+        Not a guarantee that nothing committed: ``fn`` also runs when the COMMIT raised — and an
+        exception can be reported after SQLite committed (an error surfacing late, a
+        KeyboardInterrupt or SystemExit arriving between the COMMIT and its bookkeeping). So ``fn``
+        must re-check the database before it acts on "this never committed", as journal._void
+        re-checks the attempt's receipt in a transaction of its own. An exception from ``fn`` is
+        logged, never raised over the one that ended the transaction. Outside a transaction there
+        is nothing to roll back: RuntimeError (the security journal's voids, journal._intent)."""
+        if not getattr(self._local, "depth", 0):
+            raise RuntimeError("after_rollback needs an open write transaction")
+        self._local.undo.append(fn)
 
     @contextmanager
     def conn(self):

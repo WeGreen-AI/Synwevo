@@ -356,7 +356,8 @@ def test_a_non_member_administrator_deletes_a_workspace_from_outside(space):
     assert s["wid"] not in [w["id"] for w in s["admin"].get(BASE).json()["items"]]
     # the journal entry, written ahead with its receipt
     (event,) = events(s)
-    assert set(event) == {"at", "kind", "event_id", "workspace_id", "deleted_at", "recover_until", "previous_status"}
+    assert set(event) == {"at", "kind", "attempt_id", "event_id", "workspace_id", "deleted_at", "recover_until",
+                          "previous_status"}
     assert (event["deleted_at"], event["recover_until"], event["previous_status"]) == \
         (view["deleted_at"], view["recover_until"], "active")
     assert store.one("SELECT 1 FROM meta WHERE key=?", ("workspace_withdrawal:" + event["event_id"],))
@@ -947,9 +948,10 @@ def test_the_journal_failing_commits_nothing_and_is_recorded_as_an_error(space, 
 
 def test_a_journal_failure_after_the_line_was_written_is_not_called_void(space, monkeypatch):
     """A44-J2: the directory fsync fails after the entry reached the journal. The transaction rolls
-    back — the workspace stays active, nothing durable is added in the database — but the entry has
-    no receipt, so a later restore applies it (write-ahead, fail-closed; replayed in
-    tests/integration/test_workspace_restore). The 503 says so instead of 操作未提交."""
+    back — the workspace stays active, nothing durable is added in the database — and the entry has
+    no receipt. The rollback voids it before the answer (tests/integration/test_journal_intents),
+    but a process that stopped first would leave it for a later restore to apply (write-ahead,
+    fail-closed), so the 503 still does not say 操作未提交."""
     s = space
     p = plan(s, "delete")
     before = durable(s)[:2] + durable(s)[3:]
@@ -968,6 +970,7 @@ def test_a_journal_failure_after_the_line_was_written_is_not_called_void(space, 
     assert after[:2] + after[3:] == before and ws_row(s)["status"] == "active"
     (event,) = events(s)
     assert not s["store"].one("SELECT 1 FROM meta WHERE key=?", ("workspace_withdrawal:" + event["event_id"],))
+    assert s["store"].one("SELECT 1 FROM meta WHERE key=?", ("journal_void:" + event["attempt_id"],))
 
 
 def test_the_platform_record_failing_commits_nothing(space, monkeypatch):
@@ -986,7 +989,8 @@ def test_the_platform_record_failing_commits_nothing(space, monkeypatch):
 
 def test_a_write_ahead_entry_whose_transaction_failed_has_no_receipt(space, monkeypatch):
     """The entry is fsynced before the SQL; a failure after it rolls the deletion back and leaves an
-    intent without a receipt — which a restore replays (tests/integration/test_workspace_restore)."""
+    intent without a receipt — which the rollback voids (tests/integration/test_journal_intents);
+    only one the process did not survive is replayed by a restore."""
     s = space
     p = plan(s, "delete")
     original = workspace_lifecycle.withdraw
@@ -999,6 +1003,7 @@ def test_a_write_ahead_entry_whose_transaction_failed_has_no_receipt(space, monk
     assert r.status_code == 500
     (event,) = events(s)
     assert not s["store"].one("SELECT 1 FROM meta WHERE key=?", ("workspace_withdrawal:" + event["event_id"],))
+    assert s["store"].one("SELECT 1 FROM meta WHERE key=?", ("journal_void:" + event["attempt_id"],))
     assert ws_row(s)["status"] == "active" and not operations(s)
 
 

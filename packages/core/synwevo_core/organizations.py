@@ -656,8 +656,10 @@ class Organizations:
         oid, ts, revoked = org["id"], now(), {}
         values = lifecycle_values(org, action, ts)
         # Audit is transactional and precedes the durable intent. No security
-        # SQL can commit without fsync; later failure leaves a fail-closed
-        # restore intent rather than allowing an old archive to revive access.
+        # SQL can commit without fsync; a later failure in this process voids the
+        # intent on rollback (journal._intent), and one the process did not survive
+        # leaves a fail-closed restore intent rather than allowing an old archive
+        # to revive access.
         self._record(actor_id, oid, "organization." + action,
                      {"reason": reason, **change({"status": org["status"]}, {"status": values["status"]}), **(meta or {})})
         if action in ("freeze", "delete"):

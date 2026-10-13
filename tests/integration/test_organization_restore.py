@@ -6,7 +6,7 @@ import pytest
 
 from synwevo_core import journal
 from synwevo_core.organizations import Organizations, accept_workspace_invitation, workspace_access_failure
-from synwevo_core.store import Store
+from synwevo_core.store import Store, new_id
 from tests.integration.test_security_journal import recovery, _backup, _restore, REASON
 
 
@@ -92,13 +92,33 @@ def test_journal_fsync_failure_aborts_live_org_withdrawal(recovery, monkeypatch)
     assert not w.store.one("SELECT 1 FROM audit_events WHERE action='organization.freeze'")
 
 
-def test_write_ahead_intent_before_backup_cutoff_still_applies_without_receipt(recovery):
+def test_write_ahead_intent_rolled_back_in_this_process_is_voided(recovery):
+    """The rollback proves the attempt never committed (a later committed transaction found no
+    receipt) and voids it: a restore from a backup taken after it leaves the organization active."""
     w = recovery
     orgs, oid, wid = setup_org(w)
     with pytest.raises(RuntimeError):
         with w.store.tx():
             journal.record_organization(w.store,"organization_frozen",organization_id=oid)
             raise RuntimeError("synthetic rollback after durable append")
+    (intent,) = [e for e in journal.read(w.data) if e["kind"] == "organization_frozen"]
+    (void,) = [e for e in journal.read(w.data) if e["kind"] == journal.VOID_KIND]
+    assert void["attempt_id"] == intent["attempt_id"] and void["voided_kind"] == "organization_frozen"
+    restored = _restore(w,_backup(w))
+    try:
+        assert restored.one("SELECT status FROM organizations WHERE id=?",(oid,))["status"] == "active"
+        assert workspace_access_failure(restored,wid,w.a["id"]) is None
+    finally:
+        w.snapshot._close(restored)
+
+
+def test_write_ahead_intent_before_backup_cutoff_still_applies_without_receipt(recovery):
+    """Nobody voided it (FIXTURE: the line as `_intent` appends it, with no transaction behind it —
+    the process stopped before its COMMIT): replayed although older than the backup, fail-closed."""
+    w = recovery
+    orgs, oid, wid = setup_org(w)
+    journal.record(w.store, "organization_frozen", attempt_id=new_id("ja"), event_id=new_id("ow"),
+                   organization_id=oid, workspace_ids=[wid])
     restored = _restore(w,_backup(w))
     try:
         assert restored.one("SELECT status FROM organizations WHERE id=?",(oid,))["status"] == "frozen"

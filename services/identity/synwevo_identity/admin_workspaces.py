@@ -35,8 +35,11 @@ lets run whatever the workspace's state. A recovery's notes say what the deletio
 comes back, judged by this workspace's rows now (`_ended`).
 
 A deletion that fails after its journal line was appended answers 503 `journal_unavailable` and
-commits nothing here — but, write-ahead, a later restore applies the line (core
-`workspace_lifecycle`), so the answer does not claim the act is void: re-preview and check.
+commits nothing here. The rollback normally voids the line before this answer (core
+`journal._intent`: proven by a later committed transaction that found no receipt), so no restore
+applies it — unless the process stopped first, or the void could not be written, and then a later
+restore applies the line (write-ahead, fail-closed). So the answer does not claim the act is void:
+re-preview and check.
 """
 from __future__ import annotations
 
@@ -62,7 +65,7 @@ PERMISSION = "platform.workspaces.manage"
 ACTION = "admin.workspace.lifecycle"
 REASON_MIN, REASON_MAX = 8, 500
 #: The 503 when the security journal fails during a deletion (the only act it records).
-JOURNAL_UNAVAILABLE = "安全记录暂不可用，删除未完成；如果之后从备份还原，这次删除仍可能生效。请重新预览并核实工作空间状态后再试"
+JOURNAL_UNAVAILABLE = "安全记录暂不可用，删除未完成；这次尝试通常会在本答复前作废，若未能作废，之后从备份还原时这次删除仍可能生效。请重新预览并核实工作空间状态后再试"
 #: The principal Docs' job runner asks about (JobRunner._authorized): the current run's, else the job's.
 _RUN_PRINCIPAL = ("COALESCE(NULLIF((SELECT r.principal FROM job_runs r WHERE r.job_id=jobs.id "
                   "AND r.run_no=COALESCE(jobs.run_no, 1)), ''), jobs.principal)")
@@ -381,9 +384,10 @@ class WorkspaceLifecycle(SignedPreview):
                                               audit=lambda event, **kw: self.audit(request, event, workspace_given=True, **kw))
                 except OSError:
                     # The security journal could not append or fsync: this transaction rolls back. The
-                    # line may already be written (the directory fsync comes after it), and a later
-                    # restore applies a written line (write-ahead, as the organization withdrawals): the
-                    # answer must not claim the deletion is void.
+                    # line may already be written (the directory fsync comes after it). The rollback
+                    # normally voids it before this answer (journal._intent); if the void cannot be
+                    # proven or written, a later restore applies the line (write-ahead, fail-closed):
+                    # the answer must not claim the deletion is void.
                     raise ServiceError(503, "journal_unavailable", JOURNAL_UNAVAILABLE) from None
                 result = {"ok": True, "operation_id": operation_id, "state": "succeeded", "action": transition,
                           "workspace": workspace_row(self.store, out["workspace"]), "withdrawn": out["withdrawn"],

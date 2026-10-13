@@ -43,8 +43,17 @@ REAUTH_SCOPE = "admin"
 #: routes (claim, and unclaim when it lands) take "platform.workspaces.claim"; see
 #: synwevo_core.platform_access.PERMISSIONS for the rest.
 _UNNAMED = object()
+#: An interrupted freeze attempt (its line written ahead, the process stopped before its COMMIT or
+#: before its void) has neither receipt nor void, so a restore from any backup applies it — one
+#: taken after this unfreeze included (core journal: fail-closed, as a deletion's).
 UNFREEZE_RESTORE_NOTE = ("解冻不会写入安全日志（它只记录收回访问的操作）：如果之后从早于此刻的备份恢复，"
-                         "冻结会被重新应用，需要再解冻一次。")
+                         "冻结会被重新应用，需要再解冻一次。此前若有冻结尝试在提交前中断且未能作废，"
+                         "从此刻之后的备份恢复时也可能重新冻结。")
+#: The freeze's 503 when its security-journal line cannot be made durable. The line may already be
+#: written (the directory fsync comes after it): the rollback normally voids it before this answer,
+#: but when the void cannot be proven or written a later restore still applies it — so, as a
+#: deletion's (admin_workspaces.JOURNAL_UNAVAILABLE), the answer does not say 操作未提交.
+FREEZE_JOURNAL_UNAVAILABLE = "安全记录暂不可用，冻结未完成；这次尝试通常会在本答复前作废，若未能作废，之后从备份还原时这次冻结仍可能生效。请核实工作空间状态后再试"
 #: What a claim renames the generated 「历史数据（待认领）」 label to when no name is given — and
 #: the overview never gives one.
 LEGACY_CLAIMED_NAME = "历史数据"
@@ -1518,19 +1527,18 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             raise ServiceError(400, "missing_reason", "请写明理由（至少 8 个字）")
         with _write(request, "platform.workspaces.manage", object_kind="workspace", object_id=wid):
             actor = _admin(request, "platform.workspaces.manage", dangerous=True)
-            out = ident.set_workspace_frozen(wid, frozen)
+            try:
+                # A freeze writes its security-journal line ahead of the UPDATE, with its receipt
+                # (Identity.set_workspace_frozen); a line that cannot be made durable refuses it here.
+                out = ident.set_workspace_frozen(wid, frozen)
+            except (OSError, ValueError):
+                raise ServiceError(503, "journal_unavailable", FREEZE_JOURNAL_UNAVAILABLE) from None
             journaled = True if frozen else None
             extra = {} if frozen else {"restore_note": UNFREEZE_RESTORE_NOTE}
             audit(request, "admin.workspace.freeze" if frozen else "admin.workspace.unfreeze",
                   actor_id=actor["id"], workspace_id=wid, object_kind="workspace", object_id=wid,
                   result="ok", meta={**out, **change({"frozen": not frozen}, {"frozen": frozen}),
                                      "reason": reason[:500], "journaled": journaled})
-            if frozen:
-                from synwevo_core import journal
-                try:
-                    journal.record(store, "workspace_frozen", workspace_id=wid)
-                except (OSError, ValueError):
-                    raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
             return {"ok": True, **out, "workspace": _workspace_row(ident.get_workspace(wid)),
                     "journaled": journaled, **extra}
 
