@@ -40,10 +40,12 @@ WRITE_ROLES = frozenset({"owner", "admin", "editor"})
 READ_ROLES = WRITE_ROLES | {"viewer"}
 LEGACY_WRITE = {"write", "admin"}
 
-# Workspace states in which nothing may run. `pending_claim` is the unclaimed legacy workspace:
-# nobody can reach it through membership, but operator-issued legacy keys and the operator's own
-# browser modes predate the platform and keep working there.
-BLOCKED_WORKSPACE_STATES = frozenset({"frozen", "deleted"})
+# Workspace states in which deferred work may run — an allow-list, so a state added later is
+# refused until someone decides otherwise (frozen and deleted are refused, as they always were).
+# `pending_claim` is the unclaimed legacy workspace: nobody can reach it through membership, but
+# operator-issued legacy keys and the operator's own browser modes predate the platform and keep
+# working there.
+RUNNABLE_WORKSPACE_STATES = frozenset({"active", "pending_claim"})
 
 
 # --------------------------------------------------------------------- descriptors
@@ -162,7 +164,7 @@ def check(store: Store, desc: dict | None, *, need: str = "write", app_id: str =
         return True, None
 
     ws = store.one("SELECT id, status FROM workspaces WHERE id=?", (t,)) if t else None
-    if ws and ws["status"] in BLOCKED_WORKSPACE_STATES:
+    if ws and ws["status"] not in RUNNABLE_WORKSPACE_STATES:
         return False, f"workspace_{ws['status']}"
     from .organizations import workspace_access_failure
     why = workspace_access_failure(store, t, d.get("user_id") if kind in ("user", "delegated") else None)

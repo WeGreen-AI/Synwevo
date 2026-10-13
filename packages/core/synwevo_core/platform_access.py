@@ -143,7 +143,7 @@ PERMISSIONS: dict[str, str] = {
     "platform.users.support": "send recovery mail and end an account's sessions",
     "platform.users.recover": "reset a person's lost second factor after identity confirmation, delayed and announced",
     "platform.workspaces.view": "list workspaces and their members (counts, never content)",
-    "platform.workspaces.manage": "freeze and unfreeze workspaces",
+    "platform.workspaces.manage": "freeze and unfreeze workspaces; rename, delete (with a seven-day recovery) and recover them",
     "platform.workspaces.claim": "assign the historical (pre-identity) workspace to an ordinary account, and take it back",
     "platform.orgs.view": "list organizations and read their governance metadata (owners, workspaces, members, custom roles, open imports and copies, effective permissions; never content) without membership",
     "platform.orgs.manage": "run any organization's lifecycle and hand ownership of an ownerless one to an existing member, from the admin console, without membership",

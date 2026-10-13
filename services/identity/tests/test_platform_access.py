@@ -80,6 +80,10 @@ ROUTES = [
     ("POST", "/api/admin/workspaces/{wid}/unclaim", "platform.workspaces.claim", True),
     ("POST", "/api/admin/workspaces/{wid}/freeze", "platform.workspaces.manage", True),
     ("POST", "/api/admin/workspaces/{wid}/unfreeze", "platform.workspaces.manage", True),
+    # A44 (admin_workspaces.py): the lifecycle preview changes nothing; the act (rename, delete,
+    # recover) is confirmed and dangerous, so it stops at the strict re-authentication.
+    ("POST", "/api/admin/workspaces/{wid}/lifecycle/preview", "platform.workspaces.manage", False),
+    ("POST", "/api/admin/workspaces/{wid}/lifecycle/{action}", "platform.workspaces.manage", True),
     # A37: the orphan list reads with both view permissions (checked in this order); the handovers
     # are the object's manage permission and the strict re-authentication (admin_ownership.py).
     ("GET", "/api/admin/ownership/orphans", "platform.workspaces.view", False),
@@ -355,6 +359,10 @@ def _risk_body(path):
 def _call(client, method, path, w):
     if method == "GET":
         return client.get(path)
+    if path.startswith("/api/admin/workspaces/") and path.endswith("/lifecycle/preview"):
+        # The plain account's personal workspace: a permitted role gets the rename preview (200,
+        # nothing changes); a personal workspace is never deleted.
+        return post(client, path, {"action": "rename", "name": "Matrix fixture rename"})
     if path.startswith("/api/admin/organizations/") and path.endswith("/preview"):
         # The fixture organization is active: a permitted role gets the freeze preview, 200.
         return post(client, path, {"action": "freeze"})

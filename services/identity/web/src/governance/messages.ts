@@ -1694,6 +1694,7 @@ export const governanceMessages = {
   "最后一名可用的最高管理员": { en: "the last usable super administrator", "zh-Hant": "最後一名可用的最高管理員" },
   "共享工作空间的所有权或管理权未移交": { en: "ownership or administration of a shared workspace not yet handed over", "zh-Hant": "共享工作空間的所有權或管理權未移交" },
   "组织的所有权或管理权未移交": { en: "ownership or administration of an organization not yet handed over", "zh-Hant": "組織的所有權或管理權未移交" },
+  "仍在恢复期内的已删除工作空间没有其他可用的拥有者或管理者": { en: "a deleted workspace still within its recovery period has no other usable owner or manager", "zh-Hant": "仍在恢復期內的已刪除工作空間沒有其他可用的擁有者或管理者" },
   // A17: browser push devices in the account detail
   "推送设备（{count} 个）": { en: "Push devices ({count})", "zh-Hant": "推播裝置（{count} 個）" },
   "推送设备": { en: "Push devices", "zh-Hant": "推播裝置" },

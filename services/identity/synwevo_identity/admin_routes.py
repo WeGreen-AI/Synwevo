@@ -84,6 +84,11 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     # one workspace — each previewed and confirmed (admin_apps.py). No route below shares `/apps`.
     from .admin_apps import build_router as build_app_catalogue_router
     r.include_router(build_app_catalogue_router(store, ident, audit))
+    # A44: rename, delete and recover a workspace, previewed and confirmed (admin_workspaces.py).
+    # Its four-segment `/workspaces/{wid}/lifecycle/…` paths cannot be read as the parent's
+    # `/workspaces/{wid}/claim`, `/unclaim`, `/freeze`, `/unfreeze` or A37's `/recover-owner`.
+    from .admin_workspaces import build_router as build_workspace_lifecycle_router, workspace_row
+    r.include_router(build_workspace_lifecycle_router(store, ident, audit))
 
     def _admin(request: Request, permission=_UNNAMED, *, dangerous: bool = False,
                step_up: bool = True) -> dict:
@@ -550,10 +555,9 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         """
         wid = w["id"]
         return {
-            "id": wid, "name": w["name"], "kind": w["kind"], "status": w["status"],
-            "created_at": w["created_at"],
-            "members": store.one("SELECT COUNT(*) AS n FROM memberships WHERE workspace_id=?",
-                                 (wid,))["n"],
+            # The lifecycle's WorkspaceRow (A44: its organization, deletion and recovery deadline)…
+            **workspace_row(store, w),
+            # …and the listing's own counts.
             "projects": store.one("SELECT COUNT(*) AS n FROM projects WHERE tenant=? AND deleted=0",
                                   (wid,))["n"],
             "apps": [row["app_id"] for row in store.all(
@@ -563,12 +567,21 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     # ------------------------------------------------------------------ workspaces
     @r.get("/workspaces")
     def list_workspaces(request: Request, q: str = Query("", max_length=100),
+                        status: str = Query("", max_length=20),
                         limit: int | None = None,
                         offset: int = Query(0, ge=0, le=2**63 - 1),
                         snapshot: int | None = Query(None, ge=0, le=2**63 - 1)):
+        """The workspaces that are not deleted, or with `status` one state: `active`, `frozen`,
+        `pending_claim`, or `deleted` (A44: `deleted_at` set — hidden everywhere else, listed here
+        with its recovery deadline). 400 `invalid_field` for any other value."""
         _admin(request, "platform.workspaces.view")
-        page = _page("workspaces", where="deleted_at IS NULL AND (?='' OR name LIKE ?)",
-                     params=(q, f"%{q}%"), order="kind='legacy' DESC, created_at, id",
+        if status not in ("", "active", "frozen", "pending_claim", "deleted"):
+            raise ServiceError(400, "invalid_field", "请选择有效的工作空间状态", {"field": "status"})
+        where = ("deleted_at IS NOT NULL" if status == "deleted" else
+                 "deleted_at IS NULL" + (" AND status=?" if status else ""))
+        page = _page("workspaces", where=f"{where} AND (?='' OR name LIKE ?)",
+                     params=(*((status,) if status not in ("", "deleted") else ()), q, f"%{q}%"),
+                     order="kind='legacy' DESC, created_at, id",
                      limit=None if limit is None else max(1, min(limit, 200)),
                      offset=offset, snapshot=snapshot)
         page["items"] = [_workspace_row(w) for w in page["items"]]

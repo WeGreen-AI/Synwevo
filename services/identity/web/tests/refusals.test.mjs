@@ -70,6 +70,10 @@ const SERVER = [
   // A34: the platform's read-only organization detail — the detail, its member list and the permission
   // explainer (governance/OrganizationDetail.tsx)
   { file: ID + "admin_org_detail.py", surfaces: ["admin"] },
+  // A44: the platform workspace lifecycle — rename, delete and recover, previewed and confirmed
+  // (governance/WorkspaceLifecycleDialog.tsx); its state machine in core is reached from there only
+  { file: ID + "admin_workspaces.py", surfaces: ["admin"] },
+  { file: CORE + "workspace_lifecycle.py", surfaces: ["admin"] },
   { file: ID + "ownership.py", surfaces: ["account", "admin"] },
   { file: ID + "admin_settings.py", surfaces: ["admin"] },
   { file: ID + "admin_model_prices.py", surfaces: ["admin"] },
@@ -154,6 +158,10 @@ const SERVER = [
   { file: CORE + "organizations.py", fns: ["platform_transition"], surfaces: ["admin"] },
   // A34: the member page both the tenant members list and the platform's organization detail read
   { file: CORE + "organizations.py", fns: ["member_page"], surfaces: ["org", "admin"] },
+  // A44-L1: a departure held back by a deleted workspace that can still be recovered — leaving or being
+  // removed on the organization pages, deleting one's own account, a suspension in the console (the
+  // last two through ownership.check_ownership_continuity)
+  { file: CORE + "organizations.py", fns: ["deleted_workspace_owner"], surfaces: ["account", "org", "admin"] },
   { file: CORE + "organizations.py", surfaces: ["org"] },
   { file: CORE + "org_roles.py", surfaces: ["org"] },
   { file: CORE + "data_flow.py", surfaces: [], why: "transfer refusals are met in the business applications (Agent, Forms, flows), which word them; the organization page reaches only the cap setter, after Organizations.update has refused an invalid value in its own words" },
@@ -261,6 +269,17 @@ const PASSWORD_REFUSALS = [
   password("口令不能包含本服务的名称，请换一个。", { reason: "service_name" }),
   password("口令不能包含你的邮箱或姓名，请换一个。", { reason: "personal" }),
 ];
+/** FIXTURE: a workspace deleted by the platform, its recovery deadline, and the server's two sentences for
+ *  them (organizations.deleted_workspace_owner formats the deadline in UTC). */
+const DELETED_OWNER_DETAIL = { workspace_id: "ws_fixture_deleted", name: "Fixture workspace", role: "owner", recover_until: 1792489260 };
+const DELETED_OWNER_TEXT = "此账户是已删除、仍在恢复期内的工作空间「Fixture workspace」唯一可用的拥有者；恢复期限（2026-10-20 09:41 UTC）结束前不能执行此操作。可请平台管理员恢复该工作空间后移交所有权，或等待恢复期限结束。";
+const DELETED_MANAGER_TEXT = "此账户是已删除、仍在恢复期内的工作空间「Fixture workspace」唯一可用的管理者；恢复期限（2026-10-20 09:41 UTC）结束前不能执行此操作。可请平台管理员恢复该工作空间并另设拥有者或管理者，或等待恢复期限结束。";
+/** A module constant's string value in a server source file (a refusal whose message is one). */
+function constant(file, name) {
+  const m = new RegExp(`^${name} = "([^"\\\\\\n]*)"$`, "m").exec(readFileSync(join(ROOT, file), "utf8"));
+  if (!m) throw new Error(`${file}: no string constant ${name}`);
+  return m[1];
+}
 const INDIRECT = [
   { files: [ID + "account_routes.py", ID + "auth_routes.py", ID + "registration.py"], match: /"weak_password", str\(e(xc)?\)/, refusals: PASSWORD_REFUSALS },
   { files: [ID + "auth_routes.py"], match: /\*_LOGIN_FAILED\)/, refusals: [{ status: 401, code: "bad_credentials", text: "邮箱或口令不正确" }] },
@@ -287,6 +306,15 @@ const INDIRECT = [
     { status: 400, code: "bad_change", text: "按工作空间只能启用或停用应用；访问策略对全平台生效", detail: { field: "change" } },
     { status: 400, code: "bad_change", text: "「Fixture app」不按工作空间授权：只能在全平台启用或停用", detail: { field: "change", scope: "organization" } },
     { status: 400, code: "bad_change", text: "「Fixture app」不按工作空间授权：访问策略对它不起作用", detail: { field: "change", scope: "personal" } }] },
+  // A44: the 503 of a deletion whose security journal entry failed — a module constant, since the
+  // entry may already be written (admin_workspaces.JOURNAL_UNAVAILABLE), read from the source.
+  { files: [ID + "admin_workspaces.py"], match: /"journal_unavailable", JOURNAL_UNAVAILABLE\)/, refusals: [
+    { status: 503, code: "journal_unavailable", text: constant(ID + "admin_workspaces.py", "JOURNAL_UNAVAILABLE") }] },
+  // A44-L1: the sentence names the workspace and its recovery deadline (organizations.deleted_workspace_owner),
+  // one for a sole owner and one for a sole manager; worded from `detail` by its code's template
+  { files: [CORE + "organizations.py"], match: /ServiceError\(409, "owner_of_deleted_workspace", message,/, refusals: [
+    { status: 409, code: "owner_of_deleted_workspace", text: DELETED_OWNER_TEXT, detail: DELETED_OWNER_DETAIL },
+    { status: 409, code: "owner_of_deleted_workspace", text: DELETED_MANAGER_TEXT, detail: { ...DELETED_OWNER_DETAIL, role: "admin" } }] },
   { files: [CLIENT + "session_routes.py"], match: /ServiceError\(403, failure,/, refusals: [
     { status: 403, code: "organization_unavailable", text: "该组织或工作空间当前不可用" }, { status: 403, code: "not_an_organization_member", text: "该组织或工作空间当前不可用" }] },
 ];
@@ -580,6 +608,29 @@ test("numbered refusals read in every language, from the detail the server sends
     { en: "The issuer in the discovery document from Test IdP does not match the configuration." });
   reads("org", 413, "file_too_large", "成员文件超过 5 MB 上限", { limit: 5 * MB }, { en: "The member file is over the 5 MB limit." });
   reads("api", 409, "client_disabled", "客户端 svc_1 已停用，停用的客户端没有可轮换的密钥", {}, { en: "This service client is disabled, so it has no secret to rotate." });
+});
+
+test("a departure held back by a deleted workspace names it and its recovery deadline, on every page that meets it, in every language (A44-L1)", () => {
+  const until = DELETED_OWNER_DETAIL.recover_until;
+  for (const surface of ["account", "org", "admin"]) {
+    const { ui } = pages[surface];
+    const when = (locale) => ui.formatDate(until * 1000, { dateStyle: "medium", timeStyle: "short" }, locale);
+    reads(surface, 409, "owner_of_deleted_workspace", DELETED_OWNER_TEXT, DELETED_OWNER_DETAIL, {
+      en: `This account is the only usable owner of “Fixture workspace”, a deleted workspace that can still be recovered. This cannot be done before its recovery deadline (${when("en")}). Ask a platform administrator to recover the workspace and then transfer its ownership, or wait until the recovery deadline has passed.`,
+      "zh-Hant": `此帳戶是已刪除、仍在恢復期內的工作空間「Fixture workspace」唯一可用的擁有者；恢復期限（${when("zh-Hant")}）結束前不能執行此操作。可請平台管理員恢復該工作空間後移交所有權，或等待恢復期限結束。`,
+      "zh-Hans": `此账户是已删除、仍在恢复期内的工作空间「Fixture workspace」唯一可用的拥有者；恢复期限（${when("zh-Hans")}）结束前不能执行此操作。可请平台管理员恢复该工作空间后移交所有权，或等待恢复期限结束。`,
+    });
+    reads(surface, 409, "owner_of_deleted_workspace", DELETED_MANAGER_TEXT, { ...DELETED_OWNER_DETAIL, role: "admin" }, {
+      en: `This account is the only usable manager of “Fixture workspace”, a deleted workspace that can still be recovered. This cannot be done before its recovery deadline (${when("en")}). Ask a platform administrator to recover the workspace and name another owner or manager, or wait until the recovery deadline has passed.`,
+    });
+    // no usable detail (a batch item carries the code only): the code's own sentence, never the generic one
+    for (const detail of [{}, { ...DELETED_OWNER_DETAIL, role: "member" }, { ...DELETED_OWNER_DETAIL, recover_until: "soon" }]) {
+      reads(surface, 409, "owner_of_deleted_workspace", "", detail, {
+        en: "This account is the only usable owner or manager of a deleted workspace that can still be recovered. This cannot be done before its recovery deadline. Ask a platform administrator to recover the workspace and then hand it over, or wait until the recovery deadline has passed.",
+        "zh-Hant": "此帳戶是一個已刪除、仍在恢復期內的工作空間唯一可用的擁有者或管理者；恢復期限結束前不能執行此操作。可請平台管理員恢復該工作空間後移交，或等待恢復期限結束。",
+      });
+    }
+  }
 });
 
 test("the server's catalogued sentence is preferred to a page's label for its code, and a template without its number falls back", () => {

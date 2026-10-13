@@ -77,6 +77,20 @@ export const messages = {
   "所选的组织角色已不存在，请刷新后重新选择。": { en: "A chosen organization role no longer exists. Refresh and choose again.", "zh-Hant": "所選的組織角色已不存在，請重新整理後重新選擇。" },
   "限制值必须是 {min} 至 {max} 之间的整数，留空表示继承": { en: "A limit must be a whole number from {min} to {max}; leave it empty to inherit.", "zh-Hant": "限制值必須是 {min} 至 {max} 之間的整數，留空表示繼承" },
   "只能冻结状态正常的工作空间，请刷新后再试。": { en: "Only an active workspace can be frozen. Refresh and try again.", "zh-Hant": "只能凍結狀態正常的工作空間，請重新整理後再試。" },
+  // A44-L1: a departure held back by a deleted workspace that can still be recovered (account deletion,
+  // organization leave and removal, suspension in the console): worded from `detail`, or from the code
+  "此账户是已删除、仍在恢复期内的工作空间「{name}」唯一可用的拥有者；恢复期限（{until}）结束前不能执行此操作。可请平台管理员恢复该工作空间后移交所有权，或等待恢复期限结束。": {
+    en: "This account is the only usable owner of “{name}”, a deleted workspace that can still be recovered. This cannot be done before its recovery deadline ({until}). Ask a platform administrator to recover the workspace and then transfer its ownership, or wait until the recovery deadline has passed.",
+    "zh-Hant": "此帳戶是已刪除、仍在恢復期內的工作空間「{name}」唯一可用的擁有者；恢復期限（{until}）結束前不能執行此操作。可請平台管理員恢復該工作空間後移交所有權，或等待恢復期限結束。",
+  },
+  "此账户是已删除、仍在恢复期内的工作空间「{name}」唯一可用的管理者；恢复期限（{until}）结束前不能执行此操作。可请平台管理员恢复该工作空间并另设拥有者或管理者，或等待恢复期限结束。": {
+    en: "This account is the only usable manager of “{name}”, a deleted workspace that can still be recovered. This cannot be done before its recovery deadline ({until}). Ask a platform administrator to recover the workspace and name another owner or manager, or wait until the recovery deadline has passed.",
+    "zh-Hant": "此帳戶是已刪除、仍在恢復期內的工作空間「{name}」唯一可用的管理者；恢復期限（{until}）結束前不能執行此操作。可請平台管理員恢復該工作空間並另設擁有者或管理者，或等待恢復期限結束。",
+  },
+  "此账户是一个已删除、仍在恢复期内的工作空间唯一可用的拥有者或管理者；恢复期限结束前不能执行此操作。可请平台管理员恢复该工作空间后移交，或等待恢复期限结束。": {
+    en: "This account is the only usable owner or manager of a deleted workspace that can still be recovered. This cannot be done before its recovery deadline. Ask a platform administrator to recover the workspace and then hand it over, or wait until the recovery deadline has passed.",
+    "zh-Hant": "此帳戶是一個已刪除、仍在恢復期內的工作空間唯一可用的擁有者或管理者；恢復期限結束前不能執行此操作。可請平台管理員恢復該工作空間後移交，或等待恢復期限結束。",
+  },
 };
 
 registerMessages(messages);

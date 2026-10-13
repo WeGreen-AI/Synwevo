@@ -371,9 +371,10 @@ class Auth:
           through membership", and refusing them a key would not stop them reading the files;
         * the legacy operator tenant (`SYNWEVO_UI_TENANT`, default `default`) with no workspace
           row — yes: that is the tenant the pre-identity browser modes use;
-        * frozen or deleted workspaces, workspaces without Synwevo Docs, and names that are not
-          a workspace at all — no. A typo used to mint a working key into a tenant nobody can
-          see, and data written there was effectively lost.
+        * frozen or deleted workspaces, any other state that is not `active` (an allow-list: a
+          state added later is refused until someone decides otherwise), workspaces without
+          Synwevo Docs, and names that are not a workspace at all — no. A typo used to mint a
+          working key into a tenant nobody can see, and data written there was effectively lost.
         """
         from .apps import DOCS_APP_ID
         tenant = (tenant or "").strip()
@@ -391,6 +392,8 @@ class Auth:
             return f"工作空间 {tenant} 已冻结，不能再为它签发密钥"
         if ws["status"] == "pending_claim":
             return None
+        if ws["status"] != "active":
+            return f"工作空间 {tenant} 当前不可用（{ws['status']}），不能为它签发密钥"
         app = self.store.one("SELECT status FROM apps WHERE id=?", (DOCS_APP_ID,))
         if app and app["status"] != "active":
             return "Synwevo Docs 已在平台范围停用"

@@ -700,7 +700,7 @@ class WebhookDispatcher:
             self._drop(d, "workspace_mismatch")
             return None, None
         ws = self.store.one("SELECT status FROM workspaces WHERE id=?", (sub["tenant"],))
-        if ws and ws["status"] in authority.BLOCKED_WORKSPACE_STATES:
+        if ws and ws["status"] not in authority.RUNNABLE_WORKSPACE_STATES:
             reason = f"workspace_{ws['status']}"
             self.disable_subscription(sub["id"], reason)
             self._drop(d, reason)

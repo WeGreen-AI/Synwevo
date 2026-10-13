@@ -289,7 +289,7 @@ test("the refusals of the preview and the batch read as sentences on the adminis
   const codes = ["bad_operation", "missing_users", "too_many", "already_applied", "ownership_required", "organization_ownership_required",
     "admin_operation_failed", "admin_confirmation_required", "admin_preview_invalid", "admin_preview_expired", "admin_preview_stale",
     "idempotency_conflict", "missing_reason", "no_user", "target_outranks_actor", "demote_first", "self_suspend", "last_super_admin",
-    "application_identity", "account_state_conflict"];
+    "application_identity", "account_state_conflict", "owner_of_deleted_workspace"];
   const generic = (locale) => ["操作失败，请重试。", "操作未完成，请刷新后重试。"].map((s) => tx(locale, s));
   for (const code of codes) {
     for (const locale of LOCALES) {
@@ -300,6 +300,28 @@ test("the refusals of the preview and the batch read as sentences on the adminis
   }
   // `too_many` with the limit the server sends is worded with that number
   assert.ok(inLocale("en", () => labels.resultText("too_many", "一次最多处理 {BULK_MAX} 个账户", { field: "user_ids", limit: 100 })).includes("100"));
+});
+
+test("every server sentence of a refused account (admin_bulk.REFUSAL_MESSAGES) reads in the reader's language", () => {
+  // The batch reports an account refused at preview with the server's sentence for its code.
+  const src = readFileSync(new URL("../../synwevo_identity/admin_bulk.py", import.meta.url), "utf8");
+  const start = src.indexOf("REFUSAL_MESSAGES = {");
+  const block = src.slice(start, src.indexOf("\n}\n", start));
+  const sentences = Object.fromEntries([...block.matchAll(/^\s+"([a-z_]+)":\s*\(?((?:\s*"[^"\n]*")+)\)?,/gm)]
+    .map((m) => [m[1], [...m[2].matchAll(/"([^"\n]*)"/g)].map((x) => x[1]).join("")]));
+  assert.ok(Object.keys(sentences).length >= 10, Object.keys(sentences).join(", "));
+  // A44-L1: the code-only form of organizations.deleted_workspace_owner, catalogued in all three languages
+  const deleted = sentences.owner_of_deleted_workspace;
+  assert.ok(deleted && ui.hasMessage(deleted), "owner_of_deleted_workspace has a catalogued server sentence");
+  const generic = (locale) => ["操作失败，请重试。", "操作未完成，请刷新后重试。"].map((s) => tx(locale, s));
+  for (const locale of LOCALES) {
+    assert.equal(inLocale(locale, () => labels.resultText("owner_of_deleted_workspace", deleted)), tx(locale, deleted), locale);
+    for (const [code, sentence] of Object.entries(sentences)) {
+      const worded = inLocale(locale, () => labels.resultText(code, sentence));
+      assert.ok(worded && !worded.includes(code) && !generic(locale).includes(worded), `${locale} ${code}: ${worded}`);
+      if (locale === "en") assert.ok(!HAN.test(worded), `${code}: ${worded}`);
+    }
+  }
 });
 
 test("every sentence of the bulk dialog and bar is catalogued in English and Traditional Chinese", () => {

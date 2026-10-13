@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import USABLE_OWNER_CONDITION as USABLE_WORKSPACE_OWNER
-from synwevo_core.organizations import USABLE_OWNER_CONDITION as USABLE_ORGANIZATION_OWNER
+from synwevo_core.organizations import USABLE_OWNER_CONDITION as USABLE_ORGANIZATION_OWNER, deleted_workspace_owner
 from synwevo_core.platform_access import LIVE_GRANT_EXISTS, SECOND_FACTOR_EXISTS, clock, current_rp_id
 from synwevo_core.store import now
 
@@ -55,8 +55,13 @@ _ORPHAN_ORGANIZATIONS = (
     f"WHERE m.organization_id=o.id AND {USABLE_ORGANIZATION_OWNER})")
 
 
+def _has_successor(role, eligible) -> bool:
+    """Another owner who can act for a departing owner; another owner or manager for an admin."""
+    return not ((role == "owner" and "owner" not in eligible) or not eligible.intersection({"owner", "admin"}))
+
+
 def _require_successor(role, eligible, *, organization=False):
-    if (role == "owner" and "owner" not in eligible) or not eligible.intersection({"owner", "admin"}):
+    if not _has_successor(role, eligible):
         if organization:
             raise ServiceError(409, "organization_ownership_required", "请先移交组织的所有权和管理权限")
         raise ServiceError(409, "ownership_required", "请先移交共享工作空间的所有权和管理权限")
@@ -88,10 +93,16 @@ its authorization does. A solo personal space may become inaccessible with its a
             _require_successor(member["role"], eligible, organization=True)
             state["organizations"].append({**member, "successors": others})
 
+    # A workspace the platform deleted counts while it can still be recovered (A44), as a deleted
+    # organization does above: its memberships come back with it. It cannot be handed over before
+    # a recovery, so it is refused with its own reason (A44-L1) — after every live workspace, whose
+    # handover is possible now.
+    deleted = None
     for member in store.all(
             "SELECT w.id,w.kind,w.status,w.organization_id,m.role,m.updated_at AS membership_updated_at "
             "FROM memberships m JOIN workspaces w ON w.id=m.workspace_id "
-            "WHERE m.user_id=? AND m.role IN ('owner','admin') AND w.deleted_at IS NULL ORDER BY w.id", (uid,)):
+            "WHERE m.user_id=? AND m.role IN ('owner','admin') "
+            "AND (w.deleted_at IS NULL OR (w.status='deleted' AND w.recover_until>?)) ORDER BY w.id", (uid, ts)):
         oid = member["organization_id"]
         org = (store.one("SELECT id,status,deleted_at,recover_until FROM organizations WHERE id=?", (oid,))
                if has_organizations and oid else None)
@@ -110,8 +121,14 @@ its authorization does. A solo personal space may become inaccessible with its a
             continue
         eligible = {row["role"] for row in others if row["status"] == "active" and row["deleted_at"] is None
                     and row["organization_member"]}
+        if member["status"] == "deleted" and not _has_successor(member["role"], eligible):
+            deleted = deleted or member
+            continue
         _require_successor(member["role"], eligible)
         state["workspaces"].append({**member, "organization": org, "successors": others})
+    if deleted:
+        ws = store.one("SELECT id, name, recover_until FROM workspaces WHERE id=?", (deleted["id"],))
+        raise deleted_workspace_owner(ws, deleted["role"])
     return state
 
 

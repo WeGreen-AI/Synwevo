@@ -89,3 +89,13 @@
   .org-detail .stat { flex-basis: calc(50% - 6px); padding: 10px 12px; }
   .org-detail .stat .v { font-size: 20px; }
 }
+
+/* A44: the workspace lifecycle dialog and its result (governance/WorkspaceLifecycleDialog.tsx).
+   Workspace and organization names are chosen by people and may be long or unbroken: they wrap
+   inside the dialog instead of widening it. Each count of the preview stands above the sentence
+   that says what it means, so a long label never squeezes that sentence into a narrow column. */
+.ws-lifecycle, .ws-lifecycle-name { min-width: 0; overflow-wrap: anywhere; }
+.ws-lifecycle .kv.ws-impact { grid-template-columns: minmax(0, 1fr); row-gap: 2px; }
+.ws-lifecycle .kv.ws-impact dd { margin-bottom: 8px; }
+.ws-lifecycle-notes { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 1.6; }
+.ws-name-error { color: var(--err); }

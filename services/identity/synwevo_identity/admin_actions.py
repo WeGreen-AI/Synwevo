@@ -88,6 +88,7 @@ ADMIN_ACTIONS: dict[str, dict] = {
     "admin.user.status": _a("user", "停用或恢复账户", "停用或恢復帳戶", "Suspend or restore an account"),
     "admin.workspace.claim": _a("workspace", "指派历史数据", "指派歷史資料", "Assign the historical data"),
     "admin.workspace.freeze": _a("workspace", "冻结工作空间", "凍結工作空間", "Freeze a workspace"),
+    "admin.workspace.lifecycle": _a("workspace", "重命名、删除或恢复工作空间", "重新命名、刪除或恢復工作空間", "Rename, delete or recover a workspace"),
     "admin.workspace.recover_owner": _a("workspace", "恢复工作空间所有者", "恢復工作空間所有者", "Recover a workspace's owner"),
     "admin.workspace.unclaim": _a("workspace", "撤销历史数据指派", "撤銷歷史資料指派", "Undo the historical-data assignment"),
     "admin.workspace.unfreeze": _a("workspace", "解冻工作空间", "解凍工作空間", "Unfreeze a workspace"),

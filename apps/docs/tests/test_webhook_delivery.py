@@ -310,6 +310,60 @@ def test_a_frozen_workspace_stops_delivery(hub):
     assert s["status"] == "disabled" and s["disabled_reason"] == "workspace_frozen"
 
 
+def test_a_deleted_workspace_disables_its_subscriptions_for_good(hub):
+    """A44: the platform deletes the workspace; its subscription is disabled at its next delivery
+    and stays disabled when the workspace is recovered (the preview's `webhooks_disabled_for_good`)."""
+    from synwevo_core import workspace_lifecycle
+    rx = hub.receiver()
+    sub = hub.create(rx.url, key="b_admin", events=["*"])
+    d = hub.dispatcher()
+    t = time.time()
+    hub.store.execute("INSERT INTO workspaces (id, name, kind, status, created_at, updated_at) "
+                      "VALUES ('tenant-b', 'B', 'org', 'active', ?, ?)", (t, t))       # TEST FIXTURE
+    workspace_lifecycle.platform_transition(hub.store, "tenant-b", "fixture-platform-admin", "delete",
+                                            reason="Isolated fixture: deletion")
+    fixture_event(hub.store, "tenant-b")
+    d.run_once()
+    assert rx.received == []
+    row = sub_rows(hub.store, sub["id"])[0]
+    assert row["status"] == "dropped" and row["last_error"] == "workspace_deleted"
+    workspace_lifecycle.platform_transition(hub.store, "tenant-b", "fixture-platform-admin", "recover",
+                                            reason="Isolated fixture: recovery")
+    s = hub.store.one("SELECT status, disabled_reason FROM webhook_subscriptions WHERE id=?", (sub["id"],))
+    assert s["status"] == "disabled" and s["disabled_reason"] == "workspace_deleted"
+    fixture_event(hub.store, "tenant-b")
+    d.run_once()
+    assert rx.received == []
+
+
+def test_a_workspace_state_nobody_has_decided_about_stops_delivery(hub, monkeypatch):
+    """The dispatcher's workspace check is an allow-list (`authority.RUNNABLE_WORKSPACE_STATES`):
+    a status added later disables the subscription until someone decides otherwise. The schema's
+    CHECK refuses an unknown status, so the row is stubbed (TEST FIXTURE) at the dispatcher's read."""
+    rx = hub.receiver()
+    sub = hub.create(rx.url, key="b_admin", events=["*"])
+    d = hub.dispatcher()
+    t = time.time()
+    hub.store.execute("INSERT INTO workspaces (id, name, kind, status, created_at, updated_at) "
+                      "VALUES ('tenant-b', 'B', 'org', 'active', ?, ?)", (t, t))       # TEST FIXTURE
+    original = type(hub.store).one
+
+    def stubbed(self, sql, args=()):
+        found = original(self, sql, args)
+        if sql.startswith("SELECT status FROM workspaces") and found:
+            return {**found, "status": "archived"}
+        return found
+    monkeypatch.setattr(type(hub.store), "one", stubbed)
+    try:
+        fixture_event(hub.store, "tenant-b")
+        d.run_once()
+    finally:
+        monkeypatch.setattr(type(hub.store), "one", original)
+    assert rx.received == []
+    s = hub.store.one("SELECT status, disabled_reason FROM webhook_subscriptions WHERE id=?", (sub["id"],))
+    assert s["status"] == "disabled" and s["disabled_reason"] == "workspace_archived"
+
+
 # ------------------------------------------------------------------ isolation, filters, pause
 def test_each_workspace_receives_only_its_own_events(hub):
     rx_a, rx_b = hub.receiver(), hub.receiver()

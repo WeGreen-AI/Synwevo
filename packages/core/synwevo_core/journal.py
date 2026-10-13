@@ -91,8 +91,22 @@ _CREDENTIAL_RECEIPT = "model_credential_withdrawn:"
 # holds the tightening and any loosening after it, which stands.
 APP_POLICY_KIND = "app_policy_tightened"
 _APP_POLICY_RECEIPT = "app_policy_tightened:"
+# A workspace deleted by the platform (workspace_lifecycle.py, A44): the organization deletion's
+# shape for one workspace. Written ahead of the SQL with a receipt in `meta` that commits with it
+# (record_workspace); replayed whatever the backup's time into a database that lacks the receipt:
+# the workspace becomes deleted again with the entry's own clock — never restarted, never replacing
+# a newer deletion — and the deletion's withdrawals are made again. A recovery is not journalled,
+# so a backup holding the receipt keeps a later recovery, and one taken before the deletion (or
+# between the entry and its COMMIT) deletes it again. A freeze replayed onto a row that is deleted
+# by then (_replay_freeze) is kept for its recovery: `previous_status='frozen'`. Like the
+# organization withdrawals, an attempt that fails after its line was appended (a directory fsync,
+# a full disk at the SQL or the COMMIT) leaves an intent without a receipt, which every later
+# restore applies — fail-closed; the console says so in its 503. Older restore code refuses the
+# unknown kind.
+WORKSPACE_DELETED_KIND = "workspace_deleted"
+_WORKSPACE_RECEIPT = "workspace_withdrawal:"
 ALWAYS_REPLAYED = (ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND} | RISK_KINDS | AGENT_MODEL_KINDS
-                   | {PAYER_FREEZE_KIND, APP_POLICY_KIND})
+                   | {PAYER_FREEZE_KIND, APP_POLICY_KIND, WORKSPACE_DELETED_KIND})
 
 KINDS = {
     "api_platform_approval_revoked",  # {approval_id}, including unconsumed approvals
@@ -108,6 +122,7 @@ KINDS = {
     "role_changed",             # {workspace_id, user_id, role}  — only recorded for downgrades
     "entitlement_revoked",      # {workspace_id, app_id, user_id}
     "workspace_frozen",         # {workspace_id}
+    WORKSPACE_DELETED_KIND,     # {event_id, workspace_id, deleted_at, recover_until, previous_status}
     "webhook_disabled",         # {subscription_id}
     "passkey_removed",          # {credential_id}
     "workspace_app_disabled",   # {workspace_id, app_id}
@@ -148,6 +163,7 @@ _REQUIRED = {
     "role_changed": ("workspace_id", "user_id", "role"),
     "entitlement_revoked": ("workspace_id", "app_id", "user_id"),
     "workspace_frozen": ("workspace_id",), "webhook_disabled": ("subscription_id",),
+    WORKSPACE_DELETED_KIND: ("event_id", "workspace_id"),
     "passkey_removed": ("credential_id",), "workspace_app_disabled": ("workspace_id", "app_id"),
     "app_disabled": ("app_id",), APP_POLICY_KIND: ("event_id", "app_id"),
     "invitation_revoked": ("invitation_id",), "tokens_revoked": (),
@@ -213,6 +229,13 @@ def _validate(entry, line: int) -> None:
     if kind == "model_credential_withdrawn" and (type(entry.get("credential_revision")) is not int
                                                  or entry["credential_revision"] < 1):
         bad()
+    if kind in ("organization_deleted", WORKSPACE_DELETED_KIND):
+        if any(type(entry.get(k)) not in (int, float) or not math.isfinite(entry[k]) or entry[k] < 0
+               for k in ("deleted_at", "recover_until")):
+            bad()
+        if (entry["recover_until"] != entry["deleted_at"] + 7 * 24 * 3600
+                or entry.get("previous_status") not in {"active", "frozen"}):
+            bad()
     if kind in ORGANIZATION_KINDS:
         scope = entry.get("workspace_ids")
         if (not isinstance(scope, list) or any(not isinstance(w, str) or not w.strip() for w in scope)
@@ -220,13 +243,6 @@ def _validate(entry, line: int) -> None:
             bad()
         if kind == "organization_role_changed" and entry["role"] not in {"admin", "member"}:
             bad()
-        if kind == "organization_deleted":
-            if any(type(entry.get(k)) not in (int, float) or not math.isfinite(entry[k]) or entry[k] < 0
-                   for k in ("deleted_at", "recover_until")):
-                bad()
-            if (entry["recover_until"] != entry["deleted_at"] + 7 * 24 * 3600
-                    or entry.get("previous_status") not in {"active", "frozen"}):
-                bad()
 
 
 def validated_lines(p: Path) -> list[tuple[dict, str]]:
@@ -298,6 +314,25 @@ def record_organization(store: Store, kind: str, *, organization_id: str, **fiel
         record(store, kind, event_id=eid, organization_id=organization_id,
                workspace_ids=workspace_ids, **fields)
         c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_ORG_RECEIPT + eid,))
+
+
+def record_workspace(store: Store, kind: str, *, workspace_id: str, **fields) -> None:
+    """A workspace deletion (WORKSPACE_DELETED_KIND), written ahead in the caller's write
+    transaction after its authorization and audit, before its SQL: an append/fsync failure aborts
+    the transaction; a later SQL or COMMIT failure leaves a restrictive intent without a receipt,
+    which a restore replays. So does a failure of the directory fsync after the line was written:
+    the caller sees an OSError, the transaction rolls back, and yet a later restore — from any
+    backup, even one taken after a successful retry and a recovery — deletes the workspace again
+    with this attempt's clock (record_organization's rule). The receipt commits atomically with the
+    deletion. Identifiers and lifecycle timestamps only — never a name or a reason."""
+    if kind != WORKSPACE_DELETED_KIND:
+        raise ValueError("not a workspace withdrawal")
+    with store.conn() as c:
+        if not c.in_transaction:
+            raise RuntimeError("workspace withdrawal requires a write transaction")
+        eid = new_id("wd")
+        record(store, kind, event_id=eid, workspace_id=workspace_id, **fields)
+        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_WORKSPACE_RECEIPT + eid,))
 
 
 def record_account(store: Store, kind: str, *, user_id: str, event_id: str) -> None:
@@ -444,10 +479,10 @@ def _apply_organization(c, e, orphan_orgs, orphan_workspaces):
         _org_revoke(c, scope, at)
         for wid in scope:
             # An old backup can contain the historical workspace but no org row
-            # or attachment. Freeze it instead of inventing that missing grant.
-            c.execute("UPDATE workspaces SET status='frozen',updated_at=? WHERE id=? AND status='active' "
-                      "AND (organization_id IS NULL OR organization_id<>? OR NOT EXISTS "
-                      "(SELECT 1 FROM organizations WHERE id=?))", (at, wid, oid, oid))
+            # or attachment. Freeze it instead of inventing that missing grant — a deleted one
+            # comes back frozen from its recovery.
+            _replay_freeze(c, wid, at, " AND (organization_id IS NULL OR organization_id<>? OR NOT EXISTS "
+                           "(SELECT 1 FROM organizations WHERE id=?))", (oid, oid))
     elif kind == "organization_member_removed":
         uid = e["user_id"]
         _org_revoke(c, scope, at, uid)
@@ -477,6 +512,47 @@ def _apply_organization(c, e, orphan_orgs, orphan_workspaces):
                       "AND u.status='active' AND u.deleted_at IS NULL)", (at, wid, oid))
     c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_ORG_RECEIPT + e["event_id"],))
     return 1
+
+
+def _replay_freeze(c, wid, t, where: str = "", args: tuple = ()) -> int:
+    """A replayed freeze of one workspace (`workspace_frozen`, an organization withdrawal's
+    substitute freeze, the ownerless freeze after demotions). An active row becomes frozen. A
+    deleted row stays deleted and is marked to come back frozen (`previous_status='frozen'`):
+    otherwise a recovery of the restored copy — the deletion replayed, or already in the backup —
+    would end in `active` and silently undo the freeze. Entries are applied in file order and a
+    freeze needs an active row, so a freeze entry that meets a deleted row postdates a recovery
+    (not journalled) the restore lost. `where`/`args` narrow both statements alike."""
+    n = c.execute("UPDATE workspaces SET status='frozen', updated_at=? WHERE id=? AND status='active'" + where,
+                  (t, wid, *args)).rowcount
+    return n + c.execute("UPDATE workspaces SET previous_status='frozen', updated_at=? WHERE id=? AND status='deleted' "
+                         "AND COALESCE(previous_status,'active')<>'frozen'" + where, (t, wid, *args)).rowcount
+
+
+def _apply_workspace_deleted(c, e) -> int:
+    """Make "deleted as of the entry" true unless the restored database holds its receipt (it
+    then holds the deletion and anything after it — a recovery included). Never on the
+    historical workspace (its lifecycle is claim/unclaim), never restarting the seven-day clock or
+    replacing a newer deletion (`deleted_at IS NULL OR deleted_at < ?`). A restored row that is
+    frozen — or deleted from frozen — stays `previous_status='frozen'`: a recovery must not thaw
+    what the restored database had frozen; a freeze entry replayed after this one marks it the
+    same way (_replay_freeze). The withdrawals are made again (workspace_lifecycle.withdraw,
+    the credentials bound to the revoked approvals included). A backup from before the workspace
+    existed has no row: nothing to do."""
+    receipt = _WORKSPACE_RECEIPT + e["event_id"]
+    if c.execute("SELECT 1 FROM meta WHERE key=?", (receipt,)).fetchone():
+        return 0
+    wid, at, n = e["workspace_id"], e["at"], 0
+    ws = c.execute("SELECT kind, status FROM workspaces WHERE id=?", (wid,)).fetchone()
+    if ws and ws["kind"] != "legacy" and ws["status"] != "pending_claim":
+        from .workspace_lifecycle import withdraw
+        n = c.execute("UPDATE workspaces SET status='deleted', deleted_at=?, recover_until=?, "
+                      "previous_status=CASE WHEN status='frozen' OR (status='deleted' AND previous_status='frozen') "
+                      "THEN 'frozen' ELSE ? END, updated_at=? WHERE id=? AND kind<>'legacy' "
+                      "AND status<>'pending_claim' AND (deleted_at IS NULL OR deleted_at<?)",
+                      (e["deleted_at"], e["recover_until"], e["previous_status"], at, wid, e["deleted_at"])).rowcount
+        withdraw(c, wid, at)
+    c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (receipt,))
+    return n
 
 
 def _end_platform_grants(c, uid: str, t: float) -> None:
@@ -707,6 +783,8 @@ def apply(store: Store, entries: list[dict]) -> dict:
                 n = _apply_organization(c, e, demoted_orgs, demoted_workspaces)
             elif k == UNCLAIM_KIND:
                 n = _apply_unclaim(c, e)
+            elif k == WORKSPACE_DELETED_KIND:
+                n = _apply_workspace_deleted(c, e)
             elif k == "api_key_revoked":
                 kid = e.get("key_id")
                 row = c.execute("SELECT COALESCE(lineage, id) AS l FROM api_keys WHERE id=?", (kid,)).fetchone()
@@ -884,8 +962,7 @@ def apply(store: Store, entries: list[dict]) -> dict:
                               "DO UPDATE SET revoked_at=MAX(COALESCE(app_entitlements.revoked_at,0),excluded.revoked_at)",
                               (e.get("workspace_id"), e.get("app_id"), e.get("user_id"), revoked_at, revoked_at)).rowcount
             elif k == "workspace_frozen":
-                n = c.execute("UPDATE workspaces SET status='frozen', updated_at=? WHERE id=? AND status='active'",
-                              (t, e.get("workspace_id"))).rowcount
+                n = _replay_freeze(c, e.get("workspace_id"), t)
             elif k == "webhook_disabled":
                 n = c.execute("UPDATE webhook_subscriptions SET status='disabled', disabled_reason=COALESCE(disabled_reason,'journal_replay'), "
                               "updated_at=? WHERE id=?", (t, e.get("subscription_id"))).rowcount
@@ -924,7 +1001,6 @@ def apply(store: Store, entries: list[dict]) -> dict:
                               "AND (w.organization_id IS NULL OR om.user_id IS NOT NULL) "
                               "AND u.status='active' AND u.deleted_at IS NULL LIMIT 1", (wid,)).fetchone()
             if not owner:
-                n = c.execute("UPDATE workspaces SET status='frozen', updated_at=? "
-                              "WHERE id=? AND status='active'", (t, wid)).rowcount
+                n = _replay_freeze(c, wid, t)
                 counts["role_changed_workspaces_frozen"] = counts.get("role_changed_workspaces_frozen", 0) + n
     return counts

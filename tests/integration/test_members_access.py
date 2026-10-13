@@ -147,6 +147,75 @@ def test_a_frozen_workspace_refuses_machine_callers_and_deferred_work(world):
     assert world["ident"].get_workspace(world["ws"])["status"] == "frozen"
 
 
+# ---------------------------------------------------------------- deleting (A44)
+def test_a_deleted_workspace_refuses_sessions_machine_callers_and_deferred_work(world):
+    """The platform deletes a team workspace through the console. Every way in is refused — a
+    session still naming it, a per-tab header, switching to it, its service account, a delegated
+    token, deferred work — and a recovery gives back what was refused live (membership, the
+    service account) but not what was withdrawn (tokens)."""
+    store, ident, carol_id = world["store"], world["ident"], world["carol"]["id"]
+    team = ident.create_workspace("团队空间（夹具）", owner_id=world["alice"]["id"])["id"]
+    ident.add_member(team, carol_id, "editor")
+    _, secret = oidc.Clients(store).register(client_id="team-nightly", app_id="docweave", name="团队夜间任务",
+                                             redirect_uris=[], confidential=True, kind="service",
+                                             workspace_id=team, api_scopes="docweave.read")
+    c = TestClient(world["api"])
+    data = {"grant_type": "client_credentials", "client_id": "team-nightly", "client_secret": secret}
+    service = c.post("/oidc/token", data=data).json()["access_token"]
+    raw = new_id("raw")
+    # FIXTURE: a delegated token in the team workspace, as the token endpoint would store it.
+    store.execute("INSERT INTO oauth_tokens (id,client_id,user_id,access_hash,scope,workspace_id,issued_at,"
+                  "access_expires_at,family_id) VALUES (?,?,?,?,?,?,?,?,?)",
+                  (new_id("tok"), "docweave-web", carol_id, oidc._sha(raw), "docweave.read docweave.write",
+                   team, now(), now() + 900, new_id("fam")))
+    carol = world["c"]["carol"]
+    _select(carol, team)
+    assert carol.get("/api/projects").status_code == 200
+    assert _v1(world, service).status_code == 200 and _v1(world, raw).status_code == 200
+
+    root = world["c"]["root"]
+    assert _post(root, "/api/auth/reauth", {"password": PW, "scope": "admin"}).status_code == 200
+    preview = _post(root, f"/api/admin/workspaces/{team}/lifecycle/preview", {"action": "delete"})
+    assert preview.status_code == 200 and preview.json()["impact"]["service_accounts"] == 1, preview.text
+    r = _post(root, f"/api/admin/workspaces/{team}/lifecycle/delete",
+              {"reason": REASON, "preview_token": preview.json()["preview_token"],
+               "idempotency_key": "a44_members_access_0001"})
+    assert r.status_code == 200 and r.json()["withdrawn"]["sessions"] >= 1, r.text
+
+    # the session was moved off it; one still naming it (FIXTURE: a row the move did not see) is refused
+    assert carol.get("/api/auth/me").json()["workspace_id"] != team
+    store.execute("UPDATE sessions SET workspace_id=? WHERE user_id=? AND revoked_at IS NULL", (team, carol_id))
+    refused = carol.get("/api/projects")
+    assert refused.status_code == 403 and refused.json()["error"] == "workspace_unavailable", refused.text
+    assert refused.json()["detail"]["workspace_status"] == "deleted"
+    store.execute("UPDATE sessions SET workspace_id=NULL WHERE user_id=?", (carol_id,))
+    pinned = carol.get("/api/projects", headers={"X-Synwevo-Workspace": team})
+    assert pinned.status_code == 403 and pinned.json()["error"] == "workspace_context_invalid", pinned.text
+    switch = _post(carol, "/api/auth/workspace", {"workspace_id": team})
+    assert switch.status_code == 404 and switch.json()["error"] == "no_workspace", switch.text
+    # machine callers: the service account's token and the delegated token are revoked, a new
+    # service token is refused, and deferred work of any principal there is refused
+    assert _v1(world, service).status_code == 401 and _v1(world, raw).status_code == 401
+    again = c.post("/oidc/token", data=data)
+    assert again.status_code in (400, 401) and again.json()["error"] == "invalid_client", again.text
+    for desc in ({"kind": "user", "user_id": carol_id, "tenant": team},
+                 {"kind": "delegated", "user_id": carol_id, "client_id": "docweave-web", "tenant": team},
+                 {"kind": "service_account", "client_id": "team-nightly", "tenant": team}):
+        assert authority.check(store, desc, need="read") == (False, "workspace_deleted"), desc
+
+    # recovered: refused live comes back, withdrawn does not
+    preview = _post(root, f"/api/admin/workspaces/{team}/lifecycle/preview", {"action": "recover"})
+    r = _post(root, f"/api/admin/workspaces/{team}/lifecycle/recover",
+              {"reason": REASON, "preview_token": preview.json()["preview_token"],
+               "idempotency_key": "a44_members_access_0002"})
+    assert r.status_code == 200 and r.json()["workspace"]["status"] == "active", r.text
+    _select(carol, team)
+    assert carol.get("/api/projects").status_code == 200
+    fresh = c.post("/oidc/token", data=data)
+    assert fresh.status_code == 200 and _v1(world, fresh.json()["access_token"]).status_code == 200
+    assert _v1(world, raw).status_code == 401, "a withdrawn token stays withdrawn"
+
+
 # ---------------------------------------------------------------- F324: administration is not content access
 def test_a_platform_admin_cannot_read_a_workspace_they_do_not_belong_to(world):
     root, pid = world["c"]["root"], world["pid"]

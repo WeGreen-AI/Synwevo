@@ -62,6 +62,19 @@ escalations and wait timeouts. Each reminder/escalation flag, in-app alert and o
 atomically, so repeated ticks/process restarts do not duplicate them. Reminders are visible at
 `/approvals/w/:wid/alerts`; this implementation does not send email or claim external delivery.
 
+A paused workspace — it or its organization frozen, or deleted and still inside its seven-day
+recovery window (`synwevo_core.workspace_availability`) — is skipped by the ticker: no task is
+revoked, no request stalls, no wait fails, no reminder or escalation fires. Nobody can act on its
+requests meanwhile (every operation refuses the workspace), and when it is available again the
+ticker goes on from there — votes already cast still count, the `request.wait` operation run gets
+its result, and deadlines, timeouts and anyone's own lost access apply at that first tick. A flow
+run whose step waits on that operation is not blocked by the pause: the flow engine holds it in
+`waiting_approval` (one history row with `workspace_unavailable`), looks again with a backoff of
+30 seconds up to 10 minutes, and goes on by itself once the workspace is available — no resume
+(`synwevo_core/flows/engine.py`, `_hold`). The run's own deadline still applies. A deletion past
+its recovery window is not a pause: its approvers lose access like any other, the wait fails with
+`access_revoked`, and a flow run that needs the workspace is blocked with `workspace_unavailable`.
+
 Events are version 1, with `object_kind="approval_request"`, the workspace and request identity,
 revision, state version, status and correlation. Consume the outbox using its event ID/cursor:
 

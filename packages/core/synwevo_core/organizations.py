@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
+from datetime import datetime, timezone
 
 from .audit_change import change
 from .errors import ServiceError
@@ -61,6 +62,29 @@ CREATE TABLE IF NOT EXISTS organization_idempotency (
 
 # Import this into Store's additive V6 column loop; do not rewrite tenant values.
 V6_COLUMNS = [("workspaces", "organization_id", "TEXT REFERENCES organizations(id)")]
+
+
+def deleted_workspace_owner(ws: dict, role: str = "owner") -> ServiceError:
+    """The refusal of a departure — leaving or being removed from the organization, deleting or
+    suspending the account — that would leave a workspace the platform deleted, and can still
+    recover, without its only usable owner (or, for a departing admin, without anybody to manage
+    it): its memberships come back with a recovery (A44). Unlike a live workspace it cannot be
+    handed over now — it is hidden until it is recovered, and the platform's ownership recovery
+    does not reach a deleted workspace — so the refusal says what can be done: a platform recovery
+    and then a handover, or waiting until the recovery window (`recover_until`) has ended, after
+    which the departure is allowed (A44-L1). `ws` carries `id`, `name` and `recover_until`; the
+    name and the time are in `detail` too, so every shell words it in its reader's language."""
+    until = ws["recover_until"]
+    when = datetime.fromtimestamp(until, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    if role == "owner":
+        message = (f"此账户是已删除、仍在恢复期内的工作空间「{ws['name']}」唯一可用的拥有者；恢复期限（{when}）结束前不能执行此操作。"
+                   "可请平台管理员恢复该工作空间后移交所有权，或等待恢复期限结束。")
+    else:
+        message = (f"此账户是已删除、仍在恢复期内的工作空间「{ws['name']}」唯一可用的管理者；恢复期限（{when}）结束前不能执行此操作。"
+                   "可请平台管理员恢复该工作空间并另设拥有者或管理者，或等待恢复期限结束。")
+    return ServiceError(409, "owner_of_deleted_workspace", message,
+                        {"workspace_id": ws["id"], "name": ws["name"], "role": "owner" if role == "owner" else "admin",
+                         "recover_until": until})
 
 
 def organization_for_workspace(store: Store, workspace_id: str) -> dict | None:
@@ -493,13 +517,23 @@ class Organizations:
                 raise ServiceError(403, "role_too_high", "只有组织所有者可以管理管理员和所有者")
             if target["role"] == "owner":
                 self._keep_owner(oid, uid)
-            # Removing org membership must not strand an attached workspace.
-            stranded = self.store.one("SELECT w.id FROM workspaces w JOIN memberships m ON m.workspace_id=w.id "
-                "WHERE w.organization_id=? AND w.deleted_at IS NULL AND m.user_id=? AND m.role='owner' "
+            # Removing org membership must not strand an attached workspace — nor one the platform
+            # deleted that can still be recovered (A44): its memberships come back with it, and a
+            # sole owner removed meanwhile would leave it ownerless, with nobody to name if it had
+            # no other member. Hand over first (after a recovery), or wait for its window to close.
+            # A live workspace is named first: its handover is possible now. A deleted one is
+            # refused with its own reason, since it cannot be handed over until it is recovered.
+            stranded = self.store.one("SELECT w.id, w.name, w.deleted_at, w.recover_until FROM workspaces w "
+                "JOIN memberships m ON m.workspace_id=w.id "
+                "WHERE w.organization_id=? AND (w.deleted_at IS NULL OR (w.status='deleted' AND w.recover_until>?)) "
+                "AND m.user_id=? AND m.role='owner' "
                 "AND NOT EXISTS (SELECT 1 FROM memberships other JOIN users u ON u.id=other.user_id "
                 "JOIN organization_memberships om ON om.user_id=u.id AND om.organization_id=w.organization_id "
                 "WHERE other.workspace_id=w.id AND other.role='owner' AND other.user_id<>? "
-                "AND u.status='active' AND u.deleted_at IS NULL) LIMIT 1", (oid, uid, uid))
+                "AND u.status='active' AND u.deleted_at IS NULL) ORDER BY w.deleted_at IS NOT NULL, w.id LIMIT 1",
+                (oid, now(), uid, uid))
+            if stranded and stranded["deleted_at"] is not None:
+                raise deleted_workspace_owner(stranded)
             if stranded:
                 raise ServiceError(409, "last_workspace_owner", "请先交接仍由此账户独自拥有的工作空间",
                                    {"workspace_id": stranded["id"]})

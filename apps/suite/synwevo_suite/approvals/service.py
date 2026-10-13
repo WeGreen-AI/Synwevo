@@ -16,6 +16,7 @@ from synwevo_core import auth as _auth
 from synwevo_core.capabilities import canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id, now
+from synwevo_core.workspace_availability import paused as workspace_paused
 from .definition import Definition, ROLE_RANK, check_values, evaluate, needs_requester, problems, requester_warnings
 
 OPEN = ("in_review", "stalled", "returned")
@@ -134,6 +135,17 @@ class Approvals:
                 current.pop("warnings", None)
             if fingerprint(output) != fingerprint(current):
                 hidden()
+
+    def _paused(self, wid):
+        """The request's workspace — or its organization — is frozen, or deleted and still
+        recoverable (`workspace_availability`). Then nobody may act on its requests (`_auth`
+        refuses) and nothing about them changes either: `_eligible` would refuse every approver
+        alike, and revoking their tasks, stalling the request or failing its waits would outlast
+        the pause — votes already cast lost, flow runs failed for good. They stay exactly as they
+        are until the workspace is available again; then the sweep goes on from there, deadlines
+        and a person's own lost access included. A workspace that will not come back is not
+        paused: its approvers lose access like any other."""
+        return workspace_paused(self.store, wid)
 
     def _eligible(self, wid, uid, requester=None, excluded=()):
         if uid == requester or uid in excluded:
@@ -501,6 +513,8 @@ class Approvals:
         return self.get(c,i)
 
     def _refresh(self,r,c=None):
+        if self._paused(r["workspace_id"]):
+            return self.store.one("SELECT * FROM approval_stage_runs WHERE id=? AND workspace_id=?",(r["stage_run_id"],r["workspace_id"]))
         changed = False
         excluded = self._excluded(r)
         for task in self._tasks(r):
@@ -622,6 +636,8 @@ class Approvals:
         return None
 
     def _settle(self,r,ts=None):
+        if self._paused(r["workspace_id"]):
+            return
         ts = ts or now()
         for w in self.store.all("SELECT * FROM approval_waits WHERE request_id=? AND workspace_id=? AND status='waiting'",(r["id"],r["workspace_id"])):
             status,reason = None,None
@@ -666,6 +682,8 @@ class Approvals:
             for item in batch:
                 with self.store.tx():
                     r = self._request(item["workspace_id"],item["id"])
+                    if self._paused(r["workspace_id"]):
+                        continue                    # no reminder, escalation, revocation or settled wait
                     if r["status"] in ("in_review","stalled"):
                         self._refresh(r)
                         stage = self.store.one("SELECT * FROM approval_stage_runs WHERE id=? AND workspace_id=?",(r["stage_run_id"],r["workspace_id"]))

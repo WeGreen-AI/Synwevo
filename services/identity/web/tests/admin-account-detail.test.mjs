@@ -108,6 +108,13 @@ test("what the server withholds is explained, and the quiet states are sentences
   assert.ok(!HAN.test(refused.replace(FIXTURE_TEXT, "")), `untranslated text or punctuation in English:\n${refused}`);
   assert.ok(render("zh-Hant", { ...FIXTURE, deletion: { pending: false, requested_at: null, due_at: null, overdue: false, cancellation_link_valid: false,
     blockers: ["last_super_admin", "ownership_required"] } }).includes("最後一名可用的最高管理員、共享工作空間的所有權或管理權未移交"), "the enumeration comma for a Chinese reader");
+  // A44-L1: a deleted workspace that can still be recovered holds the request back for its own reason
+  const deleted = { pending: false, requested_at: null, due_at: null, overdue: false, cancellation_link_valid: false,
+    blockers: ["owner_of_deleted_workspace"] };
+  assert.ok(render("en", { ...FIXTURE, deletion: deleted }).includes(
+    "would be refused: a deleted workspace still within its recovery period has no other usable owner or manager."), "the A44-L1 blocker in English");
+  assert.ok(render("zh-Hant", { ...FIXTURE, deletion: deleted }).includes("仍在恢復期內的已刪除工作空間沒有其他可用的擁有者或管理者"),
+    "the A44-L1 blocker in Traditional Chinese");
   const free = render("en", { ...FIXTURE, deletion: { pending: false, requested_at: null, due_at: null, overdue: false, cancellation_link_valid: false, blockers: [] } });
   assert.ok(free.includes("the person could request one now"), free);
   assert.ok(!render("en", { ...FIXTURE, deletion: undefined }).includes("Deletion request"), "an older server without the block: no section");

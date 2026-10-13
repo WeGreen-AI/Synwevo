@@ -19,7 +19,7 @@
  */
 import { ApiError } from "@synwevo/auth-client";
 import { apiFailureSentence, registerErrorTemplates, type ErrorTemplate } from "@synwevo/auth-client/api-messages";
-import { t } from "@synwevo/ui";
+import { formatDate, t } from "@synwevo/ui";
 import "../refusals.messages";
 
 const positive = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null);
@@ -51,6 +51,15 @@ const PROVIDER_FAULTS: Record<string, string> = {
   issuer_mismatch: "{provider} 的发现文档 issuer 与配置不一致",
   not_https: "{provider} 的端点不是 https",
   no_keys: "无法取得 {provider} 的签名密钥",
+};
+
+/** A44-L1: a departure — leaving or being removed from an organization, deleting or suspending the
+ *  account — that would leave a workspace the platform deleted, and can still recover, without its
+ *  only usable owner (`role` owner) or without anybody to manage it (`role` admin). Named with the
+ *  end of its recovery window (`recover_until`, seconds), and the two ways out. */
+const DELETED_WORKSPACE_OWNER: Record<string, string> = {
+  owner: "此账户是已删除、仍在恢复期内的工作空间「{name}」唯一可用的拥有者；恢复期限（{until}）结束前不能执行此操作。可请平台管理员恢复该工作空间后移交所有权，或等待恢复期限结束。",
+  admin: "此账户是已删除、仍在恢复期内的工作空间「{name}」唯一可用的管理者；恢复期限（{until}）结束前不能执行此操作。可请平台管理员恢复该工作空间并另设拥有者或管理者，或等待恢复期限结束。",
 };
 
 export const REFUSAL_TEMPLATES: Record<string, ErrorTemplate> = {
@@ -106,6 +115,11 @@ export const REFUSAL_TEMPLATES: Record<string, ErrorTemplate> = {
     const min = positive(d.min), max = positive(d.max);
     return min == null || max == null ? null : ["限制值必须是 {min} 至 {max} 之间的整数，留空表示继承", { min, max }] as const;
   },
+  owner_of_deleted_workspace: (d) => {
+    const name = text(d.name), until = positive(d.recover_until);
+    if (!name || until == null || typeof d.role !== "string" || !Object.hasOwn(DELETED_WORKSPACE_OWNER, d.role)) return null;
+    return [DELETED_WORKSPACE_OWNER[d.role], { name, until: formatDate(until * 1000, { dateStyle: "medium", timeStyle: "short" }) }] as const;
+  },
 };
 
 /** Codes whose several server sentences share one meaning, or whose sentence names something the
@@ -146,6 +160,8 @@ export const REFUSAL_SOURCES: Record<string, string> = {
   unknown_org_role: "所选的组织角色已不存在，请刷新后重新选择。",
   // the sentence quotes the status code word ("当前：frozen")
   not_active: "只能冻结状态正常的工作空间，请刷新后再试。",
+  // A44-L1: the sentence names a workspace and a time; without them in `detail`, this
+  owner_of_deleted_workspace: "此账户是一个已删除、仍在恢复期内的工作空间唯一可用的拥有者或管理者；恢复期限结束前不能执行此操作。可请平台管理员恢复该工作空间后移交，或等待恢复期限结束。",
 };
 
 registerErrorTemplates(REFUSAL_TEMPLATES);

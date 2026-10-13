@@ -42,6 +42,8 @@ export const WORKSPACE_STATUS: Record<string, string> = {
   active: "正常",
   frozen: "已冻结",
   pending_claim: "待认领",
+  // A44: listed only on the platform administration's request, during its recovery window
+  deleted: "已删除",
 };
 
 export const WORKSPACE_KIND: Record<string, string> = {

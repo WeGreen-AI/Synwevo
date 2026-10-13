@@ -99,16 +99,23 @@ export function CandidatePicker({ kind, candidates, total, value, onChange }: {
   </>;
 }
 
-type Props = { kind: OwnershipKind; held: Held; onDenied: () => void; onChanged: () => void };
+type Props = { kind: OwnershipKind; held: Held; onDenied: () => void; onChanged: () => void;
+  /** Bumped by the list above after an act of its own (a recovery, a deletion, a freeze) that can
+   *  add an object to this list or take one out: the panel then re-reads. */
+  revision?: number };
 
 /** The panel for one kind, below that kind's own list. `onChanged` runs after a handover so the
- *  list above (whose rows show the object) re-reads. */
-export function OwnershipRecovery({ kind, held, onDenied, onChanged }: Props) {
+ *  list above (whose rows show the object) re-reads; `revision` the other way round. */
+export function OwnershipRecovery({ kind, held, onDenied, onChanged, revision = 0 }: Props) {
   // The list is read with both view permissions (every built-in role that holds one holds both).
   // A caller without them is not offered a request the server would refuse and record.
   if (!held.has("platform.workspaces.view") || !held.has("platform.orgs.view")) return null;
-  return <OrphanPanel kind={kind} held={held} onDenied={onDenied} onChanged={onChanged} />;
+  return <OrphanPanel kind={kind} held={held} onDenied={onDenied} onChanged={onChanged} revision={revision} />;
 }
+
+/** Whether the panel must re-read: the list above has acted since the panel last read (a
+ *  revision other than the one it read at; the first read is the mount's own). */
+export const ownershipStale = (readAt: number, revision: number) => revision !== readAt;
 
 function statusCell(kind: OwnershipKind, item: Orphan): ReactNode {
   if (kind === "workspace") return WORKSPACE_STATUS[item.status] || item.status;
@@ -117,11 +124,17 @@ function statusCell(kind: OwnershipKind, item: Orphan): ReactNode {
     {org.recover_until && <span className="cell-note">{tr("恢复期限：{time}", { time: fmtTime(org.recover_until) })}</span>}</>;
 }
 
-function OrphanPanel({ kind, held, onDenied, onChanged }: Props) {
+function OrphanPanel({ kind, held, onDenied, onChanged, revision = 0 }: Props) {
   useI18n();
   const headingId = useId();
   const manage = permitted(held, kind === "workspace" ? "platform.workspaces.manage" : "platform.orgs.manage");
   const { data, err, loading, reload } = useAdminData<Orphans>(PATH, onDenied);
+  const readAt = useRef(revision);
+  useEffect(() => {
+    if (!ownershipStale(readAt.current, revision)) return;
+    readAt.current = revision;
+    reload();
+  }, [revision, reload]);
   const [action, setAction] = useState<Orphan | null>(null);
   const [chosen, setChosen] = useState("");
   // What the last handover did. The row that offered it is gone once the list re-reads, so focus

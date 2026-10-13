@@ -12,14 +12,17 @@ from typing import Any
 from .. import data_flow
 from ..capabilities import MAX_DEPTH, canonical, fingerprint, record_event
 from ..errors import ServiceError
+from ..organizations import current_membership, organization_for_workspace
 from ..store import new_id, now
+from ..workspace_availability import LOST, PAUSED, availability
 from .models import (BranchStep, CallStep, Definition, FailStep, Policy, Read, WaitStep, bounded, references)
 from .triggers import Triggers
 
 ACTIVE = ("queued", "running", "waiting_input", "waiting_approval", "retrying")
 # Where a run stays until its owner acts. No worker claims these again (`claim` selects ACTIVE):
 # "paused" by the owner, "blocked" by a refusal (401/403), "unknown" after a dispatched call
-# whose outcome was not confirmed. `resume` re-queues them, `cancel` ends them.
+# whose outcome was not confirmed. `resume` re-queues them, `cancel` ends them. A workspace the run
+# needs being paused is not a refusal of that kind: the run stays ACTIVE and is held (`_hold`).
 PARKED = ("paused", "blocked", "unknown")
 TERMINAL = ("succeeded", "partial", "failed", "cancelled")
 # Every state a row of flow_runs can hold: what a reader that lists runs by state has to expect.
@@ -31,6 +34,18 @@ COMPLETE = ("succeeded", "partial")
 # The operation itself ended the receipt: a definite outcome, so on_error applies. Unlike a lost
 # acknowledgement this is not an uncertain dispatch and is never "unknown".
 DEFINITE = {"failed": "flow_operation_failed", "cancelled": "flow_operation_cancelled"}
+# A workspace a step needs is paused — it or its organization frozen, or deleted and still inside
+# its recovery window (workspace_availability) — so the run is held: it stays in the state it was
+# waiting in and looks again after HOLD_MIN_S, then after as long as the pause has lasted so far,
+# never more than HOLD_MAX_S apart. Its history says why once, with this code; a workspace that
+# will not come back blocks the run with the same code.
+HOLD_MIN_S, HOLD_MAX_S = 30, 600
+WORKSPACE_UNAVAILABLE = "workspace_unavailable"
+# The refusals a paused workspace answers with: the application gate, the transfer question (whose
+# refusal never names the workspace) and an application's own lifecycle refusal. Only these are
+# held when a workspace the run reaches is paused; any other refusal blocks as before.
+PAUSE_REFUSALS = ("app_access_denied", "transfer_source_unavailable", "transfer_target_unavailable",
+                  WORKSPACE_UNAVAILABLE, "workspace_frozen", "organization_unavailable")
 
 
 def error(code, status=409):
@@ -629,6 +644,8 @@ class Flows(Triggers):
                 if self.clock() >= run["deadline"]:
                     raise error("flow_deadline_exceeded")
                 spec, step = self._stored_step(run)
+                if self._held(t, run, spec, step):
+                    return True
                 ts = self.clock()
                 t.execute("INSERT OR IGNORE INTO flow_steps (run_id,step_id,status,started_at,updated_at) VALUES (?,?,'queued',?,?)",
                           (run["id"], step.id, ts, ts))
@@ -662,6 +679,78 @@ class Flows(Triggers):
             self._failure(claim, exc, charges=run.get("_charges", 0) if run and not committed else 0,
                           receipt_read=bool(run and run.get("_receipt_read")))
         return True
+
+    def _closed(self, user_id, places):
+        """LOST or PAUSED (workspace_availability) for these workspaces as the run's owner meets
+        them now, or None when every one of them is available. LOST comes first: holding a run for
+        one workspace is pointless when another will not come back. A workspace the owner no
+        longer belongs to (or whose organization they left) is not asked at all: their own access
+        is gone, the step's own refusal says so, and nobody who left learns whether it is paused —
+        the order Objects.standing keeps for a discussion."""
+        found = None
+        for wid in sorted(w for w in places if isinstance(w, str) and w):
+            if not self.caps.identity.membership(wid, user_id):
+                continue
+            org = organization_for_workspace(self.store, wid)
+            if org and not current_membership(self.store, org["id"], user_id):
+                continue
+            state = availability(self.store, wid)
+            if state == LOST:
+                return LOST
+            if state == PAUSED:
+                found = PAUSED
+        return found
+
+    def _needs(self, run, spec, step):
+        """The workspaces this step reaches before it can tell anything: where it runs and reads
+        (``_places``), and where the completed steps it takes a value from are read again
+        (``_resolve`` → ``_source``)."""
+        needs = set(self._places(step))
+        taken = {path[1] for path in references(step.model_dump(mode="json")) if path[0] == "steps"}
+        if taken:
+            done = {r["step_id"] for r in self.store.all(
+                "SELECT step_id FROM flow_steps WHERE run_id=? AND status IN ('succeeded','partial')", (run["id"],))}
+            steps = {s.id: s for s in spec.steps}
+            for step_id in taken & done:
+                needs |= self._places(steps.get(step_id))
+        return needs
+
+    def _held(self, t, run, spec, step):
+        """Before the step does anything: a workspace it needs is paused, so the run is held
+        (``_hold``) — nothing dispatched, no call spent, no attempt counted — or will not come
+        back, so it is blocked with workspace_unavailable instead of the application gate's
+        generic refusal. The run's deadline was asked before this and still ends it; a wait's own
+        timeout applies at its first check after the pause."""
+        state = self._closed(run["user_id"], self._needs(run, spec, step))
+        if state == LOST:
+            raise error(WORKSPACE_UNAVAILABLE, 403)
+        if state == PAUSED:
+            self._hold(t, run, step)
+            return True
+        return False
+
+    def _hold(self, t, run, step):
+        """Release the run to the state it was waiting in — a wait's own state, the state of the
+        operation a dispatched step waits for, or queued — and look again later (HOLD_MIN_S …
+        HOLD_MAX_S, growing with the pause). The step row is left exactly as it is: once the
+        workspace is available the run goes on from there by itself, with no resume (A44)."""
+        saved = self._step_row(run)
+        if isinstance(step, WaitStep):
+            state = step.state
+        elif saved and saved["status"] == "operation_wait":
+            prior = self._prior_op(run, step, saved)
+            state = "waiting_approval" if prior and prior["status"] == "waiting_approval" else "waiting_input"
+        else:
+            state = "queued"
+        ts = self.clock()
+        last = self.store.one("SELECT type, error_code, created_at FROM flow_history WHERE run_id=? ORDER BY seq DESC LIMIT 1",
+                              (run["id"],))
+        if last and last["type"] == "waiting" and last["error_code"] == WORKSPACE_UNAVAILABLE:
+            since = last["created_at"]                      # still the same pause: no new history row
+        else:
+            since = ts
+            self._history(t, run, "waiting", state, code=WORKSPACE_UNAVAILABLE)
+        self._release(t, run, state, due=min(ts + min(HOLD_MAX_S, max(HOLD_MIN_S, ts - since)), run["deadline"]))
 
     def _wait(self, t, run, spec, step, saved):
         if self.clock() >= saved["started_at"] + step.timeout_s:
@@ -836,6 +925,13 @@ class Flows(Triggers):
             waiting = saved["status"] == "operation_wait" and (exc.status in (401, 403) or not receipt_read)
             uncertain = (not waiting and saved["status"] in ("executing", "operation_wait", "unknown")
                          and exc.code not in DEFINITE.values())
+            if exc.status == 403 and exc.code in PAUSE_REFUSALS and not uncertain and self._paused_source(run, spec, step):
+                # Refused where a workspace is paused that ``_held`` does not ask before the step: a
+                # source whose content the step would carry (the transfer question), or a read the
+                # attempt reached. Held like the step's own workspace, not blocked; its calls stay
+                # spent, its attempts do not.
+                self._hold(t, run, step)
+                return
             if exc.code == "flow_outcome_unknown" or uncertain:
                 state = "unknown"
             if exc.status in (401, 403) or (waiting and exc.code != "flow_deadline_exceeded"):
@@ -859,6 +955,13 @@ class Flows(Triggers):
                 self._advance(t, run, spec, step, target=step.on_error)
             else:
                 self._release(t, run, state, due=due, code=exc.code)
+
+    def _paused_source(self, run, spec, step):
+        try:
+            places = self._sources(run) | self._needs(run, spec, step)
+        except ServiceError:                                # a chain this release cannot read: no hold
+            return False
+        return self._closed(run["user_id"], places) == PAUSED
 
     def pause(self, run_id, *, user_id):
         return self._control(run_id, user_id, "paused")

@@ -283,6 +283,46 @@ def test_docs_link_cards_follow_the_readers_own_access(org):
         assert org.get(C, params={"url": url}).status_code == 404, url
 
 
+def test_a_docs_link_card_closes_while_the_projects_organization_is_frozen_or_deleted(org):
+    """A44-44c-3: the card asked only the workspace row, so while the *organization* was frozen, or
+    deleted inside its recovery window, a member still got the project's title, its workspace's
+    name and a job's status and counts — while the project's discussion answered 403
+    `workspace_unavailable`. The card now asks `workspace_availability` (the workspace and its
+    organization) and answers the same 404 `no_card` it gives a frozen workspace; once the
+    organization is back, the card is back."""
+    from synwevo_core.apps import bootstrap_docs_app
+    from synwevo_core.organizations import Organizations
+    from synwevo_core.store import now
+    st = org.ident.store
+    bootstrap_docs_app(st, org.ident, launch_url="http://docs.testserver/")
+    team = st.one("SELECT id FROM workspaces WHERE organization_id=? AND kind='org'", (org.oid,))["id"]
+    t = now()
+    st.execute("INSERT INTO projects (id,name,created_at,updated_at,tenant,record_rule,output,mapping_rev,rev,step) VALUES (?,?,?,?,?,'{}','{}',0,1,'sources')", ("p_team2", "团队合同", t, t, team))
+    st.execute("INSERT INTO jobs (id,project_id,status,created_at,counts,tenant,run_no) VALUES (?,?,?,?,?,?,1)", ("j_team2", "p_team2", "completed", t, '{"success": 3}', team))
+    orgs, owner = Organizations(st, org.ident), org.users["owner"]["id"]
+    C, links = f"{M}/link-card", ("http://docs.testserver/p/p_team2", "http://docs.testserver/p/p_team2/jobs/j_team2")
+
+    def answers() -> list[tuple]:
+        sign_in(org, "owner")               # a fresh session each time: a lifecycle act revokes the old ones
+        out = []
+        for url in links:
+            r = org.get(C, params={"url": url})
+            out.append((r.status_code, r.json().get("error") or r.json().get("title")))
+        return out
+
+    open_card, closed = [(200, "团队合同")] * 2, [(404, "no_card")] * 2
+    assert answers() == open_card
+    for close, reopen in (("freeze", "unfreeze"), ("delete", "recover")):
+        orgs.platform_transition(org.oid, owner, close, reason="Fixture: organization lifecycle for link cards")
+        assert st.one("SELECT status FROM workspaces WHERE id=?", (team,))["status"] == "active", "only the organization changed"
+        assert answers() == closed, close
+        orgs.platform_transition(org.oid, owner, reopen, reason="Fixture: organization lifecycle for link cards")
+        assert answers() == open_card, reopen
+    # the workspace itself frozen: the same answer as before
+    org.ident.set_workspace_frozen(team, True)
+    assert answers() == closed
+
+
 def test_announcements_and_reports_are_accepted_here_and_reviewed_on_the_account_service(org):
     """A group's announcement is one pinned text set by its managers and told once as a digest;
     a report of a message reaches the organization's messaging managers with an actionable item

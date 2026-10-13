@@ -70,6 +70,8 @@ export const ORG_ROLE_LABELS: Record<string, string> = { owner: "所有者", adm
 export const DELETION_BLOCKER_LABELS: Record<string, string> = {
   last_super_admin: "最后一名可用的最高管理员", ownership_required: "共享工作空间的所有权或管理权未移交",
   organization_ownership_required: "组织的所有权或管理权未移交",
+  // A44-L1: it cannot be handed over before a platform recovery, so it holds the request back until then
+  owner_of_deleted_workspace: "仍在恢复期内的已删除工作空间没有其他可用的拥有者或管理者",
 };
 
 export function amrText(amr: string): string {

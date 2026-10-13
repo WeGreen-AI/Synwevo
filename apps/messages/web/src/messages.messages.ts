@@ -424,6 +424,7 @@ export const messages = {
   "个人工作空间的项目没有组织会话；复制到组织工作空间后才能讨论": { en: "Projects in a personal workspace have no organization conversation. Copy the project to an organization workspace to discuss it", "zh-Hant": "個人工作空間的專案沒有組織會話；複製到組織工作空間後才能討論" },
   "该组织当前不可用": { en: "This organization is currently unavailable", "zh-Hant": "該組織目前無法使用" },
   "这个讨论已归档": { en: "This discussion is archived", "zh-Hant": "這個討論已封存" },
+  "项目所在的工作空间当前不可用，讨论已暂停": { en: "The project's workspace is unavailable right now, so its discussion is paused", "zh-Hant": "專案所在的工作空間目前無法使用，討論已暫停" },
   "发出超过 {n} 秒的消息不能再撤回，仍可以「删除（仅自己）」": { en: "Messages older than {n} seconds can no longer be recalled; you can still delete them for yourself", "zh-Hant": "發出超過 {n} 秒的訊息不能再撤回，仍可以「刪除（僅自己）」" },
   "发出超过 {n} 分钟的消息不能再撤回，仍可以「删除（仅自己）」": { en: "Messages older than {n} minutes can no longer be recalled; you can still delete them for yourself", "zh-Hant": "發出超過 {n} 分鐘的訊息不能再撤回，仍可以「刪除（僅自己）」" },
   "发出超过 {n} 秒的消息不能再编辑": { en: "Messages older than {n} seconds can no longer be edited", "zh-Hant": "發出超過 {n} 秒的訊息不能再編輯" },

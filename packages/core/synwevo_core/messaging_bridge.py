@@ -41,8 +41,9 @@ from .apps import DOCS_APP_ID
 from .config import DOCS_NAME
 from .errors import ServiceError
 from .identity import Identity
-from .organizations import current_membership, organization_for_workspace, workspace_access_failure
+from .organizations import current_membership, organization_for_workspace
 from .store import Store, new_id, now
+from .workspace_availability import AVAILABLE, LOST, PAUSED, availability
 
 log = logging.getLogger("synwevo.messaging_bridge")
 
@@ -84,7 +85,11 @@ MAX_ATTEMPTS = 10
 USER_MESSAGE = "user.message"
 #: Definite refusals at delivery. Recorded on the row; the sender's receipt becomes failed.
 USER_MESSAGE_REFUSALS = frozenset({"archived", "audience_changed", "no_conversation", "not_member",
-                                   "account_unavailable", "blocked", "message_too_long", "empty_message"})
+                                   "account_unavailable", "blocked", "message_too_long", "empty_message",
+                                   "workspace_unavailable"})
+#: A reader's standing towards an object (`Objects.standing`): may open it now; may again once its
+#: workspace is available (paused — frozen, or deleted and still recoverable); or not at all.
+OPEN = "open"
 MAX_TITLE = 80
 MAX_SUBTITLE = 80
 LOCALES = ("zh-Hans", "zh-Hant", "en")
@@ -330,24 +335,35 @@ class Objects:
         """The reader's own access to the object, re-read now. Same rule as `docs_links` for a
         project (active member of an active workspace whose organization they are still in); for
         a copy request, the requester or someone who may decide it."""
+        return self.standing(anchor, uid) == OPEN
+
+    def standing(self, anchor: dict | None, uid: str | None) -> str:
+        """OPEN, PAUSED or LOST: `may_open`, and — when the answer is no — whether it is the
+        reader's own access that is gone (LOST: their account, their workspace membership, their
+        organization membership, the object, or a workspace that will not come back) or only the
+        project's workspace that is stopped for now (PAUSED: it, or its organization, is frozen,
+        or deleted and still inside its recovery window — `workspace_availability`). A paused
+        project keeps its discussion's members; a lost one removes them (`reconcile`)."""
         if not uid or not anchor:
-            return False
+            return LOST
         u = self.ident.get_user(uid)
         if not u or u.get("status") != "active":
-            return False
+            return LOST
         if anchor["kind"] == "project":
-            ws = self.ident.get_workspace(anchor["workspace_id"])
-            if not ws or ws.get("status", "active") != "active" or ws.get("deleted_at"):
-                return False
-            if not self.ident.membership(anchor["workspace_id"], uid):
-                return False
-            return workspace_access_failure(self.store, anchor["workspace_id"], uid) is None
+            wid = anchor["workspace_id"]
+            if not self.ident.membership(wid, uid):
+                return LOST
+            org = organization_for_workspace(self.store, wid)
+            if org and not current_membership(self.store, org["id"], uid):
+                return LOST
+            state = availability(self.store, wid)
+            return OPEN if state == AVAILABLE else state
         if anchor["kind"] == "copy_request":
             if uid == anchor.get("requester_id"):
-                return True
+                return OPEN
             from .project_copies import ProjectCopies
-            return ProjectCopies(self.store, self.ident).can_decide(anchor["organization_id"], anchor["workspace_id"], uid)
-        return False
+            return OPEN if ProjectCopies(self.store, self.ident).can_decide(anchor["organization_id"], anchor["workspace_id"], uid) else LOST
+        return LOST
 
     def initial_members(self, anchor: dict) -> list[str]:
         """Who is in the conversation when it is created: everyone who may open the object now."""
@@ -372,7 +388,11 @@ class ObjectConversations:
 
     def _anchor_for(self, app: str, kind: str, object_id: str, uid: str) -> dict:
         anchor = self.objects.anchor(app, kind, object_id)
-        if not anchor or not self.objects.may_open(anchor, uid):
+        state = self.objects.standing(anchor, uid) if anchor else LOST
+        if state == PAUSED:
+            # Only someone whose own access stands is told: they know the project already.
+            raise paused_refusal()
+        if state != OPEN:
             # 404, never 403: a person who cannot open the object must not learn that it exists
             raise ServiceError(404, "no_object", "找不到该对象，或你没有权限查看它")
         return anchor
@@ -457,9 +477,13 @@ class ObjectConversations:
 
     # ------------------------------------------------------------------ keeping membership honest
     def reconcile(self, cid: str) -> list[str]:
-        """Remove every member who can no longer open the object (the workspace membership they had
-        is gone, the workspace or organization is not active). The owner losing access hands the
-        group to the earliest remaining member; nobody left archives it. Returns who was removed."""
+        """Remove every member who has lost the object (`Objects.standing` LOST: their account,
+        workspace membership or organization membership is gone, the object is gone, or its
+        workspace will not come back). A workspace that is only paused — frozen, or deleted and
+        still recoverable, itself or its organization — removes nobody and archives nothing: its
+        discussion is refused live while it lasts (`Messaging._member`) and is as it was afterwards.
+        The owner losing access hands the group to the earliest remaining member; nobody left
+        archives it. Returns who was removed."""
         m = self.store.one("SELECT * FROM object_conversations WHERE conversation_id=?", (cid,))
         conv = self.store.one("SELECT * FROM conversations WHERE id=?", (cid,)) if m else None
         if not m or not conv or conv["archived_at"]:
@@ -467,7 +491,7 @@ class ObjectConversations:
         anchor = self.objects.anchor(m["app"], m["kind"], m["object_id"])
         actor = app_account_id(self.store, m["app"])
         members = self.store.all("SELECT user_id, role FROM conversation_members WHERE conversation_id=? AND left_at IS NULL ORDER BY joined_at, user_id", (cid,))
-        gone = [x for x in members if not is_app_account(self.store, x["user_id"]) and not (anchor and self.objects.may_open(anchor, x["user_id"]))]
+        gone = [x for x in members if not is_app_account(self.store, x["user_id"]) and self.objects.standing(anchor, x["user_id"]) == LOST]
         if not gone:
             return []
         removed = [x["user_id"] for x in gone]
@@ -496,6 +520,57 @@ class ObjectConversations:
             except Exception:  # noqa: BLE001 - one conversation's failure must not stop the sweep
                 log.exception("reconciling object conversation %s failed", r["conversation_id"])
         return n
+
+
+def paused_refusal() -> ServiceError:
+    """The refusal of a paused project's discussion — every read and write, live
+    (`Messaging._member`), and the object's own entry (`ObjectConversations.get`/`open`). Its
+    members stay and nothing is archived: when the workspace is available again the discussion is
+    as it was."""
+    return ServiceError(403, "workspace_unavailable", "项目所在的工作空间当前不可用，讨论已暂停")
+
+
+#: The live project discussions with their project's workspace (`tenant`). A deleted project is not
+#: here: its discussion follows the object's access as it always has (`reconcile`).
+_PROJECT_DISCUSSIONS = ("SELECT o.conversation_id, p.tenant FROM object_conversations o JOIN projects p ON p.id=o.object_id "
+                        "WHERE o.kind='project' AND COALESCE(p.deleted, 0)=0 AND p.tenant IS NOT NULL AND p.tenant<>''")
+
+
+def conversation_availability(store: Store, cid: str, ts: float | None = None) -> str:
+    """AVAILABLE, PAUSED or LOST for `cid`: its project's workspace's availability when `cid` is a
+    live project's discussion (`workspace_availability`), AVAILABLE for anything else. A
+    discussion whose workspace is not available is closed to everyone, whatever their own
+    standing, at once — the sweep (`reconcile`) only does the bookkeeping later:
+
+    * PAUSED (frozen, or deleted and still recoverable — the workspace or its organization):
+      refused with `paused_refusal`; the members stay and everything is back once it is available.
+    * LOST (deleted past its recovery window, gone, or never claimed): answered as if the person
+      had already been removed (`404 no_conversation`), before the sweep has removed them.
+
+    The same answer stops the discussion's unread digest and push (`Notifier.stale_reason`)."""
+    try:
+        row = store.one(_PROJECT_DISCUSSIONS + " AND o.conversation_id=?", (cid,))
+    except sqlite3.OperationalError:            # a deployment without the bridge or Docs' tables
+        return AVAILABLE
+    return availability(store, row["tenant"], ts) if row else AVAILABLE
+
+
+def closed_conversations(store: Store, uid: str) -> dict[str, str]:
+    """`{conversation_id: PAUSED|LOST}` for every project discussion `uid` is an active member of
+    whose workspace is not available now — computed once per listing, search or sync, so those
+    can leave the closed ones out in SQL (before any LIMIT) rather than after it."""
+    try:
+        rows = store.all(_PROJECT_DISCUSSIONS + " AND o.conversation_id IN (SELECT conversation_id FROM conversation_members "
+                         "WHERE user_id=? AND left_at IS NULL)", (uid,))
+    except sqlite3.OperationalError:
+        return {}
+    ts, states, out = now(), {}, {}
+    for r in rows:
+        if r["tenant"] not in states:
+            states[r["tenant"]] = availability(store, r["tenant"], ts)
+        if states[r["tenant"]] != AVAILABLE:
+            out[r["conversation_id"]] = states[r["tenant"]]
+    return out
 
 
 # ---------------------------------------------------------------------- links

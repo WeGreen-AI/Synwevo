@@ -248,6 +248,32 @@ def test_links_of_a_frozen_organizations_workspace_close(world):
     assert r.status_code == 410 and r.json()["error"] == "link_unavailable"
 
 
+def test_links_of_a_deleted_workspace_close_and_come_back_with_it(world):
+    """A44: a workspace the platform deleted answers its links 410; a recovery within the
+    seven days opens them again (paused, not withdrawn — the preview's `forms_links_paused`)."""
+    from synwevo_core import workspace_lifecycle
+    from synwevo_core.organizations import Organizations
+    w = world
+    created = Organizations(w.store, w.p.ident).create(w.alice, "Fixture Org", "Fixture Org main", "fixture-deleted-org")
+    main = created["workspace"]["id"]
+    w.suite.sign_in("alice")
+    form = ws_op(w.suite, "forms.form.create", main, {"title": ORIGINAL, "definition": DEFINITION})["output"]
+    ws_op(w.suite, "forms.form.publish", main, {"form_id": form["id"], "draft_rev": form["draft_rev"]})
+    token = token_of(ws_op(w.suite, "forms.public_link.set", main, {"form_id": form["id"], "enabled": True})["output"]["url"])
+    assert page(w, token)["form"]["title"] == ORIGINAL
+    workspace_lifecycle.platform_transition(w.store, main, w.alice, "delete", reason="Fixture lifecycle check")
+    jar = dict(w.suite.cookies)
+    w.suite.cookies.clear()
+    try:
+        r = w.suite.get(f"/api/suite/public/forms/r/{token}", headers={"X-Synwevo-Filler": "f" * 32, **CSRF})
+    finally:
+        for k, v in jar.items():
+            w.suite.cookies.set(k, v)
+    assert r.status_code == 410 and r.json()["error"] == "link_unavailable"
+    workspace_lifecycle.platform_transition(w.store, main, w.alice, "recover", reason="Fixture lifecycle check")
+    assert page(w, token)["form"]["title"] == ORIGINAL
+
+
 # ---------------------------------------------------------------- third review round (R3)
 
 DRAFT_ONLY = "Fixture unpublished reorg plan"

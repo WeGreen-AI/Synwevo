@@ -2,9 +2,10 @@
 
 A message may contain a link to a Docs project or job. The card that goes with it (title,
 workspace, job status) is resolved *per reader*, at read time, against the reader's own access:
-the reader must be a member of the workspace the project lives in, otherwise there is no card —
-the same "nothing" a stranger gets for a project that does not exist. Being in the same
-conversation as the sender is not access to the sender's project.
+the reader must be a member of the workspace the project lives in, and that workspace (and its
+organization) must be available, otherwise there is no card — the same "nothing" a stranger gets
+for a project that does not exist. Being in the same conversation as the sender is not access to
+the sender's project.
 
 Only names and a status are read from the Docs tables (`projects`, `jobs`); no file, mapping or
 template content. This is a read-side capability of the shared package, like membership and
@@ -19,6 +20,7 @@ from urllib.parse import urlsplit
 from .apps import DOCS_APP_ID
 from .identity import Identity
 from .store import Store
+from .workspace_availability import AVAILABLE, availability
 
 _PATH = re.compile(r"^/p/(p_[a-z0-9]+)(?:/jobs/(j_[a-z0-9]+))?/?$")
 JOB_STATES = ("queued", "running", "cancelling", "completed", "completed_with_errors", "failed", "cancelled")
@@ -61,8 +63,13 @@ class DocsLinkCards:
         p = self.store.one("SELECT id, name, tenant, deleted, archived_at FROM projects WHERE id=?", (ref["project_id"],))
         if not p or p.get("deleted") or not p.get("tenant"):
             return None
+        # The workspace *and its organization* must be available (`workspace_availability`, the
+        # rule every live gate refuses by): a frozen organization, or one deleted inside its
+        # recovery window, closes the card as it closes the project's discussion (A44-44c-3).
+        if availability(self.store, p["tenant"]) != AVAILABLE:
+            return None
         ws = self.ident.get_workspace(p["tenant"])
-        if not ws or ws.get("status", "active") != "active" or ws.get("deleted_at"):
+        if not ws:
             return None
         if not self.ident.membership(p["tenant"], uid):
             return None

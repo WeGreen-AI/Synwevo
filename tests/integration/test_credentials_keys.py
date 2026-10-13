@@ -73,6 +73,39 @@ def test_deleting_the_workspace_stops_its_keys(env):
     assert r.status_code == 403 and reason(r) == "workspace_deleted"
 
 
+def test_a_workspace_deleted_by_the_platform_pauses_its_keys_and_mints_none(env, monkeypatch):
+    """A44: the platform's deletion (workspace_lifecycle) refuses the workspace's legacy keys and
+    any new key for it; a recovery gives the paused key back (it was never revoked). Key minting is
+    an allow-list past the legacy workspace: a state nobody has decided about mints nothing (the
+    schema's CHECK refuses an unknown status, so that row is stubbed — FIXTURE)."""
+    from synwevo_core import workspace_lifecycle
+    owner = env["ident"].by_email("alice@example.com")
+    team = env["ident"].create_workspace("团队空间（夹具）", owner_id=owner["id"])["id"]
+    key, row = env["auth"].create_key("ci", team, ("read",))
+    assert call(env, key).status_code == 200 and env["auth"].key_tenant_problem(team) is None
+    workspace_lifecycle.platform_transition(env["store"], team, owner["id"], "delete", reason="Isolated fixture: deletion")
+    r = call(env, key)
+    assert r.status_code == 403 and reason(r) == "workspace_deleted", r.text
+    assert env["auth"].key_tenant_problem(team) == f"工作空间 {team} 已删除"
+    assert team not in [w["id"] for w in env["auth"].key_tenant_candidates()]
+    desc = {"kind": "api_key", "key_id": row["id"], "tenant": team}
+    assert authority.check(env["store"], desc, need="read", tenant=team) == (False, "workspace_deleted")
+    workspace_lifecycle.platform_transition(env["store"], team, owner["id"], "recover", reason="Isolated fixture: recovery")
+    assert call(env, key).status_code == 200 and env["auth"].key_tenant_problem(team) is None
+    original = Store.one
+
+    def stubbed(store, sql, args=()):
+        found = original(store, sql, args)
+        if sql.startswith("SELECT id, status, deleted_at FROM workspaces") and found:
+            return {**found, "status": "archived"}
+        return found
+    monkeypatch.setattr(Store, "one", stubbed)
+    try:
+        assert env["auth"].key_tenant_problem(team) == f"工作空间 {team} 当前不可用（archived），不能为它签发密钥"
+    finally:
+        monkeypatch.setattr(Store, "one", original)
+
+
 def test_disabling_docs_for_the_workspace_stops_legacy_keys_too(env):
     """The verifier's repro: service accounts were stopped, dw_ keys were not."""
     key, _ = env["auth"].create_key("ci", env["ws"], ("read", "write"))

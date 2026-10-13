@@ -28,7 +28,9 @@ Model (docs/platform/notifications.md):
   mailed one by one. Its e-mail is off unless the reader turns the unread digest on, and the
   dispatcher re-checks at send time (``stale_reason``) that the item is still unread, the
   conversation not muted or left, and obeys the platform's current per-reader interval and
-  rolling daily budget. Defaults are one per half hour, at most eight per 24 hours.
+  rolling daily budget. Defaults are one per half hour, at most eight per 24 hours. A project
+  discussion (or a report of a message in one), or a Docs, Forms or project-copy item, whose
+  workspace is not available (frozen, deleted) sends nothing.
 
 Reading a notification never changes business state: an approval is done in its own flow and
 reports back through ``action_state``.
@@ -678,15 +680,22 @@ class Notifier:
         than when the event happened: the reader read the item in the app, turned the channel
         off since, or — for a conversation item — read the conversation, muted or left it, or
         every unread message in it was recalled or comes from someone the reader blocked (CI-78:
-        "nothing unread"). Security items are never stale. `d` is a
+        "nothing unread"). An item about something a workspace holds — a project discussion, a
+        report of a message in one, a Docs, Forms or project-copy item — whose workspace is not
+        available now — frozen, deleted (recoverable or not), itself or its organization — is
+        `workspace_unavailable` (A44, `workspace_closed`): the app refuses every read of it, so
+        nothing about it leaves by mail or push either. Security items are never stale. `d` is a
         delivery/queue row joined with its notification (`due_deliveries` / `due_push`)."""
         if d.get("severity") == "critical":
             return None
-        row = self.store.one("SELECT read_at, archived_at, object_kind, object_id FROM notifications WHERE id=?", (d["notification_id"],))
+        row = self.store.one("SELECT read_at, archived_at, category, workspace_id, object_kind, object_id FROM notifications WHERE id=?",
+                             (d["notification_id"],))
         if not row:
             return "notification gone"
         if row["read_at"] or row["archived_at"]:
             return "read in app"
+        if self.workspace_closed(row):
+            return "workspace_unavailable"
         if d.get("category") == "conversation" and row["object_kind"] == "conversation" and row["object_id"]:
             state = self.conversation_unread(row["object_id"], d["user_id"])
             if state is None:
@@ -703,11 +712,60 @@ class Notifier:
                 return "superseded"
         return None
 
+    #: Categories whose items are about content a workspace holds, stored with that workspace's
+    #: id: Docs (`docs.comment`, `docs.mention`, `docs.job_finished`, `docs.file_rejected` — the
+    #: project's workspace), Forms (`automation`: `forms.request.assigned`, `forms.submission.*` —
+    #: the workspace the form lives in, `forms/service.py` `_notify`) and project copies
+    #: (`approval`: `copy.*` — the target workspace, where the request is decided and the copy
+    #: lands; `copies.py`, `approval_routes.py`). The `organization` category is left out on
+    #: purpose although its invitation and member items carry a `workspace_id` too: they tell a
+    #: person about their *own* standing (invited, role changed, removed, a member joined or left
+    #: through their invitation), which `workspace_availability` deliberately does not judge and
+    #: which stays true whatever the workspace's state — "you were removed from X" must reach
+    #: them while X is frozen, and recovering X does not undo it.
+    WORKSPACE_CONTENT_CATEGORIES = ("docs", "automation", "approval")
+
+    def workspace_closed(self, row: dict) -> bool:
+        """Whether an item is about something its workspace's state closes now: a conversation
+        item of a project discussion whose workspace is not available
+        (`messaging_bridge.conversation_availability`, the rule `Messaging` refuses reads by); a
+        report of a message in such a discussion (`message_report`: report → message →
+        conversation — the managers' `conversation.reported` and the reporter's outcome); or a
+        Docs, Forms or project-copy item (`WORKSPACE_CONTENT_CATEGORIES`) whose `workspace_id` is
+        not available (`workspace_availability`). The item stays in the inbox; its mail or push
+        is skipped rather than deferred, because the app shows the same item once the workspace
+        is back."""
+        if row.get("category") == "conversation" and row.get("object_id"):
+            if row.get("object_kind") == "conversation":
+                return self._conversation_closed(row["object_id"])
+            if row.get("object_kind") == "message_report":
+                cid = self._reported_conversation(row["object_id"])
+                return bool(cid) and self._conversation_closed(cid)
+            return False
+        if row.get("category") in self.WORKSPACE_CONTENT_CATEGORIES and row.get("workspace_id"):
+            from .workspace_availability import AVAILABLE, availability
+            return availability(self.store, row["workspace_id"]) != AVAILABLE
+        return False
+
+    def _reported_conversation(self, rid: str) -> str | None:
+        """The conversation of the message a report is about (the report keeps it too, for a
+        message removed since)."""
+        row = self.store.one("SELECT COALESCE(m.conversation_id, r.conversation_id) AS cid FROM message_reports r "
+                             "LEFT JOIN messages m ON m.id=r.message_id WHERE r.id=?", (rid,))
+        return (row or {}).get("cid")
+
+    def _conversation_closed(self, cid: str) -> bool:
+        from .messaging_bridge import conversation_availability
+        from .workspace_availability import AVAILABLE
+        return conversation_availability(self.store, cid) != AVAILABLE
+
     def conversation_unread(self, cid: str, user_id: str) -> dict | None:
         """The reader's live unread state in one conversation — messages after their read cursor
         that still exist, and the latest of them — or None when they are not (or no longer) a
-        member. Read here rather than through the messaging service because the dispatcher has
-        no request context; the tables are synwevo_core.messaging's."""
+        member, or the conversation is a project discussion whose workspace is not available
+        (`workspace_closed`): nothing of it is rendered for mail or push then. Read here rather
+        than through the messaging service because the dispatcher has no request context; the
+        tables are synwevo_core.messaging's."""
         m = self.store.one("SELECT m.last_read_seq, m.joined_seq, m.muted, m.muted_until, m.notify, c.organization_id "
                            "FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id "
                            "WHERE m.conversation_id=? AND m.user_id=? AND m.left_at IS NULL", (cid, user_id))
@@ -719,6 +777,8 @@ class Notifier:
         org = self.store.one("SELECT status,deleted_at FROM organizations WHERE id=?", (m["organization_id"],))
         if (not org or org["status"] != "active" or org["deleted_at"] is not None
                 or not current_membership(self.store, m["organization_id"], user_id)):
+            return None
+        if self._conversation_closed(cid):
             return None
         floor = max(int(m["last_read_seq"] or 0), int(m["joined_seq"] or 0))
         # `deleted_at` is set by every delete-for-everyone — the sender's recall, a group manager's
@@ -764,6 +824,11 @@ class Notifier:
         the reader chose `preview` = full — so a recalled message is never mailed and, by default,
         no message text is."""
         item = self.render(row, locale)
+        if self.workspace_closed(row):
+            # `stale_reason` skips these before they are rendered; should one be rendered anyway,
+            # no comment excerpt, message text or announcement leaves with it.
+            item["body"] = ""
+            return item
         if row.get("category") != "conversation" or row.get("object_kind") != "conversation" or not row.get("object_id"):
             return item
         loc = _locale(locale)

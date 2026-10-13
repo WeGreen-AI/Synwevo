@@ -518,6 +518,11 @@ export const messages = {
   "{name}（不在组织中）": { en: "{name} (outside the organization)", "zh-Hant": "{name}（不在組織中）" },
   "不在组织中的人": { en: "Someone outside the organization", "zh-Hant": "不在組織中的人" },
   "名称：{from} → {to}": { en: "Name: {from} → {to}", "zh-Hant": "名稱：{from} → {to}" },
+  // A44: the platform's lifecycle acts on one of the organization's workspaces, in its audit log
+  "状态：{from} → {to}": { en: "Status: {from} → {to}", "zh-Hant": "狀態：{from} → {to}" },
+  "重命名了工作空间": { en: "renamed a workspace", "zh-Hant": "重新命名了工作空間" },
+  "删除了工作空间": { en: "deleted a workspace", "zh-Hant": "刪除了工作空間" },
+  "恢复了工作空间": { en: "recovered a workspace", "zh-Hant": "恢復了工作空間" },
   "调整了应用使用资格": { en: "changed application access", "zh-Hant": "調整了應用使用資格" },
   "已开启": { en: "turned on", "zh-Hant": "已開啟" },
   "已关闭": { en: "turned off", "zh-Hant": "已關閉" },

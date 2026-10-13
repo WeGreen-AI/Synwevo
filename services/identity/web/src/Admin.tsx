@@ -47,6 +47,8 @@ import { ApiError, post, qs } from "@synwevo/auth-client";
 import { useSession } from "@synwevo/auth-client";
 import { fmtTime, useToast } from "@synwevo/ui";
 import { releaseWorkspaceContext } from "./governance/workspaceContext";
+import { RECOVERY_EXPIRED_KEPT, WORKSPACE_ACTION_LABELS, WorkspaceLifecycleDialog, focusLost, noticeFocusDue, workspaceOutcomeText, workspaceRecoverable,
+  workspaceRowActions, type NoticeFocusWait, type RowAction, type WorkspaceLifecycleAction, type WorkspaceRow } from "./governance/WorkspaceLifecycleDialog";
 
 type Overview = {
   users: number;
@@ -60,10 +62,8 @@ type Overview = {
   second_factor?: { accounts: number; totp: number; passkeys: number; passkeys_uv: number; any: number; totp_without_recovery: number;
     super_admins: { usable: number; enrolled: number } };
 };
-type Workspace = {
-  id: string; name: string; kind: string; status: string;
-  members: number; projects: number; apps: string[];
-};
+/** GET /api/admin/workspaces: metadata and counts; the lifecycle fields (A44) are WorkspaceRow's. */
+type Workspace = WorkspaceRow & { members: number; projects: number; apps: string[] };
 type User = {
   id: string; email: string; display_name: string | null; status: string;
   platform_role: string; platform_roles?: string[]; outranks_caller?: boolean; created_at: number; workspaces: number; sessions: number;
@@ -453,40 +453,104 @@ function UsersTab({ onDenied, onAccess, revision, held }: { onDenied: () => void
   </section>;
 }
 
+/** The workspace list's status filter: by default every workspace that is not deleted; the
+ *  deleted ones (A44) are listed only when asked for, with their recovery window. */
+const WORKSPACE_FILTER = ["active", "frozen", "pending_claim", "deleted"];
+const ROW_ACTION_LABELS: Record<RowAction, string> = { ...WORKSPACE_ACTION_LABELS, freeze: "冻结工作空间", unfreeze: "解冻工作空间" };
+
 function WorkspacesTab({ onDenied, held }: { onDenied: () => void; held: Held }) {
   const [q, setQ] = useState("");
   const query = useDebounced(q.trim());
-  const { data, err, loading, reload, offset, setOffset } = useAdminPage<Workspace>(`/api/admin/workspaces${qs({ q: query })}`, onDenied);
-  const [action, setAction] = useState<Workspace | null>(null);
+  const [status, setStatus] = useState("");
+  const { data, err, loading, reload, offset, setOffset } = useAdminPage<Workspace>(`/api/admin/workspaces${qs({ q: query, status })}`, onDenied);
+  // A43: freeze and unfreeze, as before; A44: rename, delete and recover through their preview.
+  const [freeze, setFreeze] = useState<Workspace | null>(null);
+  const [lifecycle, setLifecycle] = useState<{ ws: Workspace; action: WorkspaceLifecycleAction } | null>(null);
   const [notice, setNotice] = useState("");
-  const { me } = useSession();
+  // A row that leaves the list after an act — deleted, or frozen, unfrozen or recovered out of the
+  // state the filter shows — takes the menu that opened the dialog with it: focus then goes to the
+  // outcome, which is read out, instead of the page's start. The list re-reads after the dialog has
+  // gone, so the check waits for the re-read past the page the act was taken on (noticeFocusDue).
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+  const page = useRef(data);
+  page.current = data;
+  const actedOn = useRef<NoticeFocusWait | null>(null);
+  const focusWait = useRef<NoticeFocusWait | null>(null);
+  const [focusTick, setFocusTick] = useState(0);
+  const settleFocus = (wait: NoticeFocusWait | null) => { if (wait) { focusWait.current = wait; setFocusTick((n) => n + 1); } };
+  useEffect(() => {
+    if (!noticeFocusDue(focusWait.current, { loading, data, err })) return;
+    focusWait.current = null;
+    if (focusLost(document)) noticeRef.current?.focus();
+  }, [focusTick, loading, data, err]);
+  // A37's panel below lists the workspaces without a usable owner: a recovery, a deletion or a
+  // freeze can add one to it or take one out, so it re-reads with the list (A44-WEB-5).
+  const [ownership, setOwnership] = useState(0);
+  const { me, refresh } = useSession();
   const manage = permitted(held, "platform.workspaces.manage");
   const items = loading || err ? [] : data?.items || [];
+  const now = Date.now();
+  const member = (id: string) => me?.workspaces.some((m) => m.id === id);
   return <><section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{tr("工作空间")}</h2><input className="input" type="search" aria-label={tr("搜索工作空间")} value={q} maxLength={100} onChange={(e) => setQ(e.target.value)} />
       <button className="btn sm" disabled={loading} onClick={reload}>{tr("刷新工作空间")}</button></div>
     <p className="muted small">{tr("只显示数量，不显示内容；平台管理权限不包含读取文档或管理工作空间成员。")}</p>
-    {manage.hint && <p className="notice" role="note">{tr("你的平台角色可以查看工作空间，但不能冻结或解冻。")}</p>}
-    {notice && <div className="notice" role="status">{tr(notice)}</div>}
+    <p className="muted small">{tr("持有工作空间管理权限的平台管理员可以重命名、冻结、删除或恢复工作空间：重命名、删除和恢复都要先预览影响，再写明理由并重新验证身份。删除后的工作空间对所有人不可访问，七天内可以恢复；期满后数据仍然保存，只是不能再从控制台恢复。")}</p>
+    {manage.hint && <p className="notice" role="note">{tr("你的平台角色可以查看工作空间，但不能冻结、解冻、重命名、删除或恢复。")}</p>}
+    <div className="row gap12 wrap">
+      <label className="field">{tr("工作空间状态")}<select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
+        <option value="">{tr("全部（不含已删除）")}</option>{WORKSPACE_FILTER.map((s) => <option key={s} value={s}>{WORKSPACE_STATUS[s] || s}</option>)}
+      </select></label>
+    </div>
+    {status === "deleted" && <p className="muted small">{tr("已删除的工作空间不出现在工作空间切换器和其他列表中，任何人都不能打开；在恢复期限之前可以恢复，期限过后数据仍然保存，但不能再从控制台恢复。")}</p>}
+    <div role="status" aria-live="polite">{notice && <p className="notice" ref={noticeRef} tabIndex={-1}>{tr(notice)}</p>}</div>
     {err && <div className="notice err" role="alert">{err} <button className="btn sm" onClick={reload}>{tr("重试")}</button></div>}
     {loading && <p role="status">{tr("正在加载工作空间…")}</p>}
-    <div className="list-wrap"><table className="gov" aria-label={tr("平台工作空间")} aria-busy={loading}>
+    <div className="list-wrap admin-cards-wrap"><table className="gov admin-cards-table" aria-label={tr("平台工作空间")} aria-busy={loading}>
       <thead><tr><th scope="col">{tr("名称")}</th><th scope="col">{tr("类型")}</th><th scope="col">{tr("状态")}</th><th scope="col">{tr("成员")}</th><th scope="col">{tr("项目")}</th><th scope="col" className="act">{tr("操作")}</th></tr></thead>
-      <tbody>{items.map((w) => <tr key={w.id}>
-        <th scope="row">{w.name}</th><td>{WORKSPACE_KIND[w.kind] || w.kind}</td><td>{WORKSPACE_STATUS[w.status] || w.status}</td><td>{w.members}</td><td>{w.projects}</td>
-        <td className="act"><div className="row gap4 wrap">{(w.status === "active" || w.status === "frozen") && <button className="btn sm" disabled={loading || !!err || manage.disabled} onClick={() => setAction(w)}>{w.status === "active" ? tr("冻结工作空间") : tr("解冻工作空间")}</button>}
-          {me?.workspaces.some((m) => m.id === w.id && (m.role === "owner" || m.role === "admin")) && <a className="btn sm" href={`/account/workspaces/${encodeURIComponent(w.id)}/members`}>{tr("成员与邀请")}</a>}</div></td>
-      </tr>)}
-      {!loading && !err && !items.length && <tr className="empty-row"><td colSpan={6}>{tr("没有匹配的工作空间。")}</td></tr>}</tbody>
+      <tbody>{items.map((w) => { const actions = workspaceRowActions(w, !manage.disabled, now);
+        return <tr key={w.id}>
+        <th scope="row">{w.name}{w.organization && <div className="who2">{tr("所属组织：{name}", { name: w.organization.name })}
+          {w.organization.status !== "active" && ` · ${WORKSPACE_STATUS[w.organization.status] || w.organization.status}`}</div>}</th>
+        <td data-label={tr("类型")}>{WORKSPACE_KIND[w.kind] || w.kind}</td>
+        <td data-label={tr("状态")}><div>{WORKSPACE_STATUS[w.status] || w.status}
+          {w.status === "deleted" && w.recover_until ? <span className="cell-note">{tr("恢复期限：{time}", { time: fmtTime(w.recover_until) })}</span> : null}
+          {w.status === "deleted" && !workspaceRecoverable(w, now) ? <span className="cell-note">{tr(RECOVERY_EXPIRED_KEPT)}</span> : null}
+          {w.status === "deleted" && w.previous_status ? <span className="cell-note">{tr("删除前状态：{status}", { status: WORKSPACE_STATUS[w.previous_status] || w.previous_status })}</span> : null}</div></td>
+        <td data-label={tr("成员")}>{w.members}</td><td data-label={tr("项目")}>{w.projects}</td>
+        <td className="act" data-label={tr("操作")}><div className="row gap4 wrap">
+          {actions.length > 0 && <RowMenu label={tr("{name} 的工作空间操作", { name: w.name })} items={actions.map((a) => ({
+            label: tr(ROW_ACTION_LABELS[a.action]), danger: a.danger, disabled: a.disabled, hint: a.hint && tr(a.hint),
+            onSelect: () => a.action === "freeze" || a.action === "unfreeze" ? setFreeze(w) : setLifecycle({ ws: w, action: a.action }),
+          }))} />}
+          {w.status !== "deleted" && me?.workspaces.some((m) => m.id === w.id && (m.role === "owner" || m.role === "admin")) && <a className="btn sm" href={`/account/workspaces/${encodeURIComponent(w.id)}/members`}>{tr("成员与邀请")}</a>}</div></td>
+      </tr>; })}
+      {!loading && !err && !items.length && <tr className="empty-row"><td colSpan={6}>{status === "deleted" ? tr("没有已删除的工作空间。") : tr("没有匹配的工作空间。")}</td></tr>}</tbody>
     </table></div>
     <PageControls offset={offset} total={data?.total || 0} busy={loading || !!err} onPage={setOffset} />
-    {action && <ActionDialog title={action.status === "active" ? tr("冻结工作空间") : tr("解冻工作空间")} confirmLabel={action.status === "active" ? tr("冻结工作空间") : tr("解冻工作空间")} danger reason="required"
-      impact={<>「{action.name}」：{action.status === "active" ? tr("成员将立即失去应用访问，当前会话将移出这个工作空间。成员关系和内容保留。") : tr("工作空间将恢复可用，成员仍按原有资格访问。此前结束的登录不会恢复。")}</>}
-      run={(reason) => post<{ restore_note?: string; status: string }>(`/api/admin/workspaces/${encodeURIComponent(action.id)}/${action.status === "active" ? "freeze" : "unfreeze"}`, { reason })}
-      onClose={() => setAction(null)} onDone={(r) => { setAction(null); reload(); setNotice(r.status === "frozen" ? tr("工作空间已冻结。") : tr("工作空间已解冻。若之后恢复更早的备份，冻结可能重新生效，需要再次解冻。")); }} />}
+    {freeze && <ActionDialog title={freeze.status === "active" ? tr("冻结工作空间") : tr("解冻工作空间")} confirmLabel={freeze.status === "active" ? tr("冻结工作空间") : tr("解冻工作空间")} danger reason="required"
+      impact={<>「{freeze.name}」：{freeze.status === "active" ? tr("成员将立即失去应用访问，当前会话将移出这个工作空间。成员关系和内容保留。") : tr("工作空间将恢复可用，成员仍按原有资格访问。此前结束的登录不会恢复。")}</>}
+      run={(reason) => post<{ restore_note?: string; status: string }>(`/api/admin/workspaces/${encodeURIComponent(freeze.id)}/${freeze.status === "active" ? "freeze" : "unfreeze"}`, { reason })}
+      onClose={() => setFreeze(null)} onDone={(r) => {
+        // The dialog closes with the answer; the row may leave the filtered list once it re-reads.
+        settleFocus({ stale: page.current });
+        setFreeze(null); reload(); setOwnership((n) => n + 1);
+        setNotice(r.status === "frozen" ? tr("工作空间已冻结。") : tr("工作空间已解冻。若之后恢复更早的备份，冻结可能重新生效，需要再次解冻。"));
+      }} />}
+    {lifecycle && <WorkspaceLifecycleDialog workspace={lifecycle.ws} action={lifecycle.action}
+      // The result stays open until it is closed; focus is settled then, against the page the act was taken on.
+      onClose={() => { setLifecycle(null); settleFocus(actedOn.current); actedOn.current = null; }}
+      onDone={(r) => {
+        actedOn.current = { stale: page.current };
+        reload(); setOwnership((n) => n + 1); setNotice(workspaceOutcomeText(r));
+        // A tab whose workspace context names a deleted workspace has every later request refused.
+        if (r.action === "delete") releaseWorkspaceContext(r.workspace.id);
+        // The administrator's own switcher shows the new name, or no longer the deleted workspace.
+        if (member(r.workspace.id)) void refresh();
+      }} />}
   </section>
   {/* A37: the workspaces without a usable owner, and the handover to one of their members */}
-  <OwnershipRecovery kind="workspace" held={held} onDenied={onDenied} onChanged={reload} /></>;
+  <OwnershipRecovery kind="workspace" held={held} onDenied={onDenied} onChanged={reload} revision={ownership} /></>;
 }
 
 type CatalogueItem = { code: string; scope: string; label: Record<string, string> };

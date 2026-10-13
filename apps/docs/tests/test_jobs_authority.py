@@ -123,6 +123,61 @@ def test_deleting_the_project_stops_its_queued_job(api, fixtures):
     assert api.c.get(f"/api/jobs/{j['id']}").status_code == 404
 
 
+def test_a_job_of_a_deleted_workspace_halts_for_good(api, fixtures):
+    """A44: the platform deletes the workspace while its batch waits. The runner's check refuses
+    the key's work there (`workspace_deleted`) and the job is cancelled; recovering the workspace
+    gives the key back, not the job — it stays cancelled until someone retries it."""
+    from synwevo_core import workspace_lifecycle
+    from synwevo_core.context import as_tenant
+    from synwevo_core.identity import Identity
+    pid, store, auth, _, _, svc = _setup(api, fixtures, rows=2)
+    ident = Identity(store)
+    owner = ident.create_user("owner@example.com", "a-sufficiently-long-passphrase", status="active")
+    wid = ident.create_workspace("将被删除的团队空间", owner_id=owner["id"])["id"]
+    # FIXTURE: the browser fixture's project moved into that workspace (operator mode writes `default`).
+    store.execute("UPDATE projects SET tenant=? WHERE id=?", (wid, pid))
+    store.execute("UPDATE templates SET tenant=? WHERE id IN (SELECT template_id FROM projects WHERE id=?)", (wid, pid))
+    _, meta = auth.create_key("automation", wid, ("read", "write"))
+    desc = authority.describe({"kind": "api_key", "key_id": meta["id"], "lineage": meta["id"], "tenant": wid})
+    assert authority.check(store, desc, need="write", tenant=wid) == (True, None)
+    with as_tenant(wid):
+        j = svc.create(pid, {"formats": ["docx"]}, tenant=wid, origin=f"api:{meta['id']}", principal=desc)
+    workspace_lifecycle.platform_transition(store, wid, owner["id"], "delete", reason="Isolated fixture: deletion")
+    assert svc._claim(j["id"]) is None
+    halted = store.one("SELECT status, halt_reason FROM jobs WHERE id=?", (j["id"],))
+    assert halted == {"status": "cancelled", "halt_reason": "authorization_revoked:workspace_deleted"}
+    assert _artifacts(store, j["id"]) == 0
+    workspace_lifecycle.platform_transition(store, wid, owner["id"], "recover", reason="Isolated fixture: recovery")
+    assert authority.check(store, desc, need="write", tenant=wid) == (True, None), "the key was paused, not revoked"
+    assert store.one("SELECT status FROM jobs WHERE id=?", (j["id"],))["status"] == "cancelled", "halted for good"
+
+
+def test_a_workspace_state_nobody_has_decided_about_runs_nothing(api, fixtures, monkeypatch):
+    """The runner's workspace check is an allow-list (`authority.RUNNABLE_WORKSPACE_STATES`): a
+    status added later is refused until someone decides otherwise. The schema's CHECK refuses an
+    unknown status, so the row is stubbed (FIXTURE) at the one read the check makes."""
+    pid, store, auth, kid, desc, svc = _setup(api, fixtures, rows=2)
+    j = svc.create(pid, {"formats": ["docx"]}, tenant="default", principal=desc)
+    store.execute("INSERT INTO workspaces (id,name,kind,status,created_at,updated_at) "
+                  "VALUES ('default','历史数据（待认领）','legacy','pending_claim',0,0)")
+    assert authority.check(store, desc, need="write", tenant="default") == (True, None), "pending_claim still runs"
+    original = type(store).one
+
+    def stubbed(self, sql, args=()):
+        found = original(self, sql, args)
+        if sql.startswith("SELECT id, status FROM workspaces") and found:
+            return {**found, "status": "archived"}
+        return found
+    monkeypatch.setattr(type(store), "one", stubbed)
+    try:
+        assert authority.check(store, desc, need="write", tenant="default") == (False, "workspace_archived")
+        assert svc._claim(j["id"]) is None
+    finally:
+        monkeypatch.setattr(type(store), "one", original)
+    assert store.one("SELECT halt_reason FROM jobs WHERE id=?", (j["id"],))["halt_reason"] == \
+        "authorization_revoked:workspace_archived"
+
+
 def test_operator_jobs_and_jobs_from_before_descriptors_keep_running(api, fixtures):
     """Browser operator modes and jobs created before v5 carry no descriptor: they were
     authorised under the old rules and must not be stranded by the upgrade."""

@@ -102,6 +102,17 @@ rechecked. Application configuration/template versions belong explicitly in oper
   recorded separately. A refusal (401/403) inside the attempt does not spend the attempt: nothing
   was done, the run is blocked, and resuming it once the refusal is lifted asks again. Explicit retry codes apply only to transactional server failures, with
   exponential bounded backoff, at most five attempts, per-run call budget and deadline.
+* A paused workspace is not a refusal of that kind (A44). When a workspace the step needs — where
+  it runs or reads, a completed step it takes a value from, or a source whose content a write
+  would carry — is frozen, or deleted and still inside its recovery window, or its organization is
+  (`synwevo_core.workspace_availability`), the run is *held*: it stays in the state it waited in
+  (`queued`, `waiting_input` or `waiting_approval`) with one history row `waiting` /
+  `workspace_unavailable`, nothing is dispatched, no attempt is spent and the hold spends no call,
+  and it looks again after 30 seconds, then after as long as the pause has lasted so far, at most every 10
+  minutes. Once the workspace is available it goes on by itself, without `resume`. A workspace
+  that will not come back blocks the run with `workspace_unavailable`. The owner's own lost access
+  (membership, organization membership) is not a pause: it is refused as before, and says nothing
+  about the workspace's state. The run's deadline still ends a held run.
 * Non-transactional calls persist a dispatch marker before I/O. An expired marker is never
   dispatched again. A successful `op_runs` receipt permits finishing the step; a missing,
   running, failed, partial or unknown receipt requires reconciliation. `resume` cannot supply

@@ -158,6 +158,8 @@ export function OrganizationsTab({ onDenied, held }: Props) {
   const query = useDebounced(q.trim());
   const load = useAdminPage<Organization>(`/api/admin/organizations${qs({ q: query, status })}`, onDenied);
   const [action, setAction] = useState<{ org: Organization; kind: LifecycleAction } | null>(null);
+  // A lifecycle act can add an organization to the ownerless list below or change its row there.
+  const [ownership, setOwnership] = useState(0);
   const toast = useToast();
   // A34: the open organization's detail is kept in the address (`org`), so it survives a reload.
   const detail = useOrganizationView();
@@ -182,11 +184,11 @@ export function OrganizationsTab({ onDenied, held }: Props) {
       </tr>)}{!load.loading && !load.err && !load.data?.items.length && <tr className="empty-row"><td colSpan={5}>{t("没有匹配的组织。")}</td></tr>}</tbody>
     </table></div><PageControls offset={load.offset} total={load.data?.total || 0} busy={load.loading || !!load.err} onPage={load.setOffset} />
     {action && <OrganizationLifecycleDialog org={action.org} action={action.kind}
-      onClose={() => setAction(null)} onDone={() => { setAction(null); load.reload(); toast(t("组织状态已更新"), "ok"); }} />}
+      onClose={() => setAction(null)} onDone={() => { setAction(null); load.reload(); setOwnership((n) => n + 1); toast(t("组织状态已更新"), "ok"); }} />}
     {detail.id && <OrganizationDetailDialog id={detail.id} held={held} onClose={detail.close} onChanged={load.reload} />}
   </section>
   {/* A37: the organizations without a usable owner, and the handover to one of their members */}
-  <OwnershipRecovery kind="organization" held={held} onDenied={onDenied} onChanged={load.reload} /></>;
+  <OwnershipRecovery kind="organization" held={held} onDenied={onDenied} onChanged={load.reload} revision={ownership} /></>;
 }
 
 /** Admin coverage G19: the throttles the server holds (`auth_attempts`), and their release. */

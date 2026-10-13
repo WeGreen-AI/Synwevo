@@ -3,6 +3,10 @@
 A link is a bearer credential that outlives the request that minted it. Revoking the key that
 signed it, or freezing the workspace, must end the link now — not when it expires.
 """
+import pytest
+
+from synwevo_core import workspace_lifecycle
+
 from .test_api_v1 import _ok, _prepared, _wait, keys  # noqa: F401  (keys is a fixture)
 
 
@@ -39,7 +43,10 @@ def test_revoking_the_issuing_key_ends_its_links(api, keys, fixtures):
     assert ok.status_code == 200 and ok.headers["X-Content-SHA256"] == art["sha256"]
 
 
-def test_frozen_workspace_ends_links(api, keys, fixtures):
+@pytest.mark.parametrize("stop", ["freeze", "delete"])
+def test_frozen_or_deleted_workspace_ends_links(api, keys, fixtures, stop):
+    """Frozen, or deleted by the platform (A44): the link is refused at download. A deleted
+    workspace's key is paused, not revoked — recovered, an unexpired link works again."""
     c, auth = api.c, keys["auth"]
     store = c.app_state.app.store
     # A real (non-legacy) workspace, as a fixture row, with a key bound to it.
@@ -78,9 +85,18 @@ def test_frozen_workspace_ends_links(api, keys, fixtures):
     assert j["status"] == "completed", j
     link = _ok(c.post(f"/api/v1/jobs/{jid}/archive-link", json={}, headers=h))["url"]
     assert c.get(_path(link)).status_code == 200
-    store.execute("UPDATE workspaces SET status='frozen' WHERE id='w_linkfreeze'")
+    if stop == "freeze":
+        store.execute("UPDATE workspaces SET status='frozen' WHERE id='w_linkfreeze'")
+    else:
+        workspace_lifecycle.platform_transition(store, "w_linkfreeze", "fixture-platform-admin", "delete",
+                                                reason="Isolated fixture: deletion")
     r = c.get(_path(link))
     assert r.status_code == 403 and r.json()["error"]["code"] == "link_revoked"
+    assert not r.content.startswith(b"PK")
+    if stop == "delete":
+        workspace_lifecycle.platform_transition(store, "w_linkfreeze", "fixture-platform-admin", "recover",
+                                                reason="Isolated fixture: recovery")
+        assert c.get(_path(link)).status_code == 200
 
 
 def test_unbound_legacy_links_cannot_survive_credential_revocation(api, keys, fixtures):

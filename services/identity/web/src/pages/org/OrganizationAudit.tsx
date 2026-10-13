@@ -3,12 +3,12 @@
  *  anyone's sign-ins. The server decides what is in it; this only words it. */
 import { useEffect, useRef, useState } from "react";
 import { get } from "@synwevo/auth-client";
-import { useI18n } from "@synwevo/ui";
+import { useI18n, type Translator } from "@synwevo/ui";
 import { FlowError, Loading } from "./AuthFlow";
 import { orgPath, type Organization } from "./types";
 
-interface Person { kind: "member" | "outside" | "platform_admin" | "system"; id?: string; name?: string }
-interface AuditItem {
+export interface Person { kind: "member" | "outside" | "platform_admin" | "system"; id?: string; name?: string }
+export interface AuditItem {
   seq: number; at: number; action: string; result: "ok" | "denied" | "error"; actor: Person;
   workspace: { id: string; name: string } | null;
   object: { kind: string | null; name?: string | null; person?: Person; workspace?: string };
@@ -17,13 +17,16 @@ interface AuditItem {
 type Category = "" | "organization" | "members" | "invitations" | "roles" | "imports" | "approvals";
 
 const CATEGORY_LABEL: Record<Category, string> = { "": "全部", organization: "组织本身", members: "成员变动", invitations: "邀请记录", roles: "角色", imports: "批量导入", approvals: "审批" };
-const ACTION_LABEL: Record<string, string> = {
+export const ACTION_LABEL: Record<string, string> = {
   "organization.create": "创建了组织", "organization.update": "修改了组织设置", "organization.transfer": "交接了组织所有权",
   // A37: a platform administrator named an existing member owner because no owner could act
   "organization.owner.recover": "由平台指定了组织所有者",
   "organization.freeze": "冻结了组织", "organization.unfreeze": "解冻了组织", "organization.delete": "删除了组织", "organization.recover": "恢复了组织",
   "organization.avatar.update": "更换了组织头像", "organization.avatar.remove": "移除了组织头像",
   "organization.workspace.create": "创建了工作空间", "organization.workspace.adopt": "把工作空间纳入组织",
+  // A44: the platform's lifecycle acts on one of the organization's workspaces (`by: platform`)
+  "organization.workspace.rename": "重命名了工作空间", "organization.workspace.delete": "删除了工作空间",
+  "organization.workspace.recover": "恢复了工作空间",
   "organization.member.role": "更改了成员的组织角色", "organization.member.remove": "移除了组织成员", "organization.member.leave": "退出了组织",
   "organization.role.create": "创建了自定义角色", "organization.role.update": "修改了自定义角色", "organization.role.delete": "删除了自定义角色",
   "organization.role.assign": "调整了成员的自定义角色",
@@ -36,8 +39,44 @@ const ACTION_LABEL: Record<string, string> = {
   "member.role": "更改了工作空间角色", "member.remove": "从工作空间移除了成员", "member.leave": "退出了工作空间", "member.entitlement": "调整了应用使用资格",
   "workspace.ownership.transfer": "交接了工作空间所有权", "workspace.owner.consent": "同意接收工作空间所有权",
 };
-const ROLE_LABEL: Record<string, string> = { owner: "所有者", admin: "管理员", member: "成员", viewer: "查看者", editor: "编辑者",
+export const ROLE_LABEL: Record<string, string> = { owner: "所有者", admin: "管理员", member: "成员", viewer: "查看者", editor: "编辑者",
   active: "正常", frozen: "已冻结", deleted: "已删除" };
+
+const small = (v: unknown, key: string) => typeof v === "object" && v ? (v as Record<string, unknown>)[key] : undefined;
+/** The short details a row shows, in the reader's language: a name, role or state change, counts,
+ *  who decided, whether the platform performed it, and the reason. Pure, so it can be checked on
+ *  its own (tests/org-audit-workspace-lifecycle.test.mjs). */
+export function auditDetails(d: Record<string, unknown>, t: Translator): string[] {
+  const out: string[] = [];
+  const role = (v: unknown) => typeof v === "string" ? t(ROLE_LABEL[v] || v) : "";
+  const before = typeof d.before === "object" && d.before ? small(d.before, "role") : d.before;
+  const after = typeof d.after === "object" && d.after ? small(d.after, "role") : d.after;
+  const beforeName = small(d.before, "name"), afterName = small(d.after, "name");
+  // A44: a workspace's (or the organization's) lifecycle — active, frozen, deleted
+  const beforeStatus = small(d.before, "status"), afterStatus = small(d.after, "status");
+  if (typeof beforeName === "string" && typeof afterName === "string" && beforeName !== afterName) out.push(t("名称：{from} → {to}", { from: beforeName, to: afterName }));
+  if (typeof beforeStatus === "string" && typeof afterStatus === "string" && beforeStatus !== afterStatus) {
+    out.push(t("状态：{from} → {to}", { from: role(beforeStatus), to: role(afterStatus) }));
+  }
+  if (typeof before === "string" && typeof after === "string") out.push(t("{from} → {to}", { from: role(before), to: role(after) }));
+  else if (typeof d.role === "string") out.push(t("角色：{role}", { role: role(d.role) }));
+  if (Array.isArray(d.added) && d.added.length) out.push(t("新增：{roles}", { roles: (d.added as string[]).join("、") }));
+  if (Array.isArray(d.removed) && d.removed.length) out.push(t("移除：{roles}", { roles: (d.removed as string[]).join("、") }));
+  if (typeof d.permissions === "number") out.push(t("{n} 项权限", { n: d.permissions }));
+  if (typeof d.invite === "number" || typeof d.update === "number") out.push(t("邀请 {i}，更新 {u}", { i: Number(d.invite || 0), u: Number(d.update || 0) }));
+  else if (typeof d.invited === "number" || typeof d.updated === "number") out.push(t("邀请 {i}，更新 {u}", { i: Number(d.invited || 0), u: Number(d.updated || 0) }));
+  if (typeof d.enabled === "boolean") out.push(t(d.enabled ? "已开启" : "已关闭"));
+  if (typeof d.reviewed === "number" && d.reviewed) out.push(t("已核对识别行 {n}", { n: d.reviewed }));
+  if (d.action === "approve") out.push(t("批准")); else if (d.action === "reject") out.push(t("拒绝"));
+  if (d.self_approved === true) out.push(t("申请人自行批准"));
+  // A35/A37/A44: an act the platform performed on this organization or one of its workspaces
+  // (`by: platform`). The actor may also be a member, whose name alone would read as the member's own act.
+  if (d.by === "platform") out.push(t("由平台管理执行"));
+  if (typeof d.reason === "string" && d.reason) out.push(t("原因：{reason}", { reason: d.reason }));
+  return out;
+}
+/** A row's action in the reader's language; an action this page does not word shows its code. */
+export const actionText = (action: string, t: Translator) => t(ACTION_LABEL[action] || action);
 
 export default function OrganizationAudit({ organization, mine }: { organization: Organization; mine: string[] }) {
   const { t, locale } = useI18n();
@@ -65,41 +104,16 @@ export default function OrganizationAudit({ organization, mine }: { organization
   };
   const who = (p: Person) => p.kind === "system" ? t("系统") : p.kind === "platform_admin" ? t("平台管理员")
     : p.kind === "outside" ? (p.name ? t("{name}（不在组织中）", { name: p.name }) : t("不在组织中的人")) : p.name || "—";
-  const role = (v: unknown) => typeof v === "string" ? t(ROLE_LABEL[v] || v) : "";
-  const details = (i: AuditItem) => {
-    const d = i.detail; const out: string[] = [];
-    const before = typeof d.before === "object" && d.before ? (d.before as Record<string, unknown>).role : d.before;
-    const after = typeof d.after === "object" && d.after ? (d.after as Record<string, unknown>).role : d.after;
-    const beforeName = typeof d.before === "object" && d.before ? (d.before as Record<string, unknown>).name : undefined;
-    const afterName = typeof d.after === "object" && d.after ? (d.after as Record<string, unknown>).name : undefined;
-    if (typeof beforeName === "string" && typeof afterName === "string" && beforeName !== afterName) out.push(t("名称：{from} → {to}", { from: beforeName, to: afterName }));
-    if (typeof before === "string" && typeof after === "string") out.push(t("{from} → {to}", { from: role(before), to: role(after) }));
-    else if (typeof d.role === "string") out.push(t("角色：{role}", { role: role(d.role) }));
-    if (Array.isArray(d.added) && d.added.length) out.push(t("新增：{roles}", { roles: (d.added as string[]).join("、") }));
-    if (Array.isArray(d.removed) && d.removed.length) out.push(t("移除：{roles}", { roles: (d.removed as string[]).join("、") }));
-    if (typeof d.permissions === "number") out.push(t("{n} 项权限", { n: d.permissions }));
-    if (typeof d.invite === "number" || typeof d.update === "number") out.push(t("邀请 {i}，更新 {u}", { i: Number(d.invite || 0), u: Number(d.update || 0) }));
-    else if (typeof d.invited === "number" || typeof d.updated === "number") out.push(t("邀请 {i}，更新 {u}", { i: Number(d.invited || 0), u: Number(d.updated || 0) }));
-    if (typeof d.enabled === "boolean") out.push(t(d.enabled ? "已开启" : "已关闭"));
-    if (typeof d.reviewed === "number" && d.reviewed) out.push(t("已核对识别行 {n}", { n: d.reviewed }));
-    if (d.action === "approve") out.push(t("批准")); else if (d.action === "reject") out.push(t("拒绝"));
-    if (d.self_approved === true) out.push(t("申请人自行批准"));
-    // A35/A37: an act the platform performed on this organization (`by: platform`). The actor may
-    // also be a member, whose name alone would read as the member's own act.
-    if (d.by === "platform") out.push(t("由平台管理执行"));
-    if (typeof d.reason === "string" && d.reason) out.push(t("原因：{reason}", { reason: d.reason }));
-    return out;
-  };
   return <section className="org-section" id="org-audit"><h2>{t("组织审计")}</h2>
     <p className="tiny muted">{t("组织与其工作空间的治理操作：成员、邀请、角色、批量导入、审批与组织设置。不含文档、消息内容和登录记录。")}</p>
     <FlowError error={error} />
     <div className="row wrap gap4" role="tablist">{(Object.keys(CATEGORY_LABEL) as Category[]).map(c => <button key={c || "all"} type="button" role="tab" aria-selected={category === c}
       className={`btn ${category === c ? "primary" : ""}`} onClick={() => setCategory(c)}>{t(CATEGORY_LABEL[c])}</button>)}</div>
     {!items ? <Loading /> : !items.length ? <p className="muted">{t("没有记录。")}</p> : <ul className="org-list">{items.map(i => <li key={i.seq}>
-      <div><strong>{who(i.actor)}</strong> {t(ACTION_LABEL[i.action] || i.action)}
+      <div><strong>{who(i.actor)}</strong> {actionText(i.action, t)}
         {i.object.person && <> · {who(i.object.person)}</>}{i.object.name && <> · {i.object.name}</>}
         {(i.workspace || i.object.workspace) && <span className="muted"> · {i.workspace?.name || i.object.workspace}</span>}
-        <div className="tiny muted">{new Date(i.at * 1000).toLocaleString(locale)}{details(i).map((x, n) => <span key={n}> · {x}</span>)}</div></div>
+        <div className="tiny muted">{new Date(i.at * 1000).toLocaleString(locale)}{auditDetails(i.detail, t).map((x, n) => <span key={n}> · {x}</span>)}</div></div>
       {i.result !== "ok" && <div className="org-actions"><span className="badge err">{t(i.result === "denied" ? "被拒绝" : "出错")}</span></div>}
     </li>)}</ul>}
     {next && <div className="org-actions"><button type="button" className="btn" disabled={busy} onClick={() => void more()}>{t("加载更多")}</button></div>}

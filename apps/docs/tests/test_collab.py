@@ -402,6 +402,23 @@ def test_a_role_change_and_a_removal_take_effect_on_the_open_connection(world):
     e.close()
 
 
+def test_deleting_the_workspace_closes_the_open_connection(world):
+    """A44: the platform deletes the workspace while a member edits live: the connection is closed
+    (`workspace_unavailable`, 4403) at its next check, before anything more is read or written."""
+    from synwevo_core import workspace_lifecycle
+    store, wid = world["store"], world["wid"]
+    # FIXTURE: the owner's workspace as a team workspace (a personal one is never deleted).
+    store.execute("UPDATE workspaces SET kind='org' WHERE id=?", (wid,))
+    e = _connect(world, "editor")
+    workspace_lifecycle.platform_transition(store, wid, world["owner"]["id"], "delete", reason="Isolated fixture: deletion")
+    e.append_text("（删除之后写入）")
+    assert e.recv_meta("closed", tries=20) == {"type": "closed", "reason": "workspace_unavailable"}
+    with pytest.raises(WebSocketDisconnect) as x:
+        e.ws.receive_bytes()
+    assert x.value.code == 4403
+    e.close()
+
+
 def test_a_removal_is_enforced_on_the_next_frame_not_the_next_recheck(world, monkeypatch):
     """Every HTTP request re-checks membership; a socket used to wait for its periodic re-check
     (30 s by default), in which a removed member — or every former member of historical data whose

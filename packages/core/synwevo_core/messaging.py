@@ -59,6 +59,7 @@ from .errors import ServiceError
 from .identity import Identity
 from .organizations import Organizations, current_membership
 from .store import Store, new_id, now
+from .workspace_availability import AVAILABLE, PAUSED
 from . import messaging_search as fts
 from .messaging_presence import Presence
 
@@ -325,7 +326,41 @@ class Messaging:
             raise ServiceError(404, "no_conversation", "找不到该会话")
         # organization membership is checked on every read and write, not only at join time
         self._org_member(conv["organization_id"], uid)
+        state = self._closed(conv)
+        if state == PAUSED:
+            # A project's discussion while its workspace is frozen or deleted-but-recoverable: the
+            # members stay (the bridge's sweep removes nobody for it), so every read and write is
+            # refused here instead, and works again as before once the workspace is back.
+            from .messaging_bridge import paused_refusal
+            raise paused_refusal()
+        if state:
+            # Its workspace will not come back: the same nothing as after the sweep has removed
+            # this member, at once rather than up to a sweep later.
+            raise ServiceError(404, "no_conversation", "找不到该会话")
         return conv, m
+
+    def _closed(self, conv: dict) -> str | None:
+        """PAUSED or LOST while `conv` is a project's discussion whose workspace is not available
+        (`messaging_bridge.conversation_availability`); None for every other conversation."""
+        if conv.get("purpose") != "object":
+            return None
+        from .messaging_bridge import conversation_availability
+        state = conversation_availability(self.store, conv["id"])
+        return None if state == AVAILABLE else state
+
+    def _closed_ids(self, uid: str) -> dict[str, str]:
+        """The caller's closed project discussions, once per listing (`messaging_bridge.
+        closed_conversations`)."""
+        from .messaging_bridge import closed_conversations
+        return closed_conversations(self.store, uid)
+
+    @staticmethod
+    def _not_closed(column: str, closed: dict[str, str]) -> tuple[str, list]:
+        """A SQL condition (and its one argument) leaving `closed` out — applied before LIMIT, so
+        a closed discussion never takes the place of a readable result."""
+        if not closed:
+            return "1=1", []
+        return f"{column} NOT IN (SELECT value FROM json_each(?))", [json.dumps(sorted(closed))]
 
     def _manager(self, cid: str, uid: str, *, owner: bool = False) -> tuple[dict, dict]:
         conv, m = self._member(cid, uid)
@@ -463,9 +498,12 @@ class Messaging:
         """The conversations `uid` may see right now: active memberships in organizations they
         are still a member of. The stream compares this at every heartbeat with what the tab
         knew, so a membership closed by another process (organization removal on the account
-        service, a moderation decision) reaches the open tab within one tick."""
+        service, a moderation decision) reaches the open tab within one tick. A project discussion
+        whose workspace will not come back (LOST) is left out at once, as the sweep will remove
+        the member; a paused one stays (it is refused live and comes back as it was)."""
+        cond, extra = self._not_closed("m.conversation_id", {cid: s for cid, s in self._closed_ids(uid).items() if s != PAUSED})
         rows = self.store.all("SELECT m.conversation_id, c.organization_id FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id "
-                              "WHERE m.user_id=? AND m.left_at IS NULL", (uid,))
+                              f"WHERE m.user_id=? AND m.left_at IS NULL AND {cond}", (uid, *extra))
         orgs: dict[str, bool] = {}
         out = []
         for r in rows:
@@ -1041,6 +1079,8 @@ class Messaging:
         where, args = "m.user_id=? AND m.left_at IS NULL", [uid]
         if organization_id:
             where += " AND c.organization_id=?"; args.append(organization_id)
+        cond, extra = self._not_closed("c.id", self._closed_ids(uid))       # a closed project discussion: not listed
+        where += f" AND {cond}"; args.extend(extra)
         rows = self.store.all(f"SELECT c.*, m.role AS m_role, m.joined_seq AS m_joined_seq, m.last_read_seq AS m_last_read_seq, m.muted AS m_muted, "
                               f"m.pinned AS m_pinned, m.notify AS m_notify, m.muted_until AS m_muted_until, m.marked_unread AS m_marked_unread, "
                               f"m.history_from AS m_history_from, m.last_read_at AS m_last_read_at FROM conversations c JOIN conversation_members m ON m.conversation_id=c.id "
@@ -1062,8 +1102,9 @@ class Messaging:
     def unread_total(self, uid: str) -> dict:
         """The badge: unread messages across the caller's conversations, silent ones excluded. A
         conversation the reader marked unread counts as one when it has no unread message."""
+        cond, extra = self._not_closed("c.id", self._closed_ids(uid))       # what cannot be read is not counted
         rows = self.store.all("SELECT c.organization_id, c.last_seq, m.last_read_seq, m.joined_seq, m.muted, m.muted_until, m.marked_unread FROM conversations c JOIN conversation_members m ON m.conversation_id=c.id "
-                              "WHERE m.user_id=? AND m.left_at IS NULL", (uid,))
+                              f"WHERE m.user_id=? AND m.left_at IS NULL AND {cond}", (uid, *extra))
         total, conversations = 0, 0
         seen_orgs: dict[str, bool] = {}
         ts = now()
@@ -1214,6 +1255,8 @@ class Messaging:
             where.append("x.created_at>=?"); args.append(float(since))
         if until is not None:
             where.append("x.created_at<=?"); args.append(float(until))
+        cond, extra = self._not_closed("x.conversation_id", self._closed_ids(uid))
+        where.append(cond); args.extend(extra)
         limit = max(1, min(int(limit or 50), 100))
         if use_fts:
             sql = (f"SELECT x.*, c.organization_id AS c_org, {fts.snippet_sql()} AS c_snip FROM {fts.TABLE} JOIN messages x ON x.rowid={fts.TABLE}.rowid "
@@ -1574,11 +1617,14 @@ class Messaging:
         since = float(since or 0)
         cursor = now()
         limit = max(1, min(int(limit or 500), 500))
+        closed = self._closed_ids(uid)
+        cond, extra = self._not_closed("c.id", closed)
         rows = self.store.all("SELECT c.*, m.role AS m_role, m.joined_seq AS m_joined_seq, m.last_read_seq AS m_last_read_seq, m.muted AS m_muted, m.pinned AS m_pinned, "
                               "m.notify AS m_notify, m.muted_until AS m_muted_until, m.marked_unread AS m_marked_unread, m.history_from AS m_history_from, m.last_read_at AS m_last_read_at "
                               "FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id "
-                              "WHERE m.user_id=? AND m.left_at IS NULL AND (c.updated_at>? OR COALESCE(m.updated_at,0)>? OR m.joined_at>?) ORDER BY c.updated_at DESC LIMIT ?",
-                              (uid, since, since, since, limit))
+                              f"WHERE m.user_id=? AND m.left_at IS NULL AND (c.updated_at>? OR COALESCE(m.updated_at,0)>? OR m.joined_at>?) AND {cond} "
+                              "ORDER BY c.updated_at DESC LIMIT ?",
+                              (uid, since, since, since, *extra, limit))
         convs, seen = [], {}
         for r in rows:
             oid = r["organization_id"]
@@ -1594,8 +1640,10 @@ class Messaging:
         for x in convs:
             x["unread_mentions"] = mentions.get(x["id"], 0)
         left = [r["conversation_id"] for r in self.store.all("SELECT conversation_id FROM conversation_members WHERE user_id=? AND left_at>? ORDER BY left_at LIMIT ?", (uid, since, limit))]
+        gone_cond, gone_extra = self._not_closed("x.conversation_id", closed)
         gone = self.store.all(f"SELECT x.id, x.conversation_id, x.seq, x.recalled_at, x.removed_by FROM messages x JOIN conversation_members m ON m.conversation_id=x.conversation_id "
-                              f"WHERE m.user_id=? AND m.left_at IS NULL AND x.deleted_at>? AND x.seq>=m.joined_seq ORDER BY x.deleted_at LIMIT ?", (uid, since, limit))
+                              f"WHERE m.user_id=? AND m.left_at IS NULL AND x.deleted_at>? AND x.seq>=m.joined_seq AND {gone_cond} ORDER BY x.deleted_at LIMIT ?",
+                              (uid, since, *gone_extra, limit))
         return {"cursor": cursor, "since": since, "conversations": convs, "left": left,
                 "recalled": [{"id": g["id"], "conversation_id": g["conversation_id"], "seq": g["seq"],
                               "how": "recalled" if g["recalled_at"] else ("removed" if g["removed_by"] else "deleted")} for g in gone],

@@ -346,6 +346,27 @@ def test_platform_admins_get_no_extra_reach(agent):
     assert c["status"] == "failed" and c["error_code"] == "app_access_denied"
 
 
+def test_a_deleted_workspace_refuses_the_agents_operations(agent):
+    """A44: the platform deletes workspace A; the owner's Agent can no longer act there — the
+    tool call fails `app_access_denied`, nothing is written — and the direct operation is refused
+    403 the same way."""
+    from synwevo_core import workspace_lifecycle
+    p = agent.people
+    workspace_lifecycle.platform_transition(p.store, p.a, p.uid("out"), "delete", reason="Fixture lifecycle check")
+    agent.sign_in("alice")
+    conv, out = start(agent, [
+        call("run_operation", {"operation": "forms.form.create", "workspace_id": p.a, "input": {"title": "No"}}),
+        lambda msgs: say("refused"),
+    ])
+    wait_turn(p.store, out["turn_id"])
+    c = p.store.one("SELECT * FROM agent_tool_calls")
+    assert c["status"] == "failed" and c["error_code"] == "app_access_denied"
+    r = agent.post("/api/suite/ops/forms.form.create", json={"workspace_id": p.a, "input": {"title": "No"}},
+                   headers=CSRF)
+    assert r.status_code == 403 and r.json()["error"] == "app_access_denied", r.text
+    assert p.store.one("SELECT COUNT(*) AS n FROM forms")["n"] == 0
+
+
 def test_losing_access_seals_the_conversation(agent):
     p = agent.people
     agent.sign_in("alice")

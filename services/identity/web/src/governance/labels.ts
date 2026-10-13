@@ -12,6 +12,7 @@ import "./second-factor.messages";
 import "./invitations.messages";
 import "./apps.messages";
 import "./org-detail.messages";
+import "./workspace-lifecycle.messages";
 export { ROLES, ROLE_RANK, canExport, isAbort } from "../lib/labels";
 export type { Role } from "../lib/labels";
 // Read translations at render time; imported enum labels must not freeze the initial locale.
@@ -136,6 +137,13 @@ const errors: Record<string, string> = {
   not_member: "这个账户已不是该组织的成员；请刷新成员列表。",
   bad_role: "请选择有效的角色。",
   invalid_field: "有字段无效，请检查输入后重试。",
+  // A44: the platform workspace lifecycle (governance/WorkspaceLifecycleDialog.tsx, which words
+  // `bad_action`, `invalid_field`, `no_workspace` and `admin_preview_stale` for a workspace first).
+  workspace_state_conflict: "工作空间当前状态不允许此操作，请刷新列表后重试。",
+  workspace_recovery_expired: "这个工作空间的七天恢复期限已过，不能再恢复。",
+  workspace_personal: "个人空间只能重命名，不能删除或恢复。",
+  workspace_legacy: "历史数据空间由认领流程管理，不能在这里重命名、删除或恢复。",
+  workspace_name_unchanged: "新名称与当前名称相同，无需重命名。",
 };
 /** One item of a batch the server refused: its sentence when catalogued, else this page's wording
  *  for its code (lib/refusals.ts) — a mixed batch answers 200, so the item carries no status. */

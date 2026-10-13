@@ -96,6 +96,11 @@ REFUSAL_MESSAGES = {
     "account_state_conflict": "账户状态已变化，请刷新后重试",
     "ownership_required": "请先移交共享工作空间的所有权和管理权限",
     "organization_ownership_required": "请先移交组织的所有权和管理权限",
+    # organizations.deleted_workspace_owner names the workspace and its recovery deadline; a
+    # preview item carries the code alone, so this is that sentence without the two (the same
+    # code-only wording the account shell catalogues in lib/refusals.ts REFUSAL_SOURCES).
+    "owner_of_deleted_workspace": ("此账户是一个已删除、仍在恢复期内的工作空间唯一可用的拥有者或管理者；恢复期限结束前不能执行此操作。"
+                                   "可请平台管理员恢复该工作空间后移交，或等待恢复期限结束。"),
     "target_outranks_actor": "该账户持有你没有的平台权限：只有权限不低于它的管理员才能对它执行这项操作",
 }
 REFUSED_MESSAGE = "该账户不符合这项操作的条件"
