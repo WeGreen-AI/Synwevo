@@ -919,6 +919,8 @@ through the pre-fix transport, which lacked explicit certificate verification.
 
 2026-10-13 07:45Z `git push origin HEAD:main`，`603e27df..294ab8db`（CR-127 A34 平台只读组织详情）。推送前：完整根套件 6062 通过、2 失败（v5 升级夹具删除被新索引覆盖的列，夹具已修正并重跑通过）、2 跳过；六个前端工作区 684 项 node 测试、五守卫、图标与 Logo、根 typecheck/build、infra 单元测试 12 项通过；工作树干净。运行 [38364707852](https://github.com/WeGreen-AI/Synwevo/actions/runs/38364707852)：verify 作业未启动（0 个步骤，计费注解相同），deploy 跳过；生产仍为 `synwevo:e99212d`。计费恢复后重跑最新运行（`gh run rerun 38364707852 --failed`）即可验证并部署 main 头部。08:45Z 第 27 次重跑（attempt 2）、09:41Z 第 28 次重跑（attempt 3）：verify 仍 0 个步骤、注解相同，deploy 跳过；下一次≈10:41Z。
 
+2026-10-13 10:27Z `git push origin HEAD:main`，`8a3762d5..b79afe6d`（CR-128 充值无法跳转至付款页面，用户报告；在独立 worktree `topup-fix` 中实现与验证）。推送前：完整根套件 6138 通过/0 失败/2 跳过，账户服务 1871、计费集成 272、账户前端 273、六个前端工作区 node 测试、五守卫、根 typecheck/build、infra 12 项通过；工作树干净。运行 [38383455634](https://github.com/WeGreen-AI/Synwevo/actions/runs/38383455634)：verify 作业未启动（0 个步骤，计费注解相同），deploy 跳过；生产仍为 `synwevo:e99212d`。计费恢复后重跑最新运行（`gh run rerun 38383455634 --failed`）即可验证并部署 main 头部。部署前运营可先发布仅银行卡的支付设置恢复充值（不依赖本次代码）。
+
 ## 2026-10-11 393b066 未部署（GitHub Actions 计费阻断）
 
 操作者：Claude Code 协调者会话 13b6809f。57bebb7（CR-087 + e99212d 部署记录）的 Actions 38159846815 在运行时验证因计时敏感的配额测试失败（见 BACKLOG 18:35Z），deploy 跳过；修复 393b066（配额测试前置改为显式 6/min 预算）与 86d74b0（CR-088 图片/扫描 PDF 本地文字识别附件）推送后，Actions 38164472254 verify 成功（18:35–19:34Z，全部套件通过），但 **deploy 作业未启动**：GitHub 注解「The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings」（作业 114556258462，0 个步骤）。
