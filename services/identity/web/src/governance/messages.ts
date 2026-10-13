@@ -1427,9 +1427,9 @@ export const governanceMessages = {
     "en": "A pending invitation already exists.",
     "zh-Hant": "已有待接受的邀請。"
   },
-  "邀请已接受或已撤销，请刷新。": {
-    "en": "Invitation accepted or revoked. Refresh the page.",
-    "zh-Hant": "邀請已接受或已撤銷，請重新整理。"
+  "该邀请已不在待接受状态（已接受、已拒绝或已撤销），请刷新。": {
+    "en": "This invitation is no longer pending (it was accepted, declined or revoked). Refresh the page.",
+    "zh-Hant": "該邀請已不在待接受狀態（已接受、已拒絕或已撤銷），請重新整理。"
   },
   "操作未完成，请刷新后重试。": {
     "en": "Action not completed. Refresh and try again.",

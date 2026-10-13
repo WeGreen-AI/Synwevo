@@ -720,6 +720,8 @@ INDEXES = [
     # A subscription's delivery log, and dropping its pending deliveries on pause/delete.
     ("ix_wh_sub", "webhook_deliveries", ("subscription_id", "status")),
     ("ix_mail_notification_ref", "mail_outbox", ("kind", "ref_id")),
+    # The platform's invitation oversight (A47) pages every workspace's invitations newest first.
+    ("ix_inv_created", "invitations", ("created_at",)),
 ]
 
 V2_COLUMNS = [

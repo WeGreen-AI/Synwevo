@@ -84,6 +84,12 @@ ROUTES = [
     # are the object's manage permission and the strict re-authentication (admin_ownership.py).
     ("GET", "/api/admin/ownership/orphans", "platform.workspaces.view", False),
     ("POST", "/api/admin/workspaces/{wid}/recover-owner", "platform.workspaces.manage", True),
+    # A47 (admin_invitations.py): every workspace's invitations read with the workspace listing's
+    # permission; the single and the bulk revoke are the freeze's permission and the strict
+    # re-authentication, which stops them before their bodies are read.
+    ("GET", "/api/admin/invitations", "platform.workspaces.view", False),
+    ("POST", "/api/admin/invitations/{iid}/revoke", "platform.workspaces.manage", True),
+    ("POST", "/api/admin/invitations/revoke", "platform.workspaces.manage", True),
     ("GET", "/api/admin/organizations", "platform.orgs.view", False),
     # The lifecycle preview changes nothing; the act is confirmed and dangerous (A35).
     ("POST", "/api/admin/organizations/{oid}/preview", "platform.orgs.manage", False),
@@ -341,6 +347,11 @@ def _call(client, method, path, w):
                     if path.endswith("-preview") else
                     {"operation": "revoke_sessions", "reason": REASON, "preview_token": "matrix-not-confirmed",
                      "idempotency_key": "matrix_bulk_accounts_0001"})
+    if path.startswith("/api/admin/invitations/"):
+        # A47: a well-formed revoke (a reason, and for the batch one id) of an invitation that does
+        # not exist; a permitted role stops at the strict re-authentication, so nothing is revoked.
+        return post(client, path, {"reason": REASON, "ids": ["iv_fixture_missing"]}
+                    if path == "/api/admin/invitations/revoke" else {"reason": REASON})
     if path.startswith("/api/admin/notification-recovery/"):
         return post(client, path, {"reason": REASON, "preview_token": "matrix-not-confirmed",
                                    "idempotency_key": "matrix_notification_recovery_0001"}
@@ -458,6 +469,7 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
     assert world["store"].one("SELECT status FROM organizations WHERE id=?", (world["oid"],))["status"] == "active"
     assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action='admin.organization.lifecycle'")
     assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action='admin.user.bulk'")
+    assert not world["store"].one("SELECT 1 FROM audit_events WHERE action LIKE 'admin.invitation.%' AND result='ok'")
 
 
 def test_no_platform_permission_sees_404_everywhere_including_owners_and_workspace_admins(world):

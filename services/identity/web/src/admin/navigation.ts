@@ -13,7 +13,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
   { label: "概览与待处理", items: [{ id: "overview", label: "概览" }] },
   { label: "账户与访问", items: [
     { id: "users", label: "账户" }, { id: "admins", label: "平台管理员" },
-    { id: "organizations", label: "组织" }, { id: "workspaces", label: "工作空间" },
+    { id: "organizations", label: "组织" }, { id: "workspaces", label: "工作空间" }, { id: "invitations", label: "邀请" },
     { id: "identity", label: "登录方式" },
   ] },
   { label: "应用与业务", items: [{ id: "mail", label: "邮件投递" }, { id: "api-platform", label: "API 管理" }] },

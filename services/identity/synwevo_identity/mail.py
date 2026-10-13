@@ -128,6 +128,25 @@ def _failure(exc: Exception) -> DeliveryFailure:
     return DeliveryFailure("mail_delivery_failed")
 
 
+#: The delivery codes `_failure` and the worker write, and the bookkeeping marks set beside them:
+#: the only `last_error` values an administration page may show as they are.
+PUBLIC_ERROR_CODES = frozenset({
+    "transport_unavailable", "tls_certificate_invalid", "tls_failed", "smtp_authentication_failed",
+    "smtp_security_not_supported", "mail_delivery_failed", "delivery_unknown", IN_PROGRESS, "superseded",
+    "mail_not_configured", "mail_config_invalid", "public_url_missing"})
+_PUBLIC_REJECTION = re.compile(r"smtp_(?:(?:sender|recipient|data)_)?rejected_[45][0-9]{2}")
+
+
+def public_error_code(value) -> str | None:
+    """A stored `last_error` as a code an administrator may read: a known code as it is, anything
+    else (historical rows kept raw transport text, which can echo credentials, recipients or the
+    message) as `mail_delivery_failed`, nothing as None. The mail tab and the invitation oversight
+    (admin_invitations) both show this, never the stored string."""
+    if value in PUBLIC_ERROR_CODES or (isinstance(value, str) and _PUBLIC_REJECTION.fullmatch(value)):
+        return value
+    return "mail_delivery_failed" if value else None
+
+
 def mode() -> str:
     """smtp | file | disabled — decided by configuration, never guessed."""
     explicit = (env.get("MAIL_MODE") or "").strip().lower()

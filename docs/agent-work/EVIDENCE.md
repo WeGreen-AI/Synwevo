@@ -951,3 +951,9 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 ## 2026-10-13 CR-124 A22 应用身份排除出人员治理（本地）
 
 测试：`services/identity/tests/test_admin_application_identities.py` 4 项通过（03:40Z）；账户前端 210 项、五守卫、根 typecheck/build 通过（03:4xZ）。账户服务 + 集成套件（03:40Z–03:52Z）：**3100 通过、0 失败**。改动只涉及账户服务管理路由与账户前端（完整根套件已于 03:38Z 在其前一提交上通过）。
+
+## 2026-10-13 CR-125 A47 平台邀请监管（本地）
+
+测试：`services/identity/tests/test_admin_invitations.py` 12 项 + test_platform_access / test_admin / test_members / test_invites / test_member_import / test_org_audit = 195 通过，邮件标签页 test_admin_governance 22 通过（后端子代理，04:0xZ；另以临时破坏脱敏与错误归类验证测试会失败）。账户前端 `npm test` 221 项通过（含新 11 项）；六个前端工作区 658 项 node 测试、五守卫、图标与 Logo、根 typecheck/build 通过（04:11Z）。账户服务 + 集成套件（04:10Z–04:22Z）：**3112 通过、0 失败**；
+
+对抗性审查（只读子代理，04:11Z–04:23Z）：A47 端点本身无缺陷（令牌/原始错误不外泄、与接受并发安全、授权与参数化正确）。发现并已修正：(1) 中——脱敏形同虚设：持 `workspaces.view` 的角色都持 `mail.view`，邮件标签页返回邀请邮件完整收件地址且可子串搜索 → 邀请邮件在邮件标签页与注册诊断中同样脱敏、只能按完整地址或 `@域名` 搜索，其他邮件种类不变；(2) 中低——列表在全局写锁内做两次全表扫描 → 改为单一延迟读事务、仅待接受行查邮件、新增 `ix_inv_created` 索引（以另一连接持写事务的测试证明不再等待）；(3) 批量中途异常整批 500 → 逐项 `admin_operation_failed`、其余 `batch_stopped`、批次行在 finally 写入；(5) 个人空间看不到平台撤销 → 租户邀请列表新增 `revoked_by`，前端标“由平台管理撤销”；(6) 撤销理由对组织审计读者可见 → 对话框说明；(7) 零值时间戳导致无限递归 → `_state` 用 `is not None`、不递归；(10) `invite_not_pending` 兜底文案；(11) `has_account` 仅对持 `users.view` 者返回。接受：(4) 安全日志先于审计写入（受限意图）；(8) 逐项被拒审计沿用先例。修正后定向 206 项（邀请测试 20 项）+ 82 项通过；账户前端 221 项、五守卫、根 typecheck/build 通过（04:36Z）。因核心新增索引，再跑完整根套件（04:35Z–05:00Z）：**6004 通过、0 失败、2 跳过**。

@@ -9,6 +9,7 @@ import "./ownership.messages";
 import "./organization-lifecycle.messages";
 import "./bulk-accounts.messages";
 import "./second-factor.messages";
+import "./invitations.messages";
 export { ROLES, ROLE_RANK, canExport, isAbort } from "../lib/labels";
 export type { Role } from "../lib/labels";
 // Read translations at render time; imported enum labels must not freeze the initial locale.
@@ -78,7 +79,7 @@ const errors: Record<string, string> = {
   bad_action: "不支持的组织操作，请刷新页面后重试。",
   workspace_frozen: "工作空间已冻结，不能增加权限。", already_member: "该账户已经是工作空间成员。",
   invitation_rate_limited: "邀请过于频繁，请稍后重试。", invite_rate_limited: "邀请过于频繁，请稍后重试。",
-  already_invited: "已有待接受的邀请。", invite_not_pending: "邀请已接受或已撤销，请刷新。",
+  already_invited: "已有待接受的邀请。", invite_not_pending: "该邀请已不在待接受状态（已接受、已拒绝或已撤销），请刷新。",
   self_change: "不能修改自己的权限，请使用退出工作空间或移交所有权",
   cannot_manage: "不能管理同级或更高角色的成员", not_claimable: "该工作空间已被认领或不能认领，请刷新。",
   // A37: the platform-controlled ownership handover (…/recover-owner), by code; the server's own
@@ -113,6 +114,12 @@ const errors: Record<string, string> = {
   reset_not_pending: "这项第二因素重置已经结束（已生效、已取消或已作废），请刷新。",
   email_unverified: "该账户的邮箱尚未验证：通知与取消链接无法可靠送达本人，不能申请重置。",
   recent_email_change: "该账户的邮箱最近更改过：为防止通知被转到他人邮箱，更改后 7 天内不能申请重置。",
+  // A47: the platform revocation of invitations (governance/InvitationsTab.tsx). `invite_not_pending`
+  // (no longer pending: accepted, declined or revoked) and `too_many` are worded above; a batch item found already revoked
+  // succeeds with `already_revoked`.
+  no_invite: "找不到这个邀请，可能已被删除；请刷新。",
+  missing_ids: "请至少选择一项。",
+  already_revoked: "此前已撤销，本次未重复执行。",
 };
 /** One item of a batch the server refused: its sentence when catalogued, else this page's wording
  *  for its code (lib/refusals.ts) — a mixed batch answers 200, so the item carries no status. */

@@ -9,6 +9,7 @@ import { SettingsTab } from "./governance/SettingsTab";
 import { AppRunsTab, FlowRunsTab } from "./governance/RunsTab";
 import { SuperAdminOffersAdmin, SuperAdminReadiness } from "./governance/SuperAdminHandover";
 import { MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
+import { InvitationsTab } from "./governance/InvitationsTab";
 import { OwnershipRecovery } from "./governance/OwnershipRecovery";
 import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
 import { auditChanges } from "./governance/audit";
@@ -107,6 +108,7 @@ function AdminViews({ held, tab }: { held: Held; tab: Tab }) {
     {tab === "admins" && <><PlatformAdminsTab key={accessRevision} onDenied={onDenied} onOpen={setAccess} />
       {held.has("platform.roles.assign_super") && <SuperAdminOffersAdmin key={`offers-${accessRevision}`} />}</> }
     {tab === "workspaces" && <WorkspacesTab onDenied={onDenied} held={held} />}
+    {tab === "invitations" && <InvitationsTab onDenied={onDenied} held={held} />}
     {tab === "organizations" && <OrganizationsTab onDenied={onDenied} held={held} />}
     {tab === "model-prices" && <ModelPricesTab onDenied={onDenied} held={held} />}
     {tab === "model-costs" && <ModelCostsTab onDenied={onDenied} held={held} />}

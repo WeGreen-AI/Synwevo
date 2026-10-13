@@ -71,6 +71,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     # the other account sub-routers, ahead of every `/users/{uid}…` route below.
     from .admin_second_factor import build_router as build_second_factor_router
     r.include_router(build_second_factor_router(store, ident, audit, mailer=mailer))
+    # A47: every workspace's invitations as metadata (masked invitees), and the platform-scope
+    # revoke of an abusive one. No route below shares the `/invitations` prefix.
+    from .admin_invitations import build_router as build_invitation_oversight_router
+    r.include_router(build_invitation_oversight_router(store, ident, audit))
 
     def _admin(request: Request, permission=_UNNAMED, *, dangerous: bool = False,
                step_up: bool = True) -> dict:
@@ -242,24 +246,25 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
 
     def _failure_code(value):
         # Historical transport errors may contain credentials or the full message. Never
-        # return arbitrary provider strings, even to a platform administrator.
-        safe = {"transport_unavailable", "tls_certificate_invalid", "tls_failed",
-                "smtp_authentication_failed", "smtp_security_not_supported", "mail_delivery_failed",
-                "delivery_unknown", "delivery_in_progress", "superseded", "mail_not_configured",
-                "mail_config_invalid", "public_url_missing"}
-        if value in safe or (isinstance(value, str) and re.fullmatch(
-                r"smtp_(?:(?:sender|recipient|data)_)?rejected_[45][0-9]{2}", value)):
-            return value
-        return "mail_delivery_failed" if value else None
+        # return arbitrary provider strings, even to a platform administrator. One classifier
+        # (mail.public_error_code), shared with the invitation oversight (A47).
+        from .mail import public_error_code
+        return public_error_code(value)
 
     def _mail_row(row):
         code = _failure_code(row.get("last_error"))
         retryable = (row["status"] == "failed" and row["kind"] in ("reset", "verify")
                      and bool(code) and code == row.get("last_error")
                      and code not in ("delivery_unknown", "delivery_in_progress", "superseded"))
-        return {k: row.get(k) for k in ("id", "to_addr", "kind", "ref_id", "status", "attempts",
-                                     "created_at", "sent_at", "next_attempt_at")} | {
+        out = {k: row.get(k) for k in ("id", "to_addr", "kind", "ref_id", "status", "attempts",
+                                    "created_at", "sent_at", "next_attempt_at")} | {
             "error_code": code, "retryable": retryable}
+        if row.get("kind") == "invite":
+            # An invitee is no account, and the invitation oversight (A47) never names one: its
+            # mail is masked with the same function. Every other kind goes to an account holder.
+            from .invites import masked_address
+            out["to_addr"] = masked_address(row["to_addr"])[0]
+        return out
 
     # ------------------------------------------------------------------ throttles (G19)
     from .auth_routes import MFA_BACKOFF
@@ -358,11 +363,18 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0, le=2**63-1),
                snapshot: int | None = Query(None, ge=0, le=2**63-1)):
         _admin(request, "platform.mail.view")
+        from .invites import invitee_search
         from .mail import mode
+        # The address or the mail id by substring, as before — except for an invite mail, which (like
+        # the invitation oversight, A47) only the whole address, its `@domain` or its whole mail id
+        # finds: a fragment, or a LIKE wildcard, finds no invite mail.
+        exact, domain = invitee_search(q)
         page = _page("mail_outbox", columns="id,to_addr,kind,ref_id,status,attempts,created_at,"
                      "sent_at,next_attempt_at,last_error",
-                     where="(?='' OR to_addr LIKE ? OR id LIKE ?) AND (?='' OR status=?)",
-                     params=(q, f"%{q}%", f"%{q}%", status, status),
+                     where="(?='' OR (COALESCE(kind,'')<>'invite' AND (to_addr LIKE ? OR id LIKE ?)) "
+                           "OR (kind='invite' AND (id=? OR to_addr=? OR to_addr LIKE ? ESCAPE '\\'))) "
+                           "AND (?='' OR status=?)",
+                     params=(q, f"%{q}%", f"%{q}%", q.strip(), exact or "", domain or "", status, status),
                      order="created_at DESC,id DESC", limit=limit, offset=offset, snapshot=snapshot)
         page["items"] = [_mail_row(row) for row in page["items"]]
         page["delivery_mode"] = mode()

@@ -431,3 +431,37 @@ def test_restore_invalidates_pending_super_offers_and_keeps_accepted_history(rec
         assert w.store.one("SELECT state FROM platform_super_admin_offers WHERE id='fixture-offer-pending'")["state"] == "pending"
     finally:
         w.snapshot._close(restored)
+
+
+def test_restore_keeps_a_platform_revoked_invitation_revoked(recovery):
+    """A47: the platform's revoke of an invitation (`POST /api/admin/invitations/{iid}/revoke`) is
+    journalled, so a copy restored from a backup taken before it has the link withdrawn again —
+    without the workspace's own record of who withdrew it, which the backup predates."""
+    from synwevo_identity.invites import Invites
+    from tests.integration.platform_fixture import make_platform_admin
+    w = recovery
+    # Synthetic invitation, issued by the workspace's owner through the invitation service.
+    row, raw = Invites(w.store, w.ident).create(workspace_id=w.wid, email="invitee@example.test", role="viewer",
+                                                actor_id=w.a["id"])
+    root = make_platform_admin(w.store, w.ident.create_user("root@example.test", PW, status="active",
+                                                            with_personal_workspace=False))
+    archive = _backup(w)
+    admin = _login(w.api, root["email"])
+    assert _post(admin, "/api/auth/reauth", {"password": PW, "scope": "admin"}).status_code == 200
+    out = _post(admin, f"/api/admin/invitations/{row['id']}/revoke", {"reason": REASON})
+    assert out.status_code == 200, out.text
+    assert out.json()["journaled"] is True
+    assert [e for e in journal.read(w.data) if e["kind"] == "invitation_revoked"] == [
+        {"at": pytest.approx(out.json()["invitation"]["revoked_at"], abs=5), "kind": "invitation_revoked",
+         "invitation_id": row["id"]}]
+    restored = _restore(w, archive)
+    try:
+        again = Invites(restored, Identity(restored))
+        assert restored.one("SELECT revoked_at FROM invitations WHERE id=?", (row["id"],))["revoked_at"]
+        assert again.preview(raw)["state"] == "revoked"
+        with pytest.raises(ServiceError) as refused:
+            again.accept(raw, password=PW, display_name=None)
+        assert refused.value.code == "invite_revoked"
+        assert again.revoked_by_platform(w.wid) == set(), "the backup predates the workspace's record"
+    finally:
+        w.snapshot._close(restored)

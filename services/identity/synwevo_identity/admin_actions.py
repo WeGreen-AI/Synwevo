@@ -37,6 +37,8 @@ ADMIN_ACTIONS: dict[str, dict] = {
     "admin.billing.freeze.lift": _a("billing", "解除付费冻结", "解除付費凍結", "Lift a billing freeze"),
     "admin.billing.grant": _a("billing", "发放钱包额度", "發放錢包額度", "Grant wallet credit"),
     "admin.billing.payments.publish": _a("billing", "发布支付配置", "發布支付設定", "Publish payment settings"),
+    "admin.invitation.revoke": _a("workspace", "撤销邀请", "撤銷邀請", "Revoke an invitation"),
+    "admin.invitation.revoke_bulk": _a("workspace", "批量撤销邀请", "批次撤銷邀請", "Revoke invitations in bulk"),
     "admin.mail.retry": _a("mail", "重发邮件", "重發郵件", "Retry a mail"),
     "admin.model_cost.publish": _a("model", "发布模型成本策略", "發布模型成本策略", "Publish the model cost policy"),
     "admin.model_price.draft": _a("model", "起草模型价格", "起草模型價格", "Draft model prices"),

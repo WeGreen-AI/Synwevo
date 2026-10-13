@@ -72,7 +72,7 @@ export function InvitesPanel({ wid, ws, callerRole, list, loading, error, reload
                 onClick={(e) => selection.pick(i.id, { shift: e.shiftKey })} /></td>
               <th scope="row" className="who">{i.email_key}<span className="cell-note">{tr("邀请人：{p0}", {p0: i.inviter || i.invited_by_email || tr("无记录")})}</span></th>
               <td>{roleLabel(i.role)} / {hasExport(i.role, i.can_export) ? tr("允许导出") : tr("不允许导出")}</td>
-              <td>{INVITE_STATE[i.state]}</td><td>{MAIL_STATE[i.mail] || i.mail}
+              <td>{INVITE_STATE[i.state]}{i.state === "revoked" && i.revoked_by === "platform" && <span className="cell-note">{tr("由平台管理撤销")}</span>}</td><td>{MAIL_STATE[i.mail] || i.mail}
                 {i.mail === "failed" && <span className="cell-note err">{tr("发送失败；可重发或联系管理员。")}</span>}</td>
               <td>{fmtTime(i.expires_at)}</td>
               <td className="act"><RowMenu label={tr("{p0} 的邀请操作", {p0: i.email_key})} items={[

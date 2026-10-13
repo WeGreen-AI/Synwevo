@@ -54,20 +54,23 @@
   :is(.admin-users-table, .admin-cards-table) .empty-row td { justify-content: center; }
 }
 
-/* A18: the account list's selection column. "Select this page" keeps its text for assistive
-   technology on a wide screen; on a phone, where the column headers are hidden and the rows are
-   cards, it stands above the cards with its text, and a chosen card is tinted as a whole. */
-.admin-users-table .pick-page { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-.admin-users-table .pick-page-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* A18: the account list's selection column (and A47's, on the invitation list). "Select this page"
+   keeps its text for assistive technology on a wide screen; on a phone, where the column headers
+   are hidden and the rows are cards, it stands above the cards with its text, and a chosen card is
+   tinted as a whole. */
+:is(.admin-users-table, .admin-invitations-table) .pick-page { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+:is(.admin-users-table, .admin-invitations-table) .pick-page-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (max-width: 720px) {
-  .admin-content table.gov.admin-users-table.selectable thead { position: static; display: block; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
-  .admin-content table.gov.admin-users-table.selectable thead tr { padding: 0 4px; border: 0; background: transparent; }
-  .admin-content table.gov.admin-users-table.selectable thead th:not(.pick) { position: absolute; width: 1px; height: 1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .admin-content table.gov.admin-users-table thead th.pick { position: static; width: auto; padding: 0; border: 0; background: transparent; text-align: left; }
-  .admin-users-table .pick-page { min-height: 44px; }
-  .admin-users-table .pick-page-text { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; font-size: 13px; font-weight: 500; color: var(--text); }
-  .admin-content table.gov.admin-users-table td.pick { position: static; width: auto; padding: 0; justify-content: flex-start; background: transparent; }
-  .admin-content table.gov.admin-users-table input[type="checkbox"] { width: 20px; height: 20px; }
-  .admin-content table.gov.admin-users-table tr.sel { background: var(--accent-weak); border-color: var(--accent-line); }
-  .admin-content table.gov.admin-users-table tr.sel :is(td, th) { background: transparent; box-shadow: none; }
+  .admin-content table.gov:is(.admin-users-table, .admin-invitations-table).selectable thead { position: static; display: block; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+  .admin-content table.gov:is(.admin-users-table, .admin-invitations-table).selectable thead tr { padding: 0 4px; border: 0; background: transparent; }
+  .admin-content table.gov:is(.admin-users-table, .admin-invitations-table).selectable thead th:not(.pick) { position: absolute; width: 1px; height: 1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .admin-content table.gov:is(.admin-users-table, .admin-invitations-table) thead th.pick { position: static; width: auto; padding: 0; border: 0; background: transparent; text-align: left; }
+  :is(.admin-users-table, .admin-invitations-table) .pick-page { min-height: 44px; }
+  :is(.admin-users-table, .admin-invitations-table) .pick-page-text { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; font-size: 13px; font-weight: 500; color: var(--text); }
+  .admin-content table.gov:is(.admin-users-table, .admin-invitations-table) td.pick { position: static; width: auto; padding: 0; justify-content: flex-start; background: transparent; }
+  .admin-content table.gov:is(.admin-users-table, .admin-invitations-table) input[type="checkbox"] { width: 20px; height: 20px; }
+  .admin-content table.gov:is(.admin-users-table, .admin-invitations-table) tr.sel { background: var(--accent-weak); border-color: var(--accent-line); }
+  .admin-content table.gov:is(.admin-users-table, .admin-invitations-table) tr.sel :is(td, th) { background: transparent; box-shadow: none; }
+  /* an invitation that can no longer be revoked has no checkbox: no empty line on its card */
+  .admin-content table.gov.admin-invitations-table td.pick:empty { display: none; }
 }

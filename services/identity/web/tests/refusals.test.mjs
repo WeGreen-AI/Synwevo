@@ -63,6 +63,8 @@ const SERVER = [
   { file: ID + "admin_bulk.py", surfaces: ["admin"] },
   // A26: the second-factor state, the reset's preview, request and cancel (governance/SecondFactorResetDialog.tsx)
   { file: ID + "admin_second_factor.py", surfaces: ["admin"] },
+  // A47: every workspace's invitations and their platform-scope revocation (governance/InvitationsTab.tsx)
+  { file: ID + "admin_invitations.py", surfaces: ["admin"] },
   { file: ID + "ownership.py", surfaces: ["account", "admin"] },
   { file: ID + "admin_settings.py", surfaces: ["admin"] },
   { file: ID + "admin_model_prices.py", surfaces: ["admin"] },
@@ -109,6 +111,8 @@ const SERVER = [
   { file: ID + "external.py", surfaces: ["account"] },
   { file: ID + "invites.py", fns: ["may_invite", "_create"], surfaces: ["members", "org"] },
   { file: ID + "invites.py", fns: ["list_for_workspace", "update", "resend", "revoke"], surfaces: ["members"] },
+  // A47: the platform-scope revocation is reached from the administration page only
+  { file: ID + "invites.py", fns: ["platform_revoke"], surfaces: ["admin"] },
   { file: ID + "invites.py", surfaces: ["signin"] },
   { file: ID + "mail.py", surfaces: ALL },
   { file: ID + "member_import_routes.py", surfaces: ["org"] },
@@ -287,6 +291,7 @@ const SAMPLE_DETAIL = {
   "文件「{filename}」被判定为恶意内容（{res.signature}），已拒绝": { signature: "Eicar-Test-Signature", filename: "members.csv" },
   "最多只能登记 {MAX_PASSKEYS} 个安全密钥": { limit: 10, kind: "passkey" },
   "一次最多处理 {BULK_MAX} 项": { field: "user_ids", limit: 100 },
+  "一次最多撤销 {BULK_MAX} 个邀请": { field: "ids", limit: 100 },
   "最多 {MAX_SUBSCRIPTIONS_PER_USER} 个设备，请先移除不用的设备": { limit: 10 },
   "一个组织最多 {MAX_ROLES} 个自定义角色": { limit: 50 },
   "请写明理由（至少 {REASON_MIN} 个字），它会写入审计记录": { field: "reason", min: 8 },

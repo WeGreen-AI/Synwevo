@@ -560,15 +560,19 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
     @r.get("/workspaces/{wid}/invitations")
     def list_invites(request: Request, wid: str, state: str = ""):
         """Every invitation with its real state and mail state; `state=` filters. `groups` counts
-        them the way the page shows them (a mail that failed is its own group)."""
+        them the way the page shows them (a mail that failed is its own group). `revoked_by` is
+        "platform" for an invitation the platform revoked (A47, `Invites.revoked_by_platform`),
+        else null — the workspace learns who withdrew it even outside an organization's log."""
         s = _session(request)
         items = invites.list_for_workspace(wid, s["user_id"], state=state.strip() or None)
+        by_platform = invites.revoked_by_platform(wid) if items else set()
         groups = {"pending": 0, "expired": 0, "revoked": 0, "accepted": 0, "declined": 0, "mail_failed": 0}
         for it in items:
             st = mailer.status_for(it["id"])
             it["mail"] = (st or {}).get("status") or "unknown"
             it["mail_error"] = (st or {}).get("last_error")
             it["can_export"] = bool(it["can_export"])
+            it["revoked_by"] = "platform" if it["id"] in by_platform else None
             groups[it["state"]] += 1
             if it["state"] == "pending" and it["mail"] == "failed":
                 groups["mail_failed"] += 1

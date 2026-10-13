@@ -538,6 +538,12 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 风险/未做：指纹按当前密钥，重叠期内由旧密钥验签的接收方看到的是新密钥指纹（行记"用哪把签"，当前+旧两把都签在头里）。
 - 验证：新增 4 例 + 两应用 webhook 契约/投递/加固/重投/CLI/示例 254 项与迁移测试通过。
 
+## CR-125 · A47 平台邀请监管：跨空间列表与带理由撤销（2026-10-13，本轮新增，本地已验证）
+
+- 位置：services/identity/synwevo_identity/admin_invitations.py（新：列表、单个与批量撤销，共用 `_revoke`）；invites.py（`Invites.platform_revoke`：与 `revoke` 同一 UPDATE，不经 `may_invite`）；mail.py（`public_error_code`：邮件标签页的错误归类原样迁出，供两处共用）；admin_routes.py（`_failure_code` 改调共享函数，include 新子路由）；admin_actions.py；前端 governance/InvitationsTab.tsx、invitations.messages.ts、access.ts、admin/navigation.ts、Admin.tsx、labels.ts、admin.css。
+- 审查要点：此前平台只能在邮件标签页看到邀请邮件、无法撤销滥用邀请。列表只给元数据并对受邀地址脱敏，令牌、链接与原始 SMTP 文本都不返回；撤销走平台作用域但写与租户撤销相同的安全日志与空间审计（标注 `by: platform`），因此恢复备份后邀请仍失效、空间拥有者能看到是平台撤销的；已接受/已拒绝的邀请不可撤销，已撤销的幂等返回。
+- 验证：新测试 12 项 + 相关 195 项 + 邮件标签页 22 项通过（后端子代理）；账户前端 221 项、六个前端工作区 658 项 node 测试、五守卫 + 图标与 Logo、根 typecheck/build 通过（04:11Z）；账户服务 + 集成 3112 通过；对抗性审查发现邮件标签页使脱敏失效（中）与列表占用写锁（中低）等，已修正并补测试（见 EVIDENCE 同日条目）；修正后的完整验证同条目。
+
 ## CR-124 · A22 应用身份排除出人员治理（2026-10-13，线上原有问题，本地已验证）
 
 - 位置：services/identity/synwevo_identity/admin_routes.py（`list_users` 与概览计数排除 `app_accounts`；`_dispatch` 找回/验证邮件与 `claim` 认领拒绝 `application_identity`）；前端 governance/labels.ts、PlatformAccess.tsx、SecondFactorResetDialog.tsx 与两个消息文件的拒绝文案。

@@ -311,6 +311,9 @@ def test_suspended_account_recovery_and_sensitive_message_replay_are_refused(fix
     assert "secret" not in json.dumps(metadata)
     allowed = {"id", "to_addr", "kind", "ref_id", "status", "attempts", "created_at", "sent_at", "next_attempt_at", "error_code", "retryable"}
     assert all(set(row) == allowed for row in metadata["items"])
+    # A47 follow-up (changed deliberately): the invite mail's recipient is masked, the others are not.
+    assert {row["kind"]: row["to_addr"] for row in metadata["items"]} == {
+        "invite": "f***@example.test", "security": "fixture@example.test", "email_change": "fixture@example.test"}
 
 
 def test_real_factory_registration_and_public_state_honor_saved_policy(fixture):
@@ -446,3 +449,47 @@ def test_revoke_other_devices_counts_roots_and_rps_but_preserves_current_family(
         assert current.get("/oidc/userinfo", headers={"Authorization": "Bearer " + current_grant.json()["access_token"]}).status_code == 200
         assert current.get("/oidc/userinfo", headers={"Authorization": "Bearer " + other_grant.json()["access_token"]}).status_code == 401
         assert post(current, "/api/auth/sessions/revoke-others", {}).json()["revoked"] == 0
+
+
+def test_invite_mail_names_no_invitee_and_is_found_only_whole_while_account_mail_is_unchanged(fixture):
+    """A47 follow-up: the mail tab is held to the invitation oversight's rule for invite mails — the
+    recipient masked with the same function (`invites.masked_address`), found only by the whole
+    address or `@domain` (`invites.invitee_search`), never by a fragment. A reset or verification
+    mail goes to an account holder and keeps its full address and its substring search."""
+    from synwevo_identity.mail import verify_mail
+    f = fixture
+    wid = f["org"]["workspace"]["id"]
+    invited = post(f["ordinary"], f"/api/auth/workspaces/{wid}/invitations", {"email": "invitee.person@example.org"})
+    assert invited.status_code == 200, invited.text
+    iid = invited.json()["id"]
+    reset = dispatch(f)                                   # the real recovery route: kind reset, to the account
+    subject, body, html = verify_mail(token="fixture-not-a-token", expires_h=24)
+    verify = f["api"].state.mailer.enqueue("fixture-verify@example.test", subject, body, kind="verify",
+                                           ref_id=f["user"]["id"], html=html)
+
+    def search(q=""):
+        r = f["c"].get("/api/admin/mail", params={"q": q} if q else None)
+        assert r.status_code == 200, r.text
+        return r
+
+    everything = search()
+    rows = {row["id"]: row for row in everything.json()["items"]}
+    [invite] = [row for row in rows.values() if row["kind"] == "invite"]
+    assert (invite["to_addr"], invite["ref_id"]) == ("i***@example.org", iid)
+    assert "invitee.person" not in everything.text
+    assert rows[reset["id"]]["to_addr"] == "owner@example.test"
+    assert rows[verify["id"]]["to_addr"] == "fixture-verify@example.test"
+    kinds = lambda r: sorted(row["kind"] for row in r.json()["items"])  # noqa: E731
+    # The invite mail: the whole address (normalised) or its domain, never a fragment of either.
+    for q in ("invitee.person@example.org", "  Invitee.Person@EXAMPLE.org ", "@example.org", "@Example.ORG"):
+        assert kinds(search(q)) == ["invite"], q
+    for q in ("invitee", "invitee.person", "person@example", "example.org", "@example", "i***@example.org", "%", "_"):
+        assert "invite" not in kinds(search(q)), q
+    # Every other kind: a substring of the address, as before.
+    assert kinds(search("owner")) == ["reset"] and kinds(search("fixture-ver")) == ["verify"]
+    assert kinds(search("@example.test")) == ["reset", "verify"]
+    # The mail id still finds a mail of any kind — an invite mail's only whole.
+    assert [row["id"] for row in search(invite["id"]).json()["items"]] == [invite["id"]]
+    assert "invite" not in kinds(search(invite["id"][:-2]))
+    assert [row["id"] for row in search(reset["id"]).json()["items"]] == [reset["id"]]
+    assert [row["id"] for row in search(reset["id"][:-2]).json()["items"]] == [reset["id"]]

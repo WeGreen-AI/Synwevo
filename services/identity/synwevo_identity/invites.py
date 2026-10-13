@@ -44,6 +44,35 @@ def _token() -> str:
     return secrets.token_urlsafe(32)
 
 
+# ================================================================ invitees as administration sees them
+# A platform administrator governs invitations without learning whom they were sent to (A47): every
+# administration surface that shows an invitation or its mail — the invitation oversight and the
+# mail tab — masks the invitee with this one function and searches invitees with this one rule.
+
+def masked_address(address: str) -> tuple[str, str]:
+    """(masked address, domain): the local part's first character, `***`, then `@domain`
+    (`a***@example.com`). Never the local part beyond its first character."""
+    local, _, domain = (address or "").rpartition("@")
+    return f"{local[:1]}***@{domain}", domain
+
+
+def like_escape(text: str) -> str:
+    """`text` as a literal inside a LIKE pattern written with ESCAPE '\\'."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def invitee_search(q: str) -> tuple[str | None, str | None]:
+    """How an invitee may be searched for: only whole. `(exact key, None)` for an address,
+    `(None, LIKE suffix pattern)` for `@domain` (match with ESCAPE '\\'), `(None, None)` for
+    anything else — a fragment of an address finds no invitee, so a search cannot spell one out."""
+    q = (q or "").strip()
+    if q.startswith("@") and len(q) > 1:
+        return None, "%" + like_escape(normalise_email(q))
+    if "@" in q:
+        return normalise_email(q), None
+    return None, None
+
+
 class Invites:
     def __init__(self, store: Store, ident: Identity):
         self.store = store
@@ -218,11 +247,13 @@ class Invites:
 
     @staticmethod
     def _state(r: dict) -> str:
-        if r.get("accepted_at"):
+        # `is not None`, as the SQL that writes and filters these columns says IS NULL: a timestamp
+        # of 0 is a set timestamp (A47 — the oversight list computes the same state in SQL).
+        if r.get("accepted_at") is not None:
             return "accepted"
-        if r.get("declined_at"):
+        if r.get("declined_at") is not None:
             return "declined"
-        if r.get("revoked_at"):
+        if r.get("revoked_at") is not None:
             return "revoked"
         return "expired" if r["expires_at"] <= now() else "pending"
 
@@ -235,6 +266,48 @@ class Invites:
         self.may_invite(actor_id, r["workspace_id"], r["role"])
         return bool(self.store.execute("UPDATE invitations SET revoked_at=COALESCE(revoked_at, ?) "
                                        "WHERE id=? AND accepted_at IS NULL", (now(), invite_id)))
+
+    def platform_revoke(self, invite_id: str) -> dict:
+        """Withdraw an invitation under platform governance (A47): the UPDATE `revoke` makes,
+        without `may_invite` — the platform administrator is no member of the workspace, and the
+        authority is the caller's `platform.workspaces.manage` (admin_invitations) — for the
+        caller's write transaction.
+
+        An accepted invitation is a membership now and a declined one was answered: both are 409
+        `invite_not_pending`, nothing written. An invitation already revoked (by its workspace, a
+        resend that superseded it, or an earlier platform revoke) writes nothing and comes back
+        with `already`. A pending or expired one is revoked: an expired link is dead already, but
+        a revoked one can no longer be resent by its inviter. Returns
+        `{"before": row, "state_before", "already", "revoked_at"}`."""
+        r = self.get(invite_id)
+        if not r:
+            raise ServiceError(404, "no_invite", "找不到该邀请")
+        state = self._state(r)
+        if state in ("accepted", "declined"):
+            raise ServiceError(409, "invite_not_pending", "已接受或已拒绝的邀请不能撤销")
+        if state == "revoked":
+            return {"before": r, "state_before": state, "already": True, "revoked_at": r["revoked_at"]}
+        ts = now()
+        if not self.store.execute("UPDATE invitations SET revoked_at=? WHERE id=? AND accepted_at IS NULL "
+                                  "AND declined_at IS NULL AND revoked_at IS NULL", (ts, invite_id)):
+            # The row changed between the read and the write (unreachable under the writer lock the
+            # caller holds): refused, never retried.
+            raise ServiceError(409, "invite_not_pending", "邀请状态已变化，请刷新后重试")
+        return {"before": r, "state_before": state, "already": False, "revoked_at": ts}
+
+    def revoked_by_platform(self, workspace_id: str) -> set[str]:
+        """The workspace's invitations the platform revoked (A47), for the workspace's own list.
+
+        Read from the record the platform revoke writes in its own transaction — `invite.revoke`
+        under the invitation's workspace with `by: platform` — rather than from a new column: the
+        row exists exactly when that revoke committed, the audit table is append-only (nothing
+        prunes it), `ix_audit_ws` serves the read, and no schema change is needed. A copy restored
+        from before the revoke has the revocation back from the security journal but not this
+        record, so there the invitation shows as revoked without saying by whom."""
+        return {row["object_id"] for row in self.store.all(
+            "SELECT DISTINCT object_id FROM audit_events WHERE workspace_id=? AND action='invite.revoke' "
+            "AND object_kind='invitation' AND result='ok' AND json_extract(meta, '$.by')='platform'",
+            (workspace_id,))}
 
     def preview(self, raw_token: str) -> dict:
         """What the landing page shows before anyone commits to anything.

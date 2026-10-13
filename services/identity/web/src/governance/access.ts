@@ -13,11 +13,13 @@ export type Held = ReadonlySet<string>;
 export const heldPermissions = (me?: { platform_permissions?: string[] } | null): Held =>
   new Set(me?.platform_permissions || []);
 
-export type Tab = "agent-safety" | "model-provider" | "model-costs" | "model-risk" | "model-prices" | "overview" | "users" | "admins" | "workspaces" | "organizations" | "registration" | "identity" | "mail" | "app-runs" | "flow-runs" | "audit" | "payments" | "finance";
+export type Tab = "agent-safety" | "model-provider" | "model-costs" | "model-risk" | "model-prices" | "overview" | "users" | "admins" | "workspaces" | "invitations" | "organizations" | "registration" | "identity" | "mail" | "app-runs" | "flow-runs" | "audit" | "payments" | "finance";
 /** The permission each view reads with. Only the views the caller's grants open are drawn. */
 export const TAB_PERMISSION: Record<Tab, string> = {
   overview: "platform.overview.view", users: "platform.users.view", admins: "platform.roles.view",
-  workspaces: "platform.workspaces.view", organizations: "platform.orgs.view", registration: "platform.config.view",
+  workspaces: "platform.workspaces.view",
+  // A47: every workspace's invitations, masked; revoking them is platform.workspaces.manage.
+  invitations: "platform.workspaces.view", organizations: "platform.orgs.view", registration: "platform.config.view",
   "model-provider": "platform.config.view", "model-costs": "platform.config.view", "model-risk": "platform.config.view", "model-prices": "platform.config.view", identity: "platform.config.view", mail: "platform.mail.view",
   "app-runs": "platform.apps.view", "flow-runs": "platform.apps.view", audit: "platform.audit.view",
   payments: "platform.billing.view", finance: "platform.billing.view",
