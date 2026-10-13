@@ -848,3 +848,63 @@ def test_one_failing_sweep_job_does_not_skip_the_others(world, monkeypatch, capf
     assert "auth sweep job mfa_tickets failed: RuntimeError" in printed.out
     assert "fixture failure whose text" not in printed.out + printed.err
 
+
+
+def _copy_db(store, dest):
+    """FIXTURE: the database as a backup copies it, from a connection of its own (committed rows only)."""
+    from pathlib import Path
+    dest.mkdir()
+    src, dst = sqlite3.connect(store.db_path), sqlite3.connect(dest / Path(store.db_path).name)
+    try:
+        src.backup(dst)
+    finally:
+        src.close()
+        dst.close()
+    return dest
+
+
+def test_a_completion_journals_its_passkeys_ahead_and_a_failed_one_is_voided(world, monkeypatch, tmp_path):
+    """Each passkey a completion removes is journalled inside the completion's transaction, with a
+    receipt that commits with it (journal._intent). A completion that fails after the line rolls
+    back and voids it: a restore from before skips it. The retry's line is appended while its
+    transaction is open: a backup copied right then has neither the removal nor the receipt, and a
+    restore removes the passkey there."""
+    w, store, uid = world, world["store"], world["target"]["id"]
+    enrol_totp(w["person"])
+    fixture_passkey(store, w["target"], 1)
+    pid = f"pk_fixture_{uid}_0"
+    rid = requested(w, include=True)["reset"]["id"]
+    fall_due(w, rid)
+    older = Store(_copy_db(store, tmp_path / "older"))
+    live_passkey = lambda s: bool(s.one("SELECT 1 AS x FROM passkeys WHERE id=? AND deleted_at IS NULL", (pid,)))  # noqa: E731
+    original, failed = journal.record, []
+
+    def failing_after_the_line(store_, kind, **fields):
+        original(store_, kind, **fields)
+        if kind == "passkey_removed" and not failed:
+            failed.append(fields["attempt_id"])
+            raise RuntimeError("fixture: the completion fails after its journal line")
+    monkeypatch.setattr(journal, "record", failing_after_the_line)
+    assert complete_due_second_factor_resets(store) == outcome(failed=1)
+    monkeypatch.setattr(journal, "record", original)
+    (attempt,) = failed
+    assert store.one("SELECT status FROM second_factor_resets WHERE id=?", (rid,))["status"] == "pending"
+    assert live_passkey(store) and store.one("SELECT value FROM meta WHERE key=?", ("journal_void:" + attempt,))["value"] == "passkey_removed"
+    assert journal.apply(older, journal.read(store.root, since=now() + 3600)) == {journal.VOID_KIND: 1}
+    assert live_passkey(older)
+
+    seen = []
+
+    def copy_after_the_line(store_, kind, **fields):
+        original(store_, kind, **fields)
+        if kind == "passkey_removed" and not seen:
+            seen.append((fields["attempt_id"], _copy_db(store_, tmp_path / "mid")))
+    monkeypatch.setattr(journal, "record", copy_after_the_line)
+    assert complete_due_second_factor_resets(store) == outcome(completed=1)
+    monkeypatch.setattr(journal, "record", original)
+    ((retry, mid_dir),) = seen
+    assert not live_passkey(store) and store.one("SELECT 1 AS x FROM meta WHERE key=?", ("journal_receipt:" + retry,))
+    mid = Store(mid_dir)
+    assert live_passkey(mid) and not mid.one("SELECT 1 AS x FROM meta WHERE key=?", ("journal_receipt:" + retry,))
+    assert "passkey_removed" in journal.apply(mid, journal.read(store.root, since=now() + 3600))
+    assert not live_passkey(mid)

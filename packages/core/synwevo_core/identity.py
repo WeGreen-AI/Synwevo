@@ -135,16 +135,25 @@ class Identity:
         return self.get_user(uid)
 
     def set_password(self, uid: str, password: str) -> None:
+        self.store_password_phc(uid, self.password_phc(uid, password))
+
+    def password_phc(self, uid: str, password: str) -> str:
+        """The account's new password checked against its policy and hashed, without writing it:
+        the slow half of `set_password`, for a caller that writes the result in a transaction of
+        its own — the hash (and the wait for a hashing slot) then runs before the writer lock is
+        taken, not under it. Raises PasswordError as `set_password` does."""
         user = self.get_user(uid)
         if not user:
             raise ServiceError(404, "no_user", "账户不存在")
         passwords.check_policy(password, email=user["email"], display_name=user.get("display_name"),
                                single_factor=not self.has_second_factor(uid))
-        phc = passwords.hash_password(password)
-        ts = now()
+        return passwords.hash_password(password)
+
+    def store_password_phc(self, uid: str, phc: str) -> None:
+        """Write a hash from `password_phc` as the account's password."""
         self.store.execute("INSERT INTO user_passwords (user_id,phc,updated_at) VALUES (?,?,?) "
                            "ON CONFLICT(user_id) DO UPDATE SET phc=excluded.phc, updated_at=excluded.updated_at",
-                           (uid, phc, ts))
+                           (uid, phc, now()))
 
     def has_second_factor(self, uid: str) -> bool:
         """Does a password sign-in of this account need a second factor?

@@ -29,7 +29,9 @@ Things this handles that a `cp -r data/` does not:
      live database, never overwritten by the archive) recorded after the snapshot was taken;
    * ends every session and every OIDC token, so everyone signs in again;
    * with explicit `--no-journal`, revokes every restored API key and disables every confidential
-     or service client; public interactive clients remain available for fresh sign-in;
+     or service client; public interactive clients remain available for fresh sign-in. The
+     restored copy then starts a new journal history (`journal.EPOCH_KEY`): a later restore of its
+     backups does not replay the written-ahead lines from before it;
    * drops every webhook delivery still pending in the restored database, so nothing is re-sent;
    * drops every mail still queued in the restored database and clears its body: those carry
      live invitation, reset and verification links, and the mail worker would send them the
@@ -521,15 +523,30 @@ def fence(data_dir: Path, *, since: float | None, journal_dir: Path | None,
         entries = journal.read(journal_dir, since=since) if (journal_dir and since is not None) else []
         # What read() returns is wider than "after the backup": the written-ahead lines (and the
         # voids of attempts that never committed) come whatever their time, for apply() to check
-        # against the receipts the restored copy holds. The report counts the withdrawals newer
-        # than the backup, and the lines read, separately; the voids are reported on their own.
-        report["journal_entries"] = sum(1 for e in entries if e["at"] > since and e["kind"] != journal.VOID_KIND)
+        # against the receipts the restored copy holds — and, given the backup's time, against
+        # what the backup shows was committed after them. The report counts what apply() did with
+        # each line (journal.apply `outcome`): the lines the backup did not hold and that were
+        # replayed, apart from the ones it skipped by receipt, by void, as never committed or as
+        # an abandoned history's.
+        outcome: dict = {}
+        report["journal"] = journal.apply(store, entries, since=since, outcome=outcome) if entries else {}
+        report["journal_entries"] = outcome.get("replayed", 0)
         report["journal_lines_read"] = len(entries)
-        report["journal"] = journal.apply(store, entries) if entries else {}
+        report["journal_receipted"] = outcome.get("receipted", 0)
+        report["journal_uncommitted"] = outcome.get("uncommitted", 0)
+        report["journal_superseded"] = outcome.get("superseded_history", 0)
+        report["journal_before_backup"] = outcome.get("before_backup", {})
         t = time.time()
         with store.tx() as c:
             def run(sql, args=()):
                 return c.execute(sql, args).rowcount
+            if no_journal:
+                # Nothing was replayed, by choice: this copy starts a new journal history. The live
+                # journal may stay beside it (an in-place restore only appends to it), so a later
+                # restore of this history's backups must not replay the lines from before now — an
+                # abandoned history's rotated secret would authenticate again, a withdrawal the
+                # operator chose not to replay would land (journal.EPOCH_KEY).
+                c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (journal.EPOCH_KEY, repr(t)))
             # With no withdrawal history, any restored machine credential may have been
             # revoked or replaced. An acknowledgement cannot make an old secret safe. Keep
             # hashes/key material intact, but require explicit operator regrant before use.
@@ -638,15 +655,26 @@ def _print_fence(report: dict, *, rehearsal: bool) -> None:
     read = report.get("journal_lines_read", n)
     counts = report.get("journal") or {}
     voided = counts.get("intent_voided", 0)                       # journal.VOID_KIND
-    applied = {k: v for k, v in counts.items() if k != "intent_voided"}
+    # Only what changed the restored copy: a kind every line of which the copy already held reads 0.
+    applied = {k: v for k, v in counts.items() if k != "intent_voided" and v > 0}
+    receipted = report.get("journal_receipted", 0)
+    uncommitted = report.get("journal_uncommitted", 0)
+    superseded = report.get("journal_superseded", 0)
     if src is None:
         print(f"  {WARN} 没有可读的安全日志：无法重放备份之后的成员移除、角色变更、账户停用等撤销。")
     else:
-        print(f"  {PASS} 安全日志 {src}：备份之后的撤销记录 {n} 条"
-              + (f"（连同按回执核对的预写记录，共读取 {read} 条）" if read != n else "") + f"，{verb}重放"
-              + (("：" + "，".join(f"{k} {v}" for k, v in sorted(applied.items()))) if applied else ""))
+        print(f"  {PASS} 安全日志 {src}：备份未包含的撤销记录 {n} 条"
+              + (f"（共读取 {read} 条）" if read != n else "")
+              + (f"，{verb}重放：" + "，".join(f"{k} {v}" for k, v in sorted(applied.items())) if applied
+                 else "，恢复副本无需改动"))
+        if receipted:
+            print(f"  {PASS} 备份已包含的预写记录 {receipted} 条：按回执核对，{verb}跳过")
         if voided:
             print(f"  {PASS} 已作废的尝试 {voided} 条：其事务从未提交，{verb}跳过，不重放")
+        if uncommitted:
+            print(f"  {PASS} 未提交的尝试 {uncommitted} 条：备份里有其后提交的变更，证明它从未提交，{verb}跳过并作废")
+        if superseded:
+            print(f"  {PASS} 无日志恢复之前的记录 {superseded} 条：属于已放弃的历史，{verb}跳过，不重放")
     if report.get("no_journal"):
         print(f"  {PASS} {verb}撤销全部旧 API 密钥（本次 {report['api_keys_revoked_without_journal']} 个），"
               f"停用私密及服务客户端（本次 {report['clients_disabled_without_journal']} 个）；"
@@ -669,6 +697,12 @@ def _print_fence(report: dict, *, rehearsal: bool) -> None:
           "其余的请逐个确认——已经发出的邀请链接仍然有效")
     print(f"   · 启用的 Webhook 订阅 {rv['webhook_subscriptions_active']} 个："
           "备份之后轮换过的签名密钥会回到旧值")
+    before = report.get("journal_before_backup") or {}
+    if before:
+        print(f"   · 早于备份时间、备份却没有回执的预写撤销 {sum(before.values())} 条"
+              f"（{'，'.join(f'{k} {v}' for k, v in sorted(before.items()))}）：{verb}重放。"
+              "多数是备份恰好在其提交前拍下；也可能是进程在提交前停止、从未生效的尝试——"
+              "请核对这些对象在备份之后没有被合法地重新授予")
     voided = rv.get("second_factor_resets_voided") or []
     if voided:
         print(f"   · {verb}作废等待中的第二因素重置 {len(voided)} 项（{', '.join(voided)}）：恢复不会通知本人或申请的管理员；"

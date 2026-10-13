@@ -156,11 +156,19 @@ def test_revoking_is_journalled(env):
     assert entries and entries[-1]["user_id"] == env["alice"]["id"] and entries[-1]["workspace_id"] == env["ws"]
 
 
+def _forget_receipts(store):
+    """A backup taken before the withdrawal holds no receipt of it (journal._intent): the rows the
+    journal's write-ahead lines are checked against go back with the table under test."""
+    store.execute("DELETE FROM meta WHERE key LIKE 'journal_receipt:%'")
+
+
 def _restore_and_replay(store, backup_rows, since):
     """Put `app_entitlements` back to what a backup held, then replay the journal as a restore
-    does. Only the table under test is rolled back; the rest of the database is unchanged."""
+    does. Only the table under test (and the journal receipts) is rolled back; the rest of the
+    database is unchanged."""
     from synwevo_core import journal
     store.execute("DELETE FROM app_entitlements")
+    _forget_receipts(store)
     for r in backup_rows:
         store.execute("INSERT INTO app_entitlements (workspace_id,app_id,user_id,granted_at,granted_by,revoked_at) "
                       "VALUES (?,?,?,?,?,?)", (r["workspace_id"], r["app_id"], r["user_id"], r["granted_at"],
@@ -219,8 +227,9 @@ def test_turning_docs_off_for_a_workspace_is_journalled_and_survives_a_restore(e
     assert apps.disable_for_workspace(ws, "docweave") is True
     entries = [e for e in journal.read(env["d"]) if e["kind"] == "workspace_app_disabled"]
     assert entries and entries[-1] == {**entries[-1], "workspace_id": ws, "app_id": "docweave"}
-    # the restore: the backup still had Docs on for this workspace
+    # the restore: the backup still had Docs on for this workspace, and no receipt of turning it off
     apps.enable_for_workspace(ws, "docweave")
+    _forget_receipts(store)
     journal.apply(store, journal.read(env["d"], since=taken))
     assert apps.check_access(uid, "docweave", ws)[0] is False, "恢复备份让停用的应用又被启用了"
     # Turning off something that was not on withdraws nothing and writes nothing.

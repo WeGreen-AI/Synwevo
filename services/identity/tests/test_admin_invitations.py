@@ -572,9 +572,14 @@ def test_an_audit_failure_rolls_the_revoke_back_and_sends_no_notice(world, monke
     assert not store.one("SELECT 1 AS x FROM job_events WHERE type='invitation.revoked' "
                          "AND json_extract(data,'$.invitation_id')=?", (known,))
     assert w["guest"].get("/api/auth/invitations/preview", params={"token": w["tokens"]["known"]}).json()["state"] == "pending"
-    # The journal entry preceded the failed write: a restrictive intent a restore would apply
-    # (accepted in review, as journal.record_organization's).
+    # The journal entry preceded the failed write and is voided after the rollback, once a later
+    # committed transaction found no receipt: a restore does not withdraw the link the platform
+    # was told it had not withdrawn.
     assert revocations_journaled(w, known) == 1
+    (line,) = [e for e in journal.read(w["data"]) if e["kind"] == "invitation_revoked" and e.get("invitation_id") == known]
+    assert [(e["attempt_id"], e["voided_kind"]) for e in journal.read(w["data"]) if e["kind"] == journal.VOID_KIND] == [
+        (line["attempt_id"], "invitation_revoked")]
+    assert store.one("SELECT value FROM meta WHERE key=?", ("journal_void:" + line["attempt_id"],))["value"] == "invitation_revoked"
     # Nothing is left half-done: the same revoke succeeds afterwards.
     assert post(w["admin"], f"/api/admin/invitations/{known}/revoke", {"reason": REASON}).json()["already"] is False
 

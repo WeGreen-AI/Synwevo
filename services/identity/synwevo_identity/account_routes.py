@@ -156,7 +156,9 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
                 pass
             audit(request, "auth.password.changed", actor_id=user["id"], object_kind="user", object_id=user["id"],
                   result="ok", meta={"sessions": ended, "tokens": tokens})
-        journaled = journal(store, "password_changed", user_id=user["id"])
+            # In the change's own transaction (withdrawals.record): a backup taken before its
+            # COMMIT is given the withdrawal on restore, a failure after the line voids it.
+            journaled = journal(store, "password_changed", user_id=user["id"])
         return {"ok": True, "sessions_revoked": ended, "journaled": journaled}
 
     @r.post("/email-change")
@@ -209,7 +211,7 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
                           "AND accepted_at IS NULL AND revoked_at IS NULL", (ts, user["email_key"], token["new_email_key"]))
             invalidate_access(store, user["id"], "email_changed")
             audit(request, "auth.email.changed", actor_id=user["id"], result="ok")
-        journaled = journal(store, "sessions_revoked", user_id=user["id"])
+            journaled = journal(store, "sessions_revoked", user_id=user["id"])
         return {"ok": True, "sign_in_required": True, "journaled": journaled}
 
     @r.get("/security-activity")
@@ -277,9 +279,10 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
             store.execute("UPDATE invitations SET revoked_at=? WHERE email_key=? AND accepted_at IS NULL AND revoked_at IS NULL", (ts, user["email_key"]))
             invalidate_access(store, user["id"], "account_pending_delete")
             audit(request, "auth.deletion.requested", actor_id=user["id"], result="ok")
-        # A backup predating this request must not make the account usable again. The existing
-        # conservative suspension journal entry enforces this without teaching Store about UI.
-        journaled = journal(store, "user_suspended", user_id=user["id"])
+            # A backup predating this request must not make the account usable again. The existing
+            # conservative suspension journal entry enforces this without teaching Store about UI;
+            # in the request's own transaction, so its receipt marks a backup that holds it.
+            journaled = journal(store, "user_suspended", user_id=user["id"])
         response.delete_cookie(COOKIE_NAME, path="/")
         response.delete_cookie(CSRF_COOKIE, path="/")
         return {"ok": True, "status": "pending_delete", "deletion_due_at": due, "journaled": journaled}

@@ -923,7 +923,7 @@ through the pre-fix transport, which lacked explicit certificate verification.
 
 2026-10-13 11:32Z `git push origin HEAD:main`，`40487d3b..9968d560`（CR-129 A44 平台工作空间生命周期，含暂停语义修复冻结的原有缺陷）。推送前：完整根套件 6278 通过/0 失败/2 跳过，账户服务 1939、集成 1426、Suite 1161、Message 84、账户前端 299、六个前端工作区 node 测试、五守卫与图标、根 typecheck/build、infra 12 项通过；工作树干净。运行 [38390941519](https://github.com/WeGreen-AI/Synwevo/actions/runs/38390941519)：verify 作业未启动（0 个步骤，计费注解相同），deploy 跳过；生产仍为 `synwevo:e99212d`。计费恢复后重跑最新运行（`gh run rerun 38390941519 --failed`）即可验证并部署 main 头部（含 CR-128 充值修复）。13:16Z 第 29 次重跑（attempt 2）：verify 仍 0 个步骤、注解相同，deploy 跳过。
 
-2026-10-13 13:52Z `git push origin HEAD:main`，`05525a9f..21ffd18b`（CR-130 安全日志冻结写前化与失败记录作废）。推送前：完整根套件 6320 通过/0 失败/2 跳过，账户服务 1941、集成 1465、Suite 1161、Message 84、账户前端 299、根 typecheck/build、守卫与图标、infra 12 项通过；工作树干净。运行 [38408562267](https://github.com/WeGreen-AI/Synwevo/actions/runs/38408562267)：verify 作业未启动（0 个步骤，计费注解相同），deploy 跳过；生产仍为 `synwevo:e99212d`。计费恢复后重跑最新运行（`gh run rerun 38408562267 --failed`）即可验证并部署 main 头部（含 CR-128 充值修复、CR-129 A44、CR-130）。
+2026-10-13 13:52Z `git push origin HEAD:main`，`05525a9f..21ffd18b`（CR-130 安全日志冻结写前化与失败记录作废）。推送前：完整根套件 6320 通过/0 失败/2 跳过，账户服务 1941、集成 1465、Suite 1161、Message 84、账户前端 299、根 typecheck/build、守卫与图标、infra 12 项通过；工作树干净。运行 [38408562267](https://github.com/WeGreen-AI/Synwevo/actions/runs/38408562267)：verify 作业未启动（0 个步骤，计费注解相同），deploy 跳过；生产仍为 `synwevo:e99212d`。计费恢复后重跑最新运行（`gh run rerun 38408562267 --failed`）即可验证并部署 main 头部（含 CR-128 充值修复、CR-129 A44、CR-130）。16:47Z 第 30 次重跑（attempt 2；14:52Z、15:52Z 两次因长工作流未按时执行）：verify 仍 0 个步骤、注解相同，deploy 跳过。
 
 ## 2026-10-11 393b066 未部署（GitHub Actions 计费阻断）
 

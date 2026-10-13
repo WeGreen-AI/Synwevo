@@ -154,8 +154,10 @@ def test_disabling_an_app_for_a_workspace_is_journalled_and_survives_a_restore(w
     entries = [e for e in journal.read(world["d"]) if e["kind"] == "workspace_app_disabled"]
     assert entries and entries[-1]["workspace_id"] == ws and entries[-1]["app_id"] == "docweave"
     assert _audit(world, "cli.app.workspace_disable")
-    # the backup: the row as it was, then the journal replayed over it
+    # the backup: the row as it was, without the receipt of its switch-off (journal._intent commits
+    # one with it), then the journal replayed over it
     store.execute("INSERT INTO workspace_apps (workspace_id, app_id, enabled_at) VALUES (?, 'docweave', 0)", (ws,))
+    store.execute("DELETE FROM meta WHERE key=?", ("journal_receipt:" + entries[-1]["attempt_id"],))
     journal.apply(store, journal.read(world["d"]))
     assert not store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id='docweave'", (ws,))
     # turning off what is already off is reported as such, and audited as nothing
@@ -200,6 +202,7 @@ def test_switching_an_app_off_platform_wide_is_journalled_and_survives_a_restore
     assert code == 0 and "已停用" in out
     assert [e["app_id"] for e in journal.read(world["d"]) if e["kind"] == "app_disabled"] == ["docweave"]
     store.execute("UPDATE apps SET status='active' WHERE id='docweave'")       # the backup, taken while it was on
+    store.execute("DELETE FROM meta WHERE key LIKE 'journal_receipt:%'")       # ... so without the switch-off's receipt
     journal.apply(store, journal.read(world["d"]))
     assert store.one("SELECT status FROM apps WHERE id='docweave'")["status"] == "disabled"
     code, out, _ = cli(world, capsys, "app", "disable", "docweave")

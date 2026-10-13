@@ -310,8 +310,10 @@ def test_browser_cannot_turn_machine_invitation_into_unacceptable_admin_invitati
     assert e["ident"].membership(e["ws"], accepted["user"]["id"])["role"] == "viewer"
 
 
-def test_withdrawal_journal_survives_a_later_transaction_failure_conservatively(plane, monkeypatch):
-    """The external fsynced security intent cannot be rolled back with the database writes."""
+def test_a_withdrawal_whose_transaction_fails_later_is_voided_and_never_replayed(plane, monkeypatch):
+    """The fsynced line cannot be rolled back with the database writes, so its receipt commits with
+    them (withdrawals.record) and the rollback voids the line once a later committed transaction
+    found no receipt: a restore keeps the membership the failed removal never took away."""
     from synwevo_core import journal
     e = plane
     _, cred, tok = credential(e)
@@ -327,7 +329,47 @@ def test_withdrawal_journal_survives_a_later_transaction_failure_conservatively(
     entries = [entry for entry in journal.read(e["store"].root)
                if entry["kind"] == "member_removed" and entry.get("user_id") == uid]
     assert len(entries) == 1 and entries[0]["workspace_id"] == e["ws"]
-    # An isolated restore rehearsal applies that fail-closed intent instead of re-granting
-    # access based on a database backup that did not contain the completed withdrawal.
-    journal.apply(e["store"], entries)
-    assert e["ident"].membership(e["ws"], uid) is None
+    voids = [entry for entry in journal.read(e["store"].root) if entry["kind"] == journal.VOID_KIND]
+    assert [(v["attempt_id"], v["voided_kind"]) for v in voids] == [(entries[0]["attempt_id"], "member_removed")]
+    assert not e["store"].one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + entries[0]["attempt_id"],))
+    # An isolated restore rehearsal skips the voided intent: the removal never committed.
+    assert journal.apply(e["store"], [*entries, *voids]) == {journal.VOID_KIND: 1}
+    assert e["ident"].membership(e["ws"], uid)["role"] == "editor"
+
+
+def test_a_backup_taken_between_a_directory_removal_s_line_and_its_commit_gets_the_removal(plane, monkeypatch, tmp_path):
+    """The removal's line is appended inside its transaction: a backup copied right then holds
+    neither the removal nor the receipt, and a restore removes the member there."""
+    import sqlite3
+    from pathlib import Path
+    from synwevo_core import journal
+    from synwevo_core.store import Store
+    e = plane
+    _, cred, tok = credential(e)
+    uid = e["users"]["stranger"]["id"]
+    e["ident"].add_member(e["ws"], uid, "editor")
+    real, seen = journal.record, []
+    mid_dir = tmp_path / "mid"
+
+    def copy_after_the_line(store, kind, **fields):
+        real(store, kind, **fields)
+        if kind == "member_removed" and not seen:
+            seen.append(fields["attempt_id"])
+            mid_dir.mkdir()
+            src, dst = sqlite3.connect(store.db_path), sqlite3.connect(mid_dir / Path(store.db_path).name)
+            try:
+                src.backup(dst)
+            finally:
+                src.close()
+                dst.close()
+    monkeypatch.setattr(journal, "record", copy_after_the_line)
+    removed = write(e, tok, f"/members/{uid}/remove", {"reason": "Fixture departure inside the window", "expected_role": "editor"})
+    monkeypatch.setattr(journal, "record", real)
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["journaled"] is True and e["ident"].membership(e["ws"], uid) is None
+    (attempt,) = seen
+    assert e["store"].one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + attempt,))
+    mid = Store(mid_dir)
+    assert mid.one("SELECT role FROM memberships WHERE workspace_id=? AND user_id=?", (e["ws"], uid))["role"] == "editor"
+    assert "member_removed" in journal.apply(mid, journal.read(e["store"].root, since=now() + 3600))
+    assert not mid.one("SELECT 1 FROM memberships WHERE workspace_id=? AND user_id=?", (e["ws"], uid))

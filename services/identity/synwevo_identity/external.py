@@ -716,17 +716,27 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, external: Ex
             raise ServiceError(401, "unauthorized", "请先登录")
         if not sessions.reauth_fresh(s, "mfa", strict=True):
             raise ServiceError(403, "reauth_required", "解除关联前，请重新输入口令确认身份")
-        row = store.one("SELECT * FROM external_identities WHERE id=? AND user_id=?", (iid, s["user_id"]))
-        if not row:
-            raise ServiceError(404, "not_found", "没有这个关联")
-        if other_sign_in_methods(store, s["user_id"], except_identity=iid) == 0:
-            raise ServiceError(409, "last_sign_in_method",
-                               "这是账户唯一的登录方式。请先设置口令或添加安全密钥，再解除关联")
-        store.execute("DELETE FROM external_identities WHERE id=? AND user_id=?", (iid, s["user_id"]))
+        from synwevo_core import journal
+        # The checks, the unlink, its audit and its journal line in one transaction. Journalled
+        # (`external_identity_unlinked`, strict): written ahead with its receipt (journal._intent),
+        # so a restore from an older backup unlinks the provider account again; a line that cannot
+        # be written refuses the unlink (503), and an unlink rolled back after its line is voided.
+        with store.tx():
+            row = store.one("SELECT * FROM external_identities WHERE id=? AND user_id=?", (iid, s["user_id"]))
+            if not row:
+                raise ServiceError(404, "not_found", "没有这个关联")
+            if other_sign_in_methods(store, s["user_id"], except_identity=iid) == 0:
+                raise ServiceError(409, "last_sign_in_method",
+                                   "这是账户唯一的登录方式。请先设置口令或添加安全密钥，再解除关联")
+            store.execute("DELETE FROM external_identities WHERE id=? AND user_id=?", (iid, s["user_id"]))
+            audit(request, "auth.external.unlink", actor_id=s["user_id"], object_kind="external_identity",
+                  object_id=iid, result="ok", meta={"provider": row["provider"]})
+            try:
+                journal._intent(store, "external_identity_unlinked", identity_id=iid)
+            except (OSError, ValueError):
+                raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
         user = ident.get_user(s["user_id"])
         label = external.providers[row["provider"]].label if row["provider"] in external.providers else row["provider"]
-        audit(request, "auth.external.unlink", actor_id=s["user_id"], object_kind="external_identity",
-              object_id=iid, result="ok", meta={"provider": row["provider"]})
         if user:
             _notify(request, user, f"解除了外部登录方式（{label}）")
         return {"ok": True}

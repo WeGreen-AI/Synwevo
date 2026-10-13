@@ -80,6 +80,8 @@ def _audit(store: Store, action: str, *, object_kind: str | None = None, object_
 
 
 def _journal(store: Store, kind: str, **fields) -> bool:
+    """The withdrawal's journal line, inside the transaction of the change it describes (the
+    caller's `store.tx()`, withdrawals.record); a failed append is reported and the change stands."""
     from .withdrawals import record
     ok = record(store, kind, **fields)
     if not ok:
@@ -303,12 +305,13 @@ def cmd_app(args) -> int:
                 print(f"{u['email']} 不是工作空间 {args.workspace} 的成员", file=sys.stderr)
                 return 2
             try:
-                ident.set_entitlement(args.workspace, u["id"], args.app, grant=False)
+                with store.tx():
+                    ident.set_entitlement(args.workspace, u["id"], args.app, grant=False)
+                    _journal(store, "entitlement_revoked", workspace_id=args.workspace, app_id=args.app,
+                             user_id=u["id"])
             except ServiceError as e:
                 print(f"未撤销：{e.message}", file=sys.stderr)
                 return 2
-            _journal(store, "entitlement_revoked", workspace_id=args.workspace, app_id=args.app,
-                     user_id=u["id"])
         _audit(store, f"cli.app.{args.action}", object_kind="entitlement", object_id=u["id"],
                workspace_id=args.workspace, meta={"app_id": args.app})
         print(f"{u['email']} 在 {args.workspace} 的 {args.app} 使用资格已"
@@ -351,13 +354,16 @@ def cmd_client(args) -> int:
         print(json.dumps(c, ensure_ascii=False, indent=2))
         return 0
     if args.action == "disable":
-        if not clients.disable(cid):
+        with store.tx():
+            disabled = clients.disable(cid)
+            if disabled:
+                # Its tokens go with it. A disabled client whose access tokens kept working until
+                # they expired would be "disabled" in name only for up to a quarter of an hour.
+                n = oidc.Grants(store).revoke_for_client(cid, "client_disabled")
+                _journal(store, "client_disabled", client_id=cid)
+        if not disabled:
             print(f"该客户端不存在或已停用：{cid}", file=sys.stderr)
             return 1
-        # Its tokens go with it. A disabled client whose access tokens kept working until they
-        # expired would be "disabled" in name only for up to a quarter of an hour.
-        n = oidc.Grants(store).revoke_for_client(cid, "client_disabled")
-        _journal(store, "client_disabled", client_id=cid)
         _audit(store, "cli.client.disable", object_kind="client", object_id=cid, meta={"tokens_revoked": n})
         print(f"已停用 {cid}，撤销了 {n} 个未过期的令牌。")
         return 0
@@ -372,8 +378,9 @@ def cmd_client(args) -> int:
         if not clients.get_any(cid):
             print("找不到该客户端", file=sys.stderr)
             return 2
-        n = oidc.Grants(store).revoke_for_client(cid, "operator_revoked")
-        _journal(store, "tokens_revoked", client_id=cid)
+        with store.tx():
+            n = oidc.Grants(store).revoke_for_client(cid, "operator_revoked")
+            _journal(store, "tokens_revoked", client_id=cid)
         _audit(store, "cli.client.revoke_tokens", object_kind="client", object_id=cid, meta={"tokens_revoked": n})
         print(f"已撤销 {cid} 的 {n} 个令牌。")
         return 0
@@ -383,16 +390,17 @@ def cmd_client(args) -> int:
             print(f"--grace-minutes 最多 {oidc.MAX_SECRET_GRACE_S // 60} 分钟", file=sys.stderr)
             return 2
         try:
-            out = clients.rotate_secret(cid, grace_s=grace_s)
+            with store.tx():
+                out = clients.rotate_secret(cid, grace_s=grace_s)
+                revoked = 0
+                if not grace_s:
+                    # No grace period means "the old secret may be in someone else's hands":
+                    # whatever it already obtained is ended too, not left to run out its lifetime.
+                    revoked = oidc.Grants(store).revoke_for_client(cid, "secret_rotated")
+                _journal(store, "client_secret_rotated", client_id=cid, secret_hash=out["secret_hash"])
         except ServiceError as e:
             print(f"轮换失败：{e.message}", file=sys.stderr)
             return 2
-        revoked = 0
-        if not grace_s:
-            # No grace period means "the old secret may be in someone else's hands": whatever it
-            # already obtained is ended too, not left to run out its lifetime.
-            revoked = oidc.Grants(store).revoke_for_client(cid, "secret_rotated")
-        _journal(store, "client_secret_rotated", client_id=cid, secret_hash=out["secret_hash"])
         _audit(store, "cli.client.rotate_secret", object_kind="client", object_id=cid,
                meta={"grace_s": grace_s, "tokens_revoked": revoked})
         print(f"client_id      : {cid}")

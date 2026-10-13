@@ -808,12 +808,24 @@ class WebhookDispatcher:
 
     def disable_subscription(self, sid: str, reason: str) -> bool:
         """Disable a subscription and stop its pending deliveries; journalled, so a restore of an
-        older database cannot bring it back to life."""
+        older database cannot bring it back to life.
+
+        The line is written ahead of the COMMIT, in the transaction that disables it, with a receipt
+        that commits with it (`journal._intent`): a backup taken between the line and the COMMIT is
+        disabled on restore, and a process that stops after the COMMIT has already written it. The
+        disable stands even when the journal cannot be written — the failure is caught inside the
+        transaction, which commits the disable with its receipt — and `last_error` says so."""
         t = self.clock()
+        failure: Exception | None = None
         with self.store.tx() as c:
             sub = c.execute("SELECT tenant, url FROM webhook_subscriptions WHERE id=?", (sid,)).fetchone()
             n = c.execute("UPDATE webhook_subscriptions SET status='disabled', disabled_reason=?, updated_at=?, "
                           "version=version+1 WHERE id=? AND status!='disabled'", (reason, t, sid)).rowcount
+            if n:
+                try:
+                    journal._intent(self.store, "webhook_disabled", subscription_id=sid)
+                except (OSError, ValueError) as e:
+                    failure = e     # the receipt is in: the disable commits; the journal's failure is said below
             dropped = c.execute("UPDATE webhook_deliveries SET status='dropped', last_error=?, next_attempt_at=NULL "
                                 "WHERE subscription_id=? AND status='pending'", (f"subscription_disabled:{reason}", sid)).rowcount
             if n and sub:
@@ -821,11 +833,9 @@ class WebhookDispatcher:
                 _auth.audit_event(self.store, "docs.webhook.disable", actor={"kind": "operator", "label": "webhook-dispatcher"},
                                   workspace_id=sub["tenant"], object_kind="webhook_subscription", object_id=sid,
                                   meta={"reason": reason, "host": urlsplit(sub["url"]).hostname, "deliveries_dropped": dropped})
-        if n:
-            try:
-                journal.record(self.store, "webhook_disabled", subscription_id=sid)
-            except Exception as e:  # noqa: BLE001 - the database already says disabled; say why the journal does not
-                self.last_error = f"安全日志写入失败（webhook_disabled {sid}）：{e}"
+        if failure is not None:
+            # The database already says disabled; say why the journal does not.
+            self.last_error = f"安全日志写入失败（webhook_disabled {sid}）：{failure}"
         return bool(n)
 
     # ---------------------------------------------------------- loop
@@ -1132,14 +1142,17 @@ class Subscriptions:
 
     def delete(self, tenant: str | None, sid: str, by: dict | None = None) -> dict:
         row = self._row(tenant, sid)
-        # Journal first: a delete that cannot be recorded outside the database is not durable
-        # against a restore, and the caller must hear that instead of a success.
-        try:
-            journal.record(self.store, "webhook_disabled", subscription_id=sid)
-        except Exception as e:  # noqa: BLE001
-            raise ServiceError(503, "journal_unavailable", f"无法写入安全日志，删除未执行：{e}") from e
         t = self.clock()
         with self.store.tx() as c:
+            # Journal first: a delete that cannot be recorded outside the database is not durable
+            # against a restore, and the caller must hear that instead of a success. Ahead of the
+            # change, in its transaction, with a receipt that commits with it (`journal._intent`):
+            # a backup taken between the line and the COMMIT is disabled on restore; a failure
+            # rolls the delete back (503) and the attempt is voided, so no restore applies it.
+            try:
+                journal._intent(self.store, "webhook_disabled", subscription_id=sid)
+            except (OSError, ValueError) as e:
+                raise ServiceError(503, "journal_unavailable", f"无法写入安全日志，删除未执行：{e}") from e
             c.execute("UPDATE webhook_subscriptions SET status='disabled', disabled_reason='deleted', deleted_at=?, "
                       "updated_at=?, version=version+1 WHERE id=?", (t, t, sid))
             dropped = c.execute("UPDATE webhook_deliveries SET status='dropped', last_error='subscription_deleted', next_attempt_at=NULL "

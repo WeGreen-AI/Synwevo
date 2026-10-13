@@ -280,10 +280,12 @@ def test_rotation_is_journalled_so_a_restore_does_not_revive_the_old_key(env):
     assert [e["key_id"] for e in entries] == [k["id"]]
     raw = (env["tmp"] / "d" / journal.FILENAME).read_text()
     assert tok.split("_", 2)[2] not in raw and new_tok.split("_", 2)[2] not in raw
-    # A backup taken before the rotation: the old key alive, its successor absent.
+    # A backup taken before the rotation: the old key alive, its successor absent, and no receipt
+    # of the rotation's journal line (journal._intent commits it with the rotation).
     env["store"].execute("DELETE FROM api_keys WHERE id=?", (new["id"],))
     env["store"].execute("UPDATE api_keys SET revoked_at=NULL, revoke_reason=NULL, replaced_by=NULL WHERE id=?",
                          (k["id"],))
+    env["store"].execute("DELETE FROM meta WHERE key=?", ("journal_receipt:" + entries[0]["attempt_id"],))
     assert call(env, tok).status_code == 200
     journal.apply(env["store"], entries)
     assert call(env, tok).status_code == 401
@@ -355,10 +357,12 @@ def test_revocation_is_journalled_so_a_restore_cannot_bring_the_key_back(env):
     assert entries and entries[-1]["key_id"] == k["id"], "记录的是密钥链的根，恢复出的旧库里一定有它"
     raw = (env["tmp"] / "d" / journal.FILENAME).read_text()
     assert tok.split("_", 2)[2] not in raw and new_tok.split("_", 2)[2] not in raw
-    # Simulate a restore of a backup taken before the rotation: only the root exists, alive.
+    # Simulate a restore of a backup taken before the rotation: only the root exists, alive, and
+    # neither journal line's receipt is there.
     env["store"].execute("DELETE FROM api_keys WHERE id=?", (new["id"],))
     env["store"].execute("UPDATE api_keys SET revoked_at=NULL, revoke_reason=NULL, replaced_by=NULL, expires_at=NULL "
                          "WHERE id=?", (k["id"],))
+    env["store"].execute("DELETE FROM meta WHERE key LIKE 'journal_receipt:%'")
     assert call(env, tok).status_code == 200
     journal.apply(env["store"], entries)
     assert call(env, tok).status_code == 401

@@ -150,11 +150,16 @@ def notify_user(store, user_id: str, kind: str, *, params: dict, dedupe_key: str
 
 
 def _journal(store, kind: str, **fields) -> None:
-    """Write-ahead restore aid. A failed append never undoes the restrictive state: refusing a
-    suspension or an open breaker because a log could not be written would fail open."""
+    """Write-ahead restore aid, inside the caller's write transaction (journal._intent): the line
+    before the change, with a receipt that commits with it, and a void if the transaction rolls
+    back — so a suspension or breaker that never committed is not re-created on every restore. A
+    failed append never undoes the restrictive state (strict=False: the receipt still commits with
+    it): refusing a suspension or an open breaker because a log could not be written would fail
+    open."""
     from .. import journal
     try:
-        journal.record(store, kind, **fields)
+        if not journal._intent(store, kind, strict=False, **fields):
+            log.error("security journal append for %s failed", kind)
     except Exception as exc:  # noqa: BLE001
         log.error("security journal append for %s failed: %s", kind, type(exc).__name__)
 

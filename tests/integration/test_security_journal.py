@@ -456,9 +456,11 @@ def test_restore_keeps_a_platform_revoked_invitation_revoked(recovery):
     out = _post(admin, f"/api/admin/invitations/{row['id']}/revoke", {"reason": REASON})
     assert out.status_code == 200, out.text
     assert out.json()["journaled"] is True
-    assert [e for e in journal.read(w.data) if e["kind"] == "invitation_revoked"] == [
-        {"at": pytest.approx(out.json()["invitation"]["revoked_at"], abs=5), "kind": "invitation_revoked",
-         "invitation_id": row["id"]}]
+    (line,) = [e for e in journal.read(w.data) if e["kind"] == "invitation_revoked"]
+    assert line == {"at": pytest.approx(out.json()["invitation"]["revoked_at"], abs=5), "kind": "invitation_revoked",
+                    "invitation_id": row["id"], "attempt_id": line["attempt_id"]}
+    # written ahead in the revoke's transaction, with the receipt that committed with it
+    assert w.store.one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + line["attempt_id"],))
     restored = _restore(w, archive)
     try:
         again = Invites(restored, Identity(restored))

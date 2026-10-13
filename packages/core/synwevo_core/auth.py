@@ -437,9 +437,12 @@ class Auth:
           replaced. Rotating a key whose own predecessor is still in grace ends that grace now.
           Otherwise a chain of graced rotations kept every key of the chain valid at once — and,
           since rate buckets are per key, multiplied the credential's rate limit.
-        * The rotated-out key is written to the security journal (`api_key_superseded`) inside
-          the same transaction: if the journal cannot be written nothing changes and the caller
-          is told so, rather than handed a rotation that a restored backup would silently undo.
+        * The rotated-out key is written to the security journal (`api_key_superseded`) ahead of
+          the COMMIT, inside the same transaction, with a receipt that commits with the rotation
+          (`journal._intent`): if the journal cannot be written nothing changes and the caller is
+          told so, rather than handed a rotation that a restored backup would silently undo; a
+          backup taken between the line and the COMMIT is rotated on restore, and an attempt
+          that rolls back is voided.
         """
         if grace_s is None:
             grace_s = 0
@@ -505,7 +508,7 @@ class Auth:
             old_after = dict(c.execute(f"SELECT {KEY_COLUMNS} FROM api_keys WHERE id=?", (kid,)).fetchone())
             from . import journal
             try:
-                journal.record(self.store, "api_key_superseded", key_id=kid)
+                journal._intent(self.store, "api_key_superseded", key_id=kid)
             except OSError as e:
                 # No detail: the OS error names a server path, and this message reaches API
                 # callers. The CLI prints the cause (`__cause__`) for the operator.
@@ -525,28 +528,37 @@ class Auth:
         Queued work of the lineage is halted by the job runner (`authority.check`).
 
         The withdrawal is also appended to the security journal, so restoring an older backup
-        cannot bring the key back. Journalling happens after the database change — a revocation
-        must take effect even if the journal cannot be written — and a journal failure is raised
-        (`JournalWriteFailed`) so the caller can say the revocation is in force but not durable.
+        cannot bring the key back: ahead of the COMMIT, in the revocation's transaction, with a
+        receipt that commits with it (`journal._intent`) — a backup taken between the line and the
+        COMMIT is revoked on restore, and no process stop after the COMMIT can lose the line. A
+        revocation must take effect even if the journal cannot be written: an append failure is
+        caught inside the transaction, which commits the revocation (with its receipt), and is
+        then raised (`JournalWriteFailed`) so the caller can say the revocation is in force but not
+        durable. Inside a caller's transaction that exception rolls the caller back unless it is
+        caught there; the attempt is then voided.
         """
         root = self.lineage_of(kid)
         if not root:
             return 0
         t = now()
+        from . import journal
+        failure: OSError | None = None
         with self.store.tx() as c:
             n = c.execute("UPDATE api_keys SET revoked_at=?, revoke_reason=? "
                           "WHERE (id=? OR lineage=?) AND revoked_at IS NULL", (t, reason, root, root)).rowcount
+            if n:
+                try:
+                    # The lineage root, not the key named: a backup taken before a rotation holds the
+                    # root but not its successor, and replaying "revoke <successor>" there would
+                    # match nothing and leave the root alive.
+                    journal._intent(self.store, "api_key_revoked", key_id=root)
+                except OSError as e:
+                    failure = e     # the receipt is in: the revocation commits, the caller is told
         if n:
             for k in self.store.all("SELECT id FROM api_keys WHERE id=? OR lineage=?", (root, root)):
                 self._last_seen.pop(k["id"], None)
-            from . import journal
-            try:
-                # The lineage root, not the key named: a backup taken before a rotation holds the
-                # root but not its successor, and replaying "revoke <successor>" there would
-                # match nothing and leave the root alive.
-                journal.record(self.store, "api_key_revoked", key_id=root)
-            except OSError as e:
-                raise JournalWriteFailed(n, str(e)) from e
+            if failure is not None:
+                raise JournalWriteFailed(n, str(failure)) from failure
         return n
 
     def verify(self, header: str | None) -> dict:

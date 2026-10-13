@@ -595,15 +595,24 @@ def end_central_session(store: Store, central_session_id: str, reason: str, *, d
     An RP session id is resolved to its central device first. The root, sibling RP sessions,
     grants and client-session linkage are revoked together before any network notification.
     `deliver=None` means the real network deliverer, looked up at call time.
+
+    The two halves are also callable apart, for a caller that journals the revocation in the same
+    write transaction (auth_routes' "sign out this device" and "sign out other devices"):
+    `revoke_central_session` inside that transaction, `notify_logout` after its COMMIT.
     """
-    deliver = oidc.deliver_logout if deliver is None else deliver
-    grants, clients = oidc.Grants(store), oidc.Clients(store)
+    return notify_logout(store, revoke_central_session(store, central_session_id, reason), deliver=deliver)
+
+
+def revoke_central_session(store: Store, central_session_id: str, reason: str) -> dict:
+    """end_central_session's revocations, in the caller's write transaction (or one of its own):
+    the device's central sign-in, its relying-party sessions and grants. Returns the counts and
+    `pending`, the client sessions `notify_logout` tells once this has committed — never from
+    inside the transaction, whose writer lock no network call may hold."""
     sessions = Sessions(store)
     with store.tx():
         root = sessions.device_root_id(central_session_id)
         if root is None:
-            return {"tokens_revoked": 0, "clients_notified": 0, "clients_failed": 0,
-                    "app_sessions_ended": 0, "sessions_revoked": 0}
+            return {"tokens_revoked": 0, "app_sessions_ended": 0, "sessions_revoked": 0, "pending": []}
         selected = store.one("SELECT user_id FROM sessions WHERE id=?", (central_session_id,))
         rows = store.all("SELECT * FROM client_sessions WHERE central_session_id=? "
                          "AND user_id=? AND logged_out_at IS NULL", (root, selected["user_id"]))
@@ -611,8 +620,18 @@ def end_central_session(store: Store, central_session_id: str, reason: str, *, d
                              (root, selected["user_id"]))
         outcome = sessions.revoke_device(central_session_id, reason, rp_reason=f"central_{reason}"[:60])
         rp_sessions = max(0, outcome["sessions_revoked"] - bool(root_live))
+    return {"tokens_revoked": outcome["tokens_revoked"], "app_sessions_ended": rp_sessions,
+            "sessions_revoked": outcome["sessions_revoked"], "pending": rows}
+
+
+def notify_logout(store: Store, revoked: dict, *, deliver=None) -> dict:
+    """end_central_session's notifications, after `revoke_central_session` committed and outside
+    any transaction: a back-channel logout token to each pending client session that registered
+    an endpoint, a failure kept on its row. Returns end_central_session's outcome."""
+    deliver = oidc.deliver_logout if deliver is None else deliver
+    grants, clients = oidc.Grants(store), oidc.Clients(store)
     notified, failed = 0, 0
-    for cs in rows:
+    for cs in revoked["pending"]:
         client = clients.get(cs["client_id"])
         if not client or not client.get("backchannel_logout_uri"):
             continue
@@ -623,5 +642,5 @@ def end_central_session(store: Store, central_session_id: str, reason: str, *, d
         else:
             failed += 1
             store.execute("UPDATE client_sessions SET logout_error=? WHERE id=?", (err, cs["id"]))
-    return {"tokens_revoked": outcome["tokens_revoked"], "clients_notified": notified, "clients_failed": failed,
-            "app_sessions_ended": rp_sessions, "sessions_revoked": outcome["sessions_revoked"]}
+    return {"tokens_revoked": revoked["tokens_revoked"], "clients_notified": notified, "clients_failed": failed,
+            "app_sessions_ended": revoked["app_sessions_ended"], "sessions_revoked": revoked["sessions_revoked"]}

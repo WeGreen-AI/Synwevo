@@ -864,3 +864,75 @@ def test_an_undo_racing_a_freeze_always_ends_unassigned(env):
         if freeze.status_code == 409:
             assert freeze.json()["error"] == "not_active"
         assert _consistent(env)[0] == "pending_claim"
+
+
+def test_a_backup_taken_between_the_undo_s_line_and_its_commit_is_undone_on_restore(env, tmp_path, monkeypatch):
+    """The entry carries an `attempt_id` and a receipt that commits with the undo (journal._intent):
+    a backup copied right after the line has neither and is undone on restore; one taken after the
+    COMMIT holds the receipt and is left exactly as it is."""
+    import sqlite3
+    from pathlib import Path
+    store, alice = env["store"], env["alice"]["id"]
+    _claim(env, alice)
+    mid_dir = tmp_path / "mid"
+    mid_dir.mkdir()
+    real, seen = journal.record, []
+
+    def copy_after_the_line(store_, kind, **fields):
+        real(store_, kind, **fields)
+        if kind == "workspace_unclaimed" and not seen:
+            seen.append(fields["attempt_id"])
+            src, dst = sqlite3.connect(store_.db_path), sqlite3.connect(mid_dir / Path(store_.db_path).name)
+            try:
+                src.backup(dst)
+            finally:
+                src.close()
+                dst.close()
+    monkeypatch.setattr(journal, "record", copy_after_the_line)
+    assert _unclaim(env).status_code == 200
+    monkeypatch.setattr(journal, "record", real)
+    (attempt,) = seen
+    assert store.one("SELECT 1 AS x FROM meta WHERE key=?", ("journal_receipt:" + attempt,))
+    mid = Store(mid_dir)
+    assert {r["user_id"] for r in mid.all("SELECT user_id FROM memberships WHERE workspace_id=?", (LEGACY,))} == {alice}
+    assert not mid.one("SELECT 1 AS x FROM meta WHERE key=?", ("journal_receipt:" + attempt,))
+    entries = journal.read(store.root, since=now() + 60)
+    assert journal.apply(mid, entries)["workspace_unclaimed"] >= 1
+    assert mid.all("SELECT * FROM memberships WHERE workspace_id=?", (LEGACY,)) == []
+    assert mid.one("SELECT status FROM workspaces WHERE id=?", (LEGACY,))["status"] == "pending_claim"
+    after = _backup(env, tmp_path, "after")
+    once = _snapshot(after)
+    assert journal.apply(after, entries) == {"workspace_unclaimed": 0}
+    assert _snapshot(after) == once
+
+
+def test_an_undo_that_fails_after_its_line_is_voided_and_never_replayed(env, tmp_path, monkeypatch):
+    """A failure after the entry (here the transaction itself, right after the line) rolls the undo
+    back and voids the entry once a later committed transaction found no receipt: no restore
+    removes the memberships of an undo that never happened, even from a backup taken before it."""
+    store, alice = env["store"], env["alice"]["id"]
+    _claim(env, alice)
+    older = _backup(env, tmp_path, "assigned")
+    admin = TestClient(env["api"], raise_server_exceptions=False)
+    assert admin.post("/api/auth/login", json={"email": "admin@example.com", "password": PW}).status_code == 200
+    _reauth(admin)
+    real, failed = journal.record, []
+
+    def failing_after_the_line(store_, kind, **fields):
+        real(store_, kind, **fields)
+        if kind == "workspace_unclaimed" and not failed:
+            failed.append(fields["attempt_id"])
+            raise RuntimeError("fixture: the undo's transaction fails after its journal line")
+    monkeypatch.setattr(journal, "record", failing_after_the_line)
+    r = _unclaim(env, client=admin)
+    monkeypatch.setattr(journal, "record", real)
+    assert r.status_code == 500, r.text
+    (attempt,) = failed
+    assert _members(env) == {alice} and _ws(env)["status"] == "active"
+    assert store.one("SELECT value FROM meta WHERE key=?", ("journal_void:" + attempt,))["value"] == "workspace_unclaimed"
+    voids = [e for e in journal.read(store.root) if e["kind"] == journal.VOID_KIND]
+    assert [(v["attempt_id"], v["voided_kind"]) for v in voids] == [(attempt, "workspace_unclaimed")]
+    assert journal.apply(older, journal.read(store.root, since=now() + 60)) == {journal.VOID_KIND: 1}
+    assert {r["user_id"] for r in older.all("SELECT user_id FROM memberships WHERE workspace_id=?", (LEGACY,))} == {alice}
+    # nothing is left half-done: the undo succeeds afterwards
+    assert _unclaim(env).status_code == 200 and _members(env) == set()

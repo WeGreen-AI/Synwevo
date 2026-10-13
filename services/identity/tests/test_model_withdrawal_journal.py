@@ -64,9 +64,11 @@ def test_a_switched_off_provider_stays_off_after_a_restore(provider_world):
     entries = _entries(w, "model_provider_disabled", started)
     assert len(entries) == 1
     settings = ProviderSettings(w["store"], environment="test")
-    # A backup from before the switch-off: its newest version is the enabled one.
+    # A backup from before the switch-off: its newest version is the enabled one, and it holds no
+    # receipt of the switch-off's journal line (journal._intent commits one with it).
     w["store"].execute("DROP TRIGGER model_provider_no_delete")
     w["store"].execute("DELETE FROM model_provider_versions WHERE revision=2")
+    w["store"].execute("DELETE FROM meta WHERE key=?", ("journal_receipt:" + entries[0]["attempt_id"],))
     assert settings.read()["spec"]["enabled"] is True
     assert journal.apply(w["store"], entries)["model_provider_disabled"] == 1
     state = settings.read()

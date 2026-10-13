@@ -416,14 +416,16 @@ class Ledger:
             recovered = max(0, min(disputed, booked - held))
             key, freeze_id = _id(), _id()
             owner = t.execute("SELECT kind,owner FROM billing_accounts WHERE id=?", (wallet,)).fetchone()
-            # Write-ahead, before any change below: a restored backup must not let this wallet pay
-            # again (synwevo_core.journal "payer_frozen", replayed by the freeze's id). A failed
+            # Write-ahead, before any change below, with a receipt in this transaction
+            # (journal._intent): a restored backup must not let this wallet pay again
+            # (synwevo_core.journal "payer_frozen", replayed by the freeze's id), and a chargeback
+            # that rolled back is voided rather than frozen again by every later restore. A failed
             # append aborts the chargeback; the provider's event stays in the inbox to retry.
             from .. import journal as security_journal
-            security_journal.record(self.store, security_journal.PAYER_FREEZE_KIND, freeze_id=freeze_id,
-                                    environment=self.environment, account_id=wallet,
-                                    payer_kind="organization" if owner["kind"] == "org_wallet" else "user",
-                                    payer_id=owner["owner"], chargeback_id=key)
+            security_journal._intent(self.store, security_journal.PAYER_FREEZE_KIND, freeze_id=freeze_id,
+                                     environment=self.environment, account_id=wallet,
+                                     payer_kind="organization" if owner["kind"] == "org_wallet" else "user",
+                                     payer_id=owner["owner"], chargeback_id=key)
             journal = None
             if recovered:
                 sink = self._account(t, unit, "platform", "chargeback")

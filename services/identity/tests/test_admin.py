@@ -1086,14 +1086,18 @@ def test_an_administration_write_is_undone_when_its_audit_cannot_be_written(env,
     assert r.status_code >= 500, (route, r.status_code, r.text[:200])
     assert state() == before_state, route
     if route == "finalize_deletions":
-        # The rolled-back sweep left no retry marker and no security-journal line: the journal
-        # must never describe a deletion that did not commit.
+        # The rolled-back sweep left no retry marker, and the security-journal line its deletion
+        # wrote ahead (inside the sweep's transaction) is voided: no restore applies a deletion
+        # that did not commit.
         from synwevo_core import journal
         assert store.one("SELECT COUNT(*) AS n FROM meta WHERE key GLOB 'account-deletion-journal:*'")["n"] == 0
-        journal_file = journal.path(store.root)
-        deleted_lines = [line for line in (journal_file.read_text().splitlines() if journal_file.exists() else [])
-                         if '"user_deleted"' in line and alice["id"] in line]
-        assert deleted_lines == [], deleted_lines
+        lines = journal.read(store.root)
+        deleted = [e for e in lines if e["kind"] == "user_deleted" and e["user_id"] == alice["id"]]
+        voided = {(e["attempt_id"], e["voided_kind"]) for e in lines if e["kind"] == journal.VOID_KIND}
+        assert deleted and all((e["attempt_id"], "user_deleted") in voided for e in deleted), deleted
+        for e in deleted:
+            assert not store.one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + e["attempt_id"],))
+            assert store.one("SELECT value FROM meta WHERE key=?", ("journal_void:" + e["attempt_id"],))["value"] == "user_deleted"
     assert store.one("SELECT COUNT(*) AS n FROM audit_events WHERE action=? AND result='ok'", (action,))["n"] == audits_before, route
     assert "fixture: audit storage unavailable" not in r.text, "the failure's wording never reaches the caller"
     assert json.loads(r.text).get("request_id"), "the caller gets a request id to quote"

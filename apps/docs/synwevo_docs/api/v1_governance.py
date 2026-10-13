@@ -185,21 +185,30 @@ def build_router(app_, views, jobs, auth) -> APIRouter:
         grants = Grants(store)
         if kind == "delegated":
             family = p.get("grant_family")
-            n = grants.revoke_family(family, "self_revoked")
             entry, obj = {"family_id": family}, ("grant", family)
         elif kind == "service_account":
             # Every outstanding token of this service account. Its client_secret stays valid:
             # disabling or re-keying the account is the operator's call, in the account service.
-            n = grants.revoke_for_client(p["client_id"], "self_revoked")
             entry, obj = {"client_id": p["client_id"]}, ("oauth_client", p["client_id"])
         else:
             raise ServiceError(400, "not_revocable", "这种凭据不能在这里撤销")
-        try:
-            journal.record(store, "tokens_revoked", **entry)
-        except OSError as e:
+        # Journalled ahead of the COMMIT, in the revocation's transaction, with a receipt that
+        # commits with it (journal._intent): a backup taken between the line and the COMMIT is
+        # revoked on restore, and no process stop after the COMMIT can lose the line. The
+        # revocation stands even when the journal cannot be written — the failure is caught inside
+        # the transaction, which commits the revocation with its receipt — and the caller is told.
+        failure: OSError | None = None
+        with store.tx():
+            try:
+                journal._intent(store, "tokens_revoked", **entry)
+            except OSError as e:
+                failure = e
+            n = (grants.revoke_family(family, "self_revoked") if kind == "delegated"
+                 else grants.revoke_for_client(p["client_id"], "self_revoked"))
+        if failure is not None:
             audit(request, p, "api.credential.revoke", object_kind=obj[0], object_id=obj[1],
                   result="error", meta={"revoked": n, "journal": "failed"})
-            raise ServiceError(500, "journal_failed", JOURNAL_FAILED, {"revoked": n}) from e
+            raise ServiceError(500, "journal_failed", JOURNAL_FAILED, {"revoked": n}) from failure
         audit(request, p, "api.credential.revoke", object_kind=obj[0], object_id=obj[1], meta={"revoked": n})
         out = {"revoked": True, "kind": kind, "tokens_revoked": n}
         if kind == "service_account":

@@ -145,10 +145,13 @@ class MemberImportRunner:
         me = self.ident.get_user(actor) or {}
         if row["action"] == "invite":
             self.invites.may_invite(actor, wid, f["workspace_role"])
-            inv, raw = self.invites.create(workspace_id=wid, email=f["email"], role=f["workspace_role"], actor_id=actor,
-                                           can_export=False, ttl_s=INVITE_TTL_S)
-            for old in inv.get("superseded_ids") or []:
-                journal(self.store, "invitation_revoked", invitation_id=old)
+            # Each link the new one supersedes is journalled in the transaction that withdraws it
+            # (withdrawals.record), so a restore cannot revive it.
+            with self.store.tx():
+                inv, raw = self.invites.create(workspace_id=wid, email=f["email"], role=f["workspace_role"], actor_id=actor,
+                                               can_export=False, ttl_s=INVITE_TTL_S)
+                for old in inv.get("superseded_ids") or []:
+                    journal(self.store, "invitation_revoked", invitation_id=old)
             recipient = self.ident.by_email(inv["email_key"])
             locale = (recipient or {}).get("locale") or me.get("locale") or "zh-Hans"
             self.store.execute("UPDATE invitations SET locale=? WHERE id=?", (locale, inv["id"]))

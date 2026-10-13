@@ -24,6 +24,7 @@ import importlib.util
 import json
 import random
 import socket
+import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,10 +33,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from synwevo_core import journal as security_journal
 from synwevo_core import sealed
 from synwevo_core.auth import Auth
 from synwevo_core.errors import ServiceError
-from synwevo_core.store import now
+from synwevo_core.store import Store, now
 
 
 def _sibling(name: str):
@@ -1811,7 +1813,9 @@ def test_what_was_taken_back_stays_taken_back_after_a_restore(hub, monkeypatch):
     # the restore: the row as the backup had it, then the journal
     hub.store.execute("UPDATE suite_webhook_subscriptions SET status='active', url=?, secret_enc=? WHERE id=?",
                       (before["url"], before["secret_enc"], sid))
-    security_journal.apply(hub.store, [e for e in journal(hub.store) if e.get("subscription_id") == sid])
+    lines = [e for e in journal(hub.store) if e.get("subscription_id") == sid]
+    _without_their_receipts(hub.store, lines)
+    security_journal.apply(hub.store, lines)
     row = hub.store.one("SELECT status, disabled_reason FROM suite_webhook_subscriptions WHERE id=?", (sid,))
     assert (row["status"], row["disabled_reason"]) == ("disabled", "journal_replay")
     a_table(hub.api, alice)
@@ -1824,6 +1828,13 @@ def _as_the_backup_had_it(store, table: str, rows: list[dict]) -> None:
     for row in rows:
         store.execute(f"INSERT OR REPLACE INTO {table} ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})",
                       tuple(row.values()))
+
+
+def _without_their_receipts(store, lines: list[dict]) -> None:
+    """Fixture: a backup taken before these lines holds none of the receipts their changes committed
+    (journal._intent), so a restore simulated on the live database drops them too."""
+    for e in lines:
+        store.execute("DELETE FROM meta WHERE key=?", ("journal_receipt:" + e["attempt_id"],))
 
 
 def test_a_stop_replayed_over_a_restore_is_a_stop_like_any_other(hub):
@@ -1849,7 +1860,9 @@ def test_a_stop_replayed_over_a_restore_is_a_stop_like_any_other(hub):
     hub.api.post(f"{BASE}/{sid}/pause", headers=alice)                   # after the backup: journalled
     for name, rows in held.items():                                      # the restore…
         _as_the_backup_had_it(hub.store, name, rows)
-    security_journal.apply(hub.store, [e for e in journal(hub.store) if e["kind"] == "webhook_disabled"])   # …and the replay
+    lines = [e for e in journal(hub.store) if e["kind"] == "webhook_disabled"]
+    _without_their_receipts(hub.store, [e for e in lines if e.get("subscription_id") == sid])
+    security_journal.apply(hub.store, lines)                             # …and the replay
     r = hub.api.get(f"{BASE}/{sid}", headers=alice)
     stopped = r.json()
     assert (stopped["status"], stopped["disabled_reason"]) == ("disabled", "journal_replay")
@@ -2172,9 +2185,245 @@ def test_narrowing_a_filter_is_journalled_so_a_restore_does_not_widen_it_again(h
     assert len([e for e in journal(hub.store) if e.get("subscription_id") == sid]) == 2, "widening is not journalled"
     # the restore: the wide filter as the backup had it, then the journal
     hub.store.execute("UPDATE suite_webhook_subscriptions SET status='active', events=? WHERE id=?", (before["events"], sid))
-    security_journal.apply(hub.store, [e for e in journal(hub.store) if e.get("subscription_id") == sid])
+    lines = [e for e in journal(hub.store) if e.get("subscription_id") == sid]
+    _without_their_receipts(hub.store, lines)
+    security_journal.apply(hub.store, lines)
     row = hub.store.one("SELECT status, disabled_reason FROM suite_webhook_subscriptions WHERE id=?", (sid,))
     assert (row["status"], row["disabled_reason"]) == ("disabled", "journal_replay")
+
+# --------------------------------------------------------------------------------- journalled inside the change's transaction
+# Each take-back writes `webhook_disabled` through journal._intent inside the transaction that makes
+# it: a fresh `attempt_id`, a receipt that commits with the change, the line appended before the
+# COMMIT. FIXTURES below: backups are real SQLite copies into Stores of this test's own directory,
+# restored by replaying the journal into them; failures are injected one at a time and every
+# monkeypatch is put back with setattr(original).
+def _backup_into(store, copy):
+    """FIXTURE: a backup — what is committed, copied by connections of its own (from whichever
+    thread the writer runs on)."""
+    source, destination = sqlite3.connect(store.db_path), sqlite3.connect(copy.db_path)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    return copy
+
+
+def _close_stores(*stores) -> None:
+    for s in stores:
+        c = getattr(s._local, "c", None)
+        if c is not None:
+            c.close()
+            s._local.c = None
+
+
+def _taken_back(store, sid) -> tuple:
+    row = store.one("SELECT status, disabled_reason, url, events, secret_enc, deleted_at FROM suite_webhook_subscriptions "
+                    "WHERE id=?", (sid,))
+    return tuple(row.values())
+
+
+def _receipted(store, line) -> bool:
+    return bool(store.one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + line["attempt_id"],)))
+
+
+def _stops(store, sid) -> list[dict]:
+    return [e for e in journal(store) if e["kind"] == "webhook_disabled" and e["subscription_id"] == sid]
+
+
+@contextlib.contextmanager
+def _copied_between_the_line_and_its_commit(store, monkeypatch, copy):
+    """FIXTURE: a backup taken while the change's transaction is still open, right after its line
+    reached the journal (after the directory fsync), from a connection that sees only what was
+    committed."""
+    original, taken = security_journal._fsync_dir, []
+
+    def then_copy(directory):
+        original(directory)
+        if not taken:
+            _backup_into(store, copy)
+            taken.append(directory)
+    monkeypatch.setattr(security_journal, "_fsync_dir", then_copy)
+    try:
+        yield taken
+    finally:
+        monkeypatch.setattr(security_journal, "_fsync_dir", original)
+
+
+@contextlib.contextmanager
+def _directory_fsync_fails_once(monkeypatch):
+    """FIXTURE: the line is appended and its file fsynced; the directory fsync after it fails once."""
+    original, calls = security_journal._fsync_dir, []
+
+    def fails_once(directory):
+        calls.append(directory)
+        if len(calls) == 1:
+            raise OSError("fixture: directory fsync failed after the append")
+        return original(directory)
+    monkeypatch.setattr(security_journal, "_fsync_dir", fails_once)
+    try:
+        yield
+    finally:
+        monkeypatch.setattr(security_journal, "_fsync_dir", original)
+
+
+TAKE_BACKS = {
+    "another address": lambda hub, auth, sid, url: hub.api.patch(f"{BASE}/{sid}", json={"url": url + "/moved"}, headers=auth),
+    "a narrower filter": lambda hub, auth, sid, url: hub.api.patch(f"{BASE}/{sid}", json={"events": ["tables.*"]},
+                                                                   headers=auth),
+    "another secret": lambda hub, auth, sid, url: hub.api.post(f"{BASE}/{sid}/rotate-secret", json={}, headers=auth),
+    "a pause": lambda hub, auth, sid, url: hub.api.post(f"{BASE}/{sid}/pause", headers=auth),
+    "a removal": lambda hub, auth, sid, url: hub.api.delete(f"{BASE}/{sid}", headers=auth),
+}
+
+
+@pytest.mark.parametrize("change", sorted(TAKE_BACKS))
+def test_a_backup_taken_between_a_take_back_s_line_and_its_commit_comes_back_disabled(hub, tmp_path, monkeypatch, change):
+    """The window the time cutoff lost: the backup holds neither the change nor its receipt, and it
+    is later than the line. The line is read for its `attempt_id` and the restore brings the
+    subscription back disabled; a backup taken after the COMMIT holds the receipt and is left alone."""
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    sid = hub.subscribe(alice, rx.url, events=["*"])["id"]
+    before = _taken_back(hub.store, sid)
+    mid, after = Store(tmp_path / "copies" / "mid"), Store(tmp_path / "copies" / "after")
+    try:
+        with _copied_between_the_line_and_its_commit(hub.service.store, monkeypatch, mid) as taken:
+            assert TAKE_BACKS[change](hub, alice, sid, rx.url).status_code == 200
+        assert taken, "the line was appended inside the change's transaction"
+        (line,) = _stops(hub.store, sid)
+        assert _taken_back(hub.store, sid) != before and _receipted(hub.store, line)
+        assert _taken_back(mid, sid) == before and not _receipted(mid, line)
+        entries = security_journal.read(hub.store.root, since=now() + 3600)
+        assert entries == [line]
+        assert security_journal.apply(mid, entries) == {"webhook_disabled": 1}
+        assert _taken_back(mid, sid)[:2] == ("disabled", "journal_replay") and _receipted(mid, line)
+        _backup_into(hub.service.store, after)
+        assert security_journal.apply(after, entries) == {"webhook_disabled": 0}
+        assert _taken_back(after, sid) == _taken_back(hub.store, sid)
+    finally:
+        _close_stores(mid, after)
+
+
+@pytest.mark.parametrize("change", sorted(TAKE_BACKS))
+def test_a_take_back_whose_journal_fails_after_the_append_is_not_made_and_is_voided(hub, tmp_path, monkeypatch, change):
+    """The line reached the file, its directory fsync did not: 503, nothing changed, and the attempt
+    is proven never to have committed — a restore from a backup taken before it does not stop the
+    subscription. Repeated, the change is made under an attempt of its own."""
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    sid = hub.subscribe(alice, rx.url, events=["*"])["id"]
+    before = hub.store.one("SELECT * FROM suite_webhook_subscriptions WHERE id=?", (sid,))
+    older = _backup_into(hub.service.store, Store(tmp_path / "copies" / "older"))
+    try:
+        with _directory_fsync_fails_once(monkeypatch):
+            refused(TAKE_BACKS[change](hub, alice, sid, rx.url), 503, "journal_unavailable")
+        assert hub.store.one("SELECT * FROM suite_webhook_subscriptions WHERE id=?", (sid,)) == before
+        (line,) = _stops(hub.store, sid)
+        (void,) = [e for e in journal(hub.store) if e["kind"] == security_journal.VOID_KIND]
+        assert (void["attempt_id"], void["voided_kind"]) == (line["attempt_id"], "webhook_disabled")
+        assert not _receipted(hub.store, line)
+        entries = security_journal.read(hub.store.root, since=now() + 3600)
+        assert entries == [line, void]
+        assert security_journal.apply(older, entries) == {security_journal.VOID_KIND: 1}
+        assert _taken_back(older, sid) == _taken_back(hub.store, sid)
+        assert TAKE_BACKS[change](hub, alice, sid, rx.url).status_code == 200
+        retried = _stops(hub.store, sid)[-1]
+        assert retried["attempt_id"] != line["attempt_id"] and _receipted(hub.store, retried)
+    finally:
+        _close_stores(older)
+
+
+def test_what_changes_nothing_journals_nothing(hub, monkeypatch):
+    """A rotation or an edit that loses its version race changes nothing: no line, no receipt.
+    FIXTURE: the subscription is read as it was one version earlier — another change landed between
+    the read and the write."""
+    alice = grant(hub.api, "alice")["auth"]
+    rx = hub.receiver()
+    sid = hub.subscribe(alice, rx.url, events=["*"])["id"]
+    stale = hub.service._row
+
+    def read_before_the_other_change(p, sid_):
+        row = stale(p, sid_)
+        return {**row, "version": row["version"] - 1}
+    monkeypatch.setattr(hub.service, "_row", read_before_the_other_change)
+    try:
+        refused(hub.api.post(f"{BASE}/{sid}/rotate-secret", json={}, headers=alice), 409, "version_conflict")
+        refused(hub.api.patch(f"{BASE}/{sid}", json={"events": ["tables.*"]}, headers=alice), 409, "version_conflict")
+    finally:
+        monkeypatch.setattr(hub.service, "_row", stale)
+    assert not _stops(hub.store, sid)
+    assert not hub.store.one("SELECT 1 FROM meta WHERE key LIKE 'journal_receipt:%'")
+
+
+def test_a_backup_taken_between_a_dispatcher_stop_s_line_and_its_commit_comes_back_disabled(hub, tmp_path, monkeypatch):
+    alice = grant(hub.api, "alice")["auth"]
+    sid = hub.subscribe(alice, hub.receiver().url, events=["*"])["id"]
+    mid, after = Store(tmp_path / "copies" / "mid"), Store(tmp_path / "copies" / "after")
+    try:
+        with _copied_between_the_line_and_its_commit(hub.service.store, monkeypatch, mid) as taken:
+            assert hub.service.disable(sid, "gone") is True
+        assert taken, "the line was appended inside the stop's transaction"
+        (line,) = _stops(hub.store, sid)
+        assert _taken_back(hub.store, sid)[:2] == ("disabled", "gone") and _receipted(hub.store, line)
+        assert _taken_back(mid, sid)[0] == "active" and not _receipted(mid, line)
+        entries = security_journal.read(hub.store.root, since=now() + 3600)
+        assert security_journal.apply(mid, entries) == {"webhook_disabled": 1}
+        assert _taken_back(mid, sid)[:2] == ("disabled", "journal_replay") and _receipted(mid, line)
+        _backup_into(hub.service.store, after)
+        assert security_journal.apply(after, entries) == {"webhook_disabled": 0}
+        assert _taken_back(after, sid)[:2] == ("disabled", "gone")
+    finally:
+        _close_stores(mid, after)
+
+
+def test_a_dispatcher_stop_whose_journal_fails_stands_with_its_receipt(hub, tmp_path, monkeypatch):
+    alice = grant(hub.api, "alice")["auth"]
+    sid = hub.subscribe(alice, hub.receiver().url, events=["*"])["id"]
+    older = _backup_into(hub.service.store, Store(tmp_path / "copies" / "older"))
+    try:
+        with _directory_fsync_fails_once(monkeypatch):
+            assert hub.service.disable(sid, "failing") is True
+        assert "安全日志写入失败" in hub.service.last_error and sid in hub.service.last_error
+        (line,) = _stops(hub.store, sid)
+        assert _taken_back(hub.store, sid)[:2] == ("disabled", "failing") and _receipted(hub.store, line)
+        assert not [e for e in journal(hub.store) if e["kind"] == security_journal.VOID_KIND]
+        assert not hub.store.one("SELECT 1 FROM meta WHERE key=?", ("journal_void:" + line["attempt_id"],))
+        entries = security_journal.read(hub.store.root, since=now() + 3600)
+        assert security_journal.apply(older, entries) == {"webhook_disabled": 1}
+        assert _taken_back(older, sid)[:2] == ("disabled", "journal_replay")
+    finally:
+        _close_stores(older)
+
+
+def test_a_dispatcher_stop_is_in_the_journal_when_its_commit_returns(hub, tmp_path):
+    """The line used to be appended after the transaction: a process stopping between the COMMIT
+    and the append lost it for every older backup. FIXTURE: a TEMP trigger on this thread's
+    connection sees the row turn disabled and queues a read of the journal file for right after that
+    transaction's COMMIT (Store.after_commit) — what a process stopping there leaves on disk."""
+    alice = grant(hub.api, "alice")["auth"]
+    sid = hub.subscribe(alice, hub.receiver().url, events=["*"])["id"]
+    older = _backup_into(hub.service.store, Store(tmp_path / "copies" / "older"))
+    store, seen = hub.service.store, []
+    c = store._c()
+
+    def disabled():
+        store.after_commit(lambda: seen.append(journal(store)))
+        return 0
+    c.create_function("fixture_disabled", 0, disabled)
+    c.execute("CREATE TEMP TRIGGER fixture_stop_after_commit AFTER UPDATE OF status ON suite_webhook_subscriptions "
+              "WHEN NEW.status='disabled' AND OLD.status<>'disabled' BEGIN SELECT fixture_disabled(); END")
+    try:
+        assert hub.service.disable(sid, "gone") is True
+    finally:
+        c.execute("DROP TRIGGER fixture_stop_after_commit")
+    try:
+        (on_disk,) = seen
+        assert [e["subscription_id"] for e in on_disk if e["kind"] == "webhook_disabled"] == [sid]
+        assert security_journal.apply(older, on_disk) == {"webhook_disabled": 1}
+        assert _taken_back(older, sid)[:2] == ("disabled", "journal_replay")
+    finally:
+        _close_stores(older)
 
 
 def test_ipv6_and_multicast_addresses_that_only_look_global_are_refused(hub, monkeypatch):

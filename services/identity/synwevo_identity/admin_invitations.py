@@ -23,9 +23,12 @@ of the rest of the console:
   `invitation_revoked` (a restore does not bring the link back), the workspace's own audit record
   `invite.revoke` filed under the invitation's workspace with `by: platform` (its organization's
   log shows it as the platform's, and the workspace's own list says `revoked_by: "platform"`), and
-  the platform's record `admin.invitation.revoke`. The journal entry is written before the audit
-  records and the commit, so a failure after it rolls the revoke back but leaves the entry, which a
-  restore applies: a restrictive intent that fails closed, as `journal.record_organization`'s does.
+  the platform's record `admin.invitation.revoke`. The journal entry is written ahead, before the
+  audit records and the commit, with a receipt that commits with the revoke (`withdrawals.record`):
+  a backup taken before the commit is given the revoke on restore, and a failure after the entry
+  rolls the revoke back and voids the entry once the rollback is proven. Only a process that stops
+  before that proof leaves the entry for a restore to apply: a restrictive intent that fails closed,
+  as `journal.record_organization`'s does.
   After the commit the invitee's to-do closes as the tenant route closes it. The link then fails at
   preview (state `revoked`) and at acceptance (409 `invite_revoked`); the inviter may invite the
   address again — the platform withdrew one link, it did not bar an address.
@@ -259,7 +262,7 @@ def build_router(store: Store, ident: Identity, audit) -> APIRouter:
                 return {"already": True, "invitation": invitation, "journaled": None}
             from .withdrawals import record as journal
             # A withdrawn link stays withdrawn when an older database is restored. Before the audit
-            # records: a failure after this point leaves a restrictive intent (see the module).
+            # records: a failure after this point is voided after the rollback (see the module).
             journaled = journal(store, "invitation_revoked", invitation_id=iid)
             # The workspace's own record, under the invitation's workspace (never the
             # administrator's session workspace): its governance log shows the platform's act.

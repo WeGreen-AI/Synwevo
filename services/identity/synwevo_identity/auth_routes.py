@@ -464,15 +464,19 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
         # Ending a device's sign-in ends what it authorised: the platform tokens minted from it
         # and the application sessions it opened. Revoking only the row left stolen delegated
         # refresh tokens working for up to two weeks after "sign out this device".
-        from .provider_routes import end_central_session
-        out = end_central_session(ident.store, sid, "user_revoked")
-        sessions.revoke(sid, "user_revoked")
-        # Broader than the action on purpose: the journal has no kind that re-revokes one session
-        # row, and a restore that brought this device's sign-in back would undo exactly what the
-        # person asked for. Replaying ends every session and token of the account instead —
-        # fail-safe, at the cost of signing them in again after a restore.
+        from .provider_routes import notify_logout, revoke_central_session
         from .withdrawals import record as journal
-        journaled = journal(ident.store, "sessions_revoked", user_id=s["user_id"])
+        with ident.store.tx():
+            revoked = revoke_central_session(ident.store, sid, "user_revoked")
+            sessions.revoke(sid, "user_revoked")
+            # Broader than the action on purpose: the journal has no kind that re-revokes one
+            # session row, and a restore that brought this device's sign-in back would undo exactly
+            # what the person asked for. Replaying ends every session and token of the account
+            # instead — fail-safe, at the cost of signing them in again after a restore. In the
+            # revocation's own transaction (withdrawals.record); the relying parties are told after
+            # its COMMIT, outside the writer lock.
+            journaled = journal(ident.store, "sessions_revoked", user_id=s["user_id"])
+        out = notify_logout(ident.store, revoked)
         audit(request, "auth.session.revoke", actor_id=s["user_id"], object_kind="session",
               object_id=sid, result="ok", meta={**out, "journaled": journaled})
         return {"ok": True, "was_current": sid == s["id"], "tokens_revoked": out["tokens_revoked"]}
@@ -480,31 +484,38 @@ def build_router(ident: Identity, sessions: Sessions, audit, mfa=None, tickets=N
     @r.post("/sessions/revoke-others")
     def revoke_others(request: Request):
         s = _require_session(request)
-        from .provider_routes import end_central_session
-        current_root = sessions.device_root_id(s["id"]) or s["id"]
-        others = ident.store.all("SELECT id FROM sessions WHERE user_id=? AND id<>? AND revoked_at IS NULL",
-                                 (s["user_id"], s["id"]))
-        tokens = n = 0
-        ended_roots = {current_root}
-        for row in others:
-            root = sessions.device_root_id(row["id"])
-            if root is None or root in ended_roots:
-                continue
-            ended_roots.add(root)
-            # A root and its RP rows are one device. End it once and count the actual
-            # changes; a second blanket revocation both lost this count and could end
-            # the current device through one of its relying-party sessions.
-            outcome = end_central_session(ident.store, row["id"], "user_revoked_others")
-            tokens += outcome["tokens_revoked"]
-            n += outcome["sessions_revoked"]
-        # Tokens not tied to any central session this account still has open — minted from a
-        # session since swept, say — cannot be vouched for by the one being kept, so they go too.
-        tokens += ident.store.execute(
-            "UPDATE oauth_tokens SET revoked_at=?, revoked_reason='user_revoked_others' "
-            "WHERE user_id=? AND revoked_at IS NULL AND (central_session_id IS NULL OR central_session_id<>?)",
-            (now_ts(), s["user_id"], current_root))
+        from .provider_routes import notify_logout, revoke_central_session
         from .withdrawals import record as journal
-        journaled = journal(ident.store, "sessions_revoked", user_id=s["user_id"])
+        tokens = n = 0
+        ended = []
+        # Every device's revocation and the journal line in one transaction (withdrawals.record);
+        # the relying parties are told after its COMMIT, outside the writer lock.
+        with ident.store.tx():
+            current_root = sessions.device_root_id(s["id"]) or s["id"]
+            others = ident.store.all("SELECT id FROM sessions WHERE user_id=? AND id<>? AND revoked_at IS NULL",
+                                     (s["user_id"], s["id"]))
+            ended_roots = {current_root}
+            for row in others:
+                root = sessions.device_root_id(row["id"])
+                if root is None or root in ended_roots:
+                    continue
+                ended_roots.add(root)
+                # A root and its RP rows are one device. End it once and count the actual
+                # changes; a second blanket revocation both lost this count and could end
+                # the current device through one of its relying-party sessions.
+                outcome = revoke_central_session(ident.store, row["id"], "user_revoked_others")
+                ended.append(outcome)
+                tokens += outcome["tokens_revoked"]
+                n += outcome["sessions_revoked"]
+            # Tokens not tied to any central session this account still has open — minted from a
+            # session since swept, say — cannot be vouched for by the one being kept, so they go too.
+            tokens += ident.store.execute(
+                "UPDATE oauth_tokens SET revoked_at=?, revoked_reason='user_revoked_others' "
+                "WHERE user_id=? AND revoked_at IS NULL AND (central_session_id IS NULL OR central_session_id<>?)",
+                (now_ts(), s["user_id"], current_root))
+            journaled = journal(ident.store, "sessions_revoked", user_id=s["user_id"])
+        for outcome in ended:
+            notify_logout(ident.store, outcome)
         audit(request, "auth.session.revoke_others", actor_id=s["user_id"], result="ok",
               meta={"count": n, "tokens_revoked": tokens, "journaled": journaled})
         return {"ok": True, "revoked": n, "tokens_revoked": tokens}
@@ -582,11 +593,15 @@ def build_invite_router(ident: Identity, sessions: Sessions, invites, mailer, au
     def revoke_invite(request: Request, iid: str):
         s = _session(request)
         journaled = None
-        before = ident.store.one("SELECT email_key, workspace_id FROM invitations WHERE id=?", (iid,))
-        if invites.revoke(iid, s["user_id"]):
-            # A withdrawn link stays withdrawn when an older database is restored.
-            from .withdrawals import record as journal
-            journaled = journal(ident.store, "invitation_revoked", invitation_id=iid)
+        from .withdrawals import record as journal
+        with ident.store.tx():
+            before = ident.store.one("SELECT email_key, workspace_id FROM invitations WHERE id=?", (iid,))
+            revoked = invites.revoke(iid, s["user_id"])
+            if revoked:
+                # A withdrawn link stays withdrawn when an older database is restored: the line in
+                # the revocation's own transaction (withdrawals.record).
+                journaled = journal(ident.store, "invitation_revoked", invitation_id=iid)
+        if revoked:
             _inbox_invitation_closed(request, iid, before, "invitation.revoked")
         # The invitation's own workspace — never the caller's current one (CI-101: the header could
         # file the revoke under another organization's log).
@@ -802,21 +817,26 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
         user = ident.get_user(row["user_id"])
         if not user or user["status"] == "suspended":
             raise ServiceError(403, "account_unavailable", "账户不可用，请联系管理员")
+        from synwevo_core.oidc import Grants
+        from .withdrawals import record as journal
+        # The policy check and the hash first, outside any transaction: the hash (and the wait for
+        # a hashing slot) must not hold the writer lock every other write waits on.
         try:
-            ident.set_password(user["id"], password)
+            phc = ident.password_phc(user["id"], password)
         except PasswordError as e:
             # The token is already spent — it had to be, to make it single use under
             # concurrency. Say so plainly rather than let someone retype into a dead link.
             raise ServiceError(400, "weak_password",
                                f"{e}（这个链接已失效，请重新申请一封邮件）",
                                {"field": "password", "link_spent": True, **e.detail}) from None
-
-        # A credential change ends everything that was authorised by the old one.
-        n = sessions.revoke_all_for_user(user["id"], "password_reset")
-        from synwevo_core.oidc import Grants
-        tokens = Grants(ident.store).revoke_for_user(user["id"], "password_reset")
-        from .withdrawals import record as journal
-        journaled = journal(ident.store, "password_changed", user_id=user["id"])
+        # The new password, the end of everything the old one authorised and the journal line in
+        # one transaction (withdrawals.record). The token was spent on its own, before it.
+        with ident.store.tx():
+            ident.store_password_phc(user["id"], phc)
+            # A credential change ends everything that was authorised by the old one.
+            n = sessions.revoke_all_for_user(user["id"], "password_reset")
+            tokens = Grants(ident.store).revoke_for_user(user["id"], "password_reset")
+            journaled = journal(ident.store, "password_changed", user_id=user["id"])
         audit(request, "auth.reset.complete", actor_id=user["id"], object_kind="user",
               object_id=user["id"], result="ok",
               meta={"sessions": n, "tokens": tokens, "journaled": journaled})
@@ -904,11 +924,12 @@ def build_recovery_router(ident: Identity, sessions: Sessions, invites, mailer, 
                     ident.store.execute(f"DELETE FROM {table} WHERE user_id=?", (user["id"],))
             ident.store.execute("UPDATE users SET email_verified_at=?, status='active', updated_at=? WHERE id=?",
                                 (now_ts(), now_ts(), row["user_id"]))
+            if pending:
+                # The pre-registrant's credentials ended in this transaction (withdrawals.record).
+                from .withdrawals import record as journal
+                journal(ident.store, "password_changed", user_id=row["user_id"])
         audit(request, "auth.email.verified", actor_id=row["user_id"], object_kind="user",
               object_id=row["user_id"], result="ok")
-        if pending:
-            from .withdrawals import record as journal
-            journal(ident.store, "password_changed", user_id=row["user_id"])
         return {"ok": True, "sign_in_required": pending}
 
     return r
@@ -1003,9 +1024,10 @@ def build_passkey_router(ident: Identity, sessions: Sessions, passkeys, audit) -
                 audit(request, "auth.passkey.remove", actor_id=s["user_id"], object_kind="passkey",
                       object_id=pid, result="ok", meta={"journaled": True})
                 # The key, the last-admin check and its success audit are transactional.
-                # A lost-key withdrawal must be durable before the removal commits.
+                # A lost-key withdrawal must be durable before the removal commits: written
+                # ahead with its receipt (journal._intent), voided if the removal rolls back.
                 try:
-                    journal.record(ident.store, "passkey_removed", credential_id=pid)
+                    journal._intent(ident.store, "passkey_removed", credential_id=pid)
                 except (OSError, ValueError):
                     raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
         except ServiceError as exc:

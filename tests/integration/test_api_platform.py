@@ -407,9 +407,82 @@ def test_unconsumed_revocation_survives_restore_journal(plane):
     row = request_approval(plane)
     approve(plane, row)
     assert post(plane["owner"], f"{OWNER}/{row['id']}/revoke", {"reason": REASON}).status_code == 200
+    # A backup taken before the revocation: the approval still approved, and no receipt of the
+    # revocation's journal line (journal._intent commits it with the revocation).
     plane["store"].execute("UPDATE api_platform_approvals SET status='approved',revoked_at=NULL WHERE id=?", (row["id"],))
+    plane["store"].execute("DELETE FROM meta WHERE key LIKE 'journal_receipt:%'")
     journal.apply(plane["store"], [entry for entry, _ in journal.validated_lines(journal.path(plane["store"].root))])
     assert Approvals(plane["store"]).get(row["id"])["status"] == "revoked"
+
+
+def _fsync_fails_once(monkeypatch):
+    """FIXTURE: the journal's directory fsync fails once, after the line reached the file."""
+    original, calls = journal._fsync_dir, []
+
+    def fails_once(directory):
+        calls.append(directory)
+        if len(calls) == 1:
+            raise OSError("fixture: directory fsync failed after the append")
+        return original(directory)
+    monkeypatch.setattr(journal, "_fsync_dir", fails_once)
+    return original
+
+
+def _kind_lines(e, kind):
+    return [x for x in journal.read(e["store"].root) if x["kind"] == kind]
+
+
+def _has_receipt(e, line):
+    return bool(e["store"].one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + line["attempt_id"],)))
+
+
+@pytest.mark.parametrize("action, kind", [("rotate", "client_secret_rotated"), ("revoke-tokens", "tokens_revoked"),
+                                          ("disable", "client_disabled")])
+def test_service_account_withdrawals_are_written_ahead_and_a_failed_one_is_voided(plane, monkeypatch, action, kind):
+    """Each is journalled ahead, in the console's transaction, with a receipt (journal._intent). A
+    journal failure answers 503 and changes nothing — the secret and the token still work — and
+    the attempt is voided; the retry commits with its receipt."""
+    e = plane
+    row = request_approval(e)
+    approve(e, row)
+    credential = issue(e, row)
+    access = service_token(e, credential).json()["access_token"]
+    path = f"{BASE}/credentials/service_account/{credential['client_id']}/{action}"
+    body = {"reason": REASON, **({"grace_seconds": 0} if action == "rotate" else {})}
+    original = _fsync_fails_once(monkeypatch)
+    try:
+        refused = post(e["admin"], path, body)
+    finally:
+        monkeypatch.setattr(journal, "_fsync_dir", original)
+    assert refused.status_code == 503 and refused.json()["error"] == "journal_unavailable", refused.text
+    assert call(e, access).status_code == 200 and service_token(e, credential).status_code == 200
+    (failed,) = _kind_lines(e, kind)
+    (void,) = _kind_lines(e, journal.VOID_KIND)
+    assert (void["attempt_id"], void["voided_kind"]) == (failed["attempt_id"], kind) and not _has_receipt(e, failed)
+    assert post(e["admin"], path, body).status_code == 200
+    assert call(e, access).status_code == 401
+    first, retry = _kind_lines(e, kind)
+    assert first == failed and _has_receipt(e, retry) and retry["attempt_id"] != failed["attempt_id"]
+
+
+def test_an_approval_revocation_whose_journal_fails_changes_nothing_and_is_voided(plane, monkeypatch):
+    e = plane
+    row = request_approval(e)
+    approve(e, row)
+    reauth(e["owner"])
+    original = _fsync_fails_once(monkeypatch)
+    try:
+        refused = post(e["owner"], f"{OWNER}/{row['id']}/revoke", {"reason": REASON})
+    finally:
+        monkeypatch.setattr(journal, "_fsync_dir", original)
+    assert refused.status_code == 503, refused.text
+    assert Approvals(e["store"]).get(row["id"])["status"] == "approved"
+    (failed,) = _kind_lines(e, "api_platform_approval_revoked")
+    (void,) = _kind_lines(e, journal.VOID_KIND)
+    assert void["attempt_id"] == failed["attempt_id"] and not _has_receipt(e, failed)
+    assert post(e["owner"], f"{OWNER}/{row['id']}/revoke", {"reason": REASON}).status_code == 200
+    assert Approvals(e["store"]).get(row["id"])["status"] == "revoked"
+    assert _has_receipt(e, _kind_lines(e, "api_platform_approval_revoked")[-1])
 
 
 def test_accounts_private_adapter_does_not_mount_a_public_data_surface(tmp_path, monkeypatch):

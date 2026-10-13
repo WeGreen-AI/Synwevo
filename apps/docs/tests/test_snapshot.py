@@ -478,8 +478,9 @@ def test_the_report_counts_withdrawals_after_the_backup_and_names_voided_attempt
     """journal.read() returns the written-ahead lines and the voids whatever their time, for apply()
     to check against the backup's receipts — they are not "withdrawals after the backup". A freeze
     committed and lifted before the backup and a freeze voided before it are read, checked and
-    skipped; only the member removed after the backup is counted as such, and the voided attempt
-    is reported on a line of its own, not among the withdrawals."""
+    skipped; only the member removed after the backup is counted as replayed, the receipted freeze
+    and the voided attempt are each reported on a line of their own, and a kind nothing was
+    replayed for is not listed with a 0 among the withdrawals."""
     from synwevo_core import journal
     from synwevo_core.identity import Identity
     from synwevo_core.store import Store, now
@@ -503,9 +504,9 @@ def test_the_report_counts_withdrawals_after_the_backup_and_names_voided_attempt
     into = tmp_path / "isolated"
     assert _restore(snapshot, archive, into, journal_from=instance) == 0
     out = capsys.readouterr().out
-    assert "备份之后的撤销记录 1 条（连同按回执核对的预写记录，共读取 4 条）" in out, out
-    assert "member_removed 1，workspace_frozen 0" in out and "intent_voided" not in out, out
-    assert "已作废的尝试 1 条" in out, out
+    assert "备份未包含的撤销记录 1 条（共读取 4 条），已重放：member_removed 1\n" in out, out
+    assert "workspace_frozen" not in out and "intent_voided" not in out, out
+    assert "备份已包含的预写记录 1 条" in out and "已作废的尝试 1 条" in out, out
     c = _ro(into / "docweave.sqlite3")
     assert c.execute("SELECT status FROM workspaces WHERE id='w1'").fetchone()[0] == "active"
     assert not c.execute("SELECT 1 FROM memberships WHERE user_id='u_alice'").fetchone()
@@ -679,6 +680,43 @@ def test_verify_rehearses_the_fence_and_names_what_needs_review(instance, tmp_pa
     assert "SYNWEVO_UI_AUTH" in text, "还要提醒认证模式不在库里"
     assert hashlib.sha256((instance / "docweave.sqlite3").read_bytes()).hexdigest() == before, \
         "演练只能动隔离副本"
+
+
+def test_a_restore_without_the_journal_starts_a_history_its_later_restores_keep(instance, tmp_path, capsys):
+    """An in-place `--no-journal` restore keeps the live journal beside the restored database and,
+    by choice, replays none of it. A later journalled restore of a backup of that new history must
+    not replay what came before it either: a member removed in the abandoned history is back in the
+    new one, and stays (journal.EPOCH_KEY). Nothing else happened in the new history — no change to
+    the membership, no other withdrawal — so only the epoch tells the old line apart."""
+    from synwevo_core import journal
+    from synwevo_core.store import Store, now
+    snapshot = _snapshot()
+    live = Store(instance)
+    _people(live, now)
+    _release(live)
+    b0 = _backup(snapshot, instance, tmp_path / "b0")
+    live = Store(instance)
+    with live.tx():                                        # the abandoned history: committed, receipted
+        live.execute("DELETE FROM memberships WHERE workspace_id='w1' AND user_id='u_alice'")
+        journal._intent(live, "member_removed", workspace_id="w1", user_id="u_alice")
+    _release(live)
+    assert _restore(snapshot, b0, instance, force=True, no_journal=True) == 0
+    assert [e["kind"] for e in journal.read(instance)] == ["member_removed"], "the live journal is kept"
+    c = _ro(instance / "docweave.sqlite3")
+    epoch = float(c.execute("SELECT value FROM meta WHERE key=?", (journal.EPOCH_KEY,)).fetchone()[0])
+    assert c.execute("SELECT role FROM memberships WHERE user_id='u_alice'").fetchone()[0] == "admin"
+    c.close()
+    assert journal.read(instance)[0]["at"] < epoch
+    b1 = _backup(snapshot, instance, tmp_path / "b1")
+    capsys.readouterr()
+    into = tmp_path / "isolated"
+    assert _restore(snapshot, b1, into, journal_from=instance) == 0
+    out = capsys.readouterr().out
+    c = _ro(into / "docweave.sqlite3")
+    kept = c.execute("SELECT role FROM memberships WHERE user_id='u_alice'").fetchone()
+    c.close()
+    assert kept and kept[0] == "admin", "the abandoned history's removal was replayed"
+    assert "无日志恢复之前的记录 1 条" in out and "member_removed" not in out, out
 
 
 class _args:

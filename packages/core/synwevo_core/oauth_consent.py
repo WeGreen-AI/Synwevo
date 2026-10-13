@@ -139,19 +139,18 @@ class Consents:
     def withdraw(self, user_id: str, consent_id: str, reason: str = "user_withdrew") -> dict:
         """Withdraw one consent and revoke that client's tokens for this person in this workspace.
 
-        Journaled first (write-ahead, like every withdrawal): a backup restored later re-applies it."""
+        Journaled ahead of the change (write-ahead, like every withdrawal), inside its transaction
+        and with a receipt that commits with it (`journal._intent`): a backup restored later — one
+        taken between the line and the COMMIT included — re-applies it, and a journal failure
+        raises before anything changed (the attempt is voided)."""
         from . import journal
-        row = self.store.one("SELECT * FROM oauth_consents WHERE id=? AND user_id=? AND revoked_at IS NULL",
-                             (consent_id, user_id))
-        if not row:
-            raise ServiceError(404, "not_found", "该授权不存在或已撤回")
-        journal.record(self.store, "consent_withdrawn", user_id=user_id, client_id=row["client_id"],
-                       workspace_id=row["workspace_id"] or None)
         with self.store.tx() as c:
             row = c.execute("SELECT * FROM oauth_consents WHERE id=? AND user_id=? AND revoked_at IS NULL",
                             (consent_id, user_id)).fetchone()
             if not row:
                 raise ServiceError(404, "not_found", "该授权不存在或已撤回")
+            journal._intent(self.store, "consent_withdrawn", user_id=user_id, client_id=row["client_id"],
+                            workspace_id=row["workspace_id"] or None)
             t = now()
             c.execute("UPDATE oauth_consents SET revoked_at=?, revoked_reason=?, updated_at=? WHERE id=?",
                       (t, reason, t, consent_id))

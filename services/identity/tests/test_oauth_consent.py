@@ -181,6 +181,8 @@ def test_a_restored_backup_does_not_bring_a_withdrawn_consent_back(env):
     entries = [e for e in journal.read(store.root) if e["kind"] == "consent_withdrawn"]
     assert entries and entries[-1]["client_id"] == "report-bot" and entries[-1]["user_id"] == env["user"]["id"]
     store.execute("UPDATE oauth_consents SET revoked_at=NULL, revoked_reason=NULL WHERE id=?", (cid,))  # fixture: restore
+    # ... of a backup that holds no receipt of the withdrawal (journal._intent commits one with it)
+    store.execute("DELETE FROM meta WHERE key=?", ("journal_receipt:" + entries[-1]["attempt_id"],))
     journal.apply(store, entries)
     assert Consents(store).active(env["user"]["id"], "report-bot", env["ws"]) is None
 

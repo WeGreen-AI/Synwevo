@@ -204,8 +204,10 @@ def build_router(store: Store, ident, sessions, audit,
     def revoke_approval(aid, reason):
         with store.tx():
             approvals.get(aid)
-            # Journal first, including unconsumed approvals: restore must not resurrect one.
-            journal.record(store, "api_platform_approval_revoked", approval_id=aid)
+            # Journal first, including unconsumed approvals: restore must not resurrect one. Ahead
+            # of the change in this transaction, with a receipt that commits with it
+            # (journal._intent); a failure raises (503) and the attempt is voided.
+            journal._intent(store, "api_platform_approval_revoked", approval_id=aid)
             store.execute("UPDATE api_platform_approvals SET status='revoked',revoked_at=?,decision_reason=? "
                           "WHERE id=?", (now(), reason, aid))
             binding = store.one("SELECT * FROM api_platform_bindings WHERE approval_id=?", (aid,))
@@ -287,7 +289,8 @@ def build_router(store: Store, ident, sessions, audit,
         return result
 
     def disable_client(cid):
-        journal.record(store, "client_disabled", client_id=cid)
+        # Always inside the caller's write transaction (journal._intent requires one).
+        journal._intent(store, "client_disabled", client_id=cid)
         clients.disable(cid)
         return Grants(store).revoke_for_client(cid, "api_platform_disabled")
 
@@ -321,7 +324,8 @@ def build_router(store: Store, ident, sessions, audit,
                             out = {"key": token, "credential": key}
                         else:
                             rotated = clients.rotate_secret(cid, grace_s=grace)
-                            journal.record(store, "client_secret_rotated", client_id=cid, secret_hash=rotated["secret_hash"])
+                            journal._intent(store, "client_secret_rotated", client_id=cid,
+                                            secret_hash=rotated["secret_hash"])
                             if not grace:
                                 Grants(store).revoke_for_client(cid, "secret_rotated")
                             out = {"client_id": cid, "client_secret": rotated["secret"], "grace_until": rotated["grace_until"]}
@@ -339,7 +343,7 @@ def build_router(store: Store, ident, sessions, audit,
                         approvals.active(binding["approval_id"])
                         return {"enabled": clients.enable(cid)}
                 with store.tx():
-                    journal.record(store, "tokens_revoked", client_id=cid)
+                    journal._intent(store, "tokens_revoked", client_id=cid)
                     return {"tokens_revoked": Grants(store).revoke_for_client(cid, "api_platform_revoked")}
 
     @r.get(PREFIX + "/calls")

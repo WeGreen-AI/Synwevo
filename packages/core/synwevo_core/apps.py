@@ -146,23 +146,34 @@ class Apps:
         and `app revoke` printed "已撤销" while changing nothing. The revocation has to exist as a
         row for the eligibility check to see it.
 
-        Journalled after the database write, so a restore can re-apply it (`synwevo_core.journal`).
-        For a ``members``-policy person the backup usually has no row at all, so replay has to
-        insert one, not only update — see `journal.apply`. A journal failure raises: a withdrawal
-        that cannot be made durable must not be reported as done.
+        Journalled in the same transaction as the database write (joining the caller's, if any),
+        ahead of its COMMIT and with a receipt that commits with it (`journal._intent`), so a
+        restore re-applies it to any backup that does not hold it (`synwevo_core.journal`). For a
+        ``members``-policy person the backup usually has no row at all, so replay has to insert
+        one, not only update — see `journal.apply`. A journal failure raises: a withdrawal that
+        cannot be made durable must not be reported as done. The revocation itself stands — the
+        failure is caught inside the transaction, which commits it with its receipt, and raised
+        after — unless a caller's transaction rolls back on it (the attempt is then voided).
 
         The row's ``revoked_at`` is always set to now, even over an older revocation: an older
         one may predate the current membership and be stale (:func:`entitlement_state`).
         """
         from . import journal
-        ts = now()
-        self.store.execute(
-            "INSERT INTO app_entitlements (workspace_id,app_id,user_id,granted_at,granted_by,revoked_at) "
-            "VALUES (?,?,?,?,NULL,?) ON CONFLICT(workspace_id,app_id,user_id) DO UPDATE SET "
-            "revoked_at=excluded.revoked_at",
-            (workspace_id, app_id, user_id, ts, ts))
-        journal.record(self.store, "entitlement_revoked", workspace_id=workspace_id, app_id=app_id,
-                       user_id=user_id)
+        failure: OSError | None = None
+        with self.store.tx() as t:
+            ts = now()
+            t.execute(
+                "INSERT INTO app_entitlements (workspace_id,app_id,user_id,granted_at,granted_by,revoked_at) "
+                "VALUES (?,?,?,?,NULL,?) ON CONFLICT(workspace_id,app_id,user_id) DO UPDATE SET "
+                "revoked_at=excluded.revoked_at",
+                (workspace_id, app_id, user_id, ts, ts))
+            try:
+                journal._intent(self.store, "entitlement_revoked", workspace_id=workspace_id, app_id=app_id,
+                                user_id=user_id)
+            except OSError as e:
+                failure = e
+        if failure is not None:
+            raise failure
 
     def disable_for_workspace(self, workspace_id: str, app_id: str) -> bool:
         """Turn an application off for one workspace. Takes effect on the next request of every
@@ -170,25 +181,28 @@ class Apps:
 
         Journalled like every other withdrawal, so restoring a backup taken while the
         application was still on does not quietly turn it back on. Only when something was
-        actually turned off. The entry is written inside the transaction that deletes the row: a
-        journal failure raises and rolls the deletion back, so running the command again after
-        fixing the data directory still finds the row and journals it.
+        actually turned off. The entry is written ahead, inside the transaction that deletes the
+        row, with a receipt that commits with it (`journal._intent`): a journal failure raises and
+        rolls the deletion back (and voids the attempt), so running the command again after
+        fixing the data directory still finds the row and journals it; a backup taken between
+        the entry and the COMMIT is turned off on restore.
         """
         from . import journal
         with self.store.tx() as t:
             changed = t.execute("DELETE FROM workspace_apps WHERE workspace_id=? AND app_id=?",
                                 (workspace_id, app_id)).rowcount > 0
             if changed:
-                journal.record(self.store, "workspace_app_disabled", workspace_id=workspace_id, app_id=app_id)
+                journal._intent(self.store, "workspace_app_disabled", workspace_id=workspace_id, app_id=app_id)
         return changed
 
     def set_status(self, app_id: str, status: str) -> bool:
         """Turn an application on or off platform-wide. Returns whether anything changed.
 
-        Turning it off is a withdrawal like any other and is journalled inside the same
-        transaction (a journal failure rolls it back), so a restore from a backup taken while it
-        was on keeps it off. Turning it on is not journalled, the same as enabling it for a
-        workspace.
+        Turning it off is a withdrawal like any other and is journalled ahead, inside the same
+        transaction, with a receipt that commits with it (`journal._intent`; a journal failure
+        rolls it back and voids the attempt), so a restore from a backup taken while it was on —
+        or between the entry and the COMMIT — keeps it off. Turning it on is not journalled, the
+        same as enabling it for a workspace.
 
         Turning it off also deletes the deployment's "held back" marker of a business application
         (`SUITE_UNRELEASED_PREFIX`): the switch-off is the operator's (command line or admin
@@ -202,7 +216,7 @@ class Apps:
                                 (status, now(), app_id, status)).rowcount > 0
             if changed and status == "disabled":
                 t.execute("DELETE FROM meta WHERE key=?", (SUITE_UNRELEASED_PREFIX + app_id,))
-                journal.record(self.store, "app_disabled", app_id=app_id)
+                journal._intent(self.store, "app_disabled", app_id=app_id)
         return changed
 
     def set_access_policy(self, app_id: str, policy: str) -> bool:

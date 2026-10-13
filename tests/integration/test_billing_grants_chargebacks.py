@@ -229,11 +229,22 @@ def test_a_chargeback_freeze_is_journalled_before_it_is_written_and_names_only_i
     # The journal line is written ahead of the freeze: if it cannot be written nothing changes,
     # and the provider's event can be processed again.
     real = journal.record
-    monkeypatch.setattr(journal, "record", lambda *a, **k: (_ for _ in ()).throw(OSError("fixture: disk full")))
+
+    def disk_full(store_, kind, **fields):
+        if kind == "payer_frozen":
+            raise OSError("fixture: disk full")
+        return real(store_, kind, **fields)
+    monkeypatch.setattr(journal, "record", disk_full)
     with pytest.raises(OSError):
         dispute(money, "order-1", 1000)
+    monkeypatch.setattr(journal, "record", real)
     assert store.one("SELECT COUNT(*) AS n FROM billing_chargebacks")["n"] == 0
     assert store.one("SELECT COUNT(*) AS n FROM billing_account_freezes")["n"] == 0 and balance(money).booked == 1000
+    # The attempt (journal._intent) rolled back with the chargeback and was voided: no line of it, a
+    # void for its attempt id (a void of a line never written is harmless).
+    (void,) = [e for e in journal.read(store.root) if e["kind"] == journal.VOID_KIND]
+    assert void["voided_kind"] == "payer_frozen"
+    assert store.one("SELECT value FROM meta WHERE key=?", ("journal_void:" + void["attempt_id"],))["value"] == "payer_frozen"
     seen = []
 
     def ahead(store_, kind, **fields):
@@ -249,7 +260,10 @@ def test_a_chargeback_freeze_is_journalled_before_it_is_written_and_names_only_i
     entries = [e for e in journal.read(store.root) if e["kind"] == "payer_frozen"]
     assert len(entries) == 1
     entry = entries[0]
-    assert set(entry) == {"at", "kind", "freeze_id", "environment", "account_id", "payer_kind", "payer_id", "chargeback_id"}
+    assert set(entry) == {"at", "kind", "attempt_id", "freeze_id", "environment", "account_id", "payer_kind",
+                          "payer_id", "chargeback_id"}
+    # Its receipt committed with the freeze (journal._intent).
+    assert store.one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + entry["attempt_id"],))
     assert (entry["freeze_id"], entry["chargeback_id"], entry["payer_kind"], entry["payer_id"], entry["environment"]) == (
         result["freeze_id"], result["id"], "user", users[0], "test")
     # A replayed dispute is the same chargeback: no second line.

@@ -11,9 +11,12 @@ Writes use an explicit application actor and the same member and invitation serv
 account pages. Only viewer/editor roles can be managed by an owner-approved integration.
 
 Withdrawal journal entries are fsynced outside SQLite before the surrounding transaction commits,
-as in the account governance flows. If a later database write fails, rollback cannot erase that
-security intent: a restore may conservatively withdraw access even after the request returned a
-failure. This prevents restoring revoked rights; it is not a cross-storage atomicity guarantee.
+as in the account governance flows, with a receipt that commits with the change
+(`withdrawals.record`): a backup taken before the COMMIT is given the withdrawal on restore. If a
+later database write fails, the rollback voids the entry once it is proven; only a process that
+stops before that proof leaves the intent, and a restore may then conservatively withdraw access
+even though the request returned a failure. This prevents restoring revoked rights; it is not a
+cross-storage atomicity guarantee.
 """
 from __future__ import annotations
 

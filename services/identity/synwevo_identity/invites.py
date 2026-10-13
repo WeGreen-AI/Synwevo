@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 
+from synwevo_core import journal
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity, ROLE_RANK, ROLES, normalise_email, valid_email
 from synwevo_core.store import Store, new_id, now
@@ -346,9 +347,14 @@ class Invites:
                 return {"id": row["id"], "workspace_id": row["workspace_id"], "state": "declined", "invited_by": row["invited_by"]}
             if self._state(row) != "pending":
                 raise ServiceError(409, "invite_not_pending", "邀请已经处理或失效")
-            # Durable withdrawal precedes commit. A later failure stays fail-closed on restore.
-            from synwevo_core.journal import record
-            record(self.store, "invitation_revoked", invitation_id=row["id"])
+            # Written ahead, in this transaction (journal._intent): a fresh attempt_id and a receipt
+            # that commits with the decline, so a backup copied between the line and its COMMIT is
+            # given the decline on restore. Strict: a line that cannot be written refuses the
+            # decline (503). A later failure (the caller's audit, the COMMIT) rolls back and voids it.
+            try:
+                journal._intent(self.store, "invitation_revoked", invitation_id=row["id"])
+            except (OSError, ValueError):
+                raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
             self.store.execute("UPDATE invitations SET revoked_at=?,declined_at=? WHERE id=?",
                                (now(), now(), row["id"]))
             return {"id": row["id"], "workspace_id": row["workspace_id"], "state": "declined", "invited_by": row["invited_by"]}

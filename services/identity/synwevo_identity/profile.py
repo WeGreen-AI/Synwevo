@@ -161,15 +161,28 @@ def depart_deleted_accounts(store) -> int:
 def finalize_deletions(store, *, withdrawals: bool = True) -> int:
     """Idempotent expiry: preserve immutable user IDs and organization contributions.
 
-    Two halves: the deletions themselves, committed with a retry marker each, and then the
-    withdrawal records (`record_deletion_withdrawals`, the fsync'd security journal). A caller
-    that wraps the first half in its own transaction (the administration route, which commits
-    the sweep together with its audit) passes `withdrawals=False` and records them after its
-    commit: the journal must never name a deletion that was rolled back."""
+    Two halves: the deletions themselves, each with its withdrawal record (`user_deleted`) written
+    ahead in the same transaction (`withdrawals.record`: a receipt that commits with the deletion,
+    a void when it rolls back), and then the records still owed (`record_deletion_withdrawals`). A
+    deletion whose line could not be written commits with a retry marker instead, so the sweep
+    never forgets the withdrawal. A caller that wraps the first half in its own transaction (the
+    administration route, which commits the sweep together with its audit) passes
+    `withdrawals=False` and retries the owed records after its commit; a rollback there voids the
+    lines its deletions wrote.
+
+    One transaction per account (nested in the caller's, when there is one): each holds the writer
+    lock for one erasure and the two fsyncs of its line, not a whole backlog's — the sweep after a
+    long downtime does not stall every other write — and a failure leaves the deletions committed
+    before it. The due state is read again in each, so a cancellation in between is kept."""
+    from .withdrawals import record
     removed = []
-    with store.tx():
-        for user in store.all("SELECT id FROM users WHERE status='pending_delete' AND deletion_due_at<=?", (now(),)):
-            uid = user["id"]
+    due = [r["id"] for r in store.all("SELECT id FROM users WHERE status='pending_delete' AND deletion_due_at<=?",
+                                      (now(),))]
+    for uid in due:
+        with store.tx():
+            if not store.one("SELECT 1 AS n FROM users WHERE id=? AND status='pending_delete' AND deletion_due_at<=?",
+                             (uid, now())):
+                continue                    # cancelled, or finalized by a concurrent sweep, meanwhile
             invalidate_access(store, uid, "account_deleted")
             for table in ("user_passwords", "passkeys", "webauthn_credentials", "totp_secrets", "recovery_codes", "account_recoveries"):
                 store.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
@@ -187,10 +200,13 @@ def finalize_deletions(store, *, withdrawals: bool = True) -> int:
             # Platform grants end with the account (they stopped counting at pending_delete).
             PlatformAccess(store).system_revoke_all(uid, source="system:account_deleted",
                                                     reason=SYSTEM_REASONS["account_deleted"])
-            # Commit a retry marker with the deletion. A filesystem failure after this
-            # transaction must not make the sweeper permanently forget the withdrawal.
-            store.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)",
-                          (f"account-deletion-journal:{uid}", uid))
+            # The withdrawal record, inside the deletion's transaction: a backup taken before its
+            # COMMIT is given the deletion on restore. When the line cannot be written the deletion
+            # still stands and commits a retry marker with it: a filesystem failure must not make
+            # the sweeper permanently forget the withdrawal.
+            if not record(store, "user_deleted", user_id=uid):
+                store.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)",
+                              (f"account-deletion-journal:{uid}", uid))
             removed.append(uid)
     if withdrawals:
         record_deletion_withdrawals(store)
@@ -199,11 +215,16 @@ def finalize_deletions(store, *, withdrawals: bool = True) -> int:
 
 def record_deletion_withdrawals(store) -> None:
     """The second half of `finalize_deletions`: the departed accounts leave their conversations,
-    and every committed deletion still owing a withdrawal record (its retry marker) gets one."""
+    and every committed deletion still owing a withdrawal record (its retry marker) gets one — the
+    line and the marker's removal in one transaction (`withdrawals.record`)."""
     depart_deleted_accounts(store)
     from .withdrawals import record
     for pending in store.all("SELECT key,value FROM meta WHERE key GLOB 'account-deletion-journal:*'"):
-        if record(store, "user_deleted", user_id=pending["value"]):
-            # A crash before this removal can append a duplicate withdrawal; journal replay
-            # is idempotent. Losing an unrecorded withdrawal is the unsafe alternative.
-            store.execute("DELETE FROM meta WHERE key=? AND value=?", (pending["key"], pending["value"]))
+        with store.tx():
+            if not store.one("SELECT 1 FROM meta WHERE key=? AND value=?", (pending["key"], pending["value"])):
+                continue                    # recorded meanwhile by a concurrent sweep
+            if record(store, "user_deleted", user_id=pending["value"]):
+                # A crash before this commit leaves the marker, and the next sweep appends a
+                # duplicate withdrawal; journal replay is idempotent. Losing an unrecorded
+                # withdrawal is the unsafe alternative.
+                store.execute("DELETE FROM meta WHERE key=? AND value=?", (pending["key"], pending["value"]))

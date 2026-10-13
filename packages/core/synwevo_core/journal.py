@@ -7,7 +7,21 @@ comes back to life, silently, the moment an older database is restored.
 
 So every withdrawal is also appended here, to a file that lives next to the database but is not
 part of it. A restore keeps the live journal (it is never overwritten by the backup's copy) and
-re-applies every entry newer than the backup (`apply()`), before the service starts.
+re-applies, before the service starts (`apply()`), every withdrawal the backup does not hold.
+
+Every withdrawal is written ahead (`_intent`): inside the transaction that makes the change, before
+its COMMIT, with a fresh `attempt_id` and a receipt in `meta` that commits with the change, or not
+at all. A restore replays a line whatever its time when the restored database lacks its receipt —
+a backup taken between the line and its COMMIT included — and skips it when the database holds the
+receipt (it then holds the withdrawal and whatever came after it). An attempt whose transaction did
+not commit is voided once that is proven (`_void`, `intent_voided`). One older than the backup and
+without its receipt there is either the backup's own race (copied between the line and its COMMIT)
+or an attempt that never committed and was never voided (the process stopped first); the backup
+itself tells them apart when it holds anything committed after the line (`_never_committed`), and
+only the race is replayed. A restore that replayed no journal starts a new history (EPOCH_KEY):
+attempts from before it are not replayed into that history's backups. Lines written before a kind
+moved onto `_intent` carry no `attempt_id` and keep their old rule: replayed when newer than the
+backup (TIME_FILTERED), or whatever its time and by their own ids (ALWAYS_REPLAYED).
 
 Entries hold identifiers and, for credential replacements, the same digests the database already
 holds — never a secret, a token or document content. The file is created 0600.
@@ -38,7 +52,8 @@ FILENAME = "security-journal.jsonl"
 # An attempt whose transaction did not commit in this process is voided after
 # its rollback (_intent/_void: proven by a later committed transaction that
 # found no receipt); only an unproven one — the process stopped between the line
-# and its COMMIT, or before the void — is replayed by later restores (fail-closed).
+# and its COMMIT, or before the void — is replayed by a restore whose backup lacks
+# its receipt (fail-closed), once: that restore writes the receipt.
 # No historical journal line or tenant association is rewritten.
 ORGANIZATION_KINDS = {
     "organization_frozen", "organization_deleted", "organization_member_removed",
@@ -108,8 +123,9 @@ _APP_POLICY_RECEIPT = "app_policy_tightened:"
 # a full disk at the SQL or the COMMIT) leaves an intent without a receipt; its rollback voids it
 # (`intent_voided`, VOID_KIND) once a later committed transaction has found no receipt, so no
 # restore applies it. Only when the process stops before that proof does the intent stay
-# unvoided, and every later restore applies it — fail-closed; the console's 503 says the attempt
-# could still count. Older restore code refuses the unknown kind.
+# unvoided, and a restore whose backup lacks its receipt applies it (then writes the receipt) —
+# fail-closed; the console's 503 says the attempt could still count. Older restore code refuses
+# the unknown kind.
 WORKSPACE_DELETED_KIND = "workspace_deleted"
 _WORKSPACE_RECEIPT = "workspace_withdrawal:"
 # A workspace frozen by the platform (Identity.set_workspace_frozen): written ahead, inside the
@@ -129,14 +145,23 @@ WORKSPACE_FROZEN_KIND = "workspace_frozen"
 VOID_KIND = "intent_voided"
 _RECEIPT = "journal_receipt:"
 _VOID = "journal_void:"
-#: The kinds this release writes through _intent: each line carries a fresh `attempt_id` (128
-#: random bits, and never one this database already holds a receipt or a void for — unlike
-#: `account_event_id`, which a retry repeats) and a receipt that commits with its transaction.
-#: Reading is wider than writing: `_validate` accepts an `attempt_id` on any kind, and a void of any
-#: kind, so a journal written by a release that moves more kinds onto _intent is still read here —
-#: replayed by its receipt, skipped by its void (apply's generic path) — rather than refused.
-ATTEMPTED = ORGANIZATION_KINDS | {WORKSPACE_DELETED_KIND, WORKSPACE_FROZEN_KIND, PLATFORM_GRANT_KIND,
-                                  "ai_policy_narrowed", APP_POLICY_KIND, "user_suspended", "sessions_revoked"}
+# Every withdrawal leaves its receipt in `meta` for good (and a failed attempt its void row): one
+# short row each, never pruned. A restore of any backup still kept may need them — the receipt is
+# what tells its replay that a later backup already holds the withdrawal — and nothing yet records
+# which backups are kept, so a pruning rule could only guess. Every restore reads and checks every
+# written-ahead line of the journal (read()), which grows the same way.
+# Where this database's journal history starts: `meta[EPOCH_KEY]`, the time of a restore that
+# replayed no journal (apps/docs/scripts/snapshot.py fence with --no-journal), written into the
+# restored copy. That restore decided, by choice, that nothing from before it is replayed; the live
+# journal stays beside the restored database all the same (only appended to). Every later backup
+# of the new history carries the row, so apply() skips an attempted line older than it that lacks
+# its receipt there (an abandoned history's withdrawal, or one the --no-journal restore chose not
+# to replay) — as the time filter skipped every old line older than such a backup. Lines without
+# `attempt_id` keep their old rule.
+EPOCH_KEY = "journal_epoch"
+#: Lines without `attempt_id` (written before their kind moved onto _intent) of these kinds are
+#: re-applied whatever the backup's time: their own rules decide what is still to do. Every other
+#: kind's old lines are TIME_FILTERED. A line with an `attempt_id` is read whatever its time.
 ALWAYS_REPLAYED = (ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND} | RISK_KINDS | AGENT_MODEL_KINDS
                    | {PAYER_FREEZE_KIND, APP_POLICY_KIND, WORKSPACE_DELETED_KIND, VOID_KIND})
 
@@ -158,6 +183,7 @@ KINDS = {
     WORKSPACE_DELETED_KIND,     # {event_id, workspace_id, deleted_at, recover_until, previous_status}
     "webhook_disabled",         # {subscription_id}
     "passkey_removed",          # {credential_id}
+    "external_identity_unlinked",  # {identity_id} — a sign-in through an external provider detached
     "workspace_app_disabled",   # {workspace_id, app_id}
     "app_disabled",             # {app_id} — the application switched off platform-wide
     APP_POLICY_KIND,            # {event_id, app_id} — the application's access policy narrowed to explicit grants
@@ -181,6 +207,26 @@ KINDS = {
     PAYER_FREEZE_KIND,          # {freeze_id, environment, account_id, payer_kind, payer_id, chargeback_id}
 } | ORGANIZATION_KINDS
 
+#: The kinds written through _intent — every withdrawal. Each line carries a fresh `attempt_id`
+#: (128 random bits, never one this database already holds a receipt or a void for — unlike
+#: `account_event_id`, which a retry repeats) and a receipt that commits with its transaction. By
+#: how their writers journalled before (and how their old lines are still read):
+#: * receipted already, by their own ids (organizations, workspace deletion, platform grants, AI and
+#:   application policies, the account operations' `account_event_id`): `_receipt` keeps those keys;
+#: * time-filtered, the line before COMMIT (a backup taken between them lost the withdrawal) or
+#:   after it (a process that stopped in between, or a swallowed append failure, lost it) — now
+#:   receipted with `journal_receipt:<attempt_id>`;
+#: * written ahead and matched by id or "as of `at`" (risk, payer freezes, the personal Agent,
+#:   model governance, `workspace_unclaimed`) — the receipt adds nothing to their replay, the void
+#:   stops a failed attempt from being re-created on every restore.
+#: Reading accepts an `attempt_id` on any kind (`_validate`), so a later release's lines stay readable.
+ATTEMPTED = KINDS - {VOID_KIND}
+#: Old lines (no `attempt_id`) of these kinds are replayed only when newer than the backup (read()).
+TIME_FILTERED = KINDS - ALWAYS_REPLAYED
+#: The kinds receipted by their own event ids (_receipt), whose replays check the receipt themselves.
+_OWN_RECEIPT_KINDS = ORGANIZATION_KINDS | {WORKSPACE_DELETED_KIND, PLATFORM_GRANT_KIND, "ai_policy_narrowed",
+                                           APP_POLICY_KIND}
+
 #: A workspace's AI processing policy, narrowest first (suite agent tools.workspace_policy).
 AI_PROCESSING = ("none", "platform", "any")
 #: The providers a workspace may name (suite agent tools.MODEL_PROVIDERS).
@@ -197,7 +243,8 @@ _REQUIRED = {
     "entitlement_revoked": ("workspace_id", "app_id", "user_id"),
     "workspace_frozen": ("workspace_id",), "webhook_disabled": ("subscription_id",),
     WORKSPACE_DELETED_KIND: ("event_id", "workspace_id"),
-    "passkey_removed": ("credential_id",), "workspace_app_disabled": ("workspace_id", "app_id"),
+    "passkey_removed": ("credential_id",), "external_identity_unlinked": ("identity_id",),
+    "workspace_app_disabled": ("workspace_id", "app_id"),
     "app_disabled": ("app_id",), APP_POLICY_KIND: ("event_id", "app_id"),
     "invitation_revoked": ("invitation_id",), "tokens_revoked": (),
     PLATFORM_GRANT_KIND: ("event_id", "user_id", "grant_id", "role", "granted_by"),
@@ -312,7 +359,11 @@ def path(root: str | Path) -> Path:
 
 def record(store: Store, kind: str, **fields) -> None:
     """Append one entry. Raises on failure: a withdrawal that cannot be journalled must not be
-    reported as durable, so callers decide deliberately whether to proceed."""
+    reported as durable, so callers decide deliberately whether to proceed.
+
+    The append itself, not the way to journal a withdrawal: a writer calls `_intent` (or one of the
+    record_* helpers built on it) inside the transaction of its change. A line written here without
+    an `attempt_id` has no receipt and no void, and is read by its kind's old rule (read())."""
     if kind not in KINDS:
         raise ValueError(f"unknown journal entry kind: {kind}")
     entry = {"at": time.time(), "kind": kind, **{k: v for k, v in fields.items() if v is not None}}
@@ -521,6 +572,10 @@ def record_app_policy_tightened(store: Store, *, app_id: str) -> None:
 
 
 def read(root: str | Path, since: float = 0.0) -> list[dict]:
+    """The lines a restore from a backup taken at `since` must check, in file order: every line
+    written ahead (`attempt_id`, or an account operation's `account_event_id`) and every void,
+    whatever its time — apply() decides by the receipts the restored database holds — and the
+    old lines of ALWAYS_REPLAYED kinds; old lines of the TIME_FILTERED kinds only when newer."""
     return [entry for entry, _ in validated_lines(path(root))
             if entry["at"] > since or entry["kind"] in ALWAYS_REPLAYED or entry.get("account_event_id")
             or entry.get("attempt_id")]
@@ -877,7 +932,102 @@ def _app_row(c, app_id: str, t: float) -> None:
               "VALUES (?,?,NULL,'','active','members',?,?)", (app_id, app_id, t, t))
 
 
-def apply(store: Store, entries: list[dict]) -> dict:
+# What a backup shows of a written-ahead line's own objects, per kind: (table, the rows, their keys
+# from the line, the columns that take the time of a committed change). A timestamp there after the
+# line and no later than the backup was committed after the line's transaction had ended (see
+# _never_committed). Only columns written with the time of the change itself (or a journal line's
+# own `at`), never a future time such as an expiry. Kinds absent here have nothing that can show it
+# (the row a by-id withdrawal would create, or credentials every restore ends anyway) or are already
+# replayed "as of" their time (consent withdrawals, workspace_unclaimed).
+_OWN_OBJECTS = {
+    "api_platform_approval_revoked": (("api_platform_approvals", "id=?", ("approval_id",),
+                                       ("created_at", "decided_at", "consumed_at", "revoked_at")),),
+    "api_key_superseded": (("api_keys", "id=?", ("key_id",), ("last_used_at", "revoked_at")),),
+    "client_disabled": (("oauth_clients", "client_id=?", ("client_id",), ("updated_at",)),),
+    "client_secret_rotated": (("oauth_clients", "client_id=?", ("client_id",), ("updated_at",)),),
+    "user_suspended": (("users", "id=?", ("user_id",), ("updated_at",)),),
+    "user_deleted": (("users", "id=?", ("user_id",), ("updated_at",)),),
+    "password_changed": (("user_passwords", "user_id=?", ("user_id",), ("updated_at",)),),
+    "member_removed": (("memberships", "workspace_id=? AND user_id=?", ("workspace_id", "user_id"), ("updated_at",)),
+                       ("app_entitlements", "workspace_id=? AND user_id=?", ("workspace_id", "user_id"),
+                        ("granted_at", "revoked_at"))),
+    "role_changed": (("memberships", "workspace_id=? AND user_id=?", ("workspace_id", "user_id"), ("updated_at",)),),
+    "entitlement_revoked": (("app_entitlements", "workspace_id=? AND app_id=? AND user_id=?",
+                             ("workspace_id", "app_id", "user_id"), ("granted_at", "revoked_at")),),
+    WORKSPACE_FROZEN_KIND: (("workspaces", "id=?", ("workspace_id",), ("updated_at",)),),
+    "webhook_disabled": (("webhook_subscriptions", "id=?", ("subscription_id",), ("updated_at",)),
+                         ("suite_webhook_subscriptions", "id=?", ("subscription_id",), ("updated_at",))),
+    "passkey_removed": (("passkeys", "id=?", ("credential_id",), ("last_used_at",)),
+                        ("webauthn_credentials", "id=?", ("credential_id",), ("last_used_at",))),
+    "external_identity_unlinked": (("external_identities", "id=?", ("identity_id",), ("last_used_at",)),),
+    "workspace_app_disabled": (("workspace_apps", "workspace_id=? AND app_id=?", ("workspace_id", "app_id"),
+                                ("enabled_at",)),),
+    "app_disabled": (("apps", "id=?", ("app_id",), ("updated_at",)),),
+    "model_provider_disabled": (("model_provider_versions", "environment=?", ("environment",), ("created_at",)),),
+}
+
+
+def _touched_since(c, e: dict, since: float) -> bool:
+    """Whether the restored copy holds a change to the line's own objects committed after the line
+    and no later than the backup (_OWN_OBJECTS; an API key by its whole lineage)."""
+    at = e["at"]
+    objects = [(table, where, tuple(e[f] for f in fields), columns)
+               for table, where, fields, columns in _OWN_OBJECTS.get(e["kind"], ())]
+    if e["kind"] == "api_key_revoked":
+        row = c.execute("SELECT COALESCE(lineage, id) AS l FROM api_keys WHERE id=?", (e["key_id"],)).fetchone()
+        lineage = row["l"] if row else e["key_id"]
+        objects = [("api_keys", "id=? OR lineage=? OR id=?", (e["key_id"], lineage, lineage),
+                    ("created_at", "last_used_at", "revoked_at"))]
+    for table, where, args, columns in objects:
+        window = " OR ".join(f"({col}>? AND {col}<=?)" for col in columns)
+        try:
+            if c.execute(f"SELECT 1 FROM {table} WHERE ({where}) AND ({window}) LIMIT 1",
+                         (*args, *((at, since) * len(columns)))).fetchone():
+                return True
+        except sqlite3.OperationalError:     # a table or column this database does not have
+            continue
+    return False
+
+
+def _never_committed(c, entries: list[dict], since: float, held) -> set[str]:
+    """The attempts older than the backup, lacking their (generic) receipt in it, that the backup
+    proves never committed: their withdrawal is not replayed.
+
+    Such a line is one of two things. (1) The backup's own race: it was copied between the line and
+    its COMMIT, so it holds only what committed before the line's transaction began — every
+    timestamp in it is older than the line. The withdrawal must be replayed. (2) An attempt that
+    never committed and was never voided (the process stopped between the line and its COMMIT, or
+    before its void). Replaying it would withdraw — once, the restore then writes its receipt —
+    what the backup holds of the line's object, a change made after the attempt included. The
+    backup tells them apart when it holds something committed after the line and no later than its
+    own time: a line's transaction holds the writer lock from its receipt to its end, so a commit
+    after the line's time came after that end, and a backup holding it was taken after the
+    attempt's transaction had ended without committing. The evidence: the receipt of another
+    attempted line written after it, no later than the backup (its time is taken under the writer
+    lock, or before its commit), or a change to the line's own objects in that interval
+    (_touched_since). Nothing later than the backup's time counts — not a write of this restore
+    (the schema migration, an earlier replayed line), not a backup's own clock skew. An attempt the
+    backup shows nothing after is replayed (fail-closed): a crashed withdrawal of an object nobody
+    touched again before the backup, with no other withdrawal in between, still lands."""
+    import bisect
+    later = sorted(e["at"] for e in entries
+                   if e.get("attempt_id") and e["kind"] != VOID_KIND and e["at"] <= since and held(_receipt(e)))
+    out = set()
+    for e in entries:
+        attempt = e.get("attempt_id")
+        if not attempt or e["kind"] == VOID_KIND or e["at"] > since:
+            continue
+        receipt = _receipt(e)
+        if receipt != _RECEIPT + attempt or held(receipt):
+            continue
+        i = bisect.bisect_right(later, e["at"])
+        if (i < len(later) and later[i] <= since) or _touched_since(c, e, since):
+            out.add(attempt)
+    return out
+
+
+def apply(store: Store, entries: list[dict], *, since: float | None = None,
+          outcome: dict | None = None) -> dict:
     """Make every withdrawal in `entries` true in `store`. Returns counts per kind.
 
     Runs in one transaction, so a restore either has every newer withdrawal re-applied or none.
@@ -886,11 +1036,28 @@ def apply(store: Store, entries: list[dict]) -> dict:
     is skipped (counted under `intent_voided`) and its void row written; a void naming another kind
     skips nothing (fail-closed). An attempt on the generic receipt (`journal_receipt:`) is skipped
     when the restored database holds that receipt, and the receipt is written once it is applied.
+
+    `since`, the backup's time (snapshot.fence passes it): an attempt on the generic receipt older
+    than it and without its receipt that the backup proves never committed (_never_committed) is
+    skipped too, and voided in the restored copy. An attempted line older than the restored copy's
+    EPOCH_KEY and without its receipt there belongs to a history a restore abandoned: skipped.
+
+    `outcome`, when given, is filled with what happened to each line, for the restore's report:
+    `replayed` (lines handed to their kind's rule — every written-ahead line not skipped, and old
+    lines newer than the backup), `rechecked` (old lines older than the backup, by their own ids),
+    `receipted` (skipped: the restored copy holds the receipt), `uncommitted` (proven never
+    committed by the backup), `superseded_history` (older than the epoch) and `before_backup` —
+    per kind, the written-ahead lines older than the backup that were replayed: the backup's own
+    race, or an attempt nothing showed to have failed.
     """
     for number, entry in enumerate(entries, 1):
         _validate(entry, number)
     t = time.time()
     counts: dict[str, int] = {}
+    out = outcome if outcome is not None else {}
+    for key in ("replayed", "rechecked", "receipted", "uncommitted", "superseded_history"):
+        out.setdefault(key, 0)
+    out.setdefault("before_backup", {})
     # attempt_id → the kinds its voids name: a void skips only a line of the kind it names.
     voided: dict[str, set[str]] = {}
     for e in entries:
@@ -905,6 +1072,13 @@ def apply(store: Store, entries: list[dict]) -> dict:
         # only a replay that removes the last usable one present at the start, whether by
         # grant withdrawal, account suspension/deletion or loss of its last sign-in proof.
         had_usable_super_admin = bool(PlatformAccess(store).usable_super_admins())
+
+        def held(key: str) -> bool:
+            return c.execute("SELECT 1 FROM meta WHERE key=?", (key,)).fetchone() is not None
+        epoch = c.execute("SELECT value FROM meta WHERE key=?", (EPOCH_KEY,)).fetchone()
+        epoch = float(epoch["value"]) if epoch else None
+        # Decided on the restored copy as it was handed over, before any line below writes to it.
+        uncommitted = _never_committed(c, entries, since, held) if since is not None else set()
         for e in entries:
             k = e.get("kind")
             n = 0
@@ -916,15 +1090,33 @@ def apply(store: Store, entries: list[dict]) -> dict:
                 c.execute("INSERT OR IGNORE INTO meta (key,value) VALUES (?,?)", (_VOID + attempt, k))
                 counts[VOID_KIND] = counts.get(VOID_KIND, 0) + 1
                 continue
+            if attempt and epoch is not None and e["at"] < epoch and not held(_receipt(e)):
+                out["superseded_history"] += 1
+                continue
             # The kinds receipted before `attempt_id` check their own receipts in their branches.
             generic = _RECEIPT + attempt if attempt and _receipt(e) == _RECEIPT + attempt else None
-            if generic and c.execute("SELECT 1 FROM meta WHERE key=?", (generic,)).fetchone():
+            if generic and held(generic):
                 counts[k] = counts.get(k, 0)
+                out["receipted"] += 1
                 continue
             account_event = e.get("account_event_id")
-            if account_event and c.execute("SELECT 1 FROM meta WHERE key=?",
-                                           ("account_withdrawal:" + account_event,)).fetchone():
+            if account_event and held("account_withdrawal:" + account_event):
+                out["receipted"] += 1
                 continue
+            if attempt in uncommitted:
+                # Proven by the backup (_never_committed): the attempt's transaction ended without
+                # committing. Voided here, so a backup of this restored copy skips it too.
+                c.execute("INSERT OR IGNORE INTO meta (key,value) VALUES (?,?)", (_VOID + attempt, k))
+                out["uncommitted"] += 1
+                continue
+            if not (generic or account_event) and k in _OWN_RECEIPT_KINDS and held(_receipt(e)):
+                out["receipted"] += 1                    # its branch below finds the receipt and skips it
+            elif attempt or account_event or since is None or e["at"] > since:
+                out["replayed"] += 1
+                if generic and since is not None and e["at"] <= since:
+                    out["before_backup"][k] = out["before_backup"].get(k, 0) + 1
+            else:
+                out["rechecked"] += 1
             if k == PLATFORM_GRANT_KIND:
                 n = _apply_platform_revocation(store, c, e)
             elif k in RISK_KINDS:
@@ -1127,6 +1319,9 @@ def apply(store: Store, entries: list[dict]) -> dict:
                         n += c.execute(f"DELETE FROM {table} WHERE id=?", (e.get("credential_id"),)).rowcount
                     except Exception:  # noqa: BLE001 - table name differs across versions
                         pass
+            elif k == "external_identity_unlinked":
+                # By id: a later link of the same provider account is a new row and stays.
+                n = c.execute("DELETE FROM external_identities WHERE id=?", (e["identity_id"],)).rowcount
             if account_event:
                 c.execute("INSERT OR IGNORE INTO meta (key,value) VALUES (?, '1')",
                           ("account_withdrawal:" + account_event,))

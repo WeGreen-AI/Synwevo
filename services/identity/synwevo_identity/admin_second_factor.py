@@ -420,10 +420,11 @@ def _complete_one(store: Store, rid: str, *, sessions, mailer, notifier) -> str 
                                                 {"status": "completed", **after, "sessions": 0, "tokens": 0})})
         # Last, as every withdrawal: a journal that cannot be written rolls all of this back, and
         # the next sweep tries again. Each removed passkey as the person's own removal journals
-        # it, then the sessions; the TOTP enrolment and recovery codes have no kind (a restore
-        # bringing the old factor back leaves the person protected by it).
+        # it — written ahead with its receipt (journal._intent), voided if this rolls back — then
+        # the sessions; the TOTP enrolment and recovery codes have no kind (a restore bringing the
+        # old factor back leaves the person protected by it).
         for pid in removed_passkeys:
-            journal.record(store, "passkey_removed", credential_id=pid)
+            journal._intent(store, "passkey_removed", credential_id=pid)
         journal_sessions_revoked(store, uid, rid)
         store.after_commit(lambda: notify(notifier, uid, "second_factor_reset_completed"))
     return "completed"

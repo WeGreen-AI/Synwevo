@@ -236,14 +236,16 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
             raise ServiceError(400, "bad_can_export", "can_export 必须是 true 或 false", {"field": "can_export"})
         # `role` (not new_role) is what the caller asked for: with no role in the request the
         # in-transaction check must not treat "keep the current role" as an assignment.
-        out = ident.change_role(wid, uid, role, can_export=can_export, actor_id=s["user_id"],
-                                authorize=_authority(wid, role=role, can_export=can_export, reauthed=reauthed))
-        before = out.pop("before")
-        new_role = out["role"]
-        downgrade = ROLE_RANK[new_role] < ROLE_RANK[before["role"]]
-        journaled = None
-        if downgrade:
-            journaled = journal(store, "role_changed", workspace_id=wid, user_id=uid, role=new_role)
+        with store.tx():
+            out = ident.change_role(wid, uid, role, can_export=can_export, actor_id=s["user_id"],
+                                    authorize=_authority(wid, role=role, can_export=can_export, reauthed=reauthed))
+            before = out.pop("before")
+            new_role = out["role"]
+            downgrade = ROLE_RANK[new_role] < ROLE_RANK[before["role"]]
+            journaled = None
+            if downgrade:
+                # In the change's own transaction, after its refusals (withdrawals.record).
+                journaled = journal(store, "role_changed", workspace_id=wid, user_id=uid, role=new_role)
         audit(request, "member.role", actor_id=s["user_id"], workspace_id=wid, object_kind="membership",
               object_id=uid, result="ok",
               meta={"before": before, "after": {"role": out["role"], "can_export": bool(out["can_export"])},
@@ -348,10 +350,11 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
             raise ServiceError(400, "use_leave", "要退出这个工作空间，请使用「退出工作空间」")
         if not ident.membership(wid, uid):
             raise ServiceError(404, "no_member", "该用户不是这个空间的成员")
-        out = ident.remove_member(wid, uid, actor_id=s["user_id"], authorize=_authority(wid))
-        if out is None:
-            raise ServiceError(404, "no_member", "该用户不是这个空间的成员")
-        journaled = _journal_removal(wid, uid, out)
+        with store.tx():
+            out = ident.remove_member(wid, uid, actor_id=s["user_id"], authorize=_authority(wid))
+            if out is None:
+                raise ServiceError(404, "no_member", "该用户不是这个空间的成员")
+            journaled = _journal_removal(wid, uid, out)
         audit(request, "member.remove", actor_id=s["user_id"], workspace_id=wid, object_kind="membership",
               object_id=uid, result="ok", meta={**out, "reason": reason, "journaled": journaled})
         ws = ident.get_workspace(wid) or {}
@@ -360,7 +363,8 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         return {"removed": out, "journaled": journaled}
 
     def _journal_removal(wid: str, uid: str, out: dict) -> bool:
-        """The removal and every invitation it cancelled, so a restore brings back neither."""
+        """The removal and every invitation it cancelled, so a restore brings back neither —
+        inside the removal's own transaction (withdrawals.record)."""
         ok = journal(store, "member_removed", workspace_id=wid, user_id=uid)
         for iid in out.get("cancelled_invitation_ids") or []:
             ok = journal(store, "invitation_revoked", invitation_id=iid) and ok
@@ -396,11 +400,12 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
             raise ServiceError(403, "role_too_high", "不能管理与自己同级或更高角色的成员")
         if grant:
             _grants_allowed(ws)
-        out = ident.set_entitlement(ws["id"], uid, app_id, grant=grant, actor_id=s["user_id"],
-                                    authorize=_authority(ws["id"], grant=grant))
-        journaled = None
-        if not grant and out["before"] != "revoked":
-            journaled = journal(store, "entitlement_revoked", workspace_id=ws["id"], app_id=app_id, user_id=uid)
+        with store.tx():
+            out = ident.set_entitlement(ws["id"], uid, app_id, grant=grant, actor_id=s["user_id"],
+                                        authorize=_authority(ws["id"], grant=grant))
+            journaled = None
+            if not grant and out["before"] != "revoked":
+                journaled = journal(store, "entitlement_revoked", workspace_id=ws["id"], app_id=app_id, user_id=uid)
         audit(request, "member.entitlement", actor_id=s["user_id"], workspace_id=ws["id"],
               object_kind="entitlement", object_id=uid, result="ok",
               meta={**out, "reason": reason, "journaled": journaled})
@@ -446,13 +451,15 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         if not to:
             raise ServiceError(400, "missing_user", "请选择接收所有权的成员", {"field": "to_user_id"})
         demote = body.get("demote_self_to") or None
-        out = ident.transfer_ownership(wid, s["user_id"], to, demote_self_to=demote)
         # Only the caller's demotion withdraws access; the new owner's promotion is not journalled.
-        # Record after the transfer commits so a refused transfer cannot leave a withdrawal.
-        # As for other withdrawals, a journal failure is reported without restoring old access.
-        journaled = None
-        if demote:
-            journaled = journal(store, "role_changed", workspace_id=wid, user_id=s["user_id"], role=demote)
+        # Recorded inside the transfer's transaction, after its refusals: a refused transfer leaves
+        # no line, and one that fails after the line voids it (withdrawals.record). As for other
+        # withdrawals, a journal failure is reported without restoring old access.
+        with store.tx():
+            out = ident.transfer_ownership(wid, s["user_id"], to, demote_self_to=demote)
+            journaled = None
+            if demote:
+                journaled = journal(store, "role_changed", workspace_id=wid, user_id=s["user_id"], role=demote)
         audit(request, "workspace.ownership.transfer", actor_id=s["user_id"], workspace_id=wid,
               object_kind="workspace", object_id=wid, result="ok",
               meta={"from": s["user_id"], "to": to, "self_role": out["self_role"],
@@ -464,10 +471,11 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
     def leave(request: Request, wid: str, body: dict = Body(default={})):
         """Leave a workspace yourself. A sole active owner gets 409 last_owner: hand over first."""
         s, m, _ = _actor(request, wid, manage=False)
-        out = ident.remove_member(wid, s["user_id"])
-        if out is None:
-            raise ServiceError(404, "no_workspace", "找不到该工作空间")
-        journaled = _journal_removal(wid, s["user_id"], out)
+        with store.tx():
+            out = ident.remove_member(wid, s["user_id"])
+            if out is None:
+                raise ServiceError(404, "no_workspace", "找不到该工作空间")
+            journaled = _journal_removal(wid, s["user_id"], out)
         audit(request, "member.leave", actor_id=s["user_id"], workspace_id=wid, object_kind="membership",
               object_id=s["user_id"], result="ok", meta={**out, "journaled": journaled})
         ws = ident.get_workspace(wid) or {}
@@ -500,15 +508,17 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
         An invitation whose mail cannot be queued is withdrawn rather than left as a link nobody
         will ever receive. Every earlier link this one supersedes (a resend, or re-inviting the
         same address) is journalled as revoked, so a restore cannot revive the link a resend was
-        meant to kill. A frozen workspace answers 409 `workspace_frozen` from `invites.create`
-        (for a new invitation and a resend alike), after the caller's own authority is checked."""
-        if resend_of:
-            row, raw = invites.resend(resend_of, s["user_id"], ttl_s=ttl_s)
-        else:
-            row, raw = invites.create(workspace_id=wid, email=email, role=role, actor_id=s["user_id"],
-                                      can_export=can_export, ttl_s=ttl_s)
-        for old in row.get("superseded_ids") or []:
-            journal(store, "invitation_revoked", invitation_id=old)
+        meant to kill — in the transaction that supersedes it (withdrawals.record). A frozen
+        workspace answers 409 `workspace_frozen` from `invites.create` (for a new invitation and a
+        resend alike), after the caller's own authority is checked."""
+        with store.tx():
+            if resend_of:
+                row, raw = invites.resend(resend_of, s["user_id"], ttl_s=ttl_s)
+            else:
+                row, raw = invites.create(workspace_id=wid, email=email, role=role, actor_id=s["user_id"],
+                                          can_export=can_export, ttl_s=ttl_s)
+            for old in row.get("superseded_ids") or []:
+                journal(store, "invitation_revoked", invitation_id=old)
         ws = ident.get_workspace(row["workspace_id"])
         me = ident.get_user(s["user_id"])
         recipient = ident.by_email(row["email_key"])
@@ -617,9 +627,10 @@ def build_router(ident: Identity, sessions: Sessions, invites, mailer, audit) ->
                 if not row or row["workspace_id"] != wid:
                     raise ServiceError(404, "no_invite", "找不到该邀请")
                 if action == "revoke":
-                    if row["accepted_at"] or not invites.revoke(iid, s["user_id"]):
-                        raise ServiceError(409, "invite_accepted", "这个邀请已经被接受了")
-                    journaled = journal(store, "invitation_revoked", invitation_id=iid)
+                    with store.tx():
+                        if row["accepted_at"] or not invites.revoke(iid, s["user_id"]):
+                            raise ServiceError(409, "invite_accepted", "这个邀请已经被接受了")
+                        journaled = journal(store, "invitation_revoked", invitation_id=iid)
                     audit(request, "invite.revoke", actor_id=s["user_id"], workspace_id=wid,
                           object_kind="invitation", object_id=iid, result="ok",
                           meta={"journaled": journaled})

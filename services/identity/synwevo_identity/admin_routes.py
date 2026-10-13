@@ -923,9 +923,13 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         transaction (write-ahead, like the organization withdrawals): a restore from an older
         backup then re-applies the undo whether the process stopped after the commit or the
         backup was taken before it, and the entry's own time keeps it from touching a later
-        assignment. When the journal cannot be written the undo is not performed at all
-        (`journal_unavailable`, nothing changed): an undo a restore would silently reverse is not
-        reported as done. Freezing remains available as the immediate stop.
+        assignment. The entry carries an `attempt_id` and a receipt that commits with the undo
+        (`journal._intent`): a backup holding the receipt holds the undo, and is left as it is;
+        an undo that fails after its entry rolls back and voids it once the rollback is proven,
+        so no restore removes the memberships of an undo that never happened. When the journal
+        cannot be written the undo is not performed at all (`journal_unavailable`, nothing
+        changed): an undo a restore would silently reverse is not reported as done. Freezing
+        remains available as the immediate stop.
 
         Machine credentials follow the rules already in force, nothing new: a service account
         needs an active workspace with the application on (`Apps.check_access_for_workspace`), and
@@ -977,8 +981,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                 # Every refusal is decided above; from here on the undo happens. The journal line
                 # goes first, so there is no moment at which the undo is committed and not journalled.
                 try:
-                    security_journal.record(store, security_journal.UNCLAIM_KIND, workspace_id=wid,
-                                            label_restored=bool(plan["name_restored"]))
+                    security_journal._intent(store, security_journal.UNCLAIM_KIND, workspace_id=wid,
+                                             label_restored=bool(plan["name_restored"]))
                 except (OSError, ValueError) as e:
                     journal_error = e
                     raise ServiceError(503, "journal_unavailable",
@@ -1227,9 +1231,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         from .profile import finalize_deletions, record_deletion_withdrawals
         try:
             # One transaction for the sweep and its audit (G24): a failed audit undoes the sweep,
-            # which the next hourly pass then repeats — never a deletion without its record. The
-            # withdrawal records (the fsync'd security journal) are appended only after that
-            # commit: a journal line must never describe a deletion that was rolled back.
+            # which the next hourly pass then repeats — never a deletion without its record. Each
+            # deletion's withdrawal record is written ahead inside it (profile.finalize_deletions),
+            # so a rolled-back deletion's line is voided; the records still owed (retry markers)
+            # are retried only after that commit.
             with store.tx():
                 before = deletion_counts(store)
                 finalized = finalize_deletions(store, withdrawals=False)
@@ -1472,7 +1477,15 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
         """Remove one of the account's passkeys (A17): `{"reason"}` with strict re-authentication.
         The person's own rules hold — never their only way in (`last_factor`), never the last
         usable super administrator's identity confirmation — so an administrator who means to
-        lock an account out suspends it instead."""
+        lock an account out suspends it instead.
+
+        Journalled as the person's own removal is (`passkey_removed`, strict): the key may be the
+        one reported lost, so the withdrawal is written ahead in the removal's transaction with
+        its receipt (journal._intent) — a restore from an older backup removes it again, one
+        copied between the line and its COMMIT included — and a line that cannot be written
+        refuses the removal (503, not audited as a denial); a removal rolled back after its line
+        is voided."""
+        from synwevo_core import journal
         from .passkeys import Passkeys
         actor = _admin(request, "platform.users.manage", dangerous=True)
         reason = _reason(body)
@@ -1488,6 +1501,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             audit(request, "admin.user.passkey_remove", actor_id=actor["id"], object_kind="user",
                   object_id=uid, workspace_given=True, result="ok",
                   meta={**change({"passkeys": n_before}, {"passkeys": passkeys.count(uid)}), "reason": reason, "passkey_id": pid})
+            try:
+                journal._intent(store, "passkey_removed", credential_id=pid)
+            except (OSError, ValueError):
+                raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
         notified = _security_notice(request, uid, "passkey_removed")
         return {"ok": True, "notified": notified}
 
@@ -1495,7 +1512,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     def unlink_external_identity(request: Request, uid: str, iid: str, body: dict = Body(...)):
         """Detach one external identity from the account (A17): `{"reason"}` with strict
         re-authentication; refused when it is the account's only way in (`last_sign_in_method`),
-        as the person's own unlink is. The provider's next sign-in no longer reaches this account."""
+        as the person's own unlink is. The provider's next sign-in no longer reaches this account.
+
+        Journalled (`external_identity_unlinked`, strict) as a passkey removal is: the provider
+        account may be the one that must not reach this account any more, so a restore from an
+        older backup unlinks it again; a line that cannot be written refuses the unlink (503)."""
+        from synwevo_core import journal
         from .external import ExternalIdentities, load_providers, other_sign_in_methods
         actor = _admin(request, "platform.users.manage", dangerous=True)
         reason = _reason(body)
@@ -1514,6 +1536,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
             audit(request, "admin.user.external_unlink", actor_id=actor["id"], object_kind="user",
                   object_id=uid, workspace_given=True, result="ok",
                   meta={**change({"linked": True}, {"linked": False}), "reason": reason, "provider": row["provider"]})
+            try:
+                journal._intent(store, "external_identity_unlinked", identity_id=iid)
+            except (OSError, ValueError):
+                raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
         providers = ExternalIdentities(store, load_providers()).providers
         label = providers[row["provider"]].label if row["provider"] in providers else row["provider"]
         notified = _security_notice(request, uid, f"解除了外部登录方式（{label}）")

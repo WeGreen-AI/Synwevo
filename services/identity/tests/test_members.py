@@ -312,8 +312,10 @@ def test_ownership_transfer(env, demote):
     assert ident.membership(ws, uid(env, "alice"))["role"] == demote
     entries = journal.read(env["root"])
     assert entries[:-1] == before
-    assert {k: v for k, v in entries[-1].items() if k != "at"} == {
+    assert {k: v for k, v in entries[-1].items() if k not in ("at", "attempt_id")} == {
         "kind": "role_changed", "workspace_id": ws, "user_id": uid(env, "alice"), "role": demote}
+    # written ahead in the transfer's transaction, with the receipt that committed with it
+    assert store.one("SELECT 1 FROM meta WHERE key=?", ("journal_receipt:" + entries[-1]["attempt_id"],))
     assert isinstance(entries[-1]["at"], (int, float)), "Only the withdrawal, not the promotion, is journalled"
     ev = store.all("SELECT meta FROM audit_events WHERE action='workspace.ownership.transfer'")
     assert len(ev) == 1 and json.loads(ev[0]["meta"])["from"] == uid(env, "alice") \

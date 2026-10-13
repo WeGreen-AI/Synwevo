@@ -414,8 +414,9 @@ def test_a_restore_cannot_bring_back_a_withdrawn_consent_but_keeps_a_later_one(a
     _consent(agent)
     op(agent, "agent.provider_consent.withdraw", {})
     entries = _journal(agent)
-    # An older backup still holds the consent as given.
+    # An older backup still holds the consent as given, and no receipt of its withdrawal (journal._intent).
     store.execute("UPDATE agent_provider_consents SET withdrawn_at=NULL")
+    store.execute("DELETE FROM meta WHERE key LIKE 'journal_receipt:%'")
     assert journal.apply(store, entries)["agent_provider_consent_withdrawn"] == 1
     assert ProviderConsents(store).status(uid, "deepseek")["accepted"] is False
     assert journal.apply(store, entries)["agent_provider_consent_withdrawn"] == 0
@@ -430,7 +431,8 @@ def test_a_restore_cannot_lift_an_agent_suspension(agent):
     store, uid = agent.people.store, agent.people.uid("alice")
     AgentAccess(store).suspend(uid, "admin-fixture", reason="fixture abuse")
     entries = _journal(agent)
-    store.execute("DELETE FROM agent_access_suspensions")            # a backup from before it
+    store.execute("DELETE FROM agent_access_suspensions")            # a backup from before it,
+    store.execute("DELETE FROM meta WHERE key LIKE 'journal_receipt:%'")  # without its receipt (journal._intent)
     assert journal.apply(store, entries)["agent_access_suspended"] == 1
     assert AgentAccess(store).active(uid) is not None
     assert journal.apply(store, entries)["agent_access_suspended"] == 0

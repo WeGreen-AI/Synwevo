@@ -141,7 +141,10 @@ def test_brake_latch_is_idempotent_and_survives_restore_through_the_security_jou
     refused(g, 'step-2', 'risk_payer_suspended')
     assert len(g.store.all('SELECT * FROM model_risk_suspensions')) == 1
     entries = [e for e in journal.read(g.store.root) if e['kind'] == 'model_dispatch_suspended']
-    assert len(entries) == 1 and set(entries[0]) == {'at', 'kind', 'suspension_id', 'environment', 'scope_kind', 'scope_id'}
+    assert len(entries) == 1 and set(entries[0]) == {'at', 'kind', 'attempt_id', 'suspension_id', 'environment',
+                                                     'scope_kind', 'scope_id'}
+    # Written ahead with a receipt that committed with the suspension (journal._intent).
+    assert g.store.one('SELECT 1 FROM meta WHERE key=?', ('journal_receipt:' + entries[0]['attempt_id'],))
     from synwevo_core.store import Store
     restored = Store(tmp_path / 'restored-before-the-suspension')
     journal.apply(restored, journal.read(g.store.root, since=10**12))  # Replayed whatever the backup's time.

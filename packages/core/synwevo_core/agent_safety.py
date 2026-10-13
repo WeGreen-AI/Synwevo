@@ -117,7 +117,10 @@ class ProviderConsents:
 
     def withdraw(self, user_id: str, provider: str) -> dict:
         """Stop every further model call to ``provider`` for this person. Journalled ahead of the
-        change, so a restored backup cannot bring the consent back."""
+        change, in its transaction and with a receipt that commits with it (`journal._intent`), so
+        a restored backup cannot bring the consent back, and a withdrawal whose transaction rolled
+        back is voided rather than replayed by every later restore. A journal failure raises and
+        changes nothing."""
         if provider not in PROVIDER_TERMS:
             raise ServiceError(404, "provider_consent_not_needed", "这个模型服务不需要单独同意")
         from . import journal
@@ -126,7 +129,7 @@ class ProviderConsents:
                             (user_id, provider)).fetchone()
             if row and row["withdrawn_at"] is None:
                 ts = now()
-                journal.record(self.store, "agent_provider_consent_withdrawn", user_id=user_id, provider=provider)
+                journal._intent(self.store, "agent_provider_consent_withdrawn", user_id=user_id, provider=provider)
                 c.execute("UPDATE agent_provider_consents SET withdrawn_at=? WHERE user_id=? AND provider=?",
                           (ts, user_id, provider))
                 c.execute("INSERT INTO agent_provider_consent_log (id,user_id,provider,version,action,at) "
@@ -398,8 +401,10 @@ class AgentAccess:
             if current:
                 return dict(current)
             sid = new_id("asp")
-            # Write-ahead: a restored backup must not give the person their Agent back.
-            journal.record(self.store, "agent_access_suspended", suspension_id=sid, user_id=user_id)
+            # Write-ahead, with a receipt in this transaction (journal._intent): a restored backup
+            # must not give the person their Agent back, and a suspension that rolled back is
+            # voided rather than re-created by its id on every later restore.
+            journal._intent(self.store, "agent_access_suspended", suspension_id=sid, user_id=user_id)
             self.store.execute("INSERT INTO agent_access_suspensions (id,user_id,reason,report_id,created_by,created_at) "
                                "VALUES (?,?,?,?,?,?)", (sid, user_id, reason, report_id, actor_id, now()))
             # Stop what is running now: the engine rechecks before every model call, and a

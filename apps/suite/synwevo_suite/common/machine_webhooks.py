@@ -408,12 +408,15 @@ class Webhooks:
             validate_url(url, owner=p["tenant"])
 
     def _journal(self, sid: str) -> None:
-        """Written before a change that takes something back — a pause, another address, another
-        secret, a removal: restored from a backup taken before it, the subscription comes back
-        disabled rather than as it was. A change that cannot be made durable is not made."""
+        """Written ahead of a change that takes something back — a pause, another address, another
+        secret, a removal — inside that change's transaction, with a receipt that commits with it
+        (`journal._intent`): restored from a backup taken before it, or between this line and the
+        COMMIT, the subscription comes back disabled rather than as it was. A change that cannot be
+        made durable is not made: the 503 rolls the caller's transaction back and the attempt is
+        voided, so no restore applies it."""
         try:
-            journal.record(self.store, "webhook_disabled", subscription_id=sid)
-        except Exception as e:  # noqa: BLE001
+            journal._intent(self.store, "webhook_disabled", subscription_id=sid)
+        except (OSError, ValueError) as e:
             raise ServiceError(503, "journal_unavailable", "暂时无法安全地保存这项更改，请稍后再试") from e
 
     @staticmethod
@@ -539,9 +542,6 @@ class Webhooks:
                         self._address_free(c, p, values["url"], besides=sid)
                 self._look_up(p, values["url"])
             narrowed = "events" in values and not _covers(json.loads(values["events"]), json.loads(row["events"] or "[]"))
-            if moved or narrowed:
-                # a restore must not send to the address it left, nor the events it stopped sending
-                self._journal(sid)
             sets = ", ".join(f"{k}=?" for k in values)       # keys of the closed set above
             with self.store.tx() as c:
                 if moved:
@@ -549,6 +549,9 @@ class Webhooks:
                 n = c.execute(f"UPDATE suite_webhook_subscriptions SET {sets}, updated_at=?, version=version+1 "
                               "WHERE id=? AND version=? AND deleted_at IS NULL",
                               (*values.values(), self.clock(), sid, row["version"])).rowcount
+                if n and (moved or narrowed):
+                    # a restore must not send to the address it left, nor the events it stopped sending
+                    self._journal(sid)
                 if n and "created_by" in values:
                     self._note(note, p, "suite.webhook.update", sid, values.get("url", row["url"]),
                                events=json.loads(values["events"]) if "events" in values else None,
@@ -559,14 +562,17 @@ class Webhooks:
 
     def delete(self, p: dict, sid: str, *, note=None) -> dict:
         row = self._row(p, sid)
-        self._journal(sid)
-        self._remove(sid, "deleted", lambda: self._note(note, p, "suite.webhook.delete", sid, row["url"]))
+        self._remove(sid, "deleted", lambda: self._note(note, p, "suite.webhook.delete", sid, row["url"]),
+                     journalled=True)
         return {"deleted": sid}
 
-    def _remove(self, sid: str, reason: str, noted=None, *, orphaned_before: float | None = None) -> None:
+    def _remove(self, sid: str, reason: str, noted=None, *, orphaned_before: float | None = None,
+                journalled: bool = False) -> None:
         """Remove a subscription, its secret and its queue. `orphaned_before`, the housekeeping's:
         only if it still is what the sweep listed — disabled because its grant ended, since before
-        that time. One its holder has resumed in between is theirs again and stays whole."""
+        that time. One its holder has resumed in between is theirs again and stays whole.
+        `journalled`, a person's removal: journalled in this transaction (`_journal`) when it
+        removes something."""
         t = self.clock()
         still, args = "", ()
         if orphaned_before is not None:
@@ -580,6 +586,8 @@ class Webhooks:
                          "status_changed_at=?, updated_at=?, version=version+1, secret_enc=?, secret_prev_enc=NULL, "
                          "secret_prev_expires_at=NULL WHERE id=? AND deleted_at IS NULL" + still,
                          (reason, t, t, t, sealed.seal(self.store, "webhook-secret", ""), sid, *args)).rowcount:
+                if journalled:
+                    self._journal(sid)
                 c.execute("UPDATE suite_webhook_deliveries SET status='dropped', last_error='subscription_deleted', "
                           "next_attempt_at=NULL WHERE subscription_id=? AND status='pending'", (sid,))
 
@@ -588,12 +596,12 @@ class Webhooks:
         if row["status"] == "disabled":
             raise ServiceError(409, "subscription_disabled", "订阅已停用；用 resume 重新启用", {"reason": row["disabled_reason"]})
         if row["status"] == "active":
-            self._journal(sid)
             t = self.clock()
             with self.store.tx() as c:
                 current = c.execute("SELECT * FROM suite_webhook_subscriptions WHERE id=? AND status='active' "
                                     "AND deleted_at IS NULL", (sid,)).fetchone()
                 if current:
+                    self._journal(sid)
                     c.execute("UPDATE suite_webhook_subscriptions SET status='paused', status_changed_at=?, updated_at=?, "
                               "gap_cursor=?, gap_at=?, version=version+1 WHERE id=?", (t, t, *self._stopping(c, current), sid))
                     # Pausing stops what is already queued too: no retries for days to a paused endpoint.
@@ -656,7 +664,6 @@ class Webhooks:
             prev, prev_until = row["secret_prev_enc"], row["secret_prev_expires_at"]
         else:
             prev, prev_until = row["secret_enc"], t + overlap
-        self._journal(sid)                                  # a restore must not sign with the secret this one replaces
         with self.store.tx() as c:
             n = c.execute("UPDATE suite_webhook_subscriptions SET secret_enc=?, secret_prev_enc=?, secret_prev_expires_at=?, "
                           "created_by=?, authorized_at=?, updated_at=?, version=version+1 "
@@ -664,6 +671,7 @@ class Webhooks:
                           (sealed.seal(self.store, "webhook-secret", plain), prev, prev_until, descriptor, t, t, sid,
                            row["version"])).rowcount
             if n:
+                self._journal(sid)                          # a restore must not sign with the secret this one replaces
                 self._note(note, p, "suite.webhook.rotate_secret", sid, row["url"], overlap_s=overlap)
         if not n:
             raise ServiceError(409, "version_conflict", "订阅已被修改，请重新读取后再轮换")
@@ -805,6 +813,7 @@ class Webhooks:
         whoever looks next decides again, on the row as it stands."""
         t = self.clock()
         judged, args = (" AND version=?", (version,)) if version is not None else ("", ())
+        failure: Exception | None = None
         with self.store.tx() as c:
             current = c.execute("SELECT * FROM suite_webhook_subscriptions WHERE id=? AND status!='disabled'" + judged,
                                 (sid, *args)).fetchone()
@@ -815,6 +824,14 @@ class Webhooks:
                 n = c.execute("UPDATE suite_webhook_subscriptions SET status='disabled', disabled_reason=?, status_changed_at=?, "
                               "updated_at=?, gap_cursor=?, gap_at=?, version=version+1 WHERE id=?" + judged,
                               (reason, t, t, *self._stopping(c, current, unsent), sid, *args)).rowcount
+            if n:
+                # Ahead of the COMMIT, in the transaction that stops it, with a receipt that commits
+                # with it (`journal._intent`). The stop stands without its line: the failure is
+                # caught here, the stop commits with its receipt, and `last_error` says so below.
+                try:
+                    journal._intent(self.store, "webhook_disabled", subscription_id=sid)
+                except (OSError, ValueError) as e:
+                    failure = e
             dropped = c.execute("UPDATE suite_webhook_deliveries SET status='dropped', last_error=?, next_attempt_at=NULL "
                                 "WHERE subscription_id=? AND status='pending'", (f"subscription_disabled:{reason}", sid)).rowcount
             if n:
@@ -824,12 +841,10 @@ class Webhooks:
                                   workspace_id=current["workspace_id"], object_kind="webhook_subscription", object_id=sid,
                                   meta={"reason": reason, "unsent": unsent, "dropped": dropped,
                                         **audit_change({"status": current["status"]}, {"status": "disabled"})})
-        if n:
-            try:
-                journal.record(self.store, "webhook_disabled", subscription_id=sid)
-            except Exception as e:  # noqa: BLE001 — the database is already right; say that the journal is not
-                self.last_error = f"安全日志写入失败（webhook_disabled {sid}）：{e}"
-                log.error("%s", self.last_error)
+        if failure is not None:
+            # The database is already right; say that the journal is not.
+            self.last_error = f"安全日志写入失败（webhook_disabled {sid}）：{failure}"
+            log.error("%s", self.last_error)
         return bool(n)
 
     # ------------------------------------------------------------------ fan-out

@@ -117,7 +117,10 @@ def test_a_restore_from_before_the_deletion_erases_the_agent_content_again(world
     _finalize(c)
     entries = [e for e in journal.read(c.store.root) if e["kind"] == "user_deleted"]
     assert entries
-    # The older backup still holds the conversations and memories.
+    # The older backup still holds the conversations and memories — and not the receipt the
+    # deletion committed with its journal line.
+    for e in entries:
+        c.store.execute("DELETE FROM meta WHERE key=?", ("journal_receipt:" + e["attempt_id"],))
     for table, rows in before.items():
         for row in rows:
             c.store.execute(f"INSERT INTO {table} ({','.join(row)}) VALUES ({','.join('?' * len(row))})", tuple(row.values()))
