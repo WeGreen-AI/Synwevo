@@ -913,6 +913,8 @@ through the pre-fix transport, which lacked explicit certificate verification.
 
 2026-10-13 03:52Z `git push origin HEAD:main`，`412c0c3a..6a2f5d9a`（CR-124 A22 应用身份排除出人员治理）。推送前：账户服务 + 集成套件 3100 通过，账户前端 210 项、五守卫、根 typecheck/build 通过。运行 [38343761308](https://github.com/WeGreen-AI/Synwevo/actions/runs/38343761308)：verify 作业未启动（0 个步骤，计费注解相同），deploy 跳过；生产仍为 `synwevo:e99212d`。计费恢复后重跑最新运行（`gh run rerun 38343761308 --failed`）即可验证并部署 main 头部。 04:08Z 第 22 次重跑（attempt 2）、04:34Z 第 23 次重跑（attempt 3）：verify 仍 0 个步骤、注解相同，deploy 跳过；下一次≈05:34Z。
 
+2026-10-13 05:00Z `git push origin HEAD:main`，`5e1f0ca9..3c3e47fb`（CR-125 A47 平台邀请监管）。推送前：完整根套件 6004 通过/0 失败/2 跳过，账户前端 221 项、五守卫、根 typecheck/build 通过。运行 [38349263315](https://github.com/WeGreen-AI/Synwevo/actions/runs/38349263315)：verify 作业未启动（0 个步骤，计费注解相同），deploy 跳过；生产仍为 `synwevo:e99212d`。计费恢复后重跑最新运行（`gh run rerun 38349263315 --failed`）即可验证并部署 main 头部。
+
 ## 2026-10-11 393b066 未部署（GitHub Actions 计费阻断）
 
 操作者：Claude Code 协调者会话 13b6809f。57bebb7（CR-087 + e99212d 部署记录）的 Actions 38159846815 在运行时验证因计时敏感的配额测试失败（见 BACKLOG 18:35Z），deploy 跳过；修复 393b066（配额测试前置改为显式 6/min 预算）与 86d74b0（CR-088 图片/扫描 PDF 本地文字识别附件）推送后，Actions 38164472254 verify 成功（18:35–19:34Z，全部套件通过），但 **deploy 作业未启动**：GitHub 注解「The job was not started because recent account payments have failed or your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings」（作业 114556258462，0 个步骤）。
