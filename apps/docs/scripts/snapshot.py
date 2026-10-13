@@ -563,6 +563,15 @@ def fence(data_dir: Path, *, since: float | None, journal_dir: Path | None,
             report["super_admin_offers_invalidated"] = run(
                 "UPDATE platform_super_admin_offers SET state='invalidated',closed_at=?,closed_by='system:restore', "
                 "closed_reason='restored_invalidated' WHERE state='pending'", (t,))
+            # A pending second-factor reset (A26) in the backup may have been cancelled since —
+            # by the person, through the mailed link — and its announcement may be among the mail
+            # dropped below. Completing it from the restored copy would remove factors the person
+            # refused, or never heard about; it is voided, and an administrator asks again.
+            # The fence can tell nobody, so the review below lists them for a person to follow up.
+            voided_resets = [r["id"] for r in c.execute(
+                "SELECT id FROM second_factor_resets WHERE status='pending' ORDER BY created_at, id").fetchall()]
+            run("UPDATE second_factor_resets SET status='void', void_reason='restored_invalidated' WHERE status='pending'")
+            report["second_factor_resets_voided"] = len(voided_resets)
             # Nothing is re-sent. A delivery pending in the backup was either delivered by the
             # live system afterwards or given up on; sending it again from a restored copy is a
             # duplicate the receiver never asked for.
@@ -609,6 +618,8 @@ def fence(data_dir: Path, *, since: float | None, journal_dir: Path | None,
                 "SELECT COUNT(*) AS n FROM oauth_clients WHERE kind='service' AND disabled_at IS NULL")["n"],
             "webhook_subscriptions_active": store.one(
                 "SELECT COUNT(*) AS n FROM webhook_subscriptions WHERE status='active' AND deleted_at IS NULL")["n"],
+            # A26: the pending second-factor resets the fence voided (ids only; nobody was told).
+            "second_factor_resets_voided": voided_resets,
         }
     finally:
         _close(store)
@@ -646,6 +657,10 @@ def _print_fence(report: dict, *, rehearsal: bool) -> None:
           "其余的请逐个确认——已经发出的邀请链接仍然有效")
     print(f"   · 启用的 Webhook 订阅 {rv['webhook_subscriptions_active']} 个："
           "备份之后轮换过的签名密钥会回到旧值")
+    voided = rv.get("second_factor_resets_voided") or []
+    if voided:
+        print(f"   · {verb}作废等待中的第二因素重置 {len(voided)} 项（{', '.join(voided)}）：恢复不会通知本人或申请的管理员；"
+              "仍需要的，请由管理员重新核实本人身份后再申请")
     print("   · 认证模式来自环境变量，不在这个库里。恢复数据库不会改变它；")
     print("     恢复整台机器会——确认 SYNWEVO_UI_AUTH 不会退回 none。")
 

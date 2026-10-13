@@ -813,6 +813,10 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                        "/api/auth/forgot", "/api/auth/reset", "/api/auth/reset/preview",
                        "/api/auth/verify-email", "/api/auth/email/verify", "/api/auth/register",
                        "/api/auth/deletion/recovery", "/api/auth/deletion/recovery/preview",
+                       # A26: the mailed link that cancels a platform-requested second-factor reset
+                       # is for someone who cannot sign in (that is why the reset was asked for);
+                       # the single-use token is the authority, as for the deletion recovery.
+                       "/api/auth/second-factor-reset/preview", "/api/auth/second-factor-reset/cancel",
                        "/api/auth/email/resend",
                        # A mailed one-time code is the authority for this sign-in; requesting it
                        # cannot need a session, and the answer never says whether an account exists.

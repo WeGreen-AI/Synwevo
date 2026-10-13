@@ -46,6 +46,11 @@ const ALL = ["signin", "account", "org", "admin", "members", "api"];
  *  shows it, and says why. `ext` is the external sign-in callback: it redirects to the sign-in
  *  page with the refusal's code, which `EXTERNAL_ERRORS` in Login.tsx words. */
 const SERVER = [
+  // A26: the signed-out page the second-factor reset mail links to (pages/account/SecondFactorReset.tsx),
+  // in the Account chunk like the deletion recovery page (AccountRecovery), so the account surface
+  // words its refusals.
+  { file: ID + "account_routes.py", fns: ["build_router.resettable", "build_router.second_factor_reset_preview",
+      "build_router.second_factor_reset_cancel"], surfaces: ["account"] },
   { file: ID + "account_routes.py", surfaces: ["account"] },
   { file: ID + "admin_routes.py", surfaces: ["admin"] },
   { file: ID + "admin_operations.py", surfaces: ["admin"] },
@@ -56,6 +61,8 @@ const SERVER = [
   { file: ID + "admin_ownership.py", surfaces: ["admin"] },
   // A18: bulk suspension and session revocation — preview and batch (governance/BulkAccountDialog.tsx)
   { file: ID + "admin_bulk.py", surfaces: ["admin"] },
+  // A26: the second-factor state, the reset's preview, request and cancel (governance/SecondFactorResetDialog.tsx)
+  { file: ID + "admin_second_factor.py", surfaces: ["admin"] },
   { file: ID + "ownership.py", surfaces: ["account", "admin"] },
   { file: ID + "admin_settings.py", surfaces: ["admin"] },
   { file: ID + "admin_model_prices.py", surfaces: ["admin"] },

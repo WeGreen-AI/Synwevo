@@ -27,6 +27,7 @@ const Wallet = lazyRoute(() => import("./pages/account/Wallet"));
 const WalletUsage = lazyRoute(() => import("./pages/account/Usage"));
 const WalletReceipt = lazyRoute(() => import("./pages/account/Receipt"));
 const AccountRecovery = lazyRoute(pick(() => import("./pages/Account"), "AccountRecovery"));
+const SecondFactorReset = lazyRoute(pick(() => import("./pages/Account"), "SecondFactorReset"));
 const Invite = lazyRoute(() => import("./pages/Invite"));
 const ForgotPassword = lazyRoute(pick(() => import("./pages/Recover"), "ForgotPassword"));
 const ResetPassword = lazyRoute(pick(() => import("./pages/Recover"), "ResetPassword"));
@@ -126,6 +127,9 @@ createRoot(document.getElementById("root")!).render(
               <Route path="/account/wallet/usage" element={<AccountCapabilityGate><RequireSession><WalletUsage /></RequireSession></AccountCapabilityGate>} />
               <Route path="/account/wallet/receipts/:orderId" element={<AccountCapabilityGate><RequireSession><WalletReceipt /></RequireSession></AccountCapabilityGate>} />
               <Route path="/account/recovery" element={<AccountRecovery />} />
+              {/* Signed out as well: the person whose second factor is being reset may be unable to
+                  sign in; the mailed link is the only credential the page uses (A26). */}
+              <Route path="/account/second-factor-reset" element={<SecondFactorReset />} />
               <Route path="/account/api-approvals" element={<RequireSession><OwnerApiApprovals /></RequireSession>} />
               <Route path="/oauth/consent" element={<RequireSession><OAuthConsent /></RequireSession>} />
               {/* The route exists for everyone; the server answers 404 to a non-administrator,

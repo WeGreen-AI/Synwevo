@@ -263,6 +263,15 @@ CATALOGUE: dict[str, dict] = {
         "zh-Hans": "用量待确认的成本偏高", "zh-Hant": "用量待確認的成本偏高", "en": "Unconfirmed usage exposure is high"}, "body": {
         "zh-Hans": "尚未确认用量的调用预留成本合计 {amount} {unit}，超过提醒阈值。", "zh-Hant": "尚未確認用量的呼叫預留成本合計 {amount} {unit}，超過提醒門檻。",
         "en": "Calls without confirmed usage hold {amount} {unit} of reserved cost, above the alert threshold."}},
+    # ---- A26: a platform-requested second-factor reset that fell due and was not carried out, told
+    # to the administrator who asked (synwevo_identity.admin_second_factor); `void_reason` is a
+    # VOID_WORDS key, `email` the account's address as the administrator already saw it.
+    "platform.second_factor_reset_void": {"category": "platform", "severity": "info", "email": "immediate", "title": {
+        "zh-Hans": "第二因素重置未执行：{email}", "zh-Hant": "第二因素重設未執行：{email}",
+        "en": "Second-factor reset not carried out: {email}"}, "body": {
+        "zh-Hans": "到期时{void_reason}，这项重置没有执行，该账户的第二因素没有改变。如仍需要，请重新核实本人身份后再申请。",
+        "zh-Hant": "到期時{void_reason}，這項重設沒有執行，該帳戶的第二因素沒有變更。如仍需要，請重新核實本人身分後再申請。",
+        "en": "When it fell due, {void_reason}; the reset was not carried out and the account's second factor is unchanged. If it is still needed, confirm the person's identity again and ask anew."}},
     "billing.risk.payment_webhook_failed": {"category": "platform", "severity": "action", "email": "immediate", "title": {
         "zh-Hans": "支付回调处理失败", "zh-Hant": "付款回呼處理失敗", "en": "A payment webhook failed"}, "body": {
         "zh-Hans": "{provider} 的支付回调未能处理（{code}）。请检查支付渠道配置与回调记录。", "zh-Hant": "{provider} 的付款回呼未能處理（{code}）。請檢查付款管道設定與回呼記錄。",
@@ -295,6 +304,36 @@ SECURITY_WHAT = {
     "external_unlinked": {"zh-Hans": "解除了外部登录方式（{provider}）", "zh-Hant": "已解除外部登入方式（{provider}）", "en": "External sign-in unlinked ({provider})"},
     "sessions_revoked": {"zh-Hans": "结束了其他设备的登录", "zh-Hant": "已結束其他裝置的登入", "en": "Other devices were signed out"},
     "push_revoked": {"zh-Hans": "撤销了全部浏览器推送设备", "zh-Hant": "已撤銷全部瀏覽器推播裝置", "en": "All browser push devices were revoked"},
+    # A26: the platform-controlled reset of a lost second factor (synwevo_identity.admin_second_factor).
+    "second_factor_reset_requested": {"zh-Hans": "平台管理员申请重置你的第二因素，到期才会生效；如果不是你本人要求的，请用邮件里的链接取消",
+                                      "zh-Hant": "平台管理員申請重設你的第二因素，到期才會生效；若非你本人要求，請用郵件中的連結取消",
+                                      "en": "A platform administrator asked to reset your second factor; it takes effect only after a delay. If you did not ask for this, cancel it with the link in the e-mail"},
+    "second_factor_reset_cancelled": {"zh-Hans": "第二因素重置已取消，什么都没有改变", "zh-Hant": "第二因素重設已取消，沒有任何變更",
+                                      "en": "The second-factor reset was cancelled; nothing changed"},
+    "second_factor_reset_void": {"zh-Hans": "预定的第二因素重置没有执行：{void_reason}；你的第二因素没有改变",
+                                 "zh-Hant": "預定的第二因素重設沒有執行：{void_reason}；你的第二因素沒有變更",
+                                 "en": "The scheduled second-factor reset did not take place: {void_reason}. Your second factor is unchanged"},
+    "second_factor_reset_completed": {"zh-Hans": "你的第二因素已重置：请用口令登录并重新设置动态验证码",
+                                      "zh-Hant": "你的第二因素已重設：請以密碼登入並重新設定驗證器動態驗證碼",
+                                      "en": "Your second factor was reset: sign in with your password and set up authenticator verification again"},
+}
+#: Why a platform-requested second-factor reset that fell due was not carried out (A26,
+#: synwevo_identity.admin_second_factor `void_reason`), as a clause: "When it fell due, <clause>".
+VOID_WORDS = {
+    "account_deleted": {"zh-Hans": "账户已删除", "zh-Hant": "帳戶已刪除", "en": "the account was deleted"},
+    "account_state_conflict": {"zh-Hans": "账户已不是正常使用状态", "zh-Hant": "帳戶已不是正常使用狀態", "en": "the account was no longer active"},
+    "account_suspended": {"zh-Hans": "账户已被停用", "zh-Hant": "帳戶已被停用", "en": "the account was suspended"},
+    "email_unverified": {"zh-Hans": "账户邮箱尚未验证", "zh-Hant": "帳戶電子郵件地址尚未驗證", "en": "the account's email address was not verified"},
+    "email_changed": {"zh-Hans": "登录邮箱在等待期间更改过", "zh-Hant": "登入電子郵件地址在等待期間變更過", "en": "the sign-in email had changed while it was waiting"},
+    "target_is_platform_admin": {"zh-Hans": "账户已持有平台权限", "zh-Hant": "帳戶已持有平台權限", "en": "the account held a platform role"},
+    "application_identity": {"zh-Hans": "账户是应用身份", "zh-Hant": "帳戶是應用程式身分", "en": "the account was an application identity"},
+    "authority_changed": {"zh-Hans": "申请的管理员已不再有权执行这项重置", "zh-Hant": "申請的管理員已不再有權執行這項重設",
+                          "en": "the administrator who asked no longer held the authority to carry it out"},
+    "announcement_undelivered": {"zh-Hans": "通知邮件没有送达", "zh-Hant": "通知郵件沒有送達", "en": "the announcement e-mail had not been delivered"},
+    "nothing_to_reset": {"zh-Hans": "已没有可以重置的第二因素", "zh-Hant": "已沒有可以重設的第二因素", "en": "there was no second factor left to reset"},
+    "factors_changed": {"zh-Hans": "第二因素在等待期间被使用或更改过，说明它并未丢失", "zh-Hant": "第二因素在等待期間被使用或變更過，表示它並未遺失",
+                        "en": "the second factor had been used or changed while it was waiting, so it is not lost"},
+    "restored_invalidated": {"zh-Hans": "平台从备份恢复了数据", "zh-Hant": "平台從備份還原了資料", "en": "the platform was restored from a backup"},
 }
 #: Legacy callers pass the zh-Hans sentence; map it back to a key so every reader gets their language.
 _WHAT_BY_ZH = {v["zh-Hans"]: k for k, v in SECURITY_WHAT.items()}
@@ -933,6 +972,8 @@ def _localised_params(params: dict, loc: str) -> dict:
         out["actor"] = ACTOR_WORDS[out["actor_kind"]][loc]
     if "role" in out and out["role"] in ROLE_WORDS:
         out["role"] = ROLE_WORDS[out["role"]][loc]
+    if "void_reason" in out and out["void_reason"] in VOID_WORDS:
+        out["void_reason"] = VOID_WORDS[out["void_reason"]][loc]
     if "what" in out and out["what"] in SECURITY_WHAT:
         out["what"] = _fmt(SECURITY_WHAT[out["what"]][loc], out)
     if "outcome" in out and out["outcome"] in OUTCOME_WORDS:

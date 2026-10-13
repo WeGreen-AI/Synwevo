@@ -538,6 +538,12 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 风险/未做：指纹按当前密钥，重叠期内由旧密钥验签的接收方看到的是新密钥指纹（行记"用哪把签"，当前+旧两把都签在头里）。
 - 验证：新增 4 例 + 两应用 webhook 契约/投递/加固/重投/CLI/示例 254 项与迁移测试通过。
 
+## CR-123 · A26 第二因素的受控重置：身份核验、72 小时延迟、本人可取消（2026-10-13，本轮新增，本地已验证）
+
+- 位置：services/identity/synwevo_identity/admin_second_factor.py（新：延迟常量、四条管理路由、共享取消、清扫执行函数）；account_routes.py（免登录预览/取消）；admin_routes.py（子路由先于 `/users/{uid}`）；app.py（清扫线程每轮执行到期重置）；admin_operations.py（`revoke_account_sessions` 拆为“结束全部访问”与“写安全日志”两个共享助手，单账户与批量行为不变）；mail.py（请求/取消/完成三语言邮件，只称“Synwevo 平台管理员”）；admin_actions.py；packages/core：platform_access.py（`platform.users.recover`）、store.py（`second_factor_resets` 表、待生效唯一部分索引）、notifications.py、http.py（两条免登录路径）、blob_refs.py；apps/docs/scripts/snapshot.py（恢复备份作废待生效重置）；前端 governance/SecondFactorResetDialog.tsx、second-factor.messages.ts、AccountDetail.tsx 区块、pages/account/SecondFactorReset.tsx、main.tsx 路由、labels.ts、PlatformAccess.tsx、ActivitySection.tsx。
+- 审查要点：丢失 TOTP 与全部恢复码的人此前无路可回（本人关闭需要当前验证码）。本包不让管理员“以用户身份改凭据”，而是平台恢复流程：只有最高管理员、必须声明核验方式与理由并严格重认证；不立即生效，72 小时内账户邮箱收到带取消链接的通知（与待生效行同事务入发件箱），真正的账户持有人可一键取消；到期时在独立事务中复核账户状态，任何变化即作废；全程不读取、不返回、不审计种子、恢复码或取消令牌（数据库只存令牌摘要）；完成即撤销全部会话与令牌并写安全日志；从备份恢复会作废所有待生效重置，避免旧备份让已取消的重置复活。
+- 验证：定向账户服务测试 259 项 + 跨模块 51 项 + 间接相关 136 项通过（后端子代理）；账户前端 210 项、六个前端工作区 647 项 node 测试、五守卫 + 图标与 Logo 检查、根 typecheck/build 通过（02:32Z）；对抗性安全审查两项高、两项中、六项低级发现全部修正（见 EVIDENCE 与 DECISIONS D11 第 6 条）；修正后完整根套件 5978 通过/0 失败/2 跳过（03:38Z）。
+
 ## CR-122 · A18 批量停用账户与批量撤销会话：一组单账户操作，一次预览一次确认（2026-10-13，本轮新增，本地已验证）
 
 - 位置：services/identity/synwevo_identity/admin_operations.py（单账户停用写体抽为 `AccountOperations._apply`；单账户撤销会话抽为 `revoke_account_sessions`；`OPERATIONS["admin.user.bulk"]` 按操作解析权限；`SignedPreview.token_limit`）；admin_bulk.py（新：`BulkAccountOperations`，预览与执行、逐项事务、逐项回执与重试续做、批次记录）；admin_routes.py（单账户撤销会话路由改调共享函数；批量子路由先于 `/users/{uid}` 声明）；admin_actions.py（`admin.user.bulk`）；前端 governance/BulkAccountDialog.tsx、bulk-accounts.messages.ts、BulkResult.tsx（`retryFailed`）、components/selection.ts（`usePagedSelection`）、Admin.tsx UsersTab 勾选与选择栏、labels.ts、admin.css / account.css 窄屏卡片。

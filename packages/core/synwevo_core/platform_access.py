@@ -42,6 +42,16 @@ for each (the brief asks that each be written here):
   three roles that already read the mail outbox hold it (`access_admin`, `support`, `auditor`).
   `api_platform_admin` does not: it manages credentials, and a credential's calls are already
   in its own console.
+* `platform.users.recover` is added for the platform-controlled reset of a person's lost second
+  factor (A26, synwevo_identity.admin_second_factor): when both the authenticator app and every
+  recovery code are gone, an administrator who confirmed the person's identity outside the
+  platform (in person, a video call, a verified document) asks for the TOTP authenticator and the
+  recovery codes — and, if asked, the passkeys — to be removed. Nothing changes for 72 hours; the
+  account's own address is told at once, with a link that cancels it; then every session and
+  token ends. It changes how somebody else signs in, which no `.manage` or `.support` permission
+  means, so it is the super administrator's only (by construction). It never reads a seed or a
+  code, refuses the actor's own account and every account holding a platform grant (an
+  administrator's way back is the handover process), and grants no access to anything.
 
 Rules that are properties of the data rather than of a caller's discipline:
 
@@ -113,6 +123,7 @@ PERMISSIONS: dict[str, str] = {
     "platform.users.view": "list and search accounts",
     "platform.users.manage": "suspend and restore accounts",
     "platform.users.support": "send recovery mail and end an account's sessions",
+    "platform.users.recover": "reset a person's lost second factor after identity confirmation, delayed and announced",
     "platform.workspaces.view": "list workspaces and their members (counts, never content)",
     "platform.workspaces.manage": "freeze and unfreeze workspaces",
     "platform.workspaces.claim": "assign the historical (pre-identity) workspace to an ordinary account, and take it back",

@@ -963,6 +963,37 @@ class Store:
             );
             CREATE INDEX IF NOT EXISTS ix_admin_operations_target ON admin_operations(target_id,created_at);
         """)
+        # A26: a platform-controlled reset of a person's lost second factor (synwevo_identity.
+        # admin_second_factor). A row is the request — who asked, how the identity was confirmed,
+        # why — waiting out its delay; the cancel link's token is stored only as its SHA-256. What
+        # completion re-checks is recorded with it: the announcement mail (`announcement_mail_id`,
+        # its delivery decides when the delay really ends), the address it went to
+        # (`announced_email_key`) and an opaque digest of the factor rows (`factor_digest`: ids
+        # and use markers, never a seed or a code hash). At most one pending reset per account
+        # (the partial unique index backs the check the request makes in its write transaction).
+        # Additive: older releases never read the table, so a pending reset does not complete there.
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS second_factor_resets (
+                id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+                requested_by TEXT NOT NULL, method TEXT NOT NULL, reason TEXT NOT NULL,
+                include_passkeys INTEGER NOT NULL DEFAULT 0, cancel_token_hash TEXT NOT NULL UNIQUE,
+                created_at REAL NOT NULL, due_at REAL NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('pending','cancelled','completed','void')),
+                cancelled_at REAL, cancelled_by TEXT, completed_at REAL, void_reason TEXT,
+                announcement_mail_id TEXT, announced_email_key TEXT, factor_digest TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_second_factor_resets_user ON second_factor_resets(user_id,status);
+            CREATE INDEX IF NOT EXISTS ix_second_factor_resets_due ON second_factor_resets(status,due_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_second_factor_resets_pending ON second_factor_resets(user_id)
+                WHERE status='pending';
+        """)
+        with self.tx() as t:
+            # A table created by the first cut of A26 (isolated instances only) lacks the three
+            # re-check columns; a row without them never completes (it is voided).
+            have = {r["name"] for r in t.execute("PRAGMA table_info(second_factor_resets)").fetchall()}
+            for column in ("announcement_mail_id", "announced_email_key", "factor_digest"):
+                if column not in have:
+                    t.execute(f"ALTER TABLE second_factor_resets ADD COLUMN {column} TEXT")
         # Versioned non-secret platform overrides. All reads/writes use this Store; older
         # releases ignore these additive rows. A reset/rollback appends a new revision.
         c.executescript("""

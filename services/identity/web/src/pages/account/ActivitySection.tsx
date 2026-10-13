@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { get } from '@synwevo/auth-client';
 import { useI18n } from '@synwevo/ui';
 import { ErrorNotice, errorText, timeText } from './common';
+import './second-factor-reset.messages';
 interface Event { seq: number; at: number; action: string; result: string; ip: string | null }
 interface Page { items: Event[]; next_before: number | null }
 const labels: Record<string, string> = {
@@ -12,6 +13,7 @@ const labels: Record<string, string> = {
   'auth.session.revoke': '结束登录会话', 'auth.session.revoke_others': '退出其他所有设备',
   'auth.passkey.register': '登记安全密钥', 'auth.passkey.rename': '重命名安全密钥', 'auth.passkey.remove': '删除安全密钥',
   'auth.reset.complete': '重置口令', 'auth.email.verified': '验证邮箱',
+  'auth.second_factor_reset.cancelled': '取消第二因素重置',
 };
 export default function ActivitySection({ timezone }: { timezone: string }) {
   const { t, locale } = useI18n();

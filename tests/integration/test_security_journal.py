@@ -361,6 +361,57 @@ def test_restore_fences_inflight_scoped_passkey_proofs(recovery, no_journal):
 
 
 @pytest.mark.parametrize("no_journal", [False, True])
+def test_restore_voids_a_pending_second_factor_reset_and_keeps_closed_ones(recovery, no_journal):
+    """A26: a pending reset in the backup may have been cancelled since — by the person, through
+    the mailed link — or its announcement may be among the queued mail the fence drops. Completing
+    it from the restored copy would remove factors the person refused or never heard of, so the
+    fence voids it; closed resets are history and stay. Synthetic rows only."""
+    from synwevo_core.store import now
+    w = recovery
+    ts = now()
+    for status in ("pending", "cancelled", "completed"):
+        w.store.execute("INSERT INTO second_factor_resets (id,user_id,requested_by,method,reason,include_passkeys,"
+                        "cancel_token_hash,created_at,due_at,status) VALUES (?,?,?,?,?,0,?,?,?,?)",
+                        ("fixture-reset-" + status, w.b["id"], w.a["id"], "in_person", "Fixture restore intent",
+                         "fixture-hash-" + status, ts, ts + 3600, status))
+    archive = _backup(w)
+    restored = _restore(w, archive, no_journal=no_journal)
+    try:
+        pending = restored.one("SELECT status,void_reason FROM second_factor_resets WHERE id='fixture-reset-pending'")
+        assert pending == {"status": "void", "void_reason": "restored_invalidated"}
+        for status in ("cancelled", "completed"):
+            assert restored.one("SELECT status FROM second_factor_resets WHERE id=?", ("fixture-reset-" + status,))["status"] == status
+        assert w.store.one("SELECT status FROM second_factor_resets WHERE id='fixture-reset-pending'")["status"] == "pending", \
+            "the live database is not touched"
+    finally:
+        w.snapshot._close(restored)
+
+
+def test_the_restore_review_lists_the_second_factor_resets_it_voided(recovery, capsys):
+    """The fence can tell nobody about a voided reset, so its review names them (ids only)."""
+    from synwevo_core.store import now
+    w = recovery
+    ts = now()
+    w.store.execute("INSERT INTO second_factor_resets (id,user_id,requested_by,method,reason,include_passkeys,"
+                    "cancel_token_hash,created_at,due_at,status) VALUES (?,?,?,'in_person','Fixture restore intent',0,"
+                    "'fixture-hash-review',?,?,'pending')", ("fixture-reset-review", w.b["id"], w.a["id"], ts, ts + 3600))
+    restored_dir = w.tmp / "restored"
+    _restore(w, _backup(w))
+    # The restore already voided it; a pending row written into the copy afterwards shows the report.
+    copy = Store(restored_dir)
+    copy.execute("INSERT INTO second_factor_resets (id,user_id,requested_by,method,reason,include_passkeys,"
+                 "cancel_token_hash,created_at,due_at,status) VALUES (?,?,?,'in_person','Fixture restore intent',0,"
+                 "'fixture-hash-review-2',?,?,'pending')", ("fixture-reset-review-2", w.b["id"], w.a["id"], ts, ts + 3600))
+    w.snapshot._close(copy)
+    report = w.snapshot.fence(restored_dir, since=None, journal_dir=None, no_journal=True)
+    assert report["second_factor_resets_voided"] == 1
+    assert report["review"]["second_factor_resets_voided"] == ["fixture-reset-review-2"]
+    capsys.readouterr()
+    w.snapshot._print_fence(report, rehearsal=False)
+    assert "fixture-reset-review-2" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("no_journal", [False, True])
 def test_restore_invalidates_pending_super_offers_and_keeps_accepted_history(recovery, no_journal):
     """Synthetic offer rows exercise the real restored-copy fence in both recovery modes."""
     from synwevo_core.store import now

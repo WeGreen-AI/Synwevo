@@ -62,6 +62,8 @@ OPERATIONS["admin.user.bulk"] = Operation(
     REVOKE_SESSIONS_PERMISSION, "high",
     per_operation=(("suspend", OPERATIONS["admin.user.status"].permission),
                    ("revoke_sessions", REVOKE_SESSIONS_PERMISSION)))
+#: A26: the delayed, announced reset of a person's lost second factor (admin_second_factor.py).
+OPERATIONS["admin.user.second_factor_reset.request"] = Operation("platform.users.recover", "high")
 PREVIEW_SECONDS = 300
 
 
@@ -244,6 +246,10 @@ class AccountOperations(SignedPreview):
             from .profile import invalidate_access
             invalidate_access(self.store, uid, "admin_suspended")
             tx.execute("UPDATE account_recoveries SET used_at=COALESCE(used_at,?) WHERE user_id=?", (ts, uid))
+            # A26: a second-factor reset waiting for this account is void now, in this transaction,
+            # audited as the system with this suspension named (admin_second_factor.void_for_suspension).
+            from .admin_second_factor import void_for_suspension
+            void_for_suspension(self.store, uid, request=request, suspended_by=actor["id"], operation_id=operation_id)
         result = {"ok": True, "operation_id": operation_id, "state": "succeeded", "status": result_status,
                   "sessions_revoked": revoked, "tokens_revoked": tokens,
                   "journaled": True if status == "suspended" else None}
@@ -293,16 +299,12 @@ def revoke_account_sessions(store, sessions, audit, request, actor, uid, reason,
     account's confirmed `version` (compared with `version_of(uid)` before anything is written,
     `admin_preview_stale`), its `batch_id` for the audit row, the journal `event_id` and
     `before_journal(result)`, which writes the account's receipt ahead of the journal entry."""
-    from synwevo_core import journal
-    from .profile import invalidate_access
     if not Identity(store).get_user(uid):
         raise ServiceError(404, "no_user", "找不到该账户")
     require_outranking(request, actor, uid, store=store, audit=audit)
     if version is not None and version_of(uid) != version:
         raise ServiceError(409, "admin_preview_stale", "账户的会话或平台权限已变化，请重新预览")
-    n = sessions.revoke_all_for_user(uid, "admin_revoked")
-    tokens = Grants(store).revoke_for_user(uid, "admin_revoked")
-    invalidate_access(store, uid, "admin_revoked")
+    n, tokens = withdraw_account_access(store, sessions, uid, "admin_revoked")
     meta = {**change({"sessions": n, "tokens": tokens}, {"sessions": 0, "tokens": 0}),
             "reason": reason, "sessions": n, "tokens": tokens, "journaled": True}
     if batch_id:
@@ -312,8 +314,29 @@ def revoke_account_sessions(store, sessions, audit, request, actor, uid, reason,
     result = {"sessions_revoked": n, "tokens_revoked": tokens}
     if before_journal is not None:
         before_journal(result)
+    journal_sessions_revoked(store, uid, event_id or new_id("ao"))
+    return result
+
+
+def withdraw_account_access(store, sessions, uid, reason) -> tuple[int, int]:
+    """The writes of every whole-account revocation, under the writer lock the caller holds: each
+    session, each token and every pending credential of the account (`invalidate_access`), all with
+    `reason`. Returns (sessions ended, tokens ended). Shared by `revoke_account_sessions` and the
+    completion of a second-factor reset (admin_second_factor.py), which has no administrator in
+    hand — the reset's own request admitted one 72 hours earlier — and audits as the system."""
+    from .profile import invalidate_access
+    n = sessions.revoke_all_for_user(uid, reason)
+    tokens = Grants(store).revoke_for_user(uid, reason)
+    invalidate_access(store, uid, reason)
+    return n, tokens
+
+
+def journal_sessions_revoked(store, uid, event_id) -> None:
+    """The `sessions_revoked` security-journal entry, last in the caller's transaction: a restore
+    from an older backup ends the account's restored sessions and tokens again. A journal that
+    cannot be written refuses the whole change (503), which is then not committed."""
+    from synwevo_core import journal
     try:
-        journal.record_account(store, "sessions_revoked", user_id=uid, event_id=event_id or new_id("ao"))
+        journal.record_account(store, "sessions_revoked", user_id=uid, event_id=event_id)
     except (OSError, ValueError):
         raise ServiceError(503, "journal_unavailable", "安全记录暂不可用，操作未提交，请稍后重试") from None
-    return result

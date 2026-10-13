@@ -30,6 +30,14 @@ def catalogue(locale: str) -> dict[str, tuple[str, str, str]]:
         "email_change": mail.email_change_mail(token="tok-CHG", expires_h=1, locale=locale),
         "account_deletion": mail.deletion_mail(locale, "https://accounts.example.test/account/recovery?lang=zh-Hans#token=tok-DEL"),
         "account_deletion_resend": mail.deletion_mail(locale, "https://accounts.example.test/account/recovery?lang=zh-Hans#token=tok-DEL2", resend=True),
+        # A26: the platform-controlled second-factor reset — announced, cancelled, completed.
+        "second_factor_reset_requested": mail.second_factor_reset_requested_mail(
+            locale, "https://accounts.example.test/account/second-factor-reset?lang=zh-Hans#token=tok-SFR",
+            due_at=1_800_000_000, timezone="Asia/Shanghai", include_passkeys=True),
+        "second_factor_reset_cancelled": mail.second_factor_reset_cancelled_mail(locale, by_holder=True),
+        "second_factor_reset_cancelled_by_admin": mail.second_factor_reset_cancelled_mail(locale, by_holder=False),
+        "second_factor_reset_completed": mail.second_factor_reset_completed_mail(locale, passkeys_removed=False),
+        "second_factor_reset_void": mail.second_factor_reset_void_mail(locale, "factors_changed"),
     }
 
 

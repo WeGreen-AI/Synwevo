@@ -39,6 +39,10 @@ class Sweeper:
         self.topups = None   # payments.TopupService: replays webhook events a crash left unprocessed
         #: (LowBalanceReminders, notify) once install() has a configured wallet; None means off.
         self.wallet_reminders = None
+        #: The account service's mailer and inbox, for the notices a completed second-factor reset
+        #: sends (admin_second_factor); install() sets them. None: a mailer over the same outbox.
+        self.mailer = None
+        self.notifier = None
         self._stop = threading.Event()
         self._thread = None
         if start:
@@ -48,16 +52,35 @@ class Sweeper:
             workers.register(self, self._thread)
 
     def run_once(self) -> dict:
+        """Every job once, each on its own: one that fails is logged (its name and the exception's
+        type — never its message, which can carry data) and reported as `{"error": type}`, and the
+        jobs after it still run. A failed job is retried by the next sweep."""
         from synwevo_auth_client.rp import Rp
         from .profile import finalize_deletions
-        return {"sessions": self.sessions.sweep(),
-                "mfa_tickets": self.tickets.sweep(),
-                "webauthn_challenges": self.passkeys.sweep(),
-                "rp_auth_requests": Rp(self.store).sweep(),
-                "account_deletions": finalize_deletions(self.store),
-                "member_imports": self._member_imports(),
-                "payment_events": self.topups.process_pending() if self.topups and self.topups.environment else 0,
-                "wallet_reminders": self._wallet_reminders()}
+        jobs = (("sessions", self.sessions.sweep),
+                ("mfa_tickets", self.tickets.sweep),
+                ("webauthn_challenges", self.passkeys.sweep),
+                ("rp_auth_requests", lambda: Rp(self.store).sweep()),
+                ("account_deletions", lambda: finalize_deletions(self.store)),
+                ("second_factor_resets", self._second_factor_resets),
+                ("member_imports", self._member_imports),
+                ("payment_events", lambda: self.topups.process_pending() if self.topups and self.topups.environment else 0),
+                ("wallet_reminders", self._wallet_reminders))
+        out = {}
+        for name, job in jobs:
+            try:
+                out[name] = job()
+            except Exception as e:  # noqa: BLE001 - one job's failure must not skip the others
+                print(f"[synwevo] auth sweep job {name} failed: {type(e).__name__}", flush=True)
+                out[name] = {"error": type(e).__name__}
+        return out
+
+    def _second_factor_resets(self) -> dict:
+        """A26: every platform-requested second-factor reset whose delay has passed takes effect
+        (or is voided, when the account changed meanwhile), each in its own transaction."""
+        from .admin_second_factor import complete_due_second_factor_resets
+        return complete_due_second_factor_resets(self.store, sessions=self.sessions, mailer=self.mailer,
+                                                 notifier=self.notifier)
 
     def _wallet_reminders(self) -> dict:
         if self.wallet_reminders is None:
@@ -126,6 +149,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.state.notifier = Notifier(store)
     api.state.notify_dispatcher = NotificationDispatcher(store, plat.identity, mailer, start=start_jobs)
     api.state.auth_sweeper = Sweeper(store, sessions, tickets, passkeys, start=start_jobs)
+    api.state.auth_sweeper.mailer, api.state.auth_sweeper.notifier = mailer, api.state.notifier
     from .member_import_routes import cleanup_enabled as _import_cleanup
     api.state.member_import_cleanup = _import_cleanup()        # shown on the privacy page (public state)
     api.state.mfa = mfa

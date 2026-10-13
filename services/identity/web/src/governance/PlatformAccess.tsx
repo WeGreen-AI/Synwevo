@@ -9,6 +9,7 @@ import { errText } from "./labels";
 import "./messages";
 import "./platform.messages";
 import "./runs.messages";
+import "./second-factor.messages";
 /**
  * Delegated platform roles (synwevo_core.platform_access): the administrator roster and the
  * per-account platform-access dialog.
@@ -35,7 +36,7 @@ const ROLE_SUMMARY: Record<string, string> = {
 };
 const PERMISSION_LABEL: Record<string, string> = {
   "platform.overview.view": "查看平台概览", "platform.users.view": "查看账户", "platform.users.manage": "停用与恢复账户",
-  "platform.users.support": "发送找回邮件、结束会话", "platform.workspaces.view": "查看工作空间（只含数量）",
+  "platform.users.support": "发送找回邮件、结束会话", "platform.users.recover": "核验身份后重置丢失的第二因素（延迟生效并通知本人）", "platform.workspaces.view": "查看工作空间（只含数量）",
   "platform.workspaces.manage": "冻结与解冻工作空间", "platform.workspaces.claim": "把历史数据指派给没有平台权限的账户",
   "platform.orgs.view": "查看组织",
   "platform.orgs.manage": "在管理后台管理自己拥有的组织", "platform.config.view": "查看平台配置与登录方式",

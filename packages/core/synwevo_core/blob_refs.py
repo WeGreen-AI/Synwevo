@@ -78,6 +78,8 @@ LOOKALIKES: tuple[tuple[str, str, str], ...] = (
     ("login_codes", "code_hash", "登录验证码哈希，不是 blob"),
     ("email_tokens", "token_hash", "邮件令牌哈希，不是 blob"),
     ("account_recoveries", "token_hash", "找回令牌哈希，不是 blob"),
+    ("second_factor_resets", "cancel_token_hash", "第二因素重置取消链接令牌的哈希，不是 blob"),
+    ("second_factor_resets", "factor_digest", "第二因素行的指纹（行 id 与使用标记，不含种子或恢复码），不是 blob"),
     ("bootstrap_tokens", "token_hash", "初始化令牌哈希，不是 blob"),
     ("invitations", "token_hash", "邀请令牌哈希，不是 blob"),
     ("op_runs", "input_hash", "操作输入的指纹（幂等比对），不是 blob"),

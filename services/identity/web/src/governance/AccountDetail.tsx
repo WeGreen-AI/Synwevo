@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { get, post } from "@synwevo/auth-client";
 import { fmtTime, Modal, t as tr, useI18n, useToast } from "@synwevo/ui";
 import { useLoad } from "../lib/hooks";
@@ -6,6 +6,7 @@ import type { Held } from "./access";
 import { ActionDialog } from "./ActionDialog";
 import { ACCOUNT_STATUS, WORKSPACE_KIND, WORKSPACE_STATUS, errText, fmtDuration, roleLabel } from "./labels";
 import { platformRoleLabel } from "./PlatformAccess";
+import { SecondFactorPanel, type ResetTarget } from "./SecondFactorResetDialog";
 import "./messages";
 import "./platform.messages";
 
@@ -103,8 +104,13 @@ export type AccountAction = { kind: "session" | "passkey" | "external" | "push" 
 /** One workspace row's "explain access" request (A49): opened as its own dialog over the detail. */
 export type ExplainTarget = { workspace_id: string; workspace_name: string | null; apps: { id: string; name: string }[] };
 
-export function AccountDetailBody({ detail: d, held, onAct, onExplain }: { detail: AccountDetail; held?: Held; onAct?: (action: AccountAction) => void;
-  onExplain?: (target: ExplainTarget) => void }) {
+/** What the second-factor reset (A26) needs to know about the person to decide what it offers. */
+export const resetTarget = (d: AccountDetail): ResetTarget => ({ id: d.user.id, email: d.user.email, status: d.user.status,
+  platform_access: d.platform_grants.length > 0 || d.platform_roles.length > 0, application_identity: d.application_identity });
+
+/** `secondFactor`: the second-factor section (A26), which loads its own state; shown after the sign-in methods. */
+export function AccountDetailBody({ detail: d, held, onAct, onExplain, secondFactor }: { detail: AccountDetail; held?: Held; onAct?: (action: AccountAction) => void;
+  onExplain?: (target: ExplainTarget) => void; secondFactor?: ReactNode }) {
   useI18n();
   const u = d.user;
   const b = d.backoff;
@@ -167,6 +173,8 @@ export function AccountDetailBody({ detail: d, held, onAct, onExplain }: { detai
           {mayAct && <> {act({ kind: "external", id: x.id, label: tr("解除此外部身份") })}</>}
         </li>)}</ul> : tr("无")}</dd>
       </dl></section>
+
+    {secondFactor}
 
     <section className="col gap8"><h3 className="secttl">{tr("工作空间（{count} 个）", { count: d.workspaces.length })}</h3>
       {d.workspaces.length ? <div className="list-wrap"><table className="gov" aria-label={tr("工作空间")}>
@@ -377,7 +385,8 @@ export function AccountDetailDialog({ user, held, onClose, onChanged }: {
     footer={<><span className="spacer" /><button type="button" className="btn" onClick={onClose}>{tr("关闭")}</button></>}>
     {load.loading && <p role="status">{tr("正在加载账户详情…")}</p>}
     {!!load.error && <div className="notice err" role="alert">{errText(load.error)} <button className="btn sm" onClick={load.reload}>{tr("重试")}</button></div>}
-    {load.data && <AccountDetailBody detail={load.data} held={held} onAct={setAction} onExplain={setExplain} />}
+    {load.data && <AccountDetailBody detail={load.data} held={held} onAct={setAction} onExplain={setExplain}
+      secondFactor={<SecondFactorPanel target={resetTarget(load.data)} held={held} onChanged={load.reload} />} />}
   </Modal>{confirm}{explain && <AccessExplanationDialog user={user} target={explain} onClose={() => setExplain(null)} />}</>;
 }
 export const ACCOUNT_ACTION_SENTENCES = [...Object.values(ACTION_IMPACT), ...Object.values(ACTION_DONE)];

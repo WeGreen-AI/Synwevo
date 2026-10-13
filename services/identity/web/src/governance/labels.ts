@@ -8,6 +8,7 @@ import "./account-operations.messages";
 import "./ownership.messages";
 import "./organization-lifecycle.messages";
 import "./bulk-accounts.messages";
+import "./second-factor.messages";
 export { ROLES, ROLE_RANK, canExport, isAbort } from "../lib/labels";
 export type { Role } from "../lib/labels";
 // Read translations at render time; imported enum labels must not freeze the initial locale.
@@ -101,6 +102,17 @@ const errors: Record<string, string> = {
   ownership_required: "该账户是共享工作空间唯一可用的拥有者或管理者，需先为该空间另设拥有者或管理者。",
   organization_ownership_required: "该账户是组织唯一可用的拥有者或管理者，需先为该组织另设拥有者或管理者。",
   admin_operation_failed: "操作未能完成，已记录失败；请稍后重新预览。",
+  // A26: the platform-controlled second-factor reset (governance/SecondFactorResetDialog.tsx);
+  // the server's catalogued sentences come first; `target_is_platform_admin` and `admin_preview_stale`
+  // sent without one are worded for this act by the dialog (aboutReset)
+  self_reset: "不能为自己的账户申请重置第二因素。",
+  nothing_to_reset: "该账户没有可重置的第二因素：没有动态验证码和恢复码，也没有选择移除安全密钥。",
+  reset_pending: "该账户已有待生效的第二因素重置；请先取消它，或等待它生效。",
+  bad_method: "请选择核验本人身份的方式。",
+  no_reset: "找不到这项第二因素重置，可能已被删除；请刷新。",
+  reset_not_pending: "这项第二因素重置已经结束（已生效、已取消或已作废），请刷新。",
+  email_unverified: "该账户的邮箱尚未验证：通知与取消链接无法可靠送达本人，不能申请重置。",
+  recent_email_change: "该账户的邮箱最近更改过：为防止通知被转到他人邮箱，更改后 7 天内不能申请重置。",
 };
 /** One item of a batch the server refused: its sentence when catalogued, else this page's wording
  *  for its code (lib/refusals.ts) — a mixed batch answers 200, so the item carries no status. */

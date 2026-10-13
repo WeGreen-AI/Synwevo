@@ -1,10 +1,12 @@
 """Self-service account surface; install with build_router(ident, sessions, mailer, audit).
 
 Store additions are documented in profile.py. The gateway must allow anonymous access ONLY
-to /api/auth/deletion/recovery and /api/auth/deletion/recovery/preview. Both authenticate a
-single-use recovery capability, never a suspended/deleted user's ordinary session. Mount
-AccountRecovery at /account/recovery outside RequireSession. All other routes require an
-active user (GET profile also permits pending), and only operate on the session's user ID.
+to /api/auth/deletion/recovery and /api/auth/deletion/recovery/preview, and to
+/api/auth/second-factor-reset/preview and /cancel (A26, admin_second_factor.py). Each authenticates a
+single-use capability mailed to the account's address, never a suspended/deleted user's ordinary
+session. Mount AccountRecovery at /account/recovery and the reset's cancel page at
+/account/second-factor-reset outside RequireSession. All other routes require an active user (GET
+profile also permits pending), and only operate on the session's user ID.
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ import secrets
 from fastapi import APIRouter, Body, Request, Response
 from fastapi.responses import JSONResponse
 
+from synwevo_core.audit_change import change
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import normalise_email, valid_email
 from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE
@@ -310,6 +313,45 @@ def build_router(ident, sessions, mailer, audit) -> APIRouter:
             store.execute("UPDATE users SET status='active',deletion_requested_at=NULL,deletion_due_at=NULL,updated_at=? WHERE id=?", (now(), row["user_id"]))
             audit(request, "auth.deletion.cancelled", actor_id=row["user_id"], result="ok")
         return {"ok": True, "sign_in_required": True}
+
+    # A26: the link in the announcement of a platform-requested second-factor reset. The person
+    # may be unable to sign in (that is why the reset was asked for), so the single-use token is
+    # the authority; it says only when the reset can take effect, never whose account it is. It
+    # works for as long as the reset is pending — past its nominal due time too, since completion
+    # waits the full delay after the announcement was delivered (admin_second_factor.py).
+    def resettable(token):
+        if not isinstance(token, str) or not 20 <= len(token) <= 128:
+            raise ServiceError(410, "bad_token", "链接无效或已失效：这项重置可能已经生效、已取消或已作废")
+        row = store.one("SELECT * FROM second_factor_resets WHERE cancel_token_hash=? AND status='pending'",
+                        (digest(token),))
+        if not row:
+            raise ServiceError(410, "bad_token", "链接无效或已失效：这项重置可能已经生效、已取消或已作废")
+        return row
+
+    @r.post("/second-factor-reset/preview")
+    def second_factor_reset_preview(response: Response, body: dict = Body(...)):
+        from .admin_second_factor import holder_due_at
+        fields(body, {"token"})
+        response.headers["Cache-Control"] = "no-store"
+        return {"status": "pending", "due_at": holder_due_at(store, resettable(body.get("token", "")))}
+
+    @r.post("/second-factor-reset/cancel")
+    def second_factor_reset_cancel(request: Request, response: Response, body: dict = Body(...)):
+        """Cancel the pending reset: one transaction for the cancellation, the account's own notice
+        mail (best effort: nothing changed, and the audit row is the record) and the audit row,
+        attributed to the account. Single use: the token stops working with it."""
+        from .admin_second_factor import HOLDER, close_pending, notify
+        fields(body, {"token"})
+        response.headers["Cache-Control"] = "no-store"
+        with store.tx():
+            row = resettable(body.get("token", ""))
+            mailed = close_pending(store, row, by=HOLDER, mailer=mailer)
+            audit(request, "auth.second_factor_reset.cancelled", actor_id=row["user_id"], object_kind="user",
+                  object_id=row["user_id"], result="ok",
+                  meta={"reset_id": row["id"], "due_at": row["due_at"], "mailed": mailed,
+                        **change({"status": "pending"}, {"status": "cancelled"})})
+        notify(getattr(request.app.state, "notifier", None), row["user_id"], "second_factor_reset_cancelled")
+        return {"ok": True}
 
     return r
 

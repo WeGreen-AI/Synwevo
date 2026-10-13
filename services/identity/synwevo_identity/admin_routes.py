@@ -67,6 +67,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     # route below, so neither literal segment is ever read as an account id.
     from .admin_bulk import build_router as build_bulk_accounts_router
     r.include_router(build_bulk_accounts_router(store, ident, sessions, audit))
+    # A26: the account's second factors and their delayed, announced reset — included here with
+    # the other account sub-routers, ahead of every `/users/{uid}…` route below.
+    from .admin_second_factor import build_router as build_second_factor_router
+    r.include_router(build_second_factor_router(store, ident, audit, mailer=mailer))
 
     def _admin(request: Request, permission=_UNNAMED, *, dangerous: bool = False,
                step_up: bool = True) -> dict:

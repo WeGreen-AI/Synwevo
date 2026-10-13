@@ -569,3 +569,130 @@ def deletion_mail(locale: str | None, url: str, *, resend: bool = False) -> tupl
         m = Mail(lang, "Synwevo 账户注销申请", ["你的 Synwevo 账户已停用，七天后将被删除。"], action=("取消注销", url),
                  after=["你在组织中的贡献将保留。", "打开链接本身不会恢复账户或登录，需要你在页面上确认。", "如果这不是你本人的操作，请立即取消注销并修改口令。"], security=True)
     return _render(m)
+
+
+def _moment(ts: float, timezone: str | None) -> str:
+    """A point in time as the account holder reads it: their own time zone, named (UTC when the
+    account's zone is missing or unknown)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    name = timezone or "UTC"
+    try:
+        zone = ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        name, zone = "UTC", ZoneInfo("UTC")
+    return f"{datetime.fromtimestamp(ts, zone).strftime('%Y-%m-%d %H:%M')} ({name})"
+
+
+def second_factor_reset_requested_mail(locale: str | None, url: str, *, due_at: float, timezone: str | None,
+                                       include_passkeys: bool) -> tuple[str, str, str]:
+    """A26: a platform administrator, after confirming the person's identity outside the platform,
+    asked for the account's second factor to be removed. Nothing changes until `due_at`; the link
+    (to a page, single use) cancels it. The administrator is named by role, never by address."""
+    from .mail_layout import Mail
+    lang = _lang(locale)
+    when = _moment(due_at, timezone)
+    if lang == "en":
+        removed = "your authenticator app, every recovery code" + (" and every passkey" if include_passkeys else "")
+        m = Mail(lang, "Synwevo: a reset of your second factor was requested",
+                 ["A Synwevo platform administrator confirmed your identity and asked for the second factor of your account to be reset."],
+                 facts=[("Takes effect", when), ("Will be removed", removed)], action=("Cancel the reset", url),
+                 after=["Until then nothing changes: you sign in as before.",
+                        "When it takes effect, the factors above are removed and every device is signed out; you then sign in with your password and set up authenticator verification again.",
+                        "If you did not ask for this, cancel it now with the link above and nothing changes. Opening the link does not cancel by itself; you confirm on the page."],
+                 security=True)
+    elif lang == "zh-Hant":
+        removed = "驗證器動態驗證碼、全部復原碼" + ("與全部通行密鑰（Passkey）" if include_passkeys else "")
+        m = Mail(lang, "Synwevo：有人申請重設你的第二因素", ["一位 Synwevo 平台管理員在核實你的身分後，申請重設你帳戶的第二因素。"],
+                 facts=[("生效時間", when), ("將移除", removed)], action=("取消重設", url),
+                 after=["生效前不會有任何變更，你可以照常登入。",
+                        "生效時會移除上列第二因素，並結束你在所有裝置上的登入；之後請以密碼登入，再重新設定驗證器動態驗證碼。",
+                        "若不是你本人要求的，請立即用上方連結取消，取消後不會有任何變更。開啟連結本身不會取消，請在頁面上確認。"],
+                 security=True)
+    else:
+        removed = "动态验证码、全部恢复码" + ("和全部安全密钥（Passkey）" if include_passkeys else "")
+        m = Mail(lang, "Synwevo：有人申请重置你的第二因素", ["一名 Synwevo 平台管理员在核实你的身份后，申请重置你账户的第二因素。"],
+                 facts=[("生效时间", when), ("将移除", removed)], action=("取消重置", url),
+                 after=["生效前什么都不会改变，你可以照常登录。",
+                        "生效时会移除上面列出的第二因素，并结束你在所有设备上的登录；之后请用口令登录，再重新设置动态验证码。",
+                        "如果这不是你本人要求的，请立即用上面的链接取消，取消后什么都不会改变。打开链接本身不会取消，需要你在页面上确认。"],
+                 security=True)
+    return _render(m)
+
+
+def second_factor_reset_cancelled_mail(locale: str | None, *, by_holder: bool) -> tuple[str, str, str]:
+    """A26: the requested reset will not happen — cancelled through the mailed link, or by a
+    platform administrator. Nothing about the account changed."""
+    from .mail_layout import Mail
+    lang = _lang(locale)
+    base = public_base() or "http://127.0.0.1:8765"
+    if lang == "en":
+        m = Mail(lang, "Synwevo: the second-factor reset was cancelled",
+                 ["You cancelled the reset of your second factor." if by_holder
+                  else "A Synwevo platform administrator cancelled the reset of your second factor."],
+                 action=("Review account security", f"{base}/account?lang=en"),
+                 after=["Your authenticator app, recovery codes and passkeys are unchanged.",
+                        "If this was not you, sign in and review your account security."], security=True)
+    elif lang == "zh-Hant":
+        m = Mail(lang, "Synwevo：第二因素重設已取消", ["你已取消第二因素重設。" if by_holder else "一位 Synwevo 平台管理員取消了第二因素重設。"],
+                 action=("檢視帳戶安全", f"{base}/account?lang=zh-Hant"),
+                 after=["你的驗證器動態驗證碼、復原碼與通行密鑰都沒有變更。", "若不是你本人操作，請登入檢視帳戶安全。"], security=True)
+    else:
+        m = Mail(lang, "Synwevo：第二因素重置已取消", ["你已取消第二因素重置。" if by_holder else "一名 Synwevo 平台管理员取消了第二因素重置。"],
+                 action=("查看账户与安全", f"{base}/account?lang=zh-Hans"),
+                 after=["你的动态验证码、恢复码和安全密钥都没有改变。", "如果这不是你本人的操作，请登录后在「账户与安全」里检查。"], security=True)
+    return _render(m)
+
+
+def second_factor_reset_completed_mail(locale: str | None, *, passkeys_removed: bool) -> tuple[str, str, str]:
+    """A26: the announced reset took effect. The second factor is gone and every device signed
+    out; the person signs in with the password and enrols again."""
+    from .mail_layout import Mail
+    lang = _lang(locale)
+    base = public_base() or "http://127.0.0.1:8765"
+    if lang == "en":
+        m = Mail(lang, "Synwevo: your second factor was reset",
+                 ["As announced, the authenticator app and every recovery code of your account" + (" and every passkey" if passkeys_removed else "")
+                  + " were removed, and every device was signed out."],
+                 action=("Sign in with your password", f"{base}/login?lang=en"),
+                 after=["After signing in, set up authenticator verification again under Account → Security and keep the new recovery codes.",
+                        "If you never asked for this reset, sign in now, change your password and contact the platform administrators."], security=True)
+    elif lang == "zh-Hant":
+        m = Mail(lang, "Synwevo：你的第二因素已重設",
+                 ["依先前通知的申請，你帳戶的驗證器動態驗證碼與全部復原碼" + ("及全部通行密鑰" if passkeys_removed else "") + "已移除，所有裝置上的登入也已結束。"],
+                 action=("以密碼登入", f"{base}/login?lang=zh-Hant"),
+                 after=["登入後請立即在「帳戶與安全」重新設定驗證器動態驗證碼，並保存新的復原碼。", "若你從未要求重設，請立即登入、變更密碼並聯絡平台管理員。"], security=True)
+    else:
+        m = Mail(lang, "Synwevo：你的第二因素已重置",
+                 ["按之前通知的申请，你账户的动态验证码和全部恢复码" + ("以及全部安全密钥" if passkeys_removed else "") + "已移除，所有设备上的登录也已结束。"],
+                 action=("用口令登录", f"{base}/login?lang=zh-Hans"),
+                 after=["登录后请立即在「账户与安全」里重新设置动态验证码，并保存新的恢复码。", "如果你从未要求过重置，请立即登录、修改口令并联系平台管理员。"], security=True)
+    return _render(m)
+
+
+def second_factor_reset_void_mail(locale: str | None, code: str) -> tuple[str, str, str]:
+    """A26: the announced reset fell due and was not carried out (`code`, a `VOID_WORDS` key, worded
+    in the reader's language). Sent only when the reason is not about this mailbox itself."""
+    from synwevo_core.notifications import VOID_WORDS
+    from .mail_layout import Mail
+    lang = _lang(locale)
+    base = public_base() or "http://127.0.0.1:8765"
+    why = VOID_WORDS.get(code, {}).get(lang)
+    if lang == "en":
+        m = Mail(lang, "Synwevo: the scheduled second-factor reset did not take place",
+                 ["The reset of your second factor that a Synwevo platform administrator asked for was not carried out"
+                  + (f": when it fell due, {why}." if why else ".")],
+                 action=("Review account security", f"{base}/account?lang=en"),
+                 after=["Your authenticator app, recovery codes and passkeys are unchanged.",
+                        "If you still cannot sign in, contact the platform administrators again."], security=True)
+    elif lang == "zh-Hant":
+        m = Mail(lang, "Synwevo：預定的第二因素重設沒有執行",
+                 ["Synwevo 平台管理員為你申請的第二因素重設沒有執行" + (f"：到期時{why}。" if why else "。")],
+                 action=("檢視帳戶安全", f"{base}/account?lang=zh-Hant"),
+                 after=["你的驗證器動態驗證碼、復原碼與通行密鑰都沒有變更。", "若你仍無法登入，請再次聯絡平台管理員。"], security=True)
+    else:
+        m = Mail(lang, "Synwevo：预定的第二因素重置没有执行",
+                 ["Synwevo 平台管理员为你申请的第二因素重置没有执行" + (f"：到期时{why}。" if why else "。")],
+                 action=("查看账户与安全", f"{base}/account?lang=zh-Hans"),
+                 after=["你的动态验证码、恢复码和安全密钥都没有改变。", "如果你仍然无法登录，请再次联系平台管理员。"], security=True)
+    return _render(m)

@@ -62,6 +62,15 @@ ROUTES = [
     ("POST", "/api/admin/users/{uid}/passkeys/{pid}/remove", "platform.users.manage", True),
     ("POST", "/api/admin/users/{uid}/external-identities/{iid}/unlink", "platform.users.manage", True),
     ("POST", "/api/admin/users/{uid}/deletion/cancellation-mail", "platform.users.support", True),
+    # A26 (admin_second_factor.py): the second-factor state reads with `platform.users.view`; the
+    # reset's preview and its two acts need `platform.users.recover`, the super administrator's
+    # only. The preview of the plain account, which has no second factor, is the state refusal
+    # `nothing_to_reset` (RISK_STATE_REFUSALS); the request and the cancel stop at the strict
+    # re-authentication before their bodies are read.
+    ("GET", "/api/admin/users/{uid}/second-factor", "platform.users.view", False),
+    ("POST", "/api/admin/users/{uid}/second-factor-reset/preview", "platform.users.recover", False),
+    ("POST", "/api/admin/users/{uid}/second-factor-reset", "platform.users.recover", True),
+    ("POST", "/api/admin/users/{uid}/second-factor-reset/{rid}/cancel", "platform.users.recover", True),
     ("POST", "/api/admin/users/{uid}/push-subscriptions/revoke", "platform.users.manage", True),
     ("POST", "/api/admin/account-deletions/finalize", "platform.users.manage", True),
     ("GET", "/api/admin/workspaces", "platform.workspaces.view", False),
@@ -288,7 +297,8 @@ def _path(template, w, *, legacy: str | None = None):
                            freeze_id="freeze_fixture_missing",
                            suspension_id="rsus_fixture_missing", entry_id="rallow_fixture_missing",
                            report_id=w.get("report_id", "arp_fixture_missing"), user_id=w["plain"]["id"],
-                           sid="s_fixture_missing", pid="pk_fixture_missing", iid="xi_fixture_missing")
+                           sid="s_fixture_missing", pid="pk_fixture_missing", iid="xi_fixture_missing",
+                           rid="sfr_fixture_missing")
 
 
 #: Risk changes the matrix reaches with valid bodies but no matching state: past the permission
@@ -298,6 +308,8 @@ RISK_STATE_REFUSALS = {
                        "/api/admin/diagnostics/registration": (400, "bad_email"),
                        "/api/admin/users/{uid}/platform-access/simulate": (400, "bad_simulation"),
                        "/api/admin/users/{uid}/access": (400, "bad_access_query"),
+                       # The plain account has no second factor to reset (A26).
+                       "/api/admin/users/{uid}/second-factor-reset/preview": (409, "nothing_to_reset"),
                        # No stored payment key in the matrix; authorized readers reach this refusal.
                        "/api/admin/billing/payments/readiness": (409, "payment_readiness_no_keys"),
                        "/api/admin/billing/risk/allowlist/{entry_id}/remove": (404, "risk_allowlist_not_found"),
