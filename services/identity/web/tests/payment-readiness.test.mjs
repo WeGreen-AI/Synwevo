@@ -13,6 +13,7 @@ const fixtureRuntime = `
 import * as React from 'react';
 import { t, getLocale } from '@synwevo/ui';
 export { fmtTime } from '@synwevo/ui';
+export { ApiError } from '@synwevo/auth-client';
 export const useI18n = () => ({ t, locale: getLocale() });
 export const fixture = { reads: [], writes: [], load: null };
 export function get(path, signal) {
@@ -265,6 +266,9 @@ test('unconfigured credentials and network errors use the existing ApiError pres
     new client.ApiError(503, 'payment_readiness_unavailable', '暂时无法检查 Stripe 支付渠道，请稍后重试；这不会更改支付设置'),
     new client.ApiError(503, 'payment_readiness_busy', '支付渠道检查正在进行，请稍后重试'),
     new client.ApiError(409, 'payment_revision_conflict', '支付配置已变化，请保留输入并重新读取'),
+    // UX-2: definite answers about the saved key are worded as such, never as a temporary outage
+    new client.ApiError(409, 'payment_credentials_rejected', 'Stripe 拒绝了已保存的密钥（密钥无效、已撤销或已过期）。请在 Stripe 核对后，通过“检查并发布”设置新的密钥'),
+    new client.ApiError(409, 'payment_credentials_forbidden', 'Stripe 不允许已保存的密钥读取账户信息（可能是权限受限的密钥），因此无法检查支付渠道'),
     new client.ApiError(0, 'network', 'fixture diagnostic must not be shown'),
     new client.ApiError(403, 'platform_permission_denied', 'fixture diagnostic must not be shown'),
   ];
@@ -331,4 +335,61 @@ test('three-state channel results, configuration notices and charges warnings re
     const notes = nodes(view.tree).filter(node => node.props.role === 'note');
     assert.equal(notes.length, (configuration_status === 'available' ? 0 : 1) + (allUnknown ? 0 : 1));
   }
+});
+
+test('the check names the Stripe API version applied, warns when it is not the pinned one, and says publishing checks again', async () => {
+  const pinned = '2026-04-22.dahlia';
+  for (const [api_version, shown, warned] of [[pinned, true, false], ['2026-09-30.endive', true, true],
+    ['<b>fixture</b>', false, false], [null, false, false], [undefined, false, false]]) {
+    const view = screen(); await view.click();
+    fixture.reads[0].resolve(response({ api_version, api_version_requested: pinned })); await view.flush();
+    for (const locale of ['zh-Hans', 'zh-Hant', 'en']) {
+      ui.setLocale(locale); view.draw();
+      const html = view.html();
+      assert.equal(html.includes('Stripe API'), shown, `${api_version}: ${html}`);
+      if (shown) assert.ok(html.includes(api_version));
+      assert.doesNotMatch(html, /<b>fixture/);
+      const notes = nodes(view.tree).filter(node => node.props.role === 'note').map(node => markup(node)).join('');
+      assert.equal(notes.includes(pinned) && notes.includes('2026-09-30.endive'), warned);
+      if (locale === 'en') {
+        assert.doesNotMatch(html, /[㐀-鿿]|\{(?:version|applied|pinned)\}/);
+        assert.match(html, /refuses channels that are not activated, and asks for an explicit confirmation when it cannot verify them/);
+        assert.match(html, /refuses to create a payment page/, 'a saved channel that is not activated is named as a cause of refused top-ups');
+      }
+    }
+  }
+});
+
+test('activation evidence is shown per method and decides the not-activated warning (PS-1)', async () => {
+  const view = screen(); await view.click();
+  // WeChat Pay: shown off in the default configuration, but the account's capability is active.
+  fixture.reads[0].resolve(response({ methods: { card: true, wechat_pay: false, alipay: false },
+    activated: { card: true, wechat_pay: true, alipay: false } }));
+  await view.flush();
+  const notes = () => nodes(view.tree).filter(node => node.props.role === 'note').map(node => markup(node)).join('');
+  assert.doesNotMatch(notes(), /微信支付/, 'activated but shown off is not a cause of refused top-ups');
+  for (const [locale, active, inactive] of [['zh-Hans', 'Stripe 账户已开通此方式', 'Stripe 账户未开通此方式'],
+    ['zh-Hant', 'Stripe 帳戶已開通此方式', 'Stripe 帳戶未開通此方式'], ['en', 'Activated for the Stripe account', 'Not activated for the Stripe account']]) {
+    ui.setLocale(locale); view.draw();
+    const shown = methods(view);
+    assert.deepEqual(shown.filter(text => text === active).length, 2, `${locale}: ${shown}`);
+    assert.deepEqual(shown.filter(text => text === inactive).length, 1, `${locale}: ${shown}`);
+    if (locale === 'en') assert.doesNotMatch(view.html(), /[\u3400-\u9fff]/);
+  }
+  ui.setLocale('zh-Hans');
+  // The saved selection is card + WeChat Pay: neither is "not activated", so no warning names them.
+  assert.equal(nodes(view.tree).filter(node => node.props.role === 'note').length, 0);
+  // A saved method Stripe has not activated is named.
+  const second = screen({ props: { savedMethods: ['card', 'alipay'] } }); await second.click();
+  fixture.reads[0].resolve(response({ methods: { card: true, wechat_pay: false, alipay: false },
+    activated: { card: true, wechat_pay: true, alipay: false } }));
+  await second.flush();
+  const warning = nodes(second.tree).filter(node => node.props.role === 'note').map(node => markup(node)).join('');
+  assert.match(warning, /Stripe 报告尚未开通的渠道：支付宝/);
+  // Unknown evidence (null) adds no line and no warning.
+  const third = screen(); await third.click();
+  fixture.reads[0].resolve(response({ activated: { card: null, wechat_pay: null, alipay: null } }));
+  await third.flush();
+  assert.deepEqual(methods(third), statuses);
+  assert.equal(nodes(third.tree).filter(node => node.props.role === 'note').length, 0);
 });

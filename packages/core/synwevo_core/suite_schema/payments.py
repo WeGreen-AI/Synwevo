@@ -116,8 +116,13 @@ WHEN EXISTS(SELECT 1 FROM payment_topup_intents WHERE order_id=NEW.order_id
 BEGIN SELECT RAISE(ABORT,'immutable_payment_intent'); END;
 """
 
-#: Added column: older rows have no provider time (NULL) and may receive it once.
-COLUMNS = (("payment_webhook_inbox", "provider_created_at", "INTEGER"),)
+#: Added columns: older rows have no provider time (NULL) and may receive it once.
+#: ``payment_topups.failure_detail`` (2026-10-13) is the sanitized diagnosis of a checkout creation
+#: that the provider refused or whose outcome is unknown (HTTP status and the provider's error
+#: type/code/param as allowlisted tokens; never its message, the request, a key or an account id).
+#: Older rows keep NULL; older code never reads it.
+COLUMNS = (("payment_webhook_inbox", "provider_created_at", "INTEGER"),
+           ("payment_topups", "failure_detail", "TEXT"))
 
 
 def migrate(c) -> None:

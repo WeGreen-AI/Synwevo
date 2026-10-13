@@ -22,18 +22,6 @@ export const messages = {
   "调用中冻结：{amount}": { en: "Held for calls in progress: {amount}", "zh-Hant": "呼叫中凍結：{amount}" },
   "因支付争议已冻结": { en: "Frozen by a payment dispute", "zh-Hant": "因支付爭議已凍結" },
   "为组织钱包充值": { en: "Top up the organization wallet", "zh-Hant": "為組織錢包儲值" },
-  "选择充值金额（人民币）。充值后不可退款。": { en: "Choose an amount (CNY). Top-ups are final and cannot be refunded.", "zh-Hant": "選擇儲值金額（人民幣）。儲值後不可退款。" },
-  "其他金额": { en: "Another amount", "zh-Hant": "其他金額" },
-  "金额（元），可充值 {min} 至 {max}": { en: "Amount (CNY), from {min} to {max}", "zh-Hant": "金額（元），可儲值 {min} 至 {max}" },
-  "付款在支付服务的收银台完成，可用支付方式：{methods}。只有支付服务的签名通知确认到账后，金额才会计入组织钱包并出现在账单中。": {
-    en: "You pay on the payment service's checkout page. Available payment methods: {methods}. The amount reaches the organization wallet and the statement only after the payment service's signed notice confirms it.",
-    "zh-Hant": "付款在支付服務的收銀台完成，可用支付方式：{methods}。只有支付服務的簽章通知確認到帳後，金額才會計入組織錢包並出現在帳單中。" },
-  "前往支付": { en: "Continue to payment", "zh-Hant": "前往支付" },
-  "正在打开收银台…": { en: "Opening the checkout…", "zh-Hant": "正在開啟收銀台…" },
-  "充值暂未开放": { en: "Top-ups are not open yet.", "zh-Hant": "儲值暫未開放" },
-  "请先验证邮箱再继续": { en: "Verify your email address before continuing.", "zh-Hant": "請先驗證郵箱再繼續" },
-  "该钱包因支付争议已被冻结，暂不能充值": { en: "This wallet is frozen because of a payment dispute and cannot be topped up.", "zh-Hant": "該錢包因支付爭議已被凍結，暫不能儲值" },
-  "支付服务暂时无法创建收银台，未扣款，请稍后再试": { en: "The payment service could not open a checkout. Nothing was charged; try again later.", "zh-Hant": "支付服務暫時無法建立收銀台，未扣款，請稍後再試" },
   "成员额度": { en: "Member limits", "zh-Hant": "成員額度" },
   "本月（自 {date} 起，UTC）已结算与调用中冻结的金额合计不能超过成员的每月额度。": {
     en: "This month (since {date}, UTC), settled charges plus amounts held for calls in progress cannot exceed a member's monthly limit.",

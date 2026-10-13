@@ -184,3 +184,83 @@ def test_parallel_reads_are_bounded_and_busy_does_not_contact_provider():
     assert exc.value.code == "payment_readiness_busy" and calls == []
     reader._slots.release()
     assert reader.inspect(FIXTURE_SECRET_KEY, environment="test")["methods"]["card"] is True
+
+
+# ---------------------------------------------------------------- activation evidence (PS-1)
+def inspect_with(capabilities, method_entry, *, absent=False):
+    """Inspect a FIXTURE account whose capability list is ``capabilities`` (omitted when ``absent``)
+    and whose default configuration describes WeChat Pay as ``method_entry``."""
+    def handler(request):
+        if request.url.path == "/v1/account":
+            return httpx.Response(200, json={"object": "account", "charges_enabled": True,
+                                             **({} if absent else {"capabilities": capabilities})})
+        return httpx.Response(200, json={"object": "list", "has_more": False,
+                                         "data": [configuration(wechat_pay=method_entry)]})
+    return StripeReadiness(transport=httpx.MockTransport(handler)).inspect(FIXTURE_SECRET_KEY, environment="test")
+
+
+OFF = {"available": False, "display_preference": {"value": "off"}}
+ON_UNAVAILABLE = {"available": False, "display_preference": {"value": "on"}}
+
+
+@pytest.mark.parametrize(("capabilities", "entry", "absent", "expected"), [
+    ({"card_payments": "active"}, OFF, False, False),                               # production 2026-10-13
+    ({"card_payments": "active", "wechat_pay_payments": "active"}, OFF, False, True),  # display off only
+    ({"wechat_pay_payments": "pending"}, OFF, False, False),
+    ({"wechat_pay_payments": "inactive"}, None, False, False),
+    ({"wechat_pay_payments": "inactive"}, {"available": True}, False, None),        # contradiction: no evidence
+    ({"card_payments": "active"}, {"available": True}, False, True),                 # e.g. an older account
+    ({"card_payments": "active"}, None, False, None),
+    (None, ON_UNAVAILABLE, True, False),                                             # Stripe's definition of available
+    (None, OFF, True, None),
+    (None, {"available": False}, True, None),
+    ({"wechat_pay_payments": {"status": "active"}}, OFF, False, None),               # an unexpected shape is no evidence
+])
+def test_activation_needs_definite_evidence(capabilities, entry, absent, expected):
+    result = inspect_with(capabilities, entry, absent=absent)
+    assert result["activated"]["wechat_pay"] is expected
+    assert result["activated"]["card"] is True
+    available = (entry or {}).get("available")
+    assert result["methods"]["wechat_pay"] == (available if isinstance(available, bool) else None), "the diagnostic flag is unchanged"
+
+
+def test_activation_is_read_from_capabilities_even_without_a_usable_default_configuration():
+    def handler(request):
+        if request.url.path == "/v1/account":
+            return httpx.Response(200, json={"object": "account", "charges_enabled": True,
+                                             "capabilities": {"card_payments": "active"}})
+        return httpx.Response(200, json={"object": "list", "has_more": False, "data": []})
+    result = StripeReadiness(transport=httpx.MockTransport(handler)).inspect(FIXTURE_SECRET_KEY, environment="test")
+    assert result["configuration_status"] == "missing"
+    assert result["activated"] == {"card": True, "wechat_pay": None, "alipay": None}
+
+
+# ---------------------------------------------------------------- Stripe's answer about the key (UX-2)
+@pytest.mark.parametrize(("status", "body", "code"), [
+    (401, {"error": {"type": "invalid_request_error", "code": "api_key_expired", "message": FIXTURE_SECRET_KEY}},
+     "payment_credentials_rejected"),
+    (401, {"error": {"type": "invalid_request_error", "message": "Invalid API Key provided"}}, "payment_credentials_rejected"),
+    (403, {"error": {"type": "invalid_request_error", "message": FIXTURE_SECRET_KEY}}, "payment_credentials_forbidden"),
+    (401, {"error": {"message": FIXTURE_SECRET_KEY}}, "payment_readiness_unavailable"),   # no Stripe error object
+    (401, ["not", "an", "object"], "payment_readiness_unavailable"),
+    (402, {"error": {"type": "invalid_request_error"}}, "payment_readiness_unavailable"),
+])
+def test_a_definite_answer_about_the_key_is_not_reported_as_an_outage(status, body, code):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(status, json=body)
+    with pytest.raises(ServiceError) as exc:
+        StripeReadiness(transport=httpx.MockTransport(handler)).inspect(FIXTURE_SECRET_KEY, environment="test")
+    assert exc.value.code == code
+    assert FIXTURE_SECRET_KEY not in str(exc.value) and "Invalid API Key" not in str(exc.value)
+    assert len(calls) == 1
+
+
+def test_a_body_nested_too_deeply_is_malformed_not_a_crash():
+    def handler(request):
+        return httpx.Response(200, content=b"[" * 200_000 + b"]" * 200_000)   # too deep for the JSON decoder
+    with pytest.raises(ServiceError) as exc:
+        StripeReadiness(transport=httpx.MockTransport(handler)).inspect(FIXTURE_SECRET_KEY, environment="test")
+    assert exc.value.code == "payment_readiness_unavailable"

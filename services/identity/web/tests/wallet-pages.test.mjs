@@ -234,6 +234,28 @@ test('the return page: paid links the receipt and draws the success mark; failed
   assert.ok(slow.includes('刷新状态') && slow.includes('不需要重复付款'));
 });
 
+test('an order the provider refused to create says why on the return page, in all three languages, and that nothing was charged', () => {
+  const base = { error: null, canRefresh: false, onRefresh() {}, onDismiss() {}, onRetry() {} };
+  const order = { order_id: 'top_refused_fixture', status: 'failed', creation_status: 'resolved', amount_minor: 1000, currency: 'CNY',
+    failure_reason: 'payment_method_not_enabled' };
+  const html = render(h(status.TopupStatusView, { ...base, view: 'failed', status: order }));
+  assert.match(html, /付款没有完成/);
+  assert.match(html, /所选支付方式尚未在支付服务商处开通。没有扣款。/);
+  assert.ok(html.includes('重新充值') && !html.includes('/receipts/'));
+  for (const reason of Object.keys(model.TOPUP_FAILURE_REASONS)) {
+    const sentence = model.topupFailureText(reason);
+    assert.equal(sentence, model.TOPUP_FAILURE_REASONS[reason]);
+    assert.match(ui.translate('en', sentence), /Nothing was charged/);
+    assert.doesNotMatch(ui.translate('en', sentence), /[\u3400-\u9fff]/);
+    assert.match(ui.translate('zh-Hant', sentence), /沒有扣款/);
+  }
+  for (const reason of [null, undefined, 'future_reason', '__proto__', 42]) {
+    assert.equal(model.topupFailureText(reason), null, String(reason));
+    const plain = render(h(status.TopupStatusView, { ...base, view: 'failed', status: { ...order, failure_reason: reason } }));
+    assert.match(plain, /这笔订单没有扣款/, 'an unknown reason falls back to the plain failed sentence');
+  }
+});
+
 test('the original order card describes unknown creation honestly without a time promise or another payment action', () => {
   const order = { order_id: 'top_unknown_fixture', status: 'pending', creation_status: 'verifying', amount_minor: 1000, currency: 'CNY' };
   const base = { error: null, onRefresh() {}, onDismiss() {}, onRetry() {} };

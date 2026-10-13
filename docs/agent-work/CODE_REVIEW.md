@@ -538,6 +538,16 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 风险/未做：指纹按当前密钥，重叠期内由旧密钥验签的接收方看到的是新密钥指纹（行记"用哪把签"，当前+旧两把都签在头里）。
 - 验证：新增 4 例 + 两应用 webhook 契约/投递/加固/重投/CLI/示例 254 项与迁移测试通过。
 
+## CR-128 · 充值无法跳转至付款页面：Stripe 拒绝创建收银台被当作“结果未知”，订单永久停在核实中（2026-10-13，线上原有问题，本地已验证）
+
+- 用户报告：选择充值金额后点“前往付款”不跳转。生产 `e99212d` 与 main 的充值代码逐字节相同（main 未修复）。
+- 证据（只读，2026-10-13 07:59Z–08:28Z，不创建订单、不打印密钥）：生产共 9 笔充值订单，**0 笔**拿到收银台地址或会话；最近 4 笔（2026-10-09 12:19Z、12:44Z，10-12 11:49Z，10-13 07:36Z）停在 `creating` / `provider_unknown`；当前支付设置第 3 版启用并选择 card、wechat_pay、alipay。以产品自己的就绪检查方式只读读取 Stripe：账户默认 API 版本 `2026-04-22.dahlia`（响应头），香港个人账户，`card_payments` active，`wechat_pay_payments` / `alipay_payments` 未开通；默认支付方式配置中 card 可用、微信支付与支付宝不可用。
+- 根因：(1) 配置——第 3 版要求 Stripe 用未开通的微信支付与支付宝创建收银台，Stripe 以 400 拒绝；(2) 代码——`payments.py` 把任何非 200 都当作结果未知，订单保持 `creating`，接口回 202 `verifying`、无收银台地址，对话框只在 `ready` 时跳转，于是只显示“正在核实原充值请求”和“核实并继续原订单”，同一标签页永远卡住，且失败原因既不保存也不记录日志；(3) 组织计费页另有一套表单：不带幂等键，遇到空地址时抛出英文 TypeError；(4) 未固定 Stripe API 版本，账户默认版本一旦升级到 endive，`payment_method_types` 本身会被拒绝；(5) 发布支付设置时不检查所选方式是否已开通。
+- 修复（worktree `topup-fix`）：所有 Stripe 请求固定 `Stripe-Version: 2026-04-22.dahlia`；Stripe 明确拒绝（400/401/402/403/404 且带错误对象）时订单记为失败，回复带稳定原因码（`payment_method_not_enabled` / `provider_configuration` / `provider_rejected`），释放待付款名额，对话框说明原因与“没有扣款”并可重新选择金额；网络、超时、5xx、409、429 等仍为结果未知；过期加宽限后仍在 `creating` 的订单读作已过期、不再占名额，迟到的签名通知仍只入账一次；订单保存经过净化的失败细节并写一条不含消息与密钥的警告日志，管理端财务页显示；发布启用的支付设置先做就绪检查，所选方式被报告不可用时拒绝（409 `payment_methods_unavailable`），检查无法完成或结果不确定时须显式确认；组织计费页改用同一个充值对话框；就绪检查显示 Stripe 实际使用的 API 版本。
+- 运营动作（需所有者在控制台执行，代码修复部署前即可生效）：发布仅含银行卡的支付设置；之后在新标签页充值。
+- 对抗性审查（四个视角：资金安全、安全、支付服务商语义、文案诚实；独立复核中级发现）：资金路径无缺陷（一次意图只建一次会话、不重复入账、迟到通知仍入账、宽限后释放名额安全）。修正：(1) 发布检查在 Stripe 明确拒绝密钥（401/403 带错误对象）时误报“暂时无法核实”并允许确认发布 → 新拒绝码 `payment_credentials_rejected` / `payment_credentials_forbidden`；(2) “已核实”只在 charges_enabled 且每个所选方式的账户能力确为 active（或可用）时成立，无证据时须显式确认（`payment_methods_unverified`），确认不能覆盖明确未开通；(3) 超大或嵌套过深的错误体按结果未知处理，不再 500；(4) 对话框不再承诺原付款页仍可用、结果未知时不声称没有扣款、充值关闭时不提示选择新金额；(5) 通知设置过期/异步失败时清除旧的创建失败细节。
+- 验证：账户服务全部测试 1871、支付与计费集成 272、账户前端 273、六个前端工作区、五守卫、根 typecheck/build、infra 12 项通过（10:0xZ，网络守卫确认无测试访问 Stripe）；新测试在旧代码上失败；完整根套件见 EVIDENCE。
+
 ## CR-127 · A34 平台只读组织详情：治理元数据、成员、自定义角色、待决导入与复制、有效权限解释（2026-10-13，本轮新增，本地已验证）
 
 - 位置：packages/core/synwevo_core/organizations.py（`member_page`：从 `Organizations.members` 抽出的无鉴权成员分页，租户返回形状与顺序不变；`USABLE_ACCOUNT_CONDITION`；搜索不再按已删除账户保留的地址键匹配）；store.py（索引 `ix_ws_org`）；platform_access.py（三项权限说明更正：`platform.orgs.view`、`platform.orgs.manage`、`platform.apps.manage`）；services/identity/synwevo_identity/admin_org_detail.py（新：详情、空间分页、成员分页、成员有效权限四条只读路由，延迟读快照，按读者语言附组织权限目录）；admin_routes.py（include；`list_organizations` 每行两次计数改为分组查询、`q` 按字面匹配）；前端 governance/OrganizationDetail.tsx、org-detail.messages.ts、GovernanceTabs.tsx（“详情”入口、窄屏卡片、地址栏 `org` 恢复）、OrganizationLifecycleDialog.tsx（共用动作表）、labels.ts、admin.css。

@@ -4,10 +4,11 @@ import { Modal, useI18n, type Translator } from '@synwevo/ui';
 import { isChallengeError, useChallenge } from '../org/Challenge';
 import { ErrorNotice, errorText } from './common';
 import { paymentMethodsText } from '../../lib/paymentMethods';
-import { WALLET_API, minorFromText, payerKey, payerQuery, paymentText, safeCheckout, topupClosedReason, withQuery,
-  type Payer, type TopupOptions } from './walletModel';
+import { WALLET_API, minorFromText, payerKey, payerQuery, paymentText, safeCheckout, topupClosedReason, topupFailureText, withQuery,
+  type Payer, type TopupOptions, type TopupStatus } from './walletModel';
 import './wallet.messages';
 import './topup.messages';
+import './wallet.css';
 
 export interface TopupContext {
   environment: 'test' | 'live'; initiator_id: string; payer_kind: Payer['kind']; payer_id: string;
@@ -19,6 +20,8 @@ export interface TopupReply {
   order_id: string; status: 'pending' | 'paid' | 'failed' | 'expired';
   creation_status: 'ready' | 'verifying' | 'blocked' | 'resolved'; checkout_url: string | null;
   payer_kind: Payer['kind']; payer_id: string; amount_minor: number;
+  /** Set when the provider definitely refused to create the checkout (walletModel.TOPUP_FAILURE_REASONS). */
+  failure_reason?: string | null;
 }
 const identifier = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(value);
 const positive = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0;
@@ -37,6 +40,14 @@ export function topupRequest(intent: TopupIntent) {
 }
 export function topupSettled(reply: TopupReply | null): boolean {
   return !!reply && ['paid', 'failed', 'expired'].includes(reply.status) && reply.creation_status === 'resolved';
+}
+/** A status read that is about this intent's own order and payer, in the server's known states. */
+function ownStatus(status: unknown, intent: TopupIntent | null): status is TopupStatus {
+  const read = status as TopupStatus | null;
+  return !!read && !!intent?.order_id && read.order_id === intent.order_id
+    && read.payer_kind === intent.payer_kind && read.payer_id === intent.payer_id && positive(read.amount_minor)
+    && ['pending', 'paid', 'failed', 'expired'].includes(read.status)
+    && ['ready', 'verifying', 'blocked', 'resolved'].includes(read.creation_status ?? '');
 }
 
 /** A tab's recoverable submission. A failed read/write blocks dispatch: silently replacing a
@@ -70,8 +81,20 @@ export class TopupAttempt {
   }
   startNew() {
     if (this.inflight || !topupSettled(this.reply)) throw new Error('topup_unresolved');
+    this.forget();
+  }
+  private forget() {
     try { this.storage.removeItem(this.storageKey); } catch { throw new Error('topup_storage'); }
     this.intent = null; this.reply = null;
+  }
+  /** A status read of the restored order. Only a final (paid, failed, expired), resolved answer for
+   *  this very order and payer releases the intent; anything else keeps it, so no second order can
+   *  be created while the first may still complete. Returns whether the intent was released. */
+  releaseFinal(status: unknown): boolean {
+    if (this.inflight || !ownStatus(status, this.intent) || !['paid', 'failed', 'expired'].includes(status.status)
+      || status.creation_status !== 'resolved') return false;
+    this.forget();
+    return true;
   }
   submit(selection?: TopupSelection, challenge: Record<string, string> = {},
     send: (path: string, body: unknown) => Promise<unknown> = post): Promise<TopupReply> {
@@ -117,6 +140,29 @@ export class TopupAttempt {
       throw error;
     }
   }
+}
+
+/** Opening the dialog on a restored intent: read that order (GET; nothing is created or replayed).
+ *  `status` is the order as the server reported it, or null when the answer is not about this
+ *  order; `released` says whether a final answer released the intent. A failed read keeps the
+ *  intent: the original request can still be checked with a replay. */
+export async function readRestoredOrder(attempt: TopupAttempt, signal?: AbortSignal,
+  read: (path: string, signal?: AbortSignal) => Promise<unknown> = get): Promise<{ status: TopupStatus | null; released: boolean }> {
+  const intent = attempt.intent;
+  if (!intent?.order_id) return { status: null, released: false };
+  const status = await read(`${WALLET_API}/topups/${encodeURIComponent(intent.order_id)}`, signal);
+  if (attempt.intent !== intent || !ownStatus(status, intent)) return { status: null, released: false };
+  return { status, released: attempt.releaseFinal(status) };
+}
+
+/** Where a creation reply sends the browser: the provider's hosted checkout for a ready order and
+ *  nowhere otherwise (verifying, blocked, final). A ready reply without a valid Stripe checkout
+ *  address is refused, never followed. */
+export function checkoutTarget(reply: TopupReply): string | null {
+  if (reply.status !== 'pending' || reply.creation_status !== 'ready') return null;
+  const target = safeCheckout(reply.checkout_url);
+  if (!target || new URL(target).origin !== 'https://checkout.stripe.com') throw new Error('checkout_address');
+  return target;
 }
 
 /** Why top-up is closed, in words; the codes are the top-up options' `reason`. */
@@ -195,10 +241,32 @@ export function TopupChoices({ options, choice, custom, onChoice, onCustom }: {
  *  confirmation, which the return page then reports. */
 export function topupNotice(reply: TopupReply | null): string {
   if (reply?.status === 'paid') return '原充值订单已到账，可查看收据。';
-  if (reply?.status === 'failed') return '原充值订单已失败，可以重新选择金额。';
+  if (reply?.status === 'failed') return topupFailureText(reply.failure_reason) || '原充值订单已失败，可以重新选择金额。';
   if (reply?.status === 'expired') return '原充值订单已过期，可以重新选择金额。';
   if (reply?.creation_status === 'blocked') return '支付配置已变化，原订单暂不能继续付款。请核实原订单，不要重复创建。';
+  if (reply?.creation_status === 'verifying') return VERIFYING;
   return '正在核实原充值请求。重试会使用原请求；核实完成前不能更改金额或创建另一笔充值。';
+}
+/** The provider's answer is unknown: no checkout address was returned, so the browser was not sent
+ *  anywhere. Like the return page (TopupStatus `verifying`), it makes no claim about money. */
+const VERIFYING = '暂时无法确认付款页面是否已创建，因此没有跳转。原充值请求已保留：重试只会核实同一笔订单，不会重复创建；订单完成或过期之前，不能更改金额或创建另一笔充值。';
+/** A restored order the server still reports open: what continuing does. Null when only a replay can tell.
+ *  A pending order is not promised a usable payment page: the status read cannot tell whether top-ups
+ *  closed or the keys changed since (the replay answers `blocked` then), nor whether it was paid already. */
+export function restoredNotice(status: TopupStatus | null): string | null {
+  if (status?.status !== 'pending') return null;
+  if (status.creation_status === 'verifying') return VERIFYING;
+  return status.creation_status === 'resolved'
+    ? '原充值订单仍在等待付款；继续时会核实付款页面是否仍可使用。在它完成或过期之前，不能更改金额或创建另一笔充值。' : null;
+}
+/** A restored order that turned out final: its outcome, then — only when top-ups are open here — the
+ *  new choice the dialog now offers. */
+export function releasedNotice(status: TopupStatus, open = true): string[] {
+  const reason = status.status === 'failed' ? topupFailureText(status.failure_reason) : null;
+  const outcome = status.status === 'paid' ? '上一笔充值已到账。'
+    : status.status === 'expired' ? '上一笔充值订单已过期。'
+    : reason || '上一笔充值订单已失败，没有扣款。';
+  return open ? [outcome, '可以选择新的金额。'] : [outcome];
 }
 
 export default function TopupDialog({ payer, payerName, onClose }: { payer: Payer; payerName: string; onClose: () => void }) {
@@ -214,6 +282,10 @@ export default function TopupDialog({ payer, payerName, onClose }: { payer: Paye
   const [attempt, setAttempt] = useState<TopupAttempt | null>(null);
   const [reply, setReply] = useState<TopupReply | null>(null);
   const [reload, setReload] = useState(0);
+  // The restored order as the server reported it on opening, and a final one that released the intent.
+  const [restoredOrder, setRestoredOrder] = useState<TopupStatus | null>(null);
+  const [released, setReleased] = useState<TopupStatus | null>(null);
+  const [checking, setChecking] = useState(false);
   const active = useRef<TopupAttempt | null>(null);
   const submitting = useRef(false);
   const intent = attempt?.intent;
@@ -224,6 +296,7 @@ export default function TopupDialog({ payer, payerName, onClose }: { payer: Paye
   useEffect(() => {
     const abort = new AbortController();
     setOptions(null); setLoadError(null); setAttempt(null); setReply(null); setError(null); setArmed(false);
+    setRestoredOrder(null); setReleased(null); setChecking(false);
     setBusy(false); submitting.current = false;
     get<RecoveryOptions>(withQuery(`${WALLET_API}/topup-options`, payerQuery(payer)), abort.signal)
       .then(result => {
@@ -234,6 +307,20 @@ export default function TopupDialog({ payer, payerName, onClose }: { payer: Paye
           payer_kind: result.payer_kind, payer_id: result.payer_id });
         active.current = restored; setAttempt(restored); setOptions(result);
         setChoice(result.packages[0]?.id || (customAllowed(result) ? 'custom' : ''));
+        if (!restored.intent?.order_id) return;
+        // The tab remembers an earlier order: ask what became of it before offering anything.
+        setChecking(true);
+        readRestoredOrder(restored, abort.signal)
+          .then(({ status, released: final }) => {
+            if (abort.signal.aborted || active.current !== restored) return;
+            setRestoredOrder(status);
+            if (final) setReleased(status);
+          })
+          .catch(e => {
+            // An unreadable answer keeps the intent; only a lost local record is worth saying.
+            if (!abort.signal.aborted && e instanceof Error && e.message === 'topup_storage') setError(e);
+          })
+          .finally(() => { if (!abort.signal.aborted && active.current === restored) setChecking(false); });
       })
       .catch(e => { if (!abort.signal.aborted) setLoadError(e); });
     return () => { abort.abort(); active.current = null; };
@@ -247,7 +334,7 @@ export default function TopupDialog({ payer, payerName, onClose }: { payer: Paye
   const sameActor = !!options && options.initiator_id === me?.id && options.payer_kind === payer.kind
     && options.payer_id === (payer.kind === 'user' ? me?.id : payer.id);
   const settled = topupSettled(reply);
-  const ready = !!attempt && sameActor && (intent ? !settled : open && (choice === 'custom' ? inRange : !!choice))
+  const ready = !!attempt && sameActor && !checking && (intent ? !settled : open && (choice === 'custom' ? inRange : !!choice))
     && (!challenge.required || !!challenge.token);
 
   async function submit() {
@@ -260,11 +347,8 @@ export default function TopupDialog({ payer, payerName, onClose }: { payer: Paye
       const created = await owner.submit(selected, challenge.body());
       if (active.current !== owner) return;
       setReply(created); setArmed(false);
-      if (created.status === 'pending' && created.creation_status === 'ready') {
-        const target = safeCheckout(created.checkout_url);
-        if (!target || new URL(target).origin !== 'https://checkout.stripe.com') throw new Error('checkout_address');
-        window.location.assign(target);
-      }
+      const target = checkoutTarget(created);
+      if (target) window.location.assign(target);
     } catch (e) {
       if (active.current !== owner) return;
       if (isChallengeError(e)) { setArmed(true); challenge.reset(); }
@@ -292,8 +376,12 @@ export default function TopupDialog({ payer, payerName, onClose }: { payer: Paye
       {!options && !loadError && <p role="status">{t('正在读取充值选项…')}</p>}
       {closed && <TopupClosed reason={closed} />}
       <ErrorNotice error={loadError ? topupErrorText(loadError, t) : null} />
+      {released && !intent && <div className="notice info" role="status">
+        {releasedNotice(released, open).map(line => <p key={line}>{t(line)}</p>)}
+        <a href={`${orderPage}?topup=${encodeURIComponent(released.order_id)}`}>{t('查看原订单')}</a>
+      </div>}
       {intent && <div className="notice info" role="status">
-        <p>{t(topupNotice(reply))}</p>
+        <p>{t(reply ? topupNotice(reply) : restoredNotice(restoredOrder) || topupNotice(null))}</p>
         <p>{t('原请求金额：{amount}', { amount: paymentText(reply?.amount_minor ?? intent.quoted_amount_minor, 'CNY', locale) })}</p>
         {intent.order_id && <a href={`${orderPage}?topup=${encodeURIComponent(intent.order_id)}`}>{t('查看原订单')}</a>}
       </div>}

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { ApiError, get } from '@synwevo/auth-client';
 import { useI18n } from '@synwevo/ui';
 import { errorText } from './common';
-import { POLL_LIMIT_MS, WALLET_API, paymentText, pollDelay, topupFinal, topupView,
+import { POLL_LIMIT_MS, WALLET_API, paymentText, pollDelay, topupFailureText, topupFinal, topupView,
   type TopupStatus as Status, type TopupView } from './walletModel';
 import './wallet.messages';
 import './topup.messages';
@@ -28,6 +28,8 @@ export function TopupStatusView({ view, status, error, canRefresh, onRefresh, on
 }) {
   const { t, locale } = useI18n();
   const text = TOPUP_TEXT[view];
+  // An order the provider refused to create says why (and that nothing was charged).
+  const body = (view === 'failed' && topupFailureText(status?.failure_reason)) || text.body;
   const final = topupFinal(status?.status);
   return <section className={`card card-b col gap12 topup-status tone-${text.tone}`} aria-labelledby="topup-status-title" data-state={view}>
     <div className="row gap12">
@@ -38,7 +40,7 @@ export function TopupStatusView({ view, status, error, canRefresh, onRefresh, on
       </span>
       <div className="grow">
         <h2 id="topup-status-title" ref={headingRef} tabIndex={-1}>{t(text.title)}</h2>
-        <p className="muted" role="status" aria-live="polite">{t(text.body)}</p>
+        <p className="muted" role="status" aria-live="polite">{t(body)}</p>
       </div>
     </div>
     {status && <dl className="topup-facts">

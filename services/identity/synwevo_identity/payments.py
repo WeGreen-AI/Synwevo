@@ -22,7 +22,17 @@ an amount or a credit:
    reported it, time, the configured operator name).
 
 The provider secret key and webhook secret come from ``billing.payment_settings`` (sealed). The
-Stripe API base is fixed; tests inject an ``httpx.MockTransport``, never a different host.
+Stripe API base is fixed; tests inject an ``httpx.MockTransport``, never a different host. Every
+Stripe request carries ``Stripe-Version: STRIPE_API_VERSION``, so a change of the account's default
+API version in the Stripe Dashboard can never silently change how a request is read.
+
+Checkout creation has three outcomes (2026-10-13, after production top-ups stuck in "verifying"):
+a checkout (the order becomes ``pending``); a definite refusal (``ProviderRefused``: Stripe answered
+with its documented error object, so nothing was created, or nothing was sent at all — the order
+fails at once with ``failure_code='provider_refused'`` and a stable ``failure_reason`` for the
+person); or an unknown outcome (``ProviderUnavailable``: network, timeout, 5xx, 409, 424, 429 or an
+unusable 200 — the order stays ``creating`` until signed evidence or its expiry resolves it). Both
+non-checkout outcomes keep only a sanitized ``failure_detail`` and write one warning log line.
 """
 from __future__ import annotations
 
@@ -31,6 +41,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
 from typing import Any, Protocol
 from urllib.parse import quote, urlencode
@@ -50,10 +61,23 @@ from synwevo_core.store import Store, new_id
 log = logging.getLogger(__name__)
 
 STRIPE_API = "https://api.stripe.com"
+#: Pinned on every Stripe request (``Stripe-Version`` header). This is the account's default as of
+#: 2026-10-13, so pinning changed nothing that day; it is a pre-"endive" version, in which Checkout
+#: still takes ``payment_method_types``. Moving to endive means sending
+#: ``allowed_payment_method_types`` instead, in the same change (docs/platform/wallet-payments.md).
+STRIPE_API_VERSION = "2026-04-22.dahlia"
 CHECKOUT_HOST = "https://checkout.stripe.com/"
 SIGNATURE_TOLERANCE_S = 300
 MAX_WEBHOOK_BYTES = 512 * 1024
 CHECKOUT_TTL_S = 3600                 # Stripe accepts 30 minutes .. 24 hours
+#: A checkout creation whose outcome stayed unknown is reported ``expired`` this long after the
+#: expiry it asked for: any session created by that request expired at Stripe by then (clock skew
+#: and webhook delay are the grace). A later signed payment event still credits it.
+CREATING_GRACE_S = 900
+#: Answers with a documented Stripe error object at these statuses mean nothing was created.
+REFUSAL_STATUSES = (400, 401, 402, 403, 404)
+#: A Stripe error object is a few hundred bytes; a larger non-200 body is not parsed (unknown outcome).
+MAX_ERROR_BYTES = 64 * 1024
 NAMESPACE = "wallet-topup"
 CREDIT_EVENTS = ("checkout.session.completed", "checkout.session.async_payment_succeeded")
 HANDLED_EVENTS = CREDIT_EVENTS + ("checkout.session.async_payment_failed", "checkout.session.expired",
@@ -116,8 +140,135 @@ def _form(value: Any, prefix: str = "") -> list[tuple[str, str]]:
     return out
 
 
+#: The Checkout Session parameters this adapter sends. A provider ``error.param`` is kept only when
+#: its root is one of these; its brackets map to dots (``line_items[0][price_data]`` ->
+#: ``line_items.0.price_data``). Anything else is recorded as ``other``.
+CHECKOUT_PARAMS = frozenset({"mode", "client_reference_id", "line_items", "payment_method_types",
+                             "payment_method_options", "success_url", "cancel_url", "expires_at",
+                             "metadata", "payment_intent_data"})
+_TOKEN = re.compile(r"[a-z0-9_]{1,60}")
+_PARAM = re.compile(r"([a-z_]{1,40})((?:\[[a-z0-9_]{1,40}\]){0,4})")
+#: Identifier shapes that never enter a stored detail, even when they look like a token.
+_ID_PREFIXES = ("acct_", "sk_", "rk_", "pk_", "whsec_", "cs_", "pi_", "ch_", "cus_", "evt_", "req_", "pm_", "pmc_")
+#: Stable codes the person sees for an order that failed at checkout creation (no money moved).
+FAILURE_REASONS = ("payment_method_not_enabled", "provider_configuration", "provider_rejected")
+_METHOD_PARAMS = ("payment_method_types", "payment_method_options")
+_METHOD_CODES = frozenset({"payment_method_unactivated", "payment_method_not_available",
+                           "payment_method_unexpected_state"})
+_CONFIGURATION_TYPES = frozenset({"authentication_error", "permission_error"})
+_CONFIGURATION_CODES = frozenset({"api_key_expired", "secret_key_required", "account_invalid",
+                                  "testmode_charges_only", "livemode_mismatch", "platform_api_key_expired"})
+
+
+def _token(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and _TOKEN.fullmatch(value) and not value.startswith(_ID_PREFIXES):
+        return value
+    return "other"
+
+
+def _param(value) -> str | None:
+    if value is None:
+        return None
+    match = _PARAM.fullmatch(value) if isinstance(value, str) else None
+    if not match or match.group(1) not in CHECKOUT_PARAMS:
+        return "other"
+    segments = re.findall(r"\[([a-z0-9_]{1,40})\]", match.group(2))
+    if any(segment.startswith(_ID_PREFIXES) for segment in segments):
+        return "other"
+    return ".".join([match.group(1), *segments])
+
+
+def _provider_error(response: httpx.Response) -> dict | None:
+    """The documented error object's type, code and param as safe tokens (never its message);
+    None when the answer carries no such object (a proxy page, an empty body, a body larger than
+    any Stripe error object, or one nested too deeply to decode)."""
+    if len(response.content) > MAX_ERROR_BYTES:
+        return None
+    try:
+        body = response.json()
+    except (ValueError, RecursionError):
+        return None
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict) or not isinstance(error.get("type"), str):
+        return None
+    return {"type": _token(error["type"]), "code": _token(error.get("code")), "param": _param(error.get("param"))}
+
+
+def _detail(fields: dict) -> str:
+    """``http_400;type=invalid_request_error;code=…;param=payment_method_types`` — only
+    [a-z0-9_.;=], at most 200 characters."""
+    parts = ["local=" + fields["local"]] if fields.get("local") else []
+    if type(fields.get("http")) is int:
+        parts.append(f"http_{fields['http']}")
+    parts += [f"{key}={fields[key]}" for key in ("type", "code", "param") if fields.get(key)]
+    if fields.get("cause"):
+        parts.append(fields["cause"])
+    return ";".join(parts)[:200] or "unknown"
+
+
+def _fields(detail: str | None) -> dict:
+    out: dict = {}
+    for part in (detail or "").split(";"):
+        key, sep, value = part.partition("=")
+        if sep:
+            out[key] = value
+        elif part.startswith("http_") and part[5:].isdigit():
+            out["http"] = int(part[5:])
+        elif part:
+            out["cause"] = part
+    return out
+
+
+def _reason(fields: dict) -> str:
+    if fields.get("local"):
+        return "provider_configuration"          # the configured method set could not be sent
+    if (fields.get("param") or "").split(".")[0] in _METHOD_PARAMS or fields.get("code") in _METHOD_CODES:
+        return "payment_method_not_enabled"
+    if (fields.get("http") in (401, 403) or fields.get("type") in _CONFIGURATION_TYPES
+            or fields.get("code") in _CONFIGURATION_CODES):
+        return "provider_configuration"
+    return "provider_rejected"
+
+
+def failure_reason(failure_code: str | None, failure_detail: str | None) -> str | None:
+    """The stable person-facing code of an order that failed at checkout creation, else None."""
+    return _reason(_fields(failure_detail)) if failure_code == "provider_refused" else None
+
+
+def effective_status(row: dict, now: float) -> tuple[str, str]:
+    """(status, creation_status) as a reader sees the order. Reads only; nothing is written.
+
+    An unresolved creation is ``pending``/``verifying`` until its requested expiry plus
+    CREATING_GRACE_S, then ``expired``/``resolved``: a session that request may have created can no
+    longer be paid, so the person may start again. A signed payment event still credits it."""
+    state, expires = row["status"], row["expires_at"]
+    if state == "creating":
+        if expires is not None and expires + CREATING_GRACE_S <= now:
+            return "expired", "resolved"
+        return "pending", "verifying"
+    if state == "pending" and expires is not None and expires <= now:
+        return "expired", "resolved"
+    return state, "resolved"
+
+
 class ProviderUnavailable(Exception):
     """No usable checkout response. The remote side effect may already have happened."""
+
+    def __init__(self, fields: dict):
+        self.detail = _detail(fields)
+        super().__init__(self.detail)
+
+
+class ProviderRefused(Exception):
+    """The provider definitely created nothing: it answered HTTP 400/401/402/403/404 with its
+    documented error object, or the request was never sent. Only sanitized fields are kept."""
+
+    def __init__(self, fields: dict):
+        self.detail = _detail(fields)
+        self.reason = _reason(fields)
+        super().__init__(self.detail)
 
 
 class PaymentProvider(Protocol):
@@ -154,7 +305,8 @@ class StripeCheckout:
                         payment_methods: list[PaymentMethod] | tuple[PaymentMethod, ...] = PAYMENT_METHODS) -> Checkout:
         if (not payment_methods or len(set(payment_methods)) != len(payment_methods)
                 or any(method not in PAYMENT_METHODS for method in payment_methods)):
-            raise ProviderUnavailable("payment_methods")
+            # Nothing is sent, so nothing can exist at the provider: a definite refusal.
+            raise ProviderRefused({"local": "payment_methods"})
         params = {
             "mode": "payment",
             "client_reference_id": order_id,
@@ -170,25 +322,32 @@ class StripeCheckout:
         if "wechat_pay" in payment_methods:
             params["payment_method_options"] = {"wechat_pay": {"client": "web"}}
         headers = {"Authorization": "Bearer " + self._secret, "Idempotency-Key": "checkout-" + order_id,
-                   "Content-Type": "application/x-www-form-urlencoded"}
+                   "Content-Type": "application/x-www-form-urlencoded", "Stripe-Version": STRIPE_API_VERSION}
         try:
             with httpx.Client(base_url=STRIPE_API, transport=self._transport, timeout=self._timeout,
                               follow_redirects=False, trust_env=False) as client:
                 response = client.post("/v1/checkout/sessions", content=urlencode(_form(params)), headers=headers)
         except httpx.HTTPError:
-            raise ProviderUnavailable("network") from None
+            raise ProviderUnavailable({"cause": "network"}) from None
         if response.status_code != 200:
-            raise ProviderUnavailable(f"http_{response.status_code}")
+            error = _provider_error(response)
+            fields = {"http": response.status_code, **(error or {})}
+            # Stripe answers a request it refused with its error object and creates nothing. An
+            # idempotency error, a 409/429/5xx or an answer without that object proves nothing.
+            if (response.status_code in REFUSAL_STATUSES and error is not None
+                    and error["type"] != "idempotency_error"):
+                raise ProviderRefused(fields)
+            raise ProviderUnavailable(fields)
         try:
             body = response.json()
-        except ValueError:
-            raise ProviderUnavailable("body") from None
+        except (ValueError, RecursionError):
+            raise ProviderUnavailable({"http": 200, "cause": "body"}) from None
         if not isinstance(body, dict):
-            raise ProviderUnavailable("body")
+            raise ProviderUnavailable({"http": 200, "cause": "body"})
         session_id, url = body.get("id"), body.get("url")
         if (not isinstance(session_id, str) or not session_id.startswith("cs_") or len(session_id) > 200
                 or not isinstance(url, str) or not url.startswith(CHECKOUT_HOST) or len(url) > 2048):
-            raise ProviderUnavailable("body")
+            raise ProviderUnavailable({"http": 200, "cause": "body"})
         expiry = body.get("expires_at")
         return Checkout(session_id, url, expiry if type(expiry) is int else expires_at)
 
@@ -277,6 +436,9 @@ class TopupService:
                               "WHERE initiator_id=? AND environment=? AND created_at>?",
                               (initiator_id, self.environment, now - 86400))
         hour = sum(1 for r in rows if r["created_at"] > now - 3600)
+        # Open orders: a checkout that may still be paid. A refused creation is 'failed'; an
+        # unresolved one stops counting at its requested expiry (it reports 'expired' after
+        # CREATING_GRACE_S), so a stuck creation never holds a max_pending slot past it.
         pending = sum(1 for r in rows if r["status"] in ("creating", "pending")
                       and (r["expires_at"] is None or r["expires_at"] > now))
         spent = sum(r["amount_minor"] for r in rows if r["status"] != "failed")
@@ -444,11 +606,20 @@ class TopupService:
                 payment_methods=payment_methods(spec),
                 success_url=f"{page}?topup={order_id}&result=success",
                 cancel_url=f"{page}?topup={order_id}&result=cancel")
-        except ProviderUnavailable:
+        except ProviderRefused as exc:
+            # Stripe refused with its documented error object (or nothing was sent): no checkout
+            # exists. Fail the order now, guarded like dispatch_refused, which frees its open-order
+            # slot; the person sees a stable reason. Only the sanitized detail is kept or logged.
+            log.warning("top-up checkout refused: order=%s %s", order_id, exc.detail)
+            self.store.execute("UPDATE payment_topups SET status='failed',failure_code='provider_refused',"
+                               "failure_detail=? WHERE order_id=? AND status='creating'", (exc.detail, order_id))
+        except ProviderUnavailable as exc:
             # A timeout/5xx is not proof that checkout creation failed. Keep the original
-            # intent in 'creating' until signed provider evidence resolves it. Never redispatch.
-            self.store.execute("UPDATE payment_topups SET failure_code='provider_unknown' "
-                               "WHERE order_id=? AND status='creating'", (order_id,))
+            # intent in 'creating' until signed provider evidence (or its expiry, see
+            # effective_status) resolves it. Never redispatch.
+            log.warning("top-up checkout outcome unknown: order=%s %s", order_id, exc.detail)
+            self.store.execute("UPDATE payment_topups SET failure_code='provider_unknown',failure_detail=? "
+                               "WHERE order_id=? AND status='creating'", (exc.detail, order_id))
         else:
             self.store.execute("UPDATE payment_topups SET status='pending',checkout_session_id=?,checkout_url=?,expires_at=? "
                                "WHERE order_id=? AND status='creating'",
@@ -464,17 +635,16 @@ class TopupService:
                               (order_id, self.environment))
 
     def status(self, row: dict) -> dict:
-        state = row["status"]
-        if state == "creating":
-            state = "pending"
-        elif state == "pending" and row["expires_at"] is not None and row["expires_at"] <= self.clock():
-            state = "expired"
+        state, creation = effective_status(row, self.clock())
         out = {"order_id": row["order_id"], "status": state, "amount_minor": row["amount_minor"],
                "currency": row["currency"], "payer_kind": row["payer_kind"], "payer_id": row["payer_id"],
                "created_at": row["created_at"], "expires_at": row["expires_at"],
-               "creation_status": "verifying" if row["status"] == "creating" else "resolved"}
+               "creation_status": creation}
         if row["credited_at"] is not None:
             out["credited_at"] = row["credited_at"]
+        reason = failure_reason(row.get("failure_code"), row.get("failure_detail"))
+        if state == "failed" and reason is not None:
+            out["failure_reason"] = reason
         return out
 
     def receipt(self, row: dict) -> dict:
@@ -679,8 +849,10 @@ class TopupService:
                 return "rejected", "session_mismatch"
             if kind in ("checkout.session.expired", "checkout.session.async_payment_failed"):
                 if row["status"] in ("creating", "pending"):
-                    self.store.execute("UPDATE payment_topups SET status=?,failure_code=? WHERE order_id=? "
-                                       "AND status IN ('creating','pending')",
+                    # The new failure code replaces any creation diagnosis: a signed session event
+                    # proves the checkout existed, so an earlier "outcome unknown" detail is stale.
+                    self.store.execute("UPDATE payment_topups SET status=?,failure_code=?,failure_detail=NULL "
+                                       "WHERE order_id=? AND status IN ('creating','pending')",
                                        ("expired" if kind.endswith("expired") else "failed",
                                         kind.rsplit(".", 1)[1], order_id))
                 return "processed", None
@@ -706,7 +878,7 @@ class TopupService:
                                   (PROVIDER, event_id))
             self.store.execute("UPDATE payment_topups SET status='paid',payment_id=COALESCE(payment_id,?),"
                                "paid_at=COALESCE(paid_at,?),credited_at=COALESCE(credited_at,?),journal_id=COALESCE(journal_id,?),"
-                               "failure_code=NULL WHERE order_id=?",
+                               "failure_code=NULL,failure_detail=NULL WHERE order_id=?",
                                (facts["payment_intent"], paid["provider_created_at"] if paid else None, now, journal,
                                 order_id))
             method = self.store.one("SELECT facts_json FROM payment_webhook_inbox WHERE provider=? AND type='charge.succeeded' "

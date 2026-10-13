@@ -9,12 +9,14 @@ from __future__ import annotations
 import json
 import time
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from synwevo_core.billing import DisputeNotice, Ledger, PaymentReceipt, Unit
 from synwevo_core.sessions import CSRF_COOKIE, CSRF_HEADER
 from synwevo_core.store import now
+from synwevo_identity.payment_readiness import StripeReadiness
 
 from .platform_fixture import make_platform_admin
 
@@ -31,6 +33,44 @@ SPEC = {"enabled": True, "operator_name": "Synwevo Fixture Operator",
 REASON = "fixture: configure the payment provider"
 
 
+def fixture_readiness(methods=None, *, calls=None, fail=False, capabilities="from_methods", display=None,
+                      charges=True, answer=None):
+    """FIXTURE Stripe read-only endpoints for the publish check (never api.stripe.com on the wire),
+    shaped like the production account on 2026-10-13: an account that can charge, whose capability
+    list holds each method reported available (``card_payments: active`` …) and omits the others,
+    and a default configuration reporting ``methods`` (all available by default) with the display
+    preference on exactly for the available ones.
+
+    ``capabilities``: "from_methods" (above), None (the account reports no capability list) or an
+    explicit {capability: state} dict. ``display``: per-method display preference overrides.
+    ``fail`` makes every read a timeout; ``answer`` (a callable taking the request) replaces every
+    answer. ``calls`` collects the requests seen."""
+    flags = {"card": True, "wechat_pay": True, "alipay": True, **(methods or {})}
+    names = {"card": "card_payments", "wechat_pay": "wechat_pay_payments", "alipay": "alipay_payments"}
+    listed = ({names[m]: "active" for m, v in flags.items() if v} if capabilities == "from_methods" else capabilities)
+    shown = {m: "on" if v else "off" for m, v in flags.items()} | (display or {})
+
+    def handler(request):
+        assert request.method == "GET" and request.url.host == "api.stripe.com"
+        if calls is not None:
+            calls.append(request)
+        if fail:
+            raise httpx.ConnectTimeout("fixture: provider unreachable")
+        if answer is not None:
+            return answer(request)
+        if request.url.path == "/v1/account":
+            return httpx.Response(200, json={"object": "account", "charges_enabled": charges,
+                                             **({"capabilities": listed} if listed is not None else {})},
+                                  headers={"Stripe-Version": "2026-04-22.dahlia"})
+        assert request.url.path == "/v1/payment_method_configurations"
+        return httpx.Response(200, json={"object": "list", "has_more": False, "data": [
+            {"object": "payment_method_configuration", "id": "pmc_fixture", "active": True, "is_default": True,
+             "livemode": False, **{m: {"available": v, "display_preference": {"value": shown[m]}}
+                                   for m, v in flags.items()}}]})
+
+    return StripeReadiness(transport=httpx.MockTransport(handler))
+
+
 @pytest.fixture
 def world(tmp_path, monkeypatch):
     for key, value in {"DATA_DIR": str(tmp_path / "d"), "UI_AUTH": "session", "COOKIE_SECURE": "0",
@@ -41,6 +81,8 @@ def world(tmp_path, monkeypatch):
         monkeypatch.setenv("SYNWEVO_" + key, value)
     from synwevo_identity.app import create_app
     api = create_app(str(tmp_path / "d"), start_jobs=False)
+    # Publishing an enabled version checks the provider: always against the fixture, never the network.
+    api.state.payment_readiness = fixture_readiness()
     store, ident = api.state.identity.store, api.state.identity
     people = {}
     for key in ("root", "fin", "aud", "plain"):

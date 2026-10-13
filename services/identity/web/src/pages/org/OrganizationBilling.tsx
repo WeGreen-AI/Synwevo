@@ -10,19 +10,22 @@
  *  next model call. The statement carries amounts and whom a charge was for — never a
  *  conversation. Amounts stay exact: integer wallet units are formatted with BigInt.
  *
- *  The hosted checkout returns here with ?topup=<order>&result=success|cancel. The page then
- *  polls the order (GET /api/auth/wallet/topups/{id}) until the signed notice has credited it
- *  and shows the receipt the server holds; it never treats the return itself as payment. */
+ *  The top-up itself is the wallet's own dialog (account/TopupDialog) with the organization as
+ *  payer: the same server-priced choices, idempotent recoverable request, challenge and checkout
+ *  origin check as a personal top-up. The hosted checkout returns here with
+ *  ?topup=<order>&result=success|cancel. The page then polls the order
+ *  (GET /api/auth/wallet/topups/{id}) until the signed notice has credited it and shows the
+ *  receipt the server holds; it never treats the return itself as payment. */
 import { useEffect, useId, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { get, post, put } from "@synwevo/auth-client";
+import { get, put } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { FlowError, Loading, useAction } from "./AuthFlow";
-import { isChallengeError, useChallenge } from "./Challenge";
 import { orgPath, roleSource, type Organization } from "./types";
 import { cnyText, fenText, parseYuan, yuanInput } from "../../governance/billing-money";
-import { paymentMethodsText } from "../../lib/paymentMethods";
-import { topupClosedReason, type TopupOptions } from "../account/walletModel";
+import TopupDialog from "../account/TopupDialog";
+import { TOPUP_TEXT } from "../account/TopupStatus";
+import { topupFailureText, type TopupCreationStatus } from "../account/walletModel";
 import "../account/topup.messages";
 import "../../org-billing.messages";
 
@@ -32,11 +35,11 @@ interface Billing { organization_id: string; environment: string | null; currenc
   wallet: { booked: string; held: string; available: string; frozen: boolean }; members: MemberGrant[] }
 interface StatementItem { seq: string; id: string; kind: string; delta: string; created_at: number; member_id?: string; member_email?: string | null }
 interface Statement { items: StatementItem[]; next_after_seq: string | null }
-interface TopupStatus { order_id: string; status: "pending" | "paid" | "failed" | "expired"; amount_minor: number; currency: string; credited_at?: number }
+interface TopupStatus { order_id: string; status: "pending" | "paid" | "failed" | "expired"; creation_status?: TopupCreationStatus;
+  amount_minor: number; currency: string; credited_at?: number; failure_reason?: string | null }
 interface Receipt { order_id: string; amount_minor: number; currency: string; method: string | null; paid_at: number | null;
   credited_at: number; operator_name: string | null; provider_reference: string | null }
 
-const CHECKOUT = "https://checkout.stripe.com/";
 /** The largest monthly limit the server accepts, in yuan (org_billing_routes.MAX_LIMIT_MINOR). */
 const MAX_LIMIT_YUAN = 1000000;
 const KIND: Record<string, string> = { paid: "充值到账", test_payment: "测试到账", sale: "已结算消费", grant: "赠送额度", chargeback: "拒付追回" };
@@ -44,7 +47,6 @@ const METHOD: Record<string, string> = { card: "银行卡", wechat_pay: "微信�
 /** Polling the order after the return: quickly at first, then slower, then stop and offer a manual check. */
 const POLL_DELAYS_MS = [1500, 2000, 3000, 5000];
 const POLL_FOR_MS = 120_000;
-const UNAVAILABLE: Record<string, string> = { not_configured: "充值暂未开放", email_unverified: "请先验证邮箱再继续", wallet_frozen: "该钱包因支付争议已被冻结，暂不能充值" };
 
 /** A copy of a draft map without one key (the saved row reads from the server again). */
 function without<T>(key: string) { return (drafts: Record<string, T>) => { const next = { ...drafts }; delete next[key]; return next; }; }
@@ -95,6 +97,20 @@ export default function OrganizationBilling({ organization, mine }: { organizati
   </section>;
 }
 
+/** What the return section says about the order, from the server's state only. An order the
+ *  provider refused to create names why; one whose creation is unknown never had a checkout
+ *  address, so there is no payment to wait for. */
+export function topupReturnMessage(cancelled: boolean, status: TopupStatus | null, waiting: boolean): string {
+  const state = status?.status;
+  return cancelled && !status ? "你已取消支付，没有扣款。订单会在收银台过期后关闭。"
+    : state === "paid" ? "充值已到账。"
+    : state === "failed" ? topupFailureText(status?.failure_reason) || "支付没有完成，没有扣款。可以重新发起充值。"
+    : state === "expired" ? "收银台已过期，没有扣款。可以重新发起充值。"
+    : status?.creation_status === "verifying" ? TOPUP_TEXT.verifying.body
+    : waiting ? "正在等待支付服务确认到账…"
+    : "支付服务尚未确认到账。如果你已经付款，稍后再查看；确认前不会入账。";
+}
+
 /** After the hosted checkout: the order's real state, then its receipt. A cancelled return is
  *  said plainly (nothing was charged) without polling; the order simply expires. */
 function TopupReturn({ orderId, cancelled, onCredited, onDismiss }: { orderId: string; cancelled: boolean; onCredited: () => void; onDismiss: () => void }) {
@@ -124,12 +140,7 @@ function TopupReturn({ orderId, cancelled, onCredited, onDismiss }: { orderId: s
     return () => { abort.abort(); window.clearTimeout(timer); };
   }, [orderId, cancelled, round]);
   const state = status?.status;
-  const message = cancelled && !status ? "你已取消支付，没有扣款。订单会在收银台过期后关闭。"
-    : state === "paid" ? "充值已到账。"
-    : state === "failed" ? "支付没有完成，没有扣款。可以重新发起充值。"
-    : state === "expired" ? "收银台已过期，没有扣款。可以重新发起充值。"
-    : waiting ? "正在等待支付服务确认到账…"
-    : "支付服务尚未确认到账。如果你已经付款，稍后再查看；确认前不会入账。";
+  const message = topupReturnMessage(cancelled, status, waiting);
   return <div className={`notice${state === "paid" ? " ok" : ""}`} role="status" aria-live="polite" aria-labelledby={`${id}-h`}>
     <h3 id={`${id}-h`}>{t("充值订单 {order}", { order: orderId })}</h3>
     <p>{t(message)}</p>
@@ -149,55 +160,15 @@ function TopupReturn({ orderId, cancelled, onCredited, onDismiss }: { orderId: s
   </div>;
 }
 
+/** The organization wallet's top-up: one button that opens the wallet's top-up dialog with the
+ *  organization as payer. Nothing is priced, posted or followed here. */
 export function OrganizationTopup({ organization }: { organization: Organization }) {
-  const { t, locale } = useI18n(); const id = useId(); const action = useAction();
-  const [options, setOptions] = useState<TopupOptions | null>(null); const [loadError, setLoadError] = useState<unknown>(null);
-  const [choice, setChoice] = useState<string>(""); const [custom, setCustom] = useState("");
-  const challenge = useChallenge("topup", { enabled: !!options?.available && !topupClosedReason(options, null) });
-  useEffect(() => {
-    const abort = new AbortController();
-    get<TopupOptions>(`/api/auth/wallet/topup-options?payer_kind=organization&payer_id=${encodeURIComponent(organization.id)}`, abort.signal)
-      .then(o => { setOptions(o); setChoice(o.packages[0]?.id ?? (o.custom_amount ? "custom" : "")); })
-      .catch(e => { if (!abort.signal.aborted) setLoadError(e); });
-    return () => abort.abort();
-  }, [organization.id]);
-  if (loadError) return <FlowError error={loadError} />;
-  if (!options) return <Loading />;
-  const closed = topupClosedReason(options, null);
-  if (closed) return <p className="notice" role="note">{t(UNAVAILABLE[closed] || "充值暂未开放")}</p>;
-  const customFen = choice === "custom" ? parseYuan(custom, (options.max_amount_minor ?? 0) / 100) : null;
-  const customOk = customFen !== null && customFen >= (options.min_amount_minor ?? 1) && customFen <= (options.max_amount_minor ?? 0);
-  const ready = choice !== "" && (choice !== "custom" || customOk) && (!challenge.required || !!challenge.token);
-  function pay(e: React.FormEvent) {
-    e.preventDefault();
-    if (!ready || !options) return;
-    void action.run(async () => {
-      try {
-        const out = await post<{ order_id: string; checkout_url: string }>("/api/auth/wallet/topups", {
-          payer_kind: "organization", payer_id: organization.id,
-          ...(choice === "custom" ? { amount_minor: customFen } : { package_id: choice }), ...challenge.body() });
-        // The server only ever returns the provider's hosted checkout; anything else is not followed.
-        if (!out.checkout_url.startsWith(CHECKOUT)) throw new Error("支付服务暂时无法创建收银台，未扣款，请稍后再试");
-        window.location.assign(out.checkout_url);
-      } catch (err) { if (isChallengeError(err)) challenge.reset(); throw err; }
-    });
-  }
-  return <form className="flow-stack org-create" onSubmit={pay} aria-busy={action.busy} aria-labelledby={`${id}-h`}>
-    <h3 id={`${id}-h`}>{t("为组织钱包充值")}</h3>
-    <fieldset className="flow-stack org-fieldset">
-      <legend className="tiny muted">{t("选择充值金额（人民币）。充值后不可退款。")}</legend>
-      {options.packages.map(p => <label key={p.id} className="row gap8"><input type="radio" name={`${id}-amount`} value={p.id} checked={choice === p.id} onChange={() => setChoice(p.id)} disabled={action.busy} />
-        <span>{fenText(p.amount_minor, locale)}{p.label && <span className="tiny muted"> · {p.label}</span>}</span></label>)}
-      {options.custom_amount && <label className="row gap8"><input type="radio" name={`${id}-amount`} value="custom" checked={choice === "custom"} onChange={() => setChoice("custom")} disabled={action.busy} /><span>{t("其他金额")}</span></label>}
-      {choice === "custom" && <div className="field"><label htmlFor={`${id}-custom`}>{t("金额（元），可充值 {min} 至 {max}", { min: fenText(options.min_amount_minor ?? 0, locale), max: fenText(options.max_amount_minor ?? 0, locale) })}</label>
-        <input id={`${id}-custom`} className="input" inputMode="decimal" autoComplete="off" value={custom} aria-invalid={!!custom && !customOk} disabled={action.busy} onChange={e => setCustom(e.target.value)} /></div>}
-    </fieldset>
-    {challenge.element}
-    <FlowError error={action.error} />
-    <p className="tiny muted">{t("付款在支付服务的收银台完成，可用支付方式：{methods}。只有支付服务的签名通知确认到账后，金额才会计入组织钱包并出现在账单中。", {
-      methods: paymentMethodsText(options.payment_methods, t, locale) })}</p>
-    <div className="org-actions"><button className="btn primary" disabled={!ready || action.busy}>{t(action.busy ? "正在打开收银台…" : "前往支付")}</button></div>
-  </form>;
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  return <div className="org-actions">
+    <button type="button" className="btn primary" onClick={() => setOpen(true)}>{t("为组织钱包充值")}</button>
+    {open && <TopupDialog payer={{ kind: "organization", id: organization.id }} payerName={organization.name} onClose={() => setOpen(false)} />}
+  </div>;
 }
 
 function MemberGrants({ organization, data, onSaved }: { organization: Organization; data: Billing; onSaved: (b: Billing) => void }) {

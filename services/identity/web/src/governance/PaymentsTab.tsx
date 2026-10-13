@@ -1,5 +1,5 @@
 import { useId, useRef, useState, type FormEvent } from "react";
-import { post } from "@synwevo/auth-client";
+import { ApiError, post } from "@synwevo/auth-client";
 import { fmtTime, useI18n } from "@synwevo/ui";
 import { ActionDialog } from "./ActionDialog";
 import { PaymentReadiness } from "./PaymentReadiness";
@@ -16,6 +16,14 @@ import "./payments.messages";
  * they are never put in state, never shown again (the server answers only "configured"), and the
  * inputs are emptied when the confirmation closes or the publication succeeds. Publishing is a dangerous operation: the dialog asks for
  * a reason and, when the server wants one, a fresh identity confirmation.
+ *
+ * Publishing a version with top-ups open is checked against the payment provider by the server
+ * (admin_payments.publish): a selected method the provider has not activated is refused
+ * (409 payment_methods_unavailable, `detail.methods`), and the dialog names each one and offers
+ * to deselect them; a key the provider rejects is refused (409 payment_credentials_rejected) and
+ * must be replaced; a selection that cannot be verified (503 payment_readiness_unavailable, 409
+ * payment_credentials_forbidden, 409 payment_methods_unverified) is refused unless the
+ * administrator explicitly acknowledges publishing unverified methods, which is audited.
  */
 
 type Package = { id: string; amount_minor: number; label: string | null };
@@ -34,6 +42,72 @@ type Form = { enabled: boolean; operator: string; paymentMethods: PaymentMethod[
   override?: boolean };
 
 const API = "/api/admin/billing/payments";
+/** The publish field that accepts publishing methods the server could not check (contract §5). */
+const ACKNOWLEDGE = "acknowledge_unverified_methods";
+
+/** What a refused publication asks of the administrator, from the server's refusal; null for any
+ *  other error (the dialog words it). Only methods this page knows are named.
+ *  - `methods`: Stripe has not activated these selected methods; deselect them (never acknowledgeable).
+ *  - `rejected`: Stripe rejected the key; replace it (never acknowledgeable).
+ *  - `unverified`: the selection could not be verified, and the server accepts an explicit, audited
+ *    acknowledgement — because the check could not run (`unavailable`), the key may not read the
+ *    account (`forbidden`), or Stripe's answer proves nothing for some methods (`inconclusive`). */
+export type UnverifiedCause = "unavailable" | "forbidden" | "inconclusive";
+export type UnverifiedRefusal = { kind: "unverified"; cause: UnverifiedCause; methods: PaymentMethod[]; chargesDisabled: boolean };
+export type PublishRefusal = { kind: "methods"; methods: PaymentMethod[] } | { kind: "rejected" } | UnverifiedRefusal;
+export function publishRefusal(error: unknown): PublishRefusal | null {
+  if (!(error instanceof ApiError) || error.upstream) return null;
+  const named = (value: unknown) => paymentMethods(Array.isArray(value) ? value : []);
+  const unverified = (cause: UnverifiedCause, methods: PaymentMethod[] = [], chargesDisabled = false): UnverifiedRefusal =>
+    ({ kind: "unverified", cause, methods, chargesDisabled });
+  if (error.status === 409 && error.code === "payment_methods_unavailable") {
+    const methods = named(error.detail?.methods);
+    return methods.length ? { kind: "methods", methods } : null;
+  }
+  if (error.status === 409 && error.code === "payment_credentials_rejected") return { kind: "rejected" };
+  if (error.status === 503 && error.code === "payment_readiness_unavailable") return unverified("unavailable");
+  // The other acknowledgeable refusals say so in their detail; without it there is nothing to confirm.
+  if (error.status !== 409 || error.detail?.acknowledgement !== ACKNOWLEDGE) return null;
+  if (error.code === "payment_credentials_forbidden") return unverified("forbidden");
+  if (error.code === "payment_methods_unverified")
+    return unverified("inconclusive", named(error.detail?.methods), error.detail?.charges_enabled === false);
+  return null;
+}
+
+/** Inside the publish confirmation: the methods Stripe has not activated, each named, with the way
+ *  to deselect them; a rejected key, with what to do instead; or, when the selection could not be
+ *  verified, why, and the explicit acknowledgement. */
+export function PublishGuard({ blocked, rejected, unverified, acknowledged, onAcknowledge, onDeselect }: {
+  blocked: PaymentMethod[]; rejected: boolean; unverified: UnverifiedRefusal | null; acknowledged: boolean;
+  onAcknowledge: (value: boolean) => void; onDeselect: () => void;
+}) {
+  const { t } = useI18n();
+  return <>
+    {!!blocked.length && <div className="notice warn col gap8" role="note">
+      <p style={{ margin: 0 }}>{t("支付服务商报告以下所选支付方式尚未开通：")}</p>
+      <ul style={{ margin: 0 }}>{blocked.map(method => <li key={method}>
+        {t("{method}：支付服务商报告尚未开通", { method: t(PAYMENT_METHOD_LABELS[method]) })}</li>)}</ul>
+      <div><button type="button" className="btn sm" onClick={onDeselect}>{t("取消选择这些支付方式")}</button></div>
+    </div>}
+    {rejected && !blocked.length && <div className="notice warn col gap8" role="note">
+      <p style={{ margin: 0 }}>{t("Stripe 拒绝了这个密钥，开放充值的设置不能发布，也不能通过确认跳过。请在 Stripe 核对或重新生成密钥，选择“设置或轮换密钥”填入后再发布；只关闭充值的设置不需要这项检查。")}</p>
+    </div>}
+    {unverified && !blocked.length && !rejected && <div className="notice warn col gap8" role="note">
+      {unverified.cause === "forbidden" && <p style={{ margin: 0 }}>{t("Stripe 不允许这个密钥读取账户信息（可能是权限受限的密钥），所以无法核实所选支付方式。如确认这个密钥可以创建付款页面，可以勾选下面的确认后发布；它会写入审计记录。")}</p>}
+      {unverified.cause === "inconclusive" && <>
+        {!!unverified.methods.length && <>
+          <p style={{ margin: 0 }}>{t("Stripe 的回答不足以确认以下所选支付方式已开通：")}</p>
+          <ul style={{ margin: 0 }}>{unverified.methods.map(method => <li key={method}>
+            {t("{method}：未能确认已开通", { method: t(PAYMENT_METHOD_LABELS[method]) })}</li>)}</ul>
+        </>}
+        {unverified.chargesDisabled && <p style={{ margin: 0 }}>{t("Stripe 账户尚未启用收款。")}</p>}
+      </>}
+      {unverified.cause !== "forbidden" && <p style={{ margin: 0 }}>{t("如确需在未核实的情况下现在发布，请勾选下面的确认；它会写入审计记录。")}</p>}
+      <label className="row gap8"><input type="checkbox" checked={acknowledged} onChange={(e) => onAcknowledge(e.target.checked)} />
+        {t(unverified.cause === "forbidden" ? "我知道这个密钥不能读取账户信息、所选支付方式未经核实，仍要发布" : "我知道所选支付方式未经核实，仍要发布")}</label>
+    </div>}
+  </>;
+}
 const DEFAULT_FORM: Form = { enabled: false, operator: "", paymentMethods: [], packages: [{ id: "", yuan: "", label: "" }], custom: false,
   min: "", max: "", perHour: "5", perDay: "20", pending: "3", dayAmount: "", credential: "replace" };
 
@@ -112,11 +186,31 @@ export function PaymentsTab({ onDenied, canManage }: { onDenied: () => void; can
   const [problem, setProblem] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<{ spec: Spec; expected_revision: number; idempotency_key: string } | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // The server's answer to the last publication attempt in the open confirmation (see PublishGuard).
+  const [blocked, setBlocked] = useState<PaymentMethod[]>([]);
+  const [rejected, setRejected] = useState(false);
+  const [unverified, setUnverified] = useState<UnverifiedRefusal | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [round, setRound] = useState(0);
   const secretKey = useRef<HTMLInputElement>(null);
   const webhookSecret = useRef<HTMLInputElement>(null);
   const current = form ?? (state ? formOf(state.spec, state.credential_configured) : null);
   const set = (patch: Partial<Form>) => { setForm({ ...(current as Form), ...patch }); setDone(null); };
   const clearSecrets = () => { if (secretKey.current) secretKey.current.value = ""; if (webhookSecret.current) webhookSecret.current.value = ""; };
+  const clearGuard = () => { setBlocked([]); setRejected(false); setUnverified(null); setAcknowledged(false); };
+  const newKey = () => "pay_" + crypto.randomUUID().replace(/-/g, "");
+
+  /** Deselect the refused methods and confirm the changed spec afresh (a new request and a
+   *  fresh dialog); with no method left, back to the form, which says what is missing. */
+  function deselect() {
+    if (!confirming || !current) return;
+    const next = { ...current, paymentMethods: current.paymentMethods.filter(method => !blocked.includes(method)) };
+    setForm(next); clearGuard();
+    const { spec, problem: why } = specOf(next);
+    if (!spec) { setConfirming(null); clearSecrets(); setProblem(why || null); return; }
+    setConfirming({ spec, expected_revision: confirming.expected_revision, idempotency_key: newKey() });
+    setRound(n => n + 1);
+  }
 
   function review(e: FormEvent) {
     e.preventDefault();
@@ -128,7 +222,8 @@ export function PaymentsTab({ onDenied, canManage }: { onDenied: () => void; can
       return;
     }
     setProblem(why || null);
-    if (spec && state) setConfirming({ spec, expected_revision: state.revision, idempotency_key: "pay_" + crypto.randomUUID().replace(/-/g, "") });
+    clearGuard();
+    if (spec && state) setConfirming({ spec, expected_revision: state.revision, idempotency_key: newKey() });
   }
 
   if (load.loading) return <p role="status">{t("加载中…")}</p>;
@@ -227,10 +322,11 @@ export function PaymentsTab({ onDenied, canManage }: { onDenied: () => void; can
       {state.spec.custom_amount && <p className="small">{t("自定义金额：{min} 至 {max}", {
         min: fenText(state.spec.min_amount_minor, locale), max: fenText(state.spec.max_amount_minor, locale) })}</p>}
     </section>}
-    {confirming && <ActionDialog title={t("发布支付设置")} confirmLabel={t("发布")} danger={live} reason="required"
+    {confirming && <ActionDialog key={round} title={t("发布支付设置")} confirmLabel={t("发布")} danger={live} reason="required"
       impact={<>{current.credential === "revoke" && current.override && !!state.open_checkouts?.count
         ? <p className="notice warn">{t("撤销后，{n} 个未到期收银台中完成的付款无法自动入账，需要人工核对。", { n: state.open_checkouts.count })}</p>
         : <p>{t(confirming.spec.enabled && current.credential !== "revoke" ? "发布后，用户可以按这些套餐和限制向钱包充值。" : "发布后，钱包充值关闭；已发起的付款仍会在支付通知到达后入账。")}</p>}
+        {confirming.spec.enabled && <p className="small muted">{t("发布前，服务器会向支付服务商核实所选支付方式；密钥被拒绝或所选支付方式尚未开通时不能发布。")}</p>}
         <dl className="col gap8 small"><PaymentMethodSummary spec={confirming.spec} /></dl></>}
       run={async (reason) => {
         const credential = current.credential === "replace"
@@ -238,9 +334,26 @@ export function PaymentsTab({ onDenied, canManage }: { onDenied: () => void; can
           : { action: current.credential, ...(current.credential === "revoke" && current.override ? { override_open_checkouts: true } : {}) };
         // A retry after the identity confirmation sends the same inputs; they are emptied when
         // the dialog closes or the publication succeeds.
-        return await post(`${API}/publish`, { ...confirming, credential, reason });
+        try {
+          return await post<{ methods_check?: string }>(`${API}/publish`, { ...confirming, credential, reason,
+            ...(unverified && acknowledged ? { [ACKNOWLEDGE]: true } : {}) });
+        } catch (error) {
+          const refusal = publishRefusal(error);
+          if (refusal?.kind === "methods") { clearGuard(); setBlocked(refusal.methods); }
+          if (refusal?.kind === "rejected") { clearGuard(); setRejected(true); }
+          if (refusal?.kind === "unverified") {
+            // An acknowledgement covers the reason it was given for, not a different one.
+            if (unverified?.cause !== refusal.cause) setAcknowledged(false);
+            setBlocked([]); setRejected(false); setUnverified(refusal);
+          }
+          throw error;
+        }
       }}
-      onDone={() => { clearSecrets(); setConfirming(null); setForm(null); setDone("支付设置已发布。"); load.reload(); }}
-      onClose={() => { setConfirming(null); clearSecrets(); }} />}
+      onDone={(result) => { clearSecrets(); clearGuard(); setConfirming(null); setForm(null); load.reload();
+        setDone(result?.methods_check === "unverified_acknowledged" ? "支付设置已发布；所选支付方式未经支付服务商核实。" : "支付设置已发布。"); }}
+      onClose={() => { setConfirming(null); clearSecrets(); clearGuard(); }}>
+      <PublishGuard blocked={blocked} rejected={rejected} unverified={unverified} acknowledged={acknowledged}
+        onAcknowledge={setAcknowledged} onDeselect={deselect} />
+    </ActionDialog>}
   </section>;
 }

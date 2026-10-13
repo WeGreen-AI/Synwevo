@@ -10,7 +10,7 @@ import pytest
 from synwevo_core.billing.payment_settings import PaymentSettings
 from synwevo_core.errors import ServiceError
 from synwevo_core.organizations import Organizations
-from synwevo_identity.payments import StripeCheckout, TopupService
+from synwevo_identity.payments import CREATING_GRACE_S, StripeCheckout, TopupService
 from .test_wallet_topups import (world, post, deliver, session_event, cny_booked, SPEC, CNY,
                                FIXTURE_SECRET_KEY, FIXTURE_WEBHOOK_SECRET)
 
@@ -82,18 +82,34 @@ def test_unknown_provider_response_never_redispatches_and_late_evidence_credits_
     assert first.status_code == 202 and first.json()["creation_status"] == "verifying"
     assert secret_marker not in first.text and FIXTURE_SECRET_KEY not in first.text
     oid = first.json()["order_id"]
+    assert "failure_reason" not in first.json(), "an unknown outcome is not a refusal"
     started = service.clock()
-    monkeypatch.setattr(service, "clock", lambda: started + 7200)
+    expires = world["store"].one("SELECT expires_at FROM payment_topups WHERE order_id=?", (oid,))["expires_at"]
+    original_clock = service.clock
+    # Until the requested expiry plus the grace, age alone is not evidence of anything.
+    monkeypatch.setattr(service, "clock", lambda: expires + CREATING_GRACE_S - 1)
     for _ in range(2):
         retry = post(c, PATH, body)
         assert retry.status_code == 202 and retry.json()["order_id"] == oid
         assert retry.json()["status"] == "pending" and retry.json()["checkout_url"] is None
-    assert c.get(f"{PATH}/{oid}").json()["creation_status"] == "verifying", "age is not evidence of failure"
+    assert c.get(f"{PATH}/{oid}").json()["creation_status"] == "verifying"
+    # After it, any session that request created has expired at the provider: the order reads
+    # expired/resolved, so the person can choose again. Still no second dispatch.
+    monkeypatch.setattr(service, "clock", lambda: started + 7200)
+    for _ in range(2):
+        retry = post(c, PATH, body)
+        assert retry.status_code == 200 and retry.json()["order_id"] == oid
+        assert retry.json()["status"] == "expired" and retry.json()["creation_status"] == "resolved"
+        assert retry.json()["checkout_url"] is None and "failure_reason" not in retry.json()
+    assert c.get(f"{PATH}/{oid}").json()["status"] == "expired"
+    assert world["store"].one("SELECT status FROM payment_topups WHERE order_id=?", (oid,))["status"] == "creating", \
+        "reads never write"
     assert len(world["stripe"].requests) == 1 and cny_booked(world) == 0
-    monkeypatch.setattr(service, "clock", lambda: started)
+    # Late signed evidence still credits, exactly once, even after the order read as expired.
     event = session_event(oid)
-    assert deliver(world, event).json()["status"] == "processed"
-    assert deliver(world, event).json()["status"] == "processed"
+    assert deliver(world, event, at=started + 7200).json()["status"] == "processed"
+    assert deliver(world, event, at=started + 7200).json()["status"] == "processed"
+    monkeypatch.setattr(service, "clock", original_clock)
     paid = post(c, PATH, body).json()
     assert paid["order_id"] == oid and paid["status"] == "paid" and paid["checkout_url"] is None
     assert cny_booked(world) == 1000 * 10**4

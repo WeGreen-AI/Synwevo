@@ -5,11 +5,16 @@ The shared contract (org-payments package, consumed by the usage pages):
   GET  /api/auth/wallet/topup-options?payer_kind=&payer_id=
        -> {available, reason?, currency, payment_methods, packages: [{id, amount_minor, label}], min_amount_minor, max_amount_minor}
   POST /api/auth/wallet/topups {payer_kind, payer_id, package_id? | amount_minor, idempotency_key?, challenge_token?}
-       -> {order_id, status, creation_status, checkout_url?, replayed}
+       -> {order_id, status, creation_status, checkout_url?, replayed, failure_reason?}
        201 new / 200 replay / 202 verifying; same key with different intent -> 409.
-       Omitted keys retain legacy independent creation, with no retry guarantee.
+       A new order the provider definitely refused is 201 with status=failed, creation_status=resolved
+       and failure_reason payment_method_not_enabled | provider_configuration | provider_rejected
+       (nothing was created, nothing charged). Omitted keys retain legacy independent creation,
+       with no retry guarantee.
   GET  /api/auth/wallet/topups/{order_id}
-       -> {order_id, status: pending|paid|failed|expired, amount_minor, credited_at?, ...}
+       -> {order_id, status: pending|paid|failed|expired, creation_status, amount_minor, credited_at?,
+           failure_reason?, ...}; an unresolved creation reads expired/resolved once its requested
+       expiry plus payments.CREATING_GRACE_S has passed.
   GET  /api/auth/wallet/receipts/{order_id}   -> the receipt of a credited order (JSON)
   POST /api/auth/payments/stripe/webhook      -> anonymous; the Stripe-Signature is the authority
 

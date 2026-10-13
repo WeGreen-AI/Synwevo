@@ -119,12 +119,71 @@ registerMessages({
   "Stripe 账户尚未启用收款。即使默认配置显示渠道可用，也不能据此认定可以收款；请到 Stripe 检查账户状态。": {
     en: "The Stripe account is not enabled to accept payments. A channel being available in the default configuration does not establish that payments can be accepted. Check the account status in Stripe.",
     "zh-Hant": "Stripe 帳戶尚未啟用收款。即使預設設定顯示渠道可用，也不能據此認定可以收款；請到 Stripe 檢查帳戶狀態。" },
-  "已保存的选择中包含默认配置不可用的渠道：{methods}。请到 Stripe 检查；如需调整，请通过原有“检查并发布”流程修改。": {
-    en: "Your saved selection includes channels unavailable in the default configuration: {methods}. Check them in Stripe; if changes are needed, use the existing “Review and publish” flow.",
-    "zh-Hant": "已儲存的選擇中包含預設設定不可用的渠道：{methods}。請到 Stripe 檢查；如需調整，請透過原有「檢查並發布」流程修改。" },
-  "Stripe 默认配置的可用状态不代表最终渠道资格、币种支持或订单成功。收银台显式指定的支付方式可能与默认配置展示不同；此检查不会更改所选渠道，也不会阻止发布。": {
-    en: "Availability in Stripe’s default configuration does not establish final channel eligibility, currency support or order success. Payment methods explicitly selected for checkout may differ from the default configuration shown here. This check does not change selected channels or prevent publishing.",
-    "zh-Hant": "Stripe 預設設定的可用狀態不代表最終渠道資格、幣別支援或訂單成功。收銀台明確指定的支付方式可能與預設設定展示不同；此檢查不會變更所選渠道，也不會阻止發布。" },
+  "已保存的选择中包含 Stripe 报告尚未开通的渠道：{methods}。支付服务商会拒绝为包含这些渠道的充值创建付款页面。请到 Stripe 开通，或通过“检查并发布”取消选择它们。": {
+    en: "Your saved selection includes channels Stripe reports as not activated: {methods}. The payment provider refuses to create a payment page for top-ups that include them. Activate them in Stripe, or deselect them through “Review and publish”.",
+    "zh-Hant": "已儲存的選擇中包含 Stripe 回報尚未開通的渠道：{methods}。支付服務商會拒絕為包含這些渠道的儲值建立付款頁面。請到 Stripe 開通，或透過「檢查並發布」取消選擇它們。" },
+  "Stripe 默认配置的可用状态不代表最终渠道资格、币种支持或订单成功。收银台显式指定的支付方式可能与默认配置展示不同；此检查不会更改所选渠道。发布开放充值的设置时，服务器会再做一次同样的检查：拒绝发布未开通的渠道，无法核实时需要明确确认。": {
+    en: "Availability in Stripe’s default configuration does not establish final channel eligibility, currency support or order success. Payment methods explicitly selected for checkout may differ from the default configuration shown here. This check does not change selected channels. When settings with top-ups open are published, the server runs the same check again: it refuses channels that are not activated, and asks for an explicit confirmation when it cannot verify them.",
+    "zh-Hant": "Stripe 預設設定的可用狀態不代表最終渠道資格、幣別支援或訂單成功。收銀台明確指定的支付方式可能與預設設定展示不同；此檢查不會變更所選渠道。發布開放儲值的設定時，伺服器會再做一次同樣的檢查：拒絕發布未開通的渠道，無法核實時需要明確確認。" },
+  "Stripe 账户已开通此方式": { en: "Activated for the Stripe account", "zh-Hant": "Stripe 帳戶已開通此方式" },
+  "Stripe 账户未开通此方式": { en: "Not activated for the Stripe account", "zh-Hant": "Stripe 帳戶未開通此方式" },
+  // the saved-key diagnostic's definite answers about the key (payment_readiness.py)
+  "Stripe 拒绝了已保存的密钥（密钥无效、已撤销或已过期）。请在 Stripe 核对后，通过“检查并发布”设置新的密钥": {
+    en: "Stripe rejected the saved key (it is invalid, revoked or expired). Check it in Stripe, then set a new key through “Review and publish”.",
+    "zh-Hant": "Stripe 拒絕了已儲存的金鑰（金鑰無效、已撤銷或已過期）。請在 Stripe 核對後，透過「檢查並發布」設定新的金鑰" },
+  "Stripe 不允许已保存的密钥读取账户信息（可能是权限受限的密钥），因此无法检查支付渠道": {
+    en: "Stripe does not allow the saved key to read the account (it may be a restricted key), so the payment channels cannot be checked.",
+    "zh-Hant": "Stripe 不允許已儲存的金鑰讀取帳戶資訊（可能是權限受限的金鑰），因此無法檢查支付渠道" },
+  "Stripe API 版本：{version}": { en: "Stripe API version: {version}", "zh-Hant": "Stripe API 版本：{version}" },
+  "Stripe 应用的 API 版本（{applied}）与平台固定的版本（{pinned}）不一致，请检查后再开放充值。": {
+    en: "Stripe applied API version {applied}, not the version this platform pins ({pinned}). Check this before opening top-ups.",
+    "zh-Hant": "Stripe 套用的 API 版本（{applied}）與平台固定的版本（{pinned}）不一致，請檢查後再開放儲值。" },
+  // ---- publish check against the provider (PaymentsTab.PublishGuard)
+  "发布前，服务器会向支付服务商核实所选支付方式；密钥被拒绝或所选支付方式尚未开通时不能发布。": {
+    en: "Before publishing, the server checks the selected payment methods with the payment provider; settings cannot be published with a key it rejects or with methods it has not activated.",
+    "zh-Hant": "發布前，伺服器會向支付服務商核實所選支付方式；金鑰被拒絕或所選支付方式尚未開通時不能發布。" },
+  "支付服务商报告以下所选支付方式尚未开通：": {
+    en: "The payment provider reports these selected payment methods as not activated:",
+    "zh-Hant": "支付服務商回報以下所選支付方式尚未開通：" },
+  "{method}：支付服务商报告尚未开通": { en: "{method}: not activated with the payment provider", "zh-Hant": "{method}：支付服務商回報尚未開通" },
+  "Stripe 拒绝了这个密钥，开放充值的设置不能发布，也不能通过确认跳过。请在 Stripe 核对或重新生成密钥，选择“设置或轮换密钥”填入后再发布；只关闭充值的设置不需要这项检查。": {
+    en: "Stripe rejected this key, so settings with top-ups open cannot be published, and no confirmation can override that. Check or regenerate the key in Stripe, choose “Set or rotate keys”, enter it and publish again. Settings that only close top-ups do not need this check.",
+    "zh-Hant": "Stripe 拒絕了這個金鑰，開放儲值的設定不能發布，也不能透過確認略過。請在 Stripe 核對或重新產生金鑰，選擇「設定或輪換金鑰」填入後再發布；只關閉儲值的設定不需要這項檢查。" },
+  "Stripe 不允许这个密钥读取账户信息（可能是权限受限的密钥），所以无法核实所选支付方式。如确认这个密钥可以创建付款页面，可以勾选下面的确认后发布；它会写入审计记录。": {
+    en: "Stripe does not allow this key to read the account (it may be a restricted key), so the selected payment methods cannot be verified. If you are sure this key can create payment pages, tick the confirmation below to publish; it is written to the audit log.",
+    "zh-Hant": "Stripe 不允許這個金鑰讀取帳戶資訊（可能是權限受限的金鑰），所以無法核實所選支付方式。如確認這個金鑰可以建立付款頁面，可以勾選下面的確認後發布；它會寫入稽核紀錄。" },
+  "我知道这个密钥不能读取账户信息、所选支付方式未经核实，仍要发布": {
+    en: "I understand this key cannot read the account and the selected payment methods are unverified; publish anyway",
+    "zh-Hant": "我知道這個金鑰不能讀取帳戶資訊、所選支付方式未經核實，仍要發布" },
+  "Stripe 的回答不足以确认以下所选支付方式已开通：": {
+    en: "Stripe’s answer does not confirm that these selected payment methods are activated:",
+    "zh-Hant": "Stripe 的回答不足以確認以下所選支付方式已開通：" },
+  "{method}：未能确认已开通": { en: "{method}: activation not confirmed", "zh-Hant": "{method}：未能確認已開通" },
+  "Stripe 账户尚未启用收款。": { en: "The Stripe account is not enabled to accept payments.", "zh-Hant": "Stripe 帳戶尚未啟用收款。" },
+  "取消选择这些支付方式": { en: "Deselect these payment methods", "zh-Hant": "取消選擇這些支付方式" },
+  "如确需在未核实的情况下现在发布，请勾选下面的确认；它会写入审计记录。": {
+    en: "To publish now without that check, tick the confirmation below; it is written to the audit log.",
+    "zh-Hant": "如確需在未核實的情況下現在發布，請勾選下面的確認；它會寫入稽核紀錄。" },
+  // refusals of the publish check (admin_payments.publish)
+  "Stripe 报告所选支付方式中有尚未开通的方式，设置未发布。请取消选择这些方式后再发布": {
+    en: "Stripe reports that some selected payment methods are not activated, so the settings were not published. Deselect them and publish again.",
+    "zh-Hant": "Stripe 回報所選支付方式中有尚未開通的方式，設定未發布。請取消選擇這些方式後再發布" },
+  "Stripe 拒绝了这个密钥（密钥无效、已撤销或已过期），设置未发布。请在 Stripe 核对后重新设置密钥；这项拒绝不能通过确认跳过": {
+    en: "Stripe rejected this key (it is invalid, revoked or expired), so the settings were not published. Check it in Stripe and set the key again; this refusal cannot be overridden by a confirmation.",
+    "zh-Hant": "Stripe 拒絕了這個金鑰（金鑰無效、已撤銷或已過期），設定未發布。請在 Stripe 核對後重新設定金鑰；這項拒絕不能透過確認略過" },
+  "Stripe 的回答不足以确认所选支付方式已开通，或账户尚未启用收款，设置未发布。确需在未核实的情况下发布，请明确确认": {
+    en: "Stripe’s answer does not confirm that the selected payment methods are activated, or the account is not enabled to accept payments, so the settings were not published. To publish without that confirmation, confirm it explicitly.",
+    "zh-Hant": "Stripe 的回答不足以確認所選支付方式已開通，或帳戶尚未啟用收款，設定未發布。確需在未核實的情況下發布，請明確確認" },
+  "Stripe 不允许这个密钥读取账户信息（可能是权限受限的密钥），无法核实所选支付方式，设置未发布。如确认此密钥可以创建付款页面，请明确确认后发布": {
+    en: "Stripe does not allow this key to read the account (it may be a restricted key), so the selected payment methods could not be verified and the settings were not published. If you are sure this key can create payment pages, confirm it explicitly to publish.",
+    "zh-Hant": "Stripe 不允許這個金鑰讀取帳戶資訊（可能是權限受限的金鑰），無法核實所選支付方式，設定未發布。如確認此金鑰可以建立付款頁面，請明確確認後發布" },
+  "暂时无法向 Stripe 核实所选支付方式，设置未发布。请稍后重试；确需在未核实的情况下发布，请明确确认": {
+    en: "The selected payment methods could not be checked with Stripe right now, so the settings were not published. Try again later; to publish without the check, confirm it explicitly.",
+    "zh-Hant": "暫時無法向 Stripe 核實所選支付方式，設定未發布。請稍後重試；確需在未核實的情況下發布，請明確確認" },
+  "我知道所选支付方式未经核实，仍要发布": { en: "I understand the selected payment methods are unverified; publish anyway", "zh-Hant": "我知道所選支付方式未經核實，仍要發布" },
+  "支付设置已发布；所选支付方式未经支付服务商核实。": {
+    en: "Payment settings published. The selected payment methods were not verified with the payment provider.",
+    "zh-Hant": "支付設定已發布；所選支付方式未經支付服務商核實。" },
 
   // ---- finance
   "此部署尚未配置计费环境或 CNY 钱包单位，没有资金记录可以显示。": { en: "This deployment has no billing environment or CNY wallet unit configured, so there are no money records to show.", "zh-Hant": "此部署尚未設定計費環境或 CNY 錢包單位，沒有資金紀錄可以顯示。" },
@@ -159,6 +218,17 @@ registerMessages({
   "失败": { en: "Failed", "zh-Hant": "失敗" },
   "已过期": { en: "Expired", "zh-Hant": "已過期" },
   "创建中": { en: "Creating", "zh-Hant": "建立中" },
+  // why a top-up failed or is unresolved (FinanceTab.PaymentFailure)
+  "支付服务拒绝创建付款页面": { en: "The payment service refused to create the payment page", "zh-Hant": "支付服務拒絕建立付款頁面" },
+  "未能确认付款页面是否已创建": { en: "Whether the payment page was created is unknown", "zh-Hant": "未能確認付款頁面是否已建立" },
+  "支付服务暂时不可用": { en: "The payment service was unavailable", "zh-Hant": "支付服務暫時不可用" },
+  "账本未能登记订单": { en: "The ledger could not record the order", "zh-Hant": "帳本未能登記訂單" },
+  "发起前付款方权限或支付配置已变化": { en: "The payer's permission or the payment settings changed before dispatch", "zh-Hant": "發起前付款方權限或支付設定已變更" },
+  "付款页面已过期（支付服务通知）": { en: "The payment page expired (payment service notice)", "zh-Hant": "付款頁面已過期（支付服務通知）" },
+  "延后确认的付款失败（支付服务通知）": { en: "A delayed payment failed (payment service notice)", "zh-Hant": "延後確認的付款失敗（支付服務通知）" },
+  "所选支付方式未在支付服务商处开通": { en: "a selected payment method is not activated with the provider", "zh-Hant": "所選支付方式未在支付服務商處開通" },
+  "支付密钥、权限或账户配置有误": { en: "a problem with the payment key, permissions or account", "zh-Hant": "支付金鑰、權限或帳戶設定有誤" },
+  "支付服务拒绝了请求": { en: "the payment service rejected the request", "zh-Hant": "支付服務拒絕了請求" },
   "银行卡": { en: "Card", "zh-Hant": "銀行卡" },
   "微信支付": { en: "WeChat Pay", "zh-Hant": "微信支付" },
   "支付宝": { en: "Alipay", "zh-Hant": "支付寶" },

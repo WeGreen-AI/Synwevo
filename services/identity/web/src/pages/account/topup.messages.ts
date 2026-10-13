@@ -41,6 +41,27 @@ registerMessages({
   '该钱包因支付争议已被冻结，暂不能充值': { en: 'This wallet is frozen because of a payment dispute and cannot be topped up.', 'zh-Hant': '該錢包因支付爭議已被凍結，暫不能儲值' },
   '请选择一个充值套餐或填写充值金额': { en: 'Choose a top-up package or enter an amount.', 'zh-Hant': '請選擇一個儲值套餐或填寫儲值金額' },
   '请先验证邮箱再继续': { en: 'Verify your email address before continuing.', 'zh-Hant': '請先驗證郵箱再繼續' },
+  // why the provider refused to create the checkout (walletModel.TOPUP_FAILURE_REASONS); each says nothing was charged
+  '支付服务拒绝创建付款页面：所选支付方式尚未在支付服务商处开通。没有扣款。请稍后再试或联系平台管理员。': {
+    en: 'The payment service refused to create the payment page: a selected payment method has not been activated with the payment provider. Nothing was charged. Try again later or contact the platform administrator.',
+    'zh-Hant': '支付服務拒絕建立付款頁面：所選支付方式尚未在支付服務商處開通。沒有扣款。請稍後再試或聯絡平台管理員。' },
+  '支付服务拒绝创建付款页面：平台的支付服务配置有误。没有扣款。请稍后再试或联系平台管理员。': {
+    en: "The payment service refused to create the payment page because of a problem with the platform's payment configuration. Nothing was charged. Try again later or contact the platform administrator.",
+    'zh-Hant': '支付服務拒絕建立付款頁面：平台的支付服務設定有誤。沒有扣款。請稍後再試或聯絡平台管理員。' },
+  '支付服务拒绝创建付款页面。没有扣款。请稍后再试或联系平台管理员。': {
+    en: 'The payment service refused to create the payment page. Nothing was charged. Try again later or contact the platform administrator.',
+    'zh-Hant': '支付服務拒絕建立付款頁面。沒有扣款。請稍後再試或聯絡平台管理員。' },
+  // an unknown creation outcome, and a restored order read on opening the dialog (TopupDialog.tsx)
+  '暂时无法确认付款页面是否已创建，因此没有跳转。原充值请求已保留：重试只会核实同一笔订单，不会重复创建；订单完成或过期之前，不能更改金额或创建另一笔充值。': {
+    en: 'We cannot confirm yet whether the payment page was created, so you were not redirected. Your original request is kept: retrying only checks the same order and never creates another. Until that order completes or expires, you cannot change the amount or start another top-up.',
+    'zh-Hant': '暫時無法確認付款頁面是否已建立，因此沒有跳轉。原儲值請求已保留：重試只會核實同一筆訂單，不會重複建立；訂單完成或過期之前，不能變更金額或建立另一筆儲值。' },
+  '原充值订单仍在等待付款；继续时会核实付款页面是否仍可使用。在它完成或过期之前，不能更改金额或创建另一笔充值。': {
+    en: 'The original order is still awaiting payment. Continuing first checks whether its payment page can still be used. Until it completes or expires, you cannot change the amount or start another top-up.',
+    'zh-Hant': '原儲值訂單仍在等待付款；繼續時會核實付款頁面是否仍可使用。在它完成或過期之前，不能變更金額或建立另一筆儲值。' },
+  '上一笔充值已到账。': { en: 'Your previous top-up has been credited.', 'zh-Hant': '上一筆儲值已到帳。' },
+  '上一笔充值订单已过期。': { en: 'Your previous top-up expired.', 'zh-Hant': '上一筆儲值訂單已過期。' },
+  '上一笔充值订单已失败，没有扣款。': { en: 'Your previous top-up failed and nothing was charged.', 'zh-Hant': '上一筆儲值訂單已失敗，沒有扣款。' },
+  '可以选择新的金额。': { en: 'You can choose a new amount.', 'zh-Hant': '可以選擇新的金額。' },
   // statement entry kinds added with grants and chargebacks (Wallet.tsx)
   '赠送额度': { en: 'Granted credit', 'zh-Hant': '贈送額度' },
   '拒付追回': { en: 'Recovered after a chargeback', 'zh-Hant': '拒付追回' },

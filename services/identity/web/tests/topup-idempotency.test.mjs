@@ -163,3 +163,189 @@ test('recovery, blocked and terminal notices are available in all supported lang
     assert.ok(ui.translate('zh-Hant', message));
   }
 });
+
+// ------------------------------------------------------------------ definite refusals, unknown outcomes, restored orders
+const refused = reason => ({ ...ready, status: 'failed', creation_status: 'resolved', checkout_url: null, failure_reason: reason });
+const han = /[㐀-鿿]/;
+
+test('a definite provider refusal frees the choice and says why in all three languages, always that nothing was charged', async () => {
+  for (const reason of ['payment_method_not_enabled', 'provider_configuration', 'provider_rejected']) {
+    const attempt = new topup.TopupAttempt(context, storageFixture());
+    const reply = await attempt.submit(selection, {}, async () => refused(reason));
+    assert.equal(topup.checkoutTarget(reply), null, 'a refused order is never followed anywhere');
+    assert.equal(topup.topupSettled(reply), true);
+    const message = topup.topupNotice(reply);
+    assert.ok(ui.hasMessage(message), message);
+    assert.match(message, /支付服务拒绝创建付款页面.*没有扣款/);
+    assert.match(ui.translate('en', message), /refused to create the payment page.*Nothing was charged/);
+    assert.doesNotMatch(ui.translate('en', message), han);
+    assert.match(ui.translate('zh-Hant', message), /沒有扣款/);
+    attempt.startNew();
+    assert.equal(attempt.intent, null, 'the person can choose again at once');
+  }
+  assert.match(topup.topupNotice(refused('payment_method_not_enabled')), /所选支付方式尚未在支付服务商处开通/);
+  assert.match(ui.translate('en', topup.topupNotice(refused('provider_configuration'))), /payment configuration/);
+  for (const reason of [undefined, null, 'future_reason', 'toString'])
+    assert.equal(topup.topupNotice(refused(reason)), '原充值订单已失败，可以重新选择金额。', String(reason));
+});
+
+test('an unknown creation outcome is worded honestly: not redirected, no claim about money, the same order is checked again', () => {
+  const unknown = topup.topupNotice(verifying);
+  assert.notEqual(unknown, topup.topupNotice(null), 'a verifying answer differs from no answer at all');
+  assert.match(unknown, /^暂时无法确认付款页面是否已创建，因此没有跳转/);
+  // UX-5: like the return page and the organization panel, the verifying wording never says no money was taken.
+  assert.doesNotMatch(unknown, /扣款/);
+  for (const locale of ['en', 'zh-Hant']) assert.ok(ui.hasMessage(unknown) && ui.translate(locale, unknown) !== unknown);
+  const en = ui.translate('en', unknown);
+  assert.match(en, /cannot confirm yet whether the payment page was created, so you were not redirected/);
+  assert.doesNotMatch(en, /charged/);
+  assert.doesNotMatch(ui.translate('zh-Hant', unknown), /扣款/);
+  assert.doesNotMatch(en, han);
+  assert.doesNotMatch(en, /seconds|minutes/, 'no time promise for an unknown outcome');
+});
+
+test('only a ready reply with a Stripe checkout address is followed; a verifying reply never dereferences its empty address', () => {
+  const organization = { ...ready, payer_kind: 'organization', payer_id: 'org_fixture' };
+  for (const reply of [ready, organization]) assert.equal(topup.checkoutTarget(reply), 'https://checkout.stripe.com/c/pay/cs_fixture');
+  for (const reply of [verifying, { ...organization, creation_status: 'verifying', checkout_url: null },
+    { ...ready, creation_status: 'blocked', checkout_url: null }, refused('provider_rejected')])
+    assert.equal(topup.checkoutTarget(reply), null);
+  for (const checkout_url of [null, 'https://evil.example/c/pay', 'http://checkout.stripe.com/c/pay', 'javascript:alert(1)'])
+    assert.throws(() => topup.checkoutTarget({ ...ready, checkout_url }), /checkout_address/, String(checkout_url));
+});
+
+const orderStatus = (overrides = {}) => ({ order_id: 'top_fixture', status: 'pending', creation_status: 'verifying', amount_minor: 1000,
+  currency: 'CNY', payer_kind: 'user', payer_id: 'u_fixture', created_at: 1_790_000_000, expires_at: 1_790_003_600, ...overrides });
+async function restoredAttempt(storage = storageFixture(), scope = context) {
+  const first = new topup.TopupAttempt(scope, storage);
+  await first.submit(selection, {}, async () => ({ ...verifying, payer_kind: scope.payer_kind, payer_id: scope.payer_id }));
+  return new topup.TopupAttempt(scope, storage);   // the dialog reopened in the same tab
+}
+
+test('a restored intent whose order is final is released on opening, and a new choice gets a fresh key', async () => {
+  for (const [status, extra] of [['paid', { credited_at: 1_790_000_100 }], ['failed', { failure_reason: 'payment_method_not_enabled' }],
+    ['expired', {}]]) {
+    const storage = storageFixture(), attempt = await restoredAttempt(storage);
+    const oldKey = attempt.intent.idempotency_key, reads = [];
+    const signal = new AbortController().signal;
+    const out = await topup.readRestoredOrder(attempt, signal, async (path, given) => {
+      reads.push(path); assert.equal(given, signal);
+      return orderStatus({ status, creation_status: 'resolved', ...extra });
+    });
+    assert.deepEqual(reads, ['/api/auth/wallet/topups/top_fixture'], 'a read of the existing order, never a create');
+    assert.equal(out.released, true, status);
+    assert.equal(out.status.status, status);
+    assert.equal(attempt.intent, null);
+    assert.equal(storage.entries.size, 0, 'the tab no longer pins the old request');
+    await attempt.submit({ package_id: 'cny-50', quoted_amount_minor: 5000 }, {}, async (_path, body) => {
+      assert.notEqual(body.idempotency_key, oldKey); assert.equal(body.package_id, 'cny-50');
+      return { ...verifying, order_id: 'top_fixture_next', amount_minor: 5000 };
+    });
+  }
+  // The organization's dialog recovers the same way, under its own storage key.
+  const storage = storageFixture(), scope = { ...context, payer_kind: 'organization', payer_id: 'org_fixture' };
+  const attempt = await restoredAttempt(storage, scope);
+  const out = await topup.readRestoredOrder(attempt, undefined, async () =>
+    orderStatus({ status: 'expired', creation_status: 'resolved', payer_kind: 'organization', payer_id: 'org_fixture' }));
+  assert.equal(out.released, true);
+  assert.equal(storage.entries.size, 0);
+});
+
+test('an order that may still complete, or an answer not about it, keeps the intent: no second order can race the first', async () => {
+  const keeps = [
+    orderStatus(), orderStatus({ creation_status: 'resolved' }),   // verifying, or a checkout still open
+    orderStatus({ status: 'paid', creation_status: 'verifying' }),
+    orderStatus({ status: 'failed', creation_status: 'resolved', order_id: 'top_other' }),
+    orderStatus({ status: 'failed', creation_status: 'resolved', payer_id: 'u_other' }),
+    orderStatus({ status: 'failed', creation_status: 'resolved', payer_kind: 'organization' }),
+    orderStatus({ status: 'refunded', creation_status: 'resolved' }), orderStatus({ status: 'expired' , creation_status: undefined }),
+    null, '<html>fixture</html>', { secret: 'fixture' },
+  ];
+  for (const answer of keeps) {
+    const storage = storageFixture(), attempt = await restoredAttempt(storage);
+    const key = attempt.intent.idempotency_key;
+    const out = await topup.readRestoredOrder(attempt, undefined, async () => answer);
+    assert.equal(out.released, false, JSON.stringify(answer));
+    assert.equal(attempt.intent.idempotency_key, key);
+    assert.equal(storage.entries.size, 1);
+    assert.throws(() => attempt.startNew(), /topup_unresolved/);
+  }
+  const lost = await restoredAttempt();
+  await assert.rejects(topup.readRestoredOrder(lost, undefined, async () => { throw new TypeError('fixture network'); }));
+  assert.ok(lost.intent, 'an unreadable status keeps the original request');
+  // No known order id (the first response was lost): nothing to read; only a replay can tell.
+  const storage = storageFixture(), unsent = new topup.TopupAttempt(context, storage);
+  await assert.rejects(unsent.submit(selection, {}, async () => { throw new TypeError('fixture lost response'); }));
+  const reopened = new topup.TopupAttempt(context, storage);
+  let reads = 0;
+  assert.deepEqual(await topup.readRestoredOrder(reopened, undefined, async () => { reads++; }), { status: null, released: false });
+  assert.equal(reads, 0);
+  // A replay in flight wins: a status read cannot release the intent underneath it.
+  const busy = await restoredAttempt();
+  let finish; const flight = busy.submit(undefined, {}, () => new Promise(resolve => { finish = resolve; }));
+  assert.equal(busy.releaseFinal(orderStatus({ status: 'failed', creation_status: 'resolved' })), false);
+  finish(verifying); await flight;
+  assert.ok(busy.intent);
+  // A record that cannot be removed is reported, never silently replaced.
+  const stuck = await restoredAttempt({ ...storageFixture(), removeItem() { throw new Error('fixture denied'); } });
+  await assert.rejects(topup.readRestoredOrder(stuck, undefined, async () => orderStatus({ status: 'expired', creation_status: 'resolved' })), /topup_storage/);
+});
+
+test('restored and released order notices exist in all three languages', () => {
+  const lines = [topup.restoredNotice(orderStatus()), topup.restoredNotice(orderStatus({ creation_status: 'resolved' })),
+    ...['paid', 'expired', 'failed'].flatMap(status => topup.releasedNotice(orderStatus({ status, creation_status: 'resolved' }))),
+    ...['paid', 'expired', 'failed'].flatMap(status => topup.releasedNotice(orderStatus({ status, creation_status: 'resolved' }), false)),
+    ...topup.releasedNotice(orderStatus({ status: 'failed', creation_status: 'resolved', failure_reason: 'provider_configuration' }))];
+  assert.equal(topup.restoredNotice(null), null);
+  assert.equal(topup.restoredNotice(orderStatus({ creation_status: 'blocked' })), null, 'only a replay can say what continuing does');
+  assert.equal(topup.restoredNotice(orderStatus()), topup.topupNotice(verifying));
+  assert.deepEqual(topup.releasedNotice(orderStatus({ status: 'failed', creation_status: 'resolved', failure_reason: 'provider_configuration' }))[1],
+    '可以选择新的金额。');
+  for (const line of lines) {
+    assert.ok(ui.hasMessage(line), line);
+    assert.doesNotMatch(ui.translate('en', line), han, line);
+    assert.notEqual(ui.translate('zh-Hant', line), undefined);
+  }
+});
+
+test('a restored pending order is never promised a usable payment page: continuing checks it first (UX-3)', () => {
+  // The status read cannot see that top-ups closed or the keys changed (the replay then answers
+  // blocked), nor that the person already paid; the notice only says what continuing does.
+  const pending = topup.restoredNotice(orderStatus({ creation_status: 'resolved' }));
+  assert.equal(pending, '原充值订单仍在等待付款；继续时会核实付款页面是否仍可使用。在它完成或过期之前，不能更改金额或创建另一笔充值。');
+  for (const [locale, promise] of [['zh-Hans', /仍可使用。继续会回到|付款页面仍可使用/], ['zh-Hant', /付款頁面仍可使用。繼續會回到/],
+    ['en', /still open|takes you back/]]) {
+    const text = locale === 'zh-Hans' ? pending : ui.translate(locale, pending);
+    assert.doesNotMatch(text, promise, `${locale}: ${text}`);
+  }
+  assert.match(ui.translate('en', pending), /still awaiting payment\. Continuing first checks whether its payment page can still be used/);
+  assert.match(ui.translate('zh-Hant', pending), /仍在等待付款；繼續時會核實/);
+  // Consistent with the closed notice beside it: nothing here creates an order.
+  assert.doesNotMatch(pending, /新的|重新选择/);
+});
+
+test('a released order invites a new amount only where top-ups are open (UX-4)', () => {
+  const final = (status, extra = {}) => orderStatus({ status, creation_status: 'resolved', ...extra });
+  const cases = [
+    [final('paid'), '上一笔充值已到账。'],
+    [final('expired'), '上一笔充值订单已过期。'],
+    [final('failed'), '上一笔充值订单已失败，没有扣款。'],
+    [final('failed', { failure_reason: 'payment_method_not_enabled' }), topup.topupNotice(refused('payment_method_not_enabled'))],
+  ];
+  for (const [status, outcome] of cases) {
+    assert.deepEqual(topup.releasedNotice(status), [outcome, '可以选择新的金额。'], status.status);
+    assert.deepEqual(topup.releasedNotice(status, true), [outcome, '可以选择新的金额。']);
+    assert.deepEqual(topup.releasedNotice(status, false), [outcome], 'closed, frozen or not permitted: only the outcome');
+    for (const line of topup.releasedNotice(status, false)) {
+      assert.doesNotMatch(ui.translate('en', line), /choose a new amount/i);
+      assert.doesNotMatch(ui.translate('zh-Hant', line), /選擇新的金額/);
+    }
+  }
+  // The expired outcome makes no claim that nothing was charged: a late signed payment still credits it.
+  for (const locale of ['zh-Hans', 'zh-Hant', 'en']) {
+    const line = locale === 'zh-Hans' ? '上一笔充值订单已过期。' : ui.translate(locale, '上一笔充值订单已过期。');
+    assert.doesNotMatch(line, /扣款|charged/);
+  }
+});
+
+// The mounted dialog (closed, frozen, verifying, released) is covered by topup-dialog-restored.test.mjs.

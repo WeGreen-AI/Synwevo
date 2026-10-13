@@ -39,7 +39,9 @@ export interface TopupOptions {
 export type TopupState = 'pending' | 'paid' | 'failed' | 'expired';
 /** Creation outcome, separate from payment status: GET may say resolved for an unpaid session. */
 export type TopupCreationStatus = 'verifying' | 'ready' | 'blocked' | 'resolved';
-export interface TopupStatus { order_id: string; status: TopupState; creation_status?: TopupCreationStatus; amount_minor: number; currency?: string; credited_at?: number; created_at?: number; payer_kind?: PayerKind; payer_id?: string }
+export interface TopupStatus { order_id: string; status: TopupState; creation_status?: TopupCreationStatus; amount_minor: number; currency?: string; credited_at?: number; created_at?: number; payer_kind?: PayerKind; payer_id?: string;
+  /** Why the provider refused to create the checkout (see TOPUP_FAILURE_REASONS); only on an order that failed at creation. */
+  failure_reason?: string | null }
 export interface Receipt {
   order_id: string; status: 'paid'; amount_minor: number; currency: string; method?: string | null; provider?: string;
   provider_reference?: string | null; paid_at?: number | null; credited_at?: number | null; operator_name?: string | null;
@@ -227,6 +229,18 @@ export function topupClosedReason(options: TopupOptions | null, failureStatus: n
   if (!options) return null;
   if (!options.available) return options.reason || 'not_configured';
   return paymentMethods(options.payment_methods).length ? null : 'not_configured';
+}
+/** Why the payment provider refused to create a checkout, by the server's stable `failure_reason`
+ *  code. Each sentence says that nothing was charged: the order failed before any payment page
+ *  existed. A code this page does not know yet gets no sentence of its own (the caller falls back
+ *  to the plain failed state) rather than a guess. */
+export const TOPUP_FAILURE_REASONS: Record<string, string> = {
+  payment_method_not_enabled: '支付服务拒绝创建付款页面：所选支付方式尚未在支付服务商处开通。没有扣款。请稍后再试或联系平台管理员。',
+  provider_configuration: '支付服务拒绝创建付款页面：平台的支付服务配置有误。没有扣款。请稍后再试或联系平台管理员。',
+  provider_rejected: '支付服务拒绝创建付款页面。没有扣款。请稍后再试或联系平台管理员。',
+};
+export function topupFailureText(reason: unknown): string | null {
+  return typeof reason === 'string' && Object.hasOwn(TOPUP_FAILURE_REASONS, reason) ? TOPUP_FAILURE_REASONS[reason] : null;
 }
 export type TopupView = TopupState | 'cancelled' | 'slow' | 'verifying';
 /** A terminal payment state wins. An unknown creation outcome stays distinct even after the

@@ -14,9 +14,18 @@ type Readiness = {
   charges_enabled: boolean;
   methods: Record<PaymentMethod, boolean | null>;
   configuration_status: "available" | "missing" | "ambiguous" | "incomplete" | "inactive";
+  /** Whether Stripe has activated each method for the account (its capability, or availability in the
+   *  default configuration); null when its answer proves neither. The publish check refuses `false`. */
+  activated?: Record<PaymentMethod, boolean | null>;
+  /** The Stripe API version Stripe applied to the check, and the one this platform pins on every request. */
+  api_version?: string | null;
+  api_version_requested?: string;
 };
 type Props = { revision: number; savedMethods: PaymentMethod[]; hasDraft: boolean };
 type Check = { phase: "idle" | "checking" | "stale" } | { phase: "ready"; result: Readiness } | { phase: "error"; error: unknown };
+
+const API_VERSION = /^\d{4}-\d{2}-\d{2}(\.[a-z]{1,20})?$/;
+const version = (value: unknown) => (typeof value === "string" && API_VERSION.test(value) ? value : null);
 
 const CONFIGURATION_NOTICES: Record<Exclude<Readiness["configuration_status"], "available">, string> = {
   missing: "未找到 Stripe 默认支付配置，渠道状态未能核实。",
@@ -66,7 +75,10 @@ function SavedPaymentReadiness({ revision, savedMethods, hasDraft }: Props) {
   }
 
   const result = check.phase === "ready" ? check.result : null;
-  const unavailable = result ? savedMethods.filter(method => result.methods[method] === false) : [];
+  // Not activated is what makes Stripe refuse a checkout; an older answer without that evidence
+  // falls back to the default configuration's flag.
+  const unavailable = result ? savedMethods.filter(method => (result.activated ? result.activated[method] : result.methods[method]) === false) : [];
+  const applied = version(result?.api_version), pinned = version(result?.api_version_requested);
   return <section className="col gap12" aria-labelledby={`${id}-title`} style={{ minWidth: 0, overflowWrap: "anywhere" }}>
     <h3 id={`${id}-title`}>{t("已保存的支付渠道检查")}</h3>
     <p className="small muted" id={`${id}-scope`}>{t("仅检查当前已保存版本的凭据与渠道；未发布的草稿和新密钥不在检查范围内。充值关闭时也可检查已保存凭据。")}</p>
@@ -84,6 +96,8 @@ function SavedPaymentReadiness({ revision, savedMethods, hasDraft }: Props) {
       <p className="small muted">{t("检查范围：已保存第 {n} 版 · {env}；检查时间：{time}。", {
         n: revision, env: t(result.environment === "live" ? "正式环境" : "测试环境"), time: fmtTime(result.checked_at),
       })}</p>
+      {applied && <p className="small muted">{t("Stripe API 版本：{version}", { version: applied })}</p>}
+      {applied && pinned && applied !== pinned && <p className="notice warn" role="note">{t("Stripe 应用的 API 版本（{applied}）与平台固定的版本（{pinned}）不一致，请检查后再开放充值。", { applied, pinned })}</p>}
       {!result.charges_enabled && <div className="notice err" role="alert"><strong>{t("Stripe 账户尚未启用收款。即使默认配置显示渠道可用，也不能据此认定可以收款；请到 Stripe 检查账户状态。")}</strong></div>}
       {result.configuration_status !== "available" && <p className="notice warn" role="note">{t(CONFIGURATION_NOTICES[result.configuration_status])}</p>}
       <dl className="col gap8" style={{ margin: 0 }}>
@@ -92,12 +106,14 @@ function SavedPaymentReadiness({ revision, savedMethods, hasDraft }: Props) {
           <dd style={{ margin: 0, color: result.methods[method] === false ? "var(--warn)" : "var(--text-2)" }}>
             {t(result.methods[method] === true ? "默认配置可用" : result.methods[method] === false ? "默认配置不可用" : "未能核实")}
           </dd>
+          {typeof result.activated?.[method] === "boolean" && <dd style={{ margin: 0 }} className="small muted">
+            {t(result.activated[method] ? "Stripe 账户已开通此方式" : "Stripe 账户未开通此方式")}</dd>}
         </div>)}
       </dl>
-      {!!unavailable.length && <p className="notice warn" role="note">{t("已保存的选择中包含默认配置不可用的渠道：{methods}。请到 Stripe 检查；如需调整，请通过原有“检查并发布”流程修改。", {
+      {!!unavailable.length && <p className="notice warn" role="note">{t("已保存的选择中包含 Stripe 报告尚未开通的渠道：{methods}。支付服务商会拒绝为包含这些渠道的充值创建付款页面。请到 Stripe 开通，或通过“检查并发布”取消选择它们。", {
         methods: paymentMethodsText(unavailable, t, locale),
       })}</p>}
     </div>}
-    <p className="small muted">{t("Stripe 默认配置的可用状态不代表最终渠道资格、币种支持或订单成功。收银台显式指定的支付方式可能与默认配置展示不同；此检查不会更改所选渠道，也不会阻止发布。")}</p>
+    <p className="small muted">{t("Stripe 默认配置的可用状态不代表最终渠道资格、币种支持或订单成功。收银台显式指定的支付方式可能与默认配置展示不同；此检查不会更改所选渠道。发布开放充值的设置时，服务器会再做一次同样的检查：拒绝发布未开通的渠道，无法核实时需要明确确认。")}</p>
   </section>;
 }

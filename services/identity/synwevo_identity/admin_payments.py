@@ -15,7 +15,14 @@ Routes (prefix ``/api/admin/billing``):
 
   GET  /payments                      payment settings state (no secrets) and the webhook address
   GET  /payments/readiness            read-only Stripe default-channel diagnostic, saved keys only
-  POST /payments/publish              publish a new settings version (and replace/revoke secrets)
+  POST /payments/publish              publish a new settings version (and replace/revoke secrets);
+                                      an enabled version is first checked against Stripe: a key Stripe
+                                      rejects (409 payment_credentials_rejected) or a selected method it
+                                      has not activated (409 payment_methods_unavailable) is refused; a
+                                      check that cannot verify the selection (503
+                                      payment_readiness_unavailable, 409 payment_credentials_forbidden,
+                                      409 payment_methods_unverified) is refused unless the request
+                                      carries ``acknowledge_unverified_methods: true`` (audited)
   GET  /finance                       totals, recent top-ups, grants, chargebacks, unused balances
   POST /grants                        credit a person or an organization, with a reason
   POST /freezes/{freeze_id}/lift      end a dispute freeze, with a reason
@@ -31,7 +38,7 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
 from synwevo_core.billing import BillingError, Ledger
-from synwevo_core.billing.payment_settings import PROVIDER, PaymentSettings
+from synwevo_core.billing.payment_settings import PROVIDER, PaymentSettings, payment_methods
 from synwevo_core.billing.wallet_config import cny_unit, environment_from_env, fen_to_units, units_from_env
 from synwevo_core.errors import ServiceError
 from synwevo_core.oidc import issuer
@@ -39,8 +46,14 @@ from synwevo_core.platform_access import require_platform
 from synwevo_core.store import new_id
 
 from .admin_operations import canonical
+from .payments import effective_status, failure_reason
 
 VIEW, MANAGE = "platform.billing.view", "platform.billing.manage"
+#: The publish field with which an administrator accepts publishing an enabled version whose
+#: methods Stripe's answer could not verify (the check failed, the key may not read the account, or
+#: the answer proves nothing). Never overrides a rejected key or a method Stripe has not activated.
+#: Recorded in the audit with the refusal it overrode (``methods_check_cause``).
+ACKNOWLEDGE = "acknowledge_unverified_methods"
 WEBHOOK_PATH = "/api/auth/payments/stripe/webhook"
 #: Japan's Payment Services Act counts unused prepaid balances on these base dates (§4.3); the
 #: day ends at 24:00 Japan Standard Time (UTC+9), the jurisdiction the report exists for.
@@ -141,6 +154,81 @@ def build_router(store, audit) -> APIRouter:
                              "credential_revision": current["credential_revision"]},
                             headers={"Cache-Control": "no-store"})
 
+    def methods_check(request, settings, credential, plan, acknowledged: bool) -> tuple[str, str | None]:
+        """An enabled version must not select a method Stripe has not activated (production
+        2026-10-13: an enabled WeChat Pay/Alipay that the account had not activated made Stripe
+        refuse every checkout). Same inspection as the readiness route, with the key the version
+        will use. Runs outside any Store transaction; the caller rechecks authority and revision.
+
+        Returns (methods_check, cause): ("not_required", None) for a disabled version;
+        ("verified", None) only when Stripe reports the account able to charge and every selected
+        method activated (payment_readiness: capability active, or available in the default
+        configuration); ("unverified_acknowledged", <the refusal the administrator overrode>)
+        otherwise, if the request carries the acknowledgement. Refusals:
+
+        * 409 payment_credentials_rejected — Stripe rejected the key (401 with its error object);
+          never overridable: every checkout with that key would be refused too.
+        * 409 payment_methods_unavailable — a selected method is definitely not activated; never
+          overridable: deselect it.
+        * 409 payment_credentials_forbidden — the key may not read the account (403, e.g. a
+          restricted key); overridable, since such a key may still create Checkout Sessions.
+        * 409 payment_methods_unverified — the inspection ran but proves nothing for some selected
+          method (unknown flags, missing/ambiguous/inactive default configuration) or the account
+          cannot charge; overridable.
+        * 503 payment_readiness_unavailable — the inspection could not run (network, timeout,
+          other HTTP answers, malformed body, busy, saved key unreadable); overridable.
+        """
+        if not plan["after"]["enabled"]:
+            return "not_required", None
+        if credential.action == "replace":
+            secret = credential.secret_key.get_secret_value()
+        else:
+            saved = settings.inspection_credentials()
+            if saved is not None and saved.revision != plan["before"]["revision"]:
+                raise ServiceError(409, "payment_revision_conflict", "支付配置已变化，请保留输入并重新读取")
+            secret = saved.secret_key if saved is not None else None
+        selected = payment_methods(plan["after"])
+        result, cause = None, "payment_readiness_unavailable"
+        if secret is not None:
+            try:
+                result = request.app.state.payment_readiness.inspect(secret, environment=environment)
+            except ServiceError as exc:
+                if exc.code == "payment_credentials_rejected":
+                    raise ServiceError(409, "payment_credentials_rejected",
+                                       "Stripe 拒绝了这个密钥（密钥无效、已撤销或已过期），设置未发布。请在 Stripe 核对后重新设置密钥；"
+                                       "这项拒绝不能通过确认跳过") from None
+                if exc.code == "payment_credentials_forbidden":
+                    cause = exc.code
+                elif exc.code not in ("payment_readiness_unavailable", "payment_readiness_busy"):
+                    raise
+        unverified: list[str] = []
+        if result is not None:
+            activated = result.get("activated") or {}
+            refused = [method for method in selected if activated.get(method) is False]
+            if refused:
+                raise ServiceError(409, "payment_methods_unavailable",
+                                   "Stripe 报告所选支付方式中有尚未开通的方式，设置未发布。请取消选择这些方式后再发布",
+                                   {"methods": refused})
+            unverified = [method for method in selected if activated.get(method) is not True]
+            if result.get("charges_enabled") is True and not unverified:
+                return "verified", None
+            cause = "payment_methods_unverified"
+        if acknowledged:
+            return "unverified_acknowledged", cause
+        detail = {"acknowledgement": ACKNOWLEDGE}
+        if cause == "payment_methods_unverified":
+            raise ServiceError(409, "payment_methods_unverified",
+                               "Stripe 的回答不足以确认所选支付方式已开通，或账户尚未启用收款，设置未发布。"
+                               "确需在未核实的情况下发布，请明确确认",
+                               {**detail, "methods": unverified, "charges_enabled": result.get("charges_enabled") is True})
+        if cause == "payment_credentials_forbidden":
+            raise ServiceError(409, "payment_credentials_forbidden",
+                               "Stripe 不允许这个密钥读取账户信息（可能是权限受限的密钥），无法核实所选支付方式，设置未发布。"
+                               "如确认此密钥可以创建付款页面，请明确确认后发布", detail)
+        raise ServiceError(503, "payment_readiness_unavailable",
+                           "暂时无法向 Stripe 核实所选支付方式，设置未发布。请稍后重试；确需在未核实的情况下发布，请明确确认",
+                           detail)
+
     @router.post("/payments/publish")
     def publish(request: Request, body: dict = Body(...)):
         user = actor(request, MANAGE, dangerous=True)
@@ -148,14 +236,27 @@ def build_router(store, audit) -> APIRouter:
         try:
             settings = configured()
             reason, key = _reason(body), _key(body)
-            if set(body) - {"expected_revision", "spec", "credential", "reason", "idempotency_key"}:
+            if set(body) - {"expected_revision", "spec", "credential", "reason", "idempotency_key", ACKNOWLEDGE}:
+                raise ServiceError(400, "payment_config_invalid", "支付配置字段无效，请检查套餐、金额与密钥")
+            acknowledged = body.get(ACKNOWLEDGE, False)
+            if type(acknowledged) is not bool:
                 raise ServiceError(400, "payment_config_invalid", "支付配置字段无效，请检查套餐、金额与密钥")
             from synwevo_core.billing.payment_settings import CredentialChange, _valid
             credential = _valid(CredentialChange, body.get("credential"))
             commitment = credential.commitment()
+            # The acknowledgement is not part of the operation: a retry that adds it after a 503 is
+            # the same publication, and a replay of a finished one returns its recorded result.
             request_hash = hashlib.sha256(canonical({"action": action, "environment": environment,
                 "revision": body.get("expected_revision"), "spec": body.get("spec"), "credential": commitment,
                 "reason": reason}).encode()).hexdigest()
+            with store.tx():
+                user = actor(request, MANAGE, dangerous=True)
+                previous = replay(request, user, action, key, request_hash)
+                if previous is not None:
+                    return previous
+            # Validate before contacting the provider, then check it outside any Store transaction.
+            plan = settings.plan(body.get("spec"), credential, expected_revision=body.get("expected_revision"))
+            check, cause = methods_check(request, settings, credential, plan, acknowledged)
             with store.tx() as transaction:
                 user = actor(request, MANAGE, dangerous=True)
                 previous = replay(request, user, action, key, request_hash)
@@ -164,21 +265,29 @@ def build_router(store, audit) -> APIRouter:
                 before = settings.read()
                 stranded = settings.open_checkouts()["count"] if credential.override_open_checkouts else 0
                 operation_id = new_id("ao")
+                # append() re-checks expected_revision here, after the provider read: a version
+                # published meanwhile refuses this one (payment_revision_conflict).
                 saved = settings.append(body.get("spec"), credential, expected_revision=body.get("expected_revision"),
                                         actor_id=user["id"], reason=reason, operation_id=operation_id)
-                result = {"operation_id": operation_id, "status": "succeeded", "state": state(settings)}
+                result = {"operation_id": operation_id, "status": "succeeded", "state": state(settings),
+                          "methods_check": check}
                 audit(request, action, actor_id=user["id"], object_kind="payment_settings", object_id=environment,
                       workspace_given=True, result="ok",
                       meta={"operation_id": operation_id, "reason": reason, "before_revision": before["revision"],
                             "revision": saved["revision"], "credential_action": commitment["action"],
-                            "enabled": saved["spec"]["enabled"],
+                            "enabled": saved["spec"]["enabled"], "methods_check": check,
+                            **({ACKNOWLEDGE: True, "methods_check_cause": cause}
+                               if check == "unverified_acknowledged" else {}),
                             **({"override_open_checkouts": True, "open_checkouts": stranded}
                                if credential.override_open_checkouts else {})})
                 record(transaction, user, action, environment, key, request_hash, result)
                 return result
         except ServiceError as exc:
             audit(request, action, actor_id=user["id"], object_kind="payment_settings", object_id=environment or "-",
-                  workspace_given=True, result="denied" if exc.status < 500 else "error", meta={"code": exc.code})
+                  workspace_given=True, result="denied" if exc.status < 500 else "error",
+                  meta={"code": exc.code, **({"methods": exc.detail["methods"]}
+                                             if exc.code in ("payment_methods_unavailable", "payment_methods_unverified")
+                                             else {})})
             raise
 
     @router.get("/finance")
@@ -190,14 +299,18 @@ def build_router(store, audit) -> APIRouter:
         now = time.time()
         payments = store.all(
             "SELECT t.order_id,t.payer_kind,t.payer_id,t.amount_minor,t.currency,t.status,t.method,t.created_at,"
-            "t.expires_at,t.credited_at,t.failure_code,u.email AS initiator_email,o.name AS organization_name,"
+            "t.expires_at,t.credited_at,t.failure_code,t.failure_detail,u.email AS initiator_email,o.name AS organization_name,"
             "pu.email AS payer_email FROM payment_topups t JOIN users u ON u.id=t.initiator_id "
             "LEFT JOIN organizations o ON t.payer_kind='organization' AND o.id=t.payer_id "
             "LEFT JOIN users pu ON t.payer_kind='user' AND pu.id=t.payer_id "
             "WHERE t.environment=? ORDER BY t.created_at DESC LIMIT ?", (environment, LIST_LIMIT))
         for row in payments:
-            if row["status"] == "pending" and row["expires_at"] and row["expires_at"] <= now:
+            # The reader's view (payments.effective_status): an expired checkout, or a creation whose
+            # outcome stayed unknown past its expiry, shows as expired; failure_code/failure_detail
+            # keep why (sanitized), failure_reason is what the person was told.
+            if effective_status(row, now)[0] == "expired":
                 row["status"] = "expired"
+            row["failure_reason"] = failure_reason(row["failure_code"], row["failure_detail"])
         grants = store.all(
             "SELECT g.id,g.kind,g.payer_kind,g.payer_id,g.amount,g.reason,g.actor_id,g.created_at,"
             "u.email AS actor_email,pu.email AS payer_email,o.name AS organization_name FROM billing_grants g "
