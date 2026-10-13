@@ -65,6 +65,8 @@ const SERVER = [
   { file: ID + "admin_second_factor.py", surfaces: ["admin"] },
   // A47: every workspace's invitations and their platform-scope revocation (governance/InvitationsTab.tsx)
   { file: ID + "admin_invitations.py", surfaces: ["admin"] },
+  // B1/B2: the application catalogue — the preview and the change (governance/AppChangeDialog.tsx)
+  { file: ID + "admin_apps.py", surfaces: ["admin"] },
   { file: ID + "ownership.py", surfaces: ["account", "admin"] },
   { file: ID + "admin_settings.py", surfaces: ["admin"] },
   { file: ID + "admin_model_prices.py", surfaces: ["admin"] },
@@ -181,7 +183,8 @@ const SERVER = [
   { file: CORE + "messaging_bridge.py", surfaces: [], why: "discussions of a Synwevo Docs object, in Synwevo Message's shell (CI-83)" },
   { file: CORE + "machine.py", surfaces: [], why: "credential checks on Synwevo Docs' business API" },
   { file: CORE + "http.py", surfaces: [], why: "the business gate and API routing: refusals of requests this shell never makes" },
-  { file: CORE + "apps.py", surfaces: [], why: "`app` commands of the CLI" },
+  // B1/B2: the console calls `set_access_policy` with only `members` or `explicit` (admin_apps maps its four changes)
+  { file: CORE + "apps.py", surfaces: [], why: "`app` commands of the CLI; the administration console sends the access policy only as one of its two values" },
 ];
 
 /** Refusals no person can cause from this shell, with the reason. The shell sends these fields
@@ -272,6 +275,13 @@ const INDIRECT = [
     { status: 409, code: "workspace_frozen", text: "该工作空间当前不能增加成员" }, { status: 409, code: "workspace_unavailable", text: "该工作空间当前不能增加成员" }] },
   { files: [ID + "members.py"], match: /"workspace_frozen" if frozen/, refusals: [
     { status: 409, code: "workspace_frozen", text: "该工作空间已被冻结，暂时不能增加成员或权限" }, { status: 409, code: "workspace_unavailable", text: "该工作空间当前不可用" }] },
+  // B1/B2: `AppGovernance._bad` — a change the preview does not admit; the two naming the application
+  // are f-strings, read here with a fixture name (worded by their code on the page).
+  { files: [ID + "admin_apps.py"], match: /ServiceError\(400, "bad_change", message,/, refusals: [
+    { status: 400, code: "bad_change", text: "请选择有效的应用操作（disable / enable / policy_explicit / policy_members）", detail: { field: "change" } },
+    { status: 400, code: "bad_change", text: "按工作空间只能启用或停用应用；访问策略对全平台生效", detail: { field: "change" } },
+    { status: 400, code: "bad_change", text: "「Fixture app」不按工作空间授权：只能在全平台启用或停用", detail: { field: "change", scope: "organization" } },
+    { status: 400, code: "bad_change", text: "「Fixture app」不按工作空间授权：访问策略对它不起作用", detail: { field: "change", scope: "personal" } }] },
   { files: [CLIENT + "session_routes.py"], match: /ServiceError\(403, failure,/, refusals: [
     { status: 403, code: "organization_unavailable", text: "该组织或工作空间当前不可用" }, { status: 403, code: "not_an_organization_member", text: "该组织或工作空间当前不可用" }] },
 ];

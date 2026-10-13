@@ -88,9 +88,13 @@ test("the run pages are offered to exactly the roles that hold platform.apps.vie
     assert.equal(nav.adminGroups(held).some((g) => g.label === "运行与数据"), false);
   }
   const only = new Set(["platform.apps.view"]);
-  assert.deepEqual(nav.adminGroups(only).map((g) => [g.label, g.items.map((i) => i.id)]), [["运行与数据", ["app-runs", "flow-runs"]]]);
+  // B1/B2: the same permission reads the application catalogue, a page of its own in the
+  // applications group, which comes first; the run pages keep their own group.
+  assert.deepEqual(nav.adminGroups(only).map((g) => [g.label, g.items.map((i) => i.id)]),
+    [["应用与业务", ["apps"]], ["运行与数据", ["app-runs", "flow-runs"]]]);
   assert.equal(nav.resolveAdminPage("/admin", "flow-runs", only), "flow-runs");
-  assert.equal(nav.resolveAdminPage("/admin", null, only), "app-runs");
+  assert.equal(nav.resolveAdminPage("/admin", "app-runs", only), "app-runs");
+  assert.equal(nav.resolveAdminPage("/admin", null, only), "apps");
   // adding the pages does not change where an unqualified /admin opens for the existing roles
   assert.equal(nav.resolveAdminPage("/admin", null, ROLES.support), "overview");
   assert.equal(nav.resolveAdminPage("/admin", null, new Set(["platform.config.view"])), "identity");
@@ -102,7 +106,7 @@ test("the group, its two pages and the permission are named in three languages",
   assert.equal(ui.translate("zh-Hant", "流程运行"), "流程執行");
   ui.setLocale("en");
   try {
-    assert.equal(dialog.permissionLabel("platform.apps.view"), "View business application and flow run records (no content)");
+    assert.equal(dialog.permissionLabel("platform.apps.view"), "View the application catalogue, and business application and flow run records (no content)");
   } finally { ui.setLocale("zh-Hans"); }
 });
 

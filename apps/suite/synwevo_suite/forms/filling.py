@@ -9,6 +9,11 @@ The link's token is the authority. What each kind of link shows:
   by a random filler key the browser keeps (``X-Synwevo-Filler``), so one filler can never read
   another's answers or files.
 
+Either kind closes (410 `link_unavailable`) while its workspace is unavailable or Synwevo Forms is
+switched off — platform-wide or for that workspace (`Apps.check_access_for_workspace`), asked on
+every use because `/api/suite/public/` passes the per-application gate by — and opens again when
+it is switched back on.
+
 Saving a draft is not submitting (no event, nobody notified). Submitting is checked with the
 same rules as every other entry (`definition.check_answers`); files must have been uploaded to
 this request by this filler and passed the platform's upload check.
@@ -27,6 +32,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field as F
 
 from synwevo_core import auth as _auth
+from synwevo_core.apps import Apps
 from synwevo_core.capabilities import canonical, fingerprint, record_event
 from synwevo_core.errors import ServiceError
 from synwevo_core.organizations import workspace_access_failure
@@ -108,6 +114,11 @@ class Filling:
         if not ws or ws["status"] != "active" or workspace_access_failure(self.store, req["workspace_id"]):
             # A frozen or deleted organization closes its workspaces' links like their pages.
             raise ServiceError(410, "link_unavailable", "这个表单所在的工作空间当前不可用")
+        if not Apps(self.store, self.forms.identity).check_access_for_workspace(req["workspace_id"], APP)[0]:
+            # Forms switched off platform-wide or for this workspace (admin console, command line):
+            # the public prefix skips the per-application gate, so the link asks here, on every use,
+            # and opens again when Forms is switched back on.
+            raise ServiceError(410, "link_unavailable", "表单应用当前未启用，这个链接暂时不能填写")
         user = getattr(request.state, "user", None)
         if req["kind"] == "personal":
             if req["require_sign_in"]:

@@ -6,6 +6,7 @@ import "../governance/model-risk.messages";
 import "../governance/runs.messages";
 import "../governance/payments.messages";
 import "../governance/agent-safety.messages";
+import "../governance/apps.messages";
 import { TAB_PERMISSION, type Held, type Tab } from "../governance/access";
 export type AdminPage = Tab | "api-platform";
 export type AdminGroup = { label: string; items: { id: AdminPage; label: string }[] };
@@ -16,7 +17,7 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     { id: "organizations", label: "组织" }, { id: "workspaces", label: "工作空间" }, { id: "invitations", label: "邀请" },
     { id: "identity", label: "登录方式" },
   ] },
-  { label: "应用与业务", items: [{ id: "mail", label: "邮件投递" }, { id: "api-platform", label: "API 管理" }] },
+  { label: "应用与业务", items: [{ id: "apps", label: "应用目录" }, { id: "mail", label: "邮件投递" }, { id: "api-platform", label: "API 管理" }] },
   { label: "运行与数据", items: [{ id: "app-runs", label: "应用运行" }, { id: "flow-runs", label: "流程运行" }] },
   { label: "配置与治理", items: [{ id: "registration", label: "平台配置" }, { id: "model-provider", label: "模型提供方" }, { id: "model-prices", label: "模型价格" }, { id: "model-costs", label: "模型成本" }, { id: "model-risk", label: "付费风险控制" }, { id: "agent-safety", label: "Agent 内容安全" }, { id: "audit", label: "审计" }] },
   { label: "财务与支付", items: [{ id: "finance", label: "财务" }, { id: "payments", label: "支付设置" }] },

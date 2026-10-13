@@ -396,7 +396,8 @@ class Auth:
             return "Synwevo Docs 已在平台范围停用"
         if not self.store.one("SELECT 1 FROM workspace_apps WHERE workspace_id=? AND app_id=?",
                               (tenant, DOCS_APP_ID)):
-            return (f"工作空间 {tenant} 尚未启用 Synwevo Docs；请先由平台管理员在账户服务命令行"
+            return (f"工作空间 {tenant} 尚未启用 Synwevo Docs；请先由平台管理员在管理后台的「应用目录」"
+                    "（按工作空间启用），或在账户服务命令行"
                     "（python -m synwevo_identity.cli app enable docweave --workspace <工作空间 ID>）为它启用")
         return None
 

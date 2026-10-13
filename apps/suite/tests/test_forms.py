@@ -304,3 +304,50 @@ def test_request_creation_is_idempotent_per_caller(suite):
     b = op(suite, "forms.request.create", p.a, {"form_id": fid}, key="req-key-1")
     assert b["replayed"] and a["output"]["request_id"] == b["output"]["request_id"]
     assert p.store.one("SELECT COUNT(*) AS n FROM form_requests WHERE kind='personal'")["n"] == 1
+
+
+@pytest.mark.parametrize("scope", ["platform", "workspace"])
+def test_switching_forms_off_closes_its_fill_links_until_it_is_switched_on(suite, scope):
+    """B1/B2: `/api/suite/public/` passes the per-application gate by, so a fill link — public or
+    personal — asks on every use whether Synwevo Forms is on, platform-wide and in the form's
+    workspace, through the service methods the admin console and the command line call. Off, the
+    page and every write are refused (410 `link_unavailable`); on again, the same link works."""
+    from synwevo_core.apps import Apps
+    p = suite.people
+    apps = Apps(p.store, p.ident)
+    suite.sign_in("bob")
+    fid = published_form(suite, p.a)
+    personal = token_of(op(suite, "forms.request.create", p.a, {"form_id": fid})["output"]["url"])
+    public = token_of(op(suite, "forms.public_link.set", p.a, {"form_id": fid, "enabled": True})["output"]["url"])
+    suite.cookies.clear()
+    ann = {"X-Synwevo-Filler": "a" * 32, **CSRF}
+    links = [f"/api/suite/public/forms/r/{public}", f"/api/suite/public/forms/r/{personal}"]
+
+    def calls(n):
+        for base in links:
+            yield suite.get(base, headers=ann)
+            yield suite.put(base + "/draft", json={"answers": {F_NAME: "Ann"}}, headers=ann)
+            yield suite.post(base + "/files", data={"field_id": F_FILE},
+                             files={"file": ("r.pdf", b"%PDF-1.4 fixture", "application/pdf")}, headers=ann)
+            yield suite.post(base + "/submit", headers=ann, json={"version": 1, "answers": good_answers(),
+                                                                  "idempotency_key": f"submit-switch-{scope}-{n}-{base[-6:]}"})
+
+    for r in calls(0):
+        assert r.status_code == 200, r.text
+    if scope == "platform":
+        assert apps.set_status("forms", "disabled")
+    else:
+        assert apps.disable_for_workspace(p.a, "forms")
+    for r in calls(1):
+        assert r.status_code == 410 and r.json()["error"] == "link_unavailable", r.text
+    submitted = p.store.one("SELECT COUNT(*) AS n FROM form_submissions")["n"]
+    if scope == "platform":
+        assert apps.set_status("forms", "active")
+    else:
+        apps.enable_for_workspace(p.a, "forms")
+    assert suite.get(links[0], headers=ann).status_code == 200
+    assert suite.get(links[1], headers=ann).json()["submissions"], "the personal request kept its submission"
+    again = suite.post(links[0] + "/submit", headers=ann, json={"version": 1, "answers": good_answers(),
+                                                                "idempotency_key": f"submit-switch-{scope}-again"})
+    assert again.status_code == 200, again.text
+    assert p.store.one("SELECT COUNT(*) AS n FROM form_submissions")["n"] == submitted + 1

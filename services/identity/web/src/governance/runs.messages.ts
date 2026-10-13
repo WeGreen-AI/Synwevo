@@ -6,7 +6,7 @@ registerMessages({
   "运行与数据": { en: "Operations and data", "zh-Hant": "執行與資料" },
   "应用运行": { en: "Application runs", "zh-Hant": "應用執行" },
   "流程运行": { en: "Flow runs", "zh-Hant": "流程執行" },
-  "查看业务应用与流程的运行记录（不含内容）": { en: "View business application and flow run records (no content)", "zh-Hant": "檢視業務應用與流程的執行記錄（不含內容）" },
+  "查看应用目录，以及业务应用与流程的运行记录（不含内容）": { en: "View the application catalogue, and business application and flow run records (no content)", "zh-Hant": "檢視應用目錄，以及業務應用與流程的執行記錄（不含內容）" },
   // refusals (admin_runs.py)
   "找不到这次运行": { en: "This run could not be found.", "zh-Hant": "找不到這次執行" },
   "筛选条件无效，请重新选择": { en: "That filter is not valid. Choose again.", "zh-Hant": "篩選條件無效，請重新選擇" },

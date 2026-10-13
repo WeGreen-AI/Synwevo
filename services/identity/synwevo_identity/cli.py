@@ -15,8 +15,12 @@
 主机名）；撤销访问的命令（停用客户端、轮换密钥、撤销使用资格）同时写入安全日志，恢复备份后会被
 重新应用。
 
-刻意只有 CLI。应用注册表是平台配置，不是产品功能；一个能把应用授权给工作空间的网页，就是一个能
-授予数据访问权的网页。
+应用的全平台启用/停用、访问策略（members / explicit）与按工作空间启用/停用，管理后台现在也提供
+（平台权限 platform.apps.manage，synwevo_identity.admin_apps）：先预览影响，再写理由、重新验证身份
+并确认。启停调用的是与这里相同的服务方法（Apps.set_status、Apps.disable_for_workspace、
+Apps.enable_for_workspace）；访问策略由 Apps.set_access_policy 修改（命令行没有对应命令）。撤销访问
+的一侧同样写入安全日志。按人授予或撤销使用资格仍不在管理后台：它属于工作空间自己的管理员（成员页）
+和这里的命令行。
 
 数据目录默认取 `$SYNWEVO_DATA_DIR`，再退回仓库根目录的 `data/`——和业务应用同一个库，因为账户
 权威只能有一个。
@@ -194,9 +198,13 @@ def _platform(args):
 def cmd_app(args) -> int:
     """Applications and who may use them.
 
-    Deliberately CLI-only. An application registry is platform configuration, not a product
-    feature, and a web page that could enable an application for a workspace would be a web page
-    that could grant access to data.
+    The platform-wide switch and the per-workspace switch are also offered by the admin console
+    (`synwevo_identity.admin_apps`, permission `platform.apps.manage`) through the same service
+    methods this command calls — there behind an impact preview, a written reason and strict
+    re-authentication — together with the access policy (`Apps.set_access_policy`, which has no
+    command here). Granting or revoking one person's use of an application stays here and on the
+    workspace's own members page: the console switches applications, it does not hand anyone
+    access to data.
     """
     store, ident, apps, _ = _platform(args)
     if args.action == "list":

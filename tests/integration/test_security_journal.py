@@ -465,3 +465,143 @@ def test_restore_keeps_a_platform_revoked_invitation_revoked(recovery):
         assert again.revoked_by_platform(w.wid) == set(), "the backup predates the workspace's record"
     finally:
         w.snapshot._close(restored)
+
+
+def _app_policy(w, change, key):
+    """A platform-scope policy change through the console, by a super administrator (D12)."""
+    from synwevo_core.apps import DOCS_APP_ID
+    from tests.integration.platform_fixture import make_platform_admin
+    root = w.store.one("SELECT * FROM users WHERE email_key='root@example.test'") or make_platform_admin(
+        w.store, w.ident.create_user("root@example.test", PW, status="active", with_personal_workspace=False))
+    admin = _login(w.api, root["email"])
+    assert _post(admin, "/api/auth/reauth", {"password": PW, "scope": "admin"}).status_code == 200
+    preview = _post(admin, f"/api/admin/apps/{DOCS_APP_ID}/preview", {"change": change})
+    assert preview.status_code == 200, preview.text
+    out = _post(admin, f"/api/admin/apps/{DOCS_APP_ID}/{change}",
+                {"reason": REASON, "preview_token": preview.json()["preview_token"], "idempotency_key": key})
+    assert out.status_code == 200, out.text
+    return preview.json()
+
+
+def test_restore_keeps_a_tightened_application_policy(recovery):
+    """B1/B2: tightening an application to explicit grants from the console (`POST
+    /api/admin/apps/{id}/policy_explicit`) is journalled with a receipt, so a copy restored from a
+    backup taken before it comes back `explicit`: the member without a grant is still refused, the
+    owner's grant still counts. Grants themselves are not journalled and need not be — the backup
+    has them."""
+    from synwevo_core.apps import DOCS_APP_ID, Apps
+    w = recovery
+    assert Apps(w.store, w.ident).check_access(w.b["id"], DOCS_APP_ID)[0], "a member, under the members policy"
+    archive = _backup(w)
+    preview = _app_policy(w, "policy_explicit", "restore_policy_fixture_0001")
+    assert preview["impact"]["people_losing_access"] == 1 and preview["impact"]["memberships_losing_access"] == 1
+    assert [e["app_id"] for e in journal.read(w.data) if e["kind"] == "app_policy_tightened"] == [DOCS_APP_ID]
+    restored = _restore(w, archive)
+    try:
+        assert restored.one("SELECT access_policy FROM apps WHERE id=?", (DOCS_APP_ID,))["access_policy"] == "explicit"
+        gate = Apps(restored, Identity(restored))
+        assert gate.check_access(w.b["id"], DOCS_APP_ID)[0] is False
+        assert gate.check_access(w.a["id"], DOCS_APP_ID)[0] is True
+        # Replaying it again changes nothing: the entry is "make explicit true".
+        assert journal.apply(restored, [e for e in journal.read(w.data) if e["kind"] == "app_policy_tightened"]) \
+            == {"app_policy_tightened": 0}
+    finally:
+        w.snapshot._close(restored)
+
+
+def test_restore_keeps_a_loosening_the_backup_already_holds(recovery):
+    """The tightening's entry is replayed whatever the backup's time, but only into a database
+    without its receipt: a backup taken after the tightening and a later loosening holds both, and
+    the loosening stands."""
+    from synwevo_core.apps import DOCS_APP_ID, Apps
+    w = recovery
+    _app_policy(w, "policy_explicit", "restore_policy_fixture_0002")
+    _app_policy(w, "policy_members", "restore_policy_fixture_0003")
+    archive = _backup(w)
+    restored = _restore(w, archive)
+    try:
+        assert restored.one("SELECT access_policy FROM apps WHERE id=?", (DOCS_APP_ID,))["access_policy"] == "members"
+        assert Apps(restored, Identity(restored)).check_access(w.b["id"], DOCS_APP_ID)[0] is True
+    finally:
+        w.snapshot._close(restored)
+
+
+def test_restore_tightens_when_the_entry_outran_its_commit(recovery):
+    """The restore window the receipt closes: a tightening whose entry reached the journal but whose
+    transaction never committed (or committed after the backup read the database) — the backup holds
+    neither the change nor the receipt, and the entry is older than the backup's time. It is replayed
+    anyway, failing closed."""
+    from synwevo_core.apps import DOCS_APP_ID, Apps
+    w = recovery
+    # FIXTURE: the entry as Apps.set_access_policy appends it, with no committed change or receipt.
+    journal.record(w.store, "app_policy_tightened", event_id="apt_fixture_uncommitted", app_id=DOCS_APP_ID)
+    assert w.store.one("SELECT access_policy FROM apps WHERE id=?", (DOCS_APP_ID,))["access_policy"] == "members"
+    archive = _backup(w)
+    restored = _restore(w, archive)
+    try:
+        assert restored.one("SELECT access_policy FROM apps WHERE id=?", (DOCS_APP_ID,))["access_policy"] == "explicit"
+        assert Apps(restored, Identity(restored)).check_access(w.b["id"], DOCS_APP_ID)[0] is False
+        assert restored.one("SELECT 1 FROM meta WHERE key='app_policy_tightened:apt_fixture_uncommitted'")
+    finally:
+        w.snapshot._close(restored)
+
+
+def _forms(store, released):
+    from synwevo_core.apps import bootstrap_suite_app
+    return bootstrap_suite_app(store, Identity(store), app_id="forms", name="Fixture forms", icon="forms",
+                               launch_url="http://workplace.localhost:8769/forms", released=released)
+
+
+@pytest.mark.parametrize("held_back", ["disabled", "enabled_by_command_line"])
+def test_restore_keeps_an_operator_switch_off_of_an_application_the_deployment_held_back(recovery, held_back):
+    """A backup holding the deployment's hold on a business application (`suite_unreleased:`
+    marker) — switched off by the start-up, or switched on since by `cli app enable`, which leaves
+    the marker — and an operator's later platform-wide switch-off: the replayed `app_disabled` ends
+    the hold too, so the restored deployment's next start that releases the application keeps it
+    off instead of turning it back on."""
+    from synwevo_core.apps import Apps, suite_unreleased
+    w = recovery
+    apps = Apps(w.store, w.ident)
+    _forms(w.store, True)
+    _forms(w.store, False)                                   # held back: disabled + marker
+    if held_back == "enabled_by_command_line":
+        assert apps.set_status("forms", "active") and suite_unreleased(w.store, "forms")
+    archive = _backup(w)
+    if held_back == "disabled":
+        _forms(w.store, True)                                # released again: active, no marker
+    assert apps.set_status("forms", "disabled")              # the operator's switch-off (journalled)
+    _forms(w.store, True)
+    assert w.store.one("SELECT status FROM apps WHERE id='forms'")["status"] == "disabled"
+    restored = _restore(w, archive)
+    try:
+        assert restored.one("SELECT status FROM apps WHERE id='forms'")["status"] == "disabled"
+        assert not suite_unreleased(restored, "forms"), "the replayed switch-off ended the hold"
+        _forms(restored, True)                               # the restored deployment starts, Forms released
+        assert restored.one("SELECT status FROM apps WHERE id='forms'")["status"] == "disabled"
+    finally:
+        w.snapshot._close(restored)
+
+
+def test_restore_from_before_an_application_was_registered_keeps_its_restrictions(recovery):
+    """A backup taken before the application had a registry row: the replayed tightening and
+    switch-off write a placeholder row that carries them (journal._app_row) — rather than changing
+    nothing and consuming the tightening's receipt — and the next start-up registration fills in
+    the rest while keeping status and policy."""
+    from synwevo_core.apps import Apps
+    w = recovery
+    assert not w.store.one("SELECT 1 FROM apps WHERE id='forms'"), "precondition: not registered yet"
+    archive = _backup(w)
+    _forms(w.store, True)
+    apps = Apps(w.store, w.ident)
+    assert apps.set_access_policy("forms", "explicit") and apps.set_status("forms", "disabled")
+    restored = _restore(w, archive)
+    try:
+        row = restored.one("SELECT name, status, access_policy, launch_url FROM apps WHERE id='forms'")
+        assert row == {"name": "forms", "status": "disabled", "access_policy": "explicit", "launch_url": ""}
+        assert restored.one("SELECT 1 FROM meta WHERE key LIKE 'app_policy_tightened:%'"), "the receipt, with its change"
+        _forms(restored, True)
+        row = restored.one("SELECT name, status, access_policy, launch_url FROM apps WHERE id='forms'")
+        assert row == {"name": "Fixture forms", "status": "disabled", "access_policy": "explicit",
+                       "launch_url": "http://workplace.localhost:8769/forms"}
+    finally:
+        w.snapshot._close(restored)

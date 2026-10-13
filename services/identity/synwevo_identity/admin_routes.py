@@ -75,6 +75,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     # revoke of an abusive one. No route below shares the `/invitations` prefix.
     from .admin_invitations import build_router as build_invitation_oversight_router
     r.include_router(build_invitation_oversight_router(store, ident, audit))
+    # B1/B2: the application catalogue — on or off platform-wide, the access policy, on or off for
+    # one workspace — each previewed and confirmed (admin_apps.py). No route below shares `/apps`.
+    from .admin_apps import build_router as build_app_catalogue_router
+    r.include_router(build_app_catalogue_router(store, ident, audit))
 
     def _admin(request: Request, permission=_UNNAMED, *, dangerous: bool = False,
                step_up: bool = True) -> dict:

@@ -82,7 +82,17 @@ AGENT_MODEL_KINDS = {"agent_access_suspended", "agent_provider_consent_withdrawn
                      "model_credential_withdrawn", "model_provider_disabled"}
 _AI_POLICY_RECEIPT = "ai_policy_narrowed:"
 _CREDENTIAL_RECEIPT = "model_credential_withdrawn:"
-ALWAYS_REPLAYED = ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND} | RISK_KINDS | AGENT_MODEL_KINDS | {PAYER_FREEZE_KIND}
+# An application's access policy narrowed to explicit grants (Apps.set_access_policy): the shape of
+# ai_policy_narrowed and for the same reasons. The policy is one mutable column that a later
+# loosening (not journalled) sets back, so the entry is applied by receipt, not by time: written in
+# the transaction that tightens, with a receipt in `meta` that commits with it; replayed whatever
+# the backup's time, into a database that lacks the receipt — a backup taken between the entry and
+# its COMMIT holds neither the change nor the receipt and is tightened, one that holds the receipt
+# holds the tightening and any loosening after it, which stands.
+APP_POLICY_KIND = "app_policy_tightened"
+_APP_POLICY_RECEIPT = "app_policy_tightened:"
+ALWAYS_REPLAYED = (ORGANIZATION_KINDS | {UNCLAIM_KIND, PLATFORM_GRANT_KIND} | RISK_KINDS | AGENT_MODEL_KINDS
+                   | {PAYER_FREEZE_KIND, APP_POLICY_KIND})
 
 KINDS = {
     "api_platform_approval_revoked",  # {approval_id}, including unconsumed approvals
@@ -102,6 +112,7 @@ KINDS = {
     "passkey_removed",          # {credential_id}
     "workspace_app_disabled",   # {workspace_id, app_id}
     "app_disabled",             # {app_id} — the application switched off platform-wide
+    APP_POLICY_KIND,            # {event_id, app_id} — the application's access policy narrowed to explicit grants
     "invitation_revoked",       # {invitation_id}
     "api_key_superseded",       # {key_id} — a rotated-out key; the successor is not recreated
     PLATFORM_GRANT_KIND,       # {event_id, user_id, grant_id, role, granted_at, granted_by}
@@ -138,7 +149,7 @@ _REQUIRED = {
     "entitlement_revoked": ("workspace_id", "app_id", "user_id"),
     "workspace_frozen": ("workspace_id",), "webhook_disabled": ("subscription_id",),
     "passkey_removed": ("credential_id",), "workspace_app_disabled": ("workspace_id", "app_id"),
-    "app_disabled": ("app_id",),
+    "app_disabled": ("app_id",), APP_POLICY_KIND: ("event_id", "app_id"),
     "invitation_revoked": ("invitation_id",), "tokens_revoked": (),
     PLATFORM_GRANT_KIND: ("event_id", "user_id", "grant_id", "role", "granted_by"),
     UNCLAIM_KIND: ("workspace_id",),
@@ -333,6 +344,17 @@ def record_ai_policy_narrowed(store: Store, *, workspace_id: str, processing: st
         record(store, "ai_policy_narrowed", event_id=eid, workspace_id=workspace_id,
                processing=processing, providers=providers)
         c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_AI_POLICY_RECEIPT + eid,))
+
+
+def record_app_policy_tightened(store: Store, *, app_id: str) -> None:
+    """Journal an application's tightening to explicit grants with its receipt, in the caller's
+    write transaction (Apps.set_access_policy): see APP_POLICY_KIND."""
+    with store.conn() as c:
+        if not c.in_transaction:
+            raise RuntimeError("an application policy tightening requires a write transaction")
+        eid = new_id("apt")
+        record(store, APP_POLICY_KIND, event_id=eid, app_id=app_id)
+        c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (_APP_POLICY_RECEIPT + eid,))
 
 
 def read(root: str | Path, since: float = 0.0) -> list[dict]:
@@ -636,6 +658,20 @@ def _apply_provider_disabled(c, e) -> int:
     return 1
 
 
+def _app_row(c, app_id: str, t: float) -> None:
+    """A registry row for a restriction replayed into a database from before the application was
+    registered: without one, the switch-off or tightening would change nothing (and the tightening
+    would still consume its receipt), and the next start's registration would create the
+    application on and open to every member. Fail closed instead: the placeholder takes the
+    replayed restriction (the caller's UPDATE), and `Apps.register` keeps a row's status always and
+    its policy when given none (every start-up registration), so the restriction survives the
+    registration that fills in the rest. The name is the id until then; the launch address is empty,
+    which `apps._http_url` reads as "no address yet" — never another application's default — and the
+    process that serves the application writes its own when it starts."""
+    c.execute("INSERT OR IGNORE INTO apps (id,name,icon,launch_url,status,access_policy,created_at,updated_at) "
+              "VALUES (?,?,NULL,'','active','members',?,?)", (app_id, app_id, t, t))
+
+
 def apply(store: Store, entries: list[dict]) -> dict:
     """Make every withdrawal in `entries` true in `store`. Returns counts per kind.
 
@@ -809,8 +845,23 @@ def apply(store: Store, entries: list[dict]) -> dict:
                 n = c.execute("DELETE FROM workspace_apps WHERE workspace_id=? AND app_id=?",
                               (e.get("workspace_id"), e.get("app_id"))).rowcount
             elif k == "app_disabled":
+                from .apps import SUITE_UNRELEASED_PREFIX
+                _app_row(c, e["app_id"], t)
                 n = c.execute("UPDATE apps SET status='disabled', updated_at=? WHERE id=? AND status<>'disabled'",
-                              (t, e.get("app_id"))).rowcount
+                              (t, e["app_id"])).rowcount
+                # The operator's switch-off ends the deployment's hold too, as Apps.set_status does:
+                # a marker the restored database still holds would let the next start that releases
+                # the application turn it back on.
+                c.execute("DELETE FROM meta WHERE key=?", (SUITE_UNRELEASED_PREFIX + e["app_id"],))
+            elif k == APP_POLICY_KIND:
+                # By receipt (APP_POLICY_KIND): a database holding it holds the tightening and any
+                # loosening after it. Entitlement rows are not touched: a grant held then counts now.
+                receipt = _APP_POLICY_RECEIPT + e["event_id"]
+                if not c.execute("SELECT 1 FROM meta WHERE key=?", (receipt,)).fetchone():
+                    _app_row(c, e["app_id"], t)
+                    n = c.execute("UPDATE apps SET access_policy='explicit', updated_at=? WHERE id=? "
+                                  "AND access_policy<>'explicit'", (t, e["app_id"])).rowcount
+                    c.execute("INSERT INTO meta (key,value) VALUES (?, '1')", (receipt,))
             elif k == "invitation_revoked":
                 n = c.execute("UPDATE invitations SET revoked_at=COALESCE(revoked_at, ?) WHERE id=? AND accepted_at IS NULL",
                               (t, e.get("invitation_id"))).rowcount

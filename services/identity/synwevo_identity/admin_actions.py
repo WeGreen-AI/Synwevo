@@ -20,6 +20,7 @@ SCOPES: dict[str, dict[str, str]] = {
     "model": {"zh-Hans": "模型提供方、价格与风险", "zh-Hant": "模型提供方、價格與風險", "en": "Model providers, prices and risk"},
     "billing": {"zh-Hans": "付费与钱包", "zh-Hant": "付費與錢包", "en": "Billing and wallets"},
     "agent_safety": {"zh-Hans": "Agent 内容安全", "zh-Hant": "Agent 內容安全", "en": "Agent content safety"},
+    "apps": {"zh-Hans": "应用目录", "zh-Hant": "應用目錄", "en": "Application catalogue"},
 }
 
 
@@ -34,6 +35,12 @@ ADMIN_ACTIONS: dict[str, dict] = {
     "admin.agent_safety.report_decide": _a("agent_safety", "处理 Agent 举报", "處理 Agent 舉報", "Decide an Agent report"),
     "admin.agent_safety.rules_publish": _a("agent_safety", "发布 Agent 内容安全规则", "發布 Agent 內容安全規則", "Publish Agent safety rules"),
     "admin.agent_safety.suspend": _a("agent_safety", "暂停 Agent 使用权限", "暫停 Agent 使用權限", "Suspend Agent access"),
+    "admin.app.disable": _a("apps", "全平台停用应用", "全平台停用應用", "Disable an application platform-wide"),
+    "admin.app.enable": _a("apps", "全平台启用应用", "全平台啟用應用", "Enable an application platform-wide"),
+    "admin.app.policy_explicit": _a("apps", "应用改为仅限明确授权", "應用改為僅限明確授權", "Restrict an application to explicit grants"),
+    "admin.app.policy_members": _a("apps", "应用改为成员均可使用", "應用改為成員均可使用", "Open an application to every member"),
+    "admin.app.workspace_disable": _a("apps", "为工作空间停用应用", "為工作空間停用應用", "Disable an application for a workspace"),
+    "admin.app.workspace_enable": _a("apps", "为工作空间启用应用", "為工作空間啟用應用", "Enable an application for a workspace"),
     "admin.billing.freeze.lift": _a("billing", "解除付费冻结", "解除付費凍結", "Lift a billing freeze"),
     "admin.billing.grant": _a("billing", "发放钱包额度", "發放錢包額度", "Grant wallet credit"),
     "admin.billing.payments.publish": _a("billing", "发布支付配置", "發布支付設定", "Publish payment settings"),

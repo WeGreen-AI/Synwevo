@@ -538,6 +538,13 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 风险/未做：指纹按当前密钥，重叠期内由旧密钥验签的接收方看到的是新密钥指纹（行记"用哪把签"，当前+旧两把都签在头里）。
 - 验证：新增 4 例 + 两应用 webhook 契约/投递/加固/重投/CLI/示例 254 项与迁移测试通过。
 
+## CR-126 · B1/B2 应用目录的平台管理：全局与按空间启停、访问策略，带影响预览（2026-10-13，本轮新增，本地已验证）
+
+- 位置：packages/core/synwevo_core/apps.py（`Apps.set_access_policy`：收紧时同事务写 `app_policy_tightened`；`suite_unreleased()`）；journal.py（新日志种类及重放：恢复后改为 explicit）；platform_access.py（`platform.apps.manage`：super_admin、access_admin）；services/identity/synwevo_identity/admin_apps.py（新：列表、按空间列表、预览与确认）；admin_routes.py（include）；admin_actions.py（新 scope `apps` 与六个动作）；cli.py（说明控制台走同一服务层）；前端 governance/AppsTab.tsx、AppChangeDialog.tsx、apps.messages.ts、access.ts、admin/navigation.ts、Admin.tsx、PlatformAccess.tsx、labels.ts 与两个消息文件。
+- 审查要点：应用登记此前刻意只开放命令行；统一执行要求 §15.4 要求管理中心管理应用的启用状态与允许使用的组织/空间、说明停用后的行为。服务层早已在同一事务写停用日志（D6 修复），本包不另造写入，只把它接到确认操作协议上：预览给出失去/获得访问的人数（与 `check_access` 逐人一致）、受影响空间、会被停止的 Docs 任务（按 `authority.check` 的五个检查点实际行为说明）与行为说明；访问策略此前没有任何写入方，新增 `set_access_policy` 并让收紧可在恢复备份后重放。门户、组织/个人作用域应用与未发布应用按真实检查路径限制可做的变更。
+- 审查发现（两轮，均已修正，详见 EVIDENCE）：影响须按“人 × 工作空间”计算（默认账户下原先约为 0）；Forms 填写链接原不受启用状态控制；平台范围变更须另持 `platform.config.manage`（D12）；收紧日志改为回执形状并消除恢复竞态；预览改为读快照；`running_jobs` 只计会被新拒绝的任务；平台停用与恢复重放都删除“未发布”标记（否则下次发布启动会重新启用）；API 密钥与服务账户随批准者失去访问而停止，预览计入 `credentials_stopping` 并说明，前端更正原“不受影响”的说法；早于登记的备份恢复后以占位登记行保留限制。
+- 验证：初版完整根套件 6026 通过；两轮修正后定向 181 + 相邻 204 项、账户前端 232 项、六个前端工作区 669 项 node 测试、五守卫 + 图标与 Logo、根 typecheck/build 通过（06:23Z）；最终树完整根套件见 EVIDENCE 同日条目。
+
 ## CR-125 · A47 平台邀请监管：跨空间列表与带理由撤销（2026-10-13，本轮新增，本地已验证）
 
 - 位置：services/identity/synwevo_identity/admin_invitations.py（新：列表、单个与批量撤销，共用 `_revoke`）；invites.py（`Invites.platform_revoke`：与 `revoke` 同一 UPDATE，不经 `may_invite`）；mail.py（`public_error_code`：邮件标签页的错误归类原样迁出，供两处共用）；admin_routes.py（`_failure_code` 改调共享函数，include 新子路由）；admin_actions.py；前端 governance/InvitationsTab.tsx、invitations.messages.ts、access.ts、admin/navigation.ts、Admin.tsx、labels.ts、admin.css。

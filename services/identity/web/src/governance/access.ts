@@ -13,7 +13,7 @@ export type Held = ReadonlySet<string>;
 export const heldPermissions = (me?: { platform_permissions?: string[] } | null): Held =>
   new Set(me?.platform_permissions || []);
 
-export type Tab = "agent-safety" | "model-provider" | "model-costs" | "model-risk" | "model-prices" | "overview" | "users" | "admins" | "workspaces" | "invitations" | "organizations" | "registration" | "identity" | "mail" | "app-runs" | "flow-runs" | "audit" | "payments" | "finance";
+export type Tab = "agent-safety" | "model-provider" | "model-costs" | "model-risk" | "model-prices" | "overview" | "users" | "admins" | "workspaces" | "invitations" | "organizations" | "registration" | "identity" | "mail" | "apps" | "app-runs" | "flow-runs" | "audit" | "payments" | "finance";
 /** The permission each view reads with. Only the views the caller's grants open are drawn. */
 export const TAB_PERMISSION: Record<Tab, string> = {
   overview: "platform.overview.view", users: "platform.users.view", admins: "platform.roles.view",
@@ -21,6 +21,8 @@ export const TAB_PERMISSION: Record<Tab, string> = {
   // A47: every workspace's invitations, masked; revoking them is platform.workspaces.manage.
   invitations: "platform.workspaces.view", organizations: "platform.orgs.view", registration: "platform.config.view",
   "model-provider": "platform.config.view", "model-costs": "platform.config.view", "model-risk": "platform.config.view", "model-prices": "platform.config.view", identity: "platform.config.view", mail: "platform.mail.view",
+  // B1/B2: the application catalogue; switching applications and their policy is platform.apps.manage.
+  apps: "platform.apps.view",
   "app-runs": "platform.apps.view", "flow-runs": "platform.apps.view", audit: "platform.audit.view",
   payments: "platform.billing.view", finance: "platform.billing.view",
   // Reports, stops and suspensions are account governance; the rule lists inside need platform.config.*.
@@ -28,6 +30,12 @@ export const TAB_PERMISSION: Record<Tab, string> = {
 };
 export const visibleTabs = (held: Held): Tab[] =>
   (Object.keys(TAB_PERMISSION) as Tab[]).filter((t) => held.has(TAB_PERMISSION[t]));
+
+/** B1/B2: an application switched on or off for one workspace needs the catalogue's manage
+ *  permission; a platform-scope change — on or off platform-wide, or its access policy — needs
+ *  platform configuration's as well, which only a super administrator holds (admin_apps). */
+export const mayChangeAppWorkspace = (held: Held) => held.has("platform.apps.manage");
+export const mayChangeAppPlatform = (held: Held) => held.has("platform.apps.manage") && held.has("platform.config.manage");
 
 /** Assigning the historical data: the claim itself, and the account search its picker runs. */
 export const mayClaim = (held: Held) => held.has("platform.workspaces.claim") && held.has("platform.users.view");
@@ -67,7 +75,7 @@ export function userOffers(held: Held, user: UserRow, meId: string | undefined) 
  *  are the platform-access records (grants, revocations, denied attempts). */
 export const AUDIT_SCOPES: [string, string][] = [
   ["", "全部操作"], ["admin.user.", "账户管理"], ["admin.workspace.", "工作空间管理"], ["admin.organization.", "组织管理"],
-  ["admin.platform.", "平台权限"], ["admin.access.", "被拒绝的管理请求"],
+  ["admin.app.", "应用管理"], ["admin.platform.", "平台权限"], ["admin.access.", "被拒绝的管理请求"],
   ["auth.", "登录与账户安全"], ["member.", "成员管理"], ["invite.", "邀请"], ["mfa.", "两步验证"],
   // The applications' own rows (G26, D7 §9): every Synwevo Docs change, every workplace-application
   // change made outside its registered operations. Single codes are offered from the catalogue.

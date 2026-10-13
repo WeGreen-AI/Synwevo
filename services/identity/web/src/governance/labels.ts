@@ -10,6 +10,7 @@ import "./organization-lifecycle.messages";
 import "./bulk-accounts.messages";
 import "./second-factor.messages";
 import "./invitations.messages";
+import "./apps.messages";
 export { ROLES, ROLE_RANK, canExport, isAbort } from "../lib/labels";
 export type { Role } from "../lib/labels";
 // Read translations at render time; imported enum labels must not freeze the initial locale.
@@ -120,6 +121,14 @@ const errors: Record<string, string> = {
   no_invite: "找不到这个邀请，可能已被删除；请刷新。",
   missing_ids: "请至少选择一项。",
   already_revoked: "此前已撤销，本次未重复执行。",
+  // B1/B2: the application catalogue's preview and change (governance/AppChangeDialog.tsx, which
+  // words them for an application first). `no_app` and `no_workspace` are worded above.
+  legacy_workspace: "这是待认领的历史数据空间，由认领流程管理，不能在这里更改。",
+  workspace_unavailable: "这个工作空间当前不可用，请刷新后重试。",
+  no_change: "已经是这个状态，不需要更改；请刷新查看最新状态。",
+  bad_change: "不支持的更改，请刷新页面后重试。",
+  portal_required: "平台本身依赖这个应用，不能停用它或改为仅限明确授权。",
+  app_not_released: "当前部署没有发布这个应用，不能在这里启用；启用后下次启动也会被重新停用。",
 };
 /** One item of a batch the server refused: its sentence when catalogued, else this page's wording
  *  for its code (lib/refusals.ts) — a mixed batch answers 200, so the item carries no status. */

@@ -10,6 +10,7 @@ import { AppRunsTab, FlowRunsTab } from "./governance/RunsTab";
 import { SuperAdminOffersAdmin, SuperAdminReadiness } from "./governance/SuperAdminHandover";
 import { MailTab, OrganizationsTab } from "./governance/GovernanceTabs";
 import { InvitationsTab } from "./governance/InvitationsTab";
+import { AppsTab } from "./governance/AppsTab";
 import { OwnershipRecovery } from "./governance/OwnershipRecovery";
 import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
 import { auditChanges } from "./governance/audit";
@@ -122,6 +123,7 @@ function AdminViews({ held, tab }: { held: Held; tab: Tab }) {
     {tab === "registration" && <SettingsTab onDenied={onDenied} held={held} />}
     {tab === "identity" && <IdentityProvidersTab onDenied={onDenied} />}
     {tab === "mail" && <MailTab onDenied={onDenied} held={held} />}
+    {tab === "apps" && <AppsTab onDenied={onDenied} held={held} />}
     {tab === "app-runs" && <AppRunsTab onDenied={onDenied} />}
     {tab === "flow-runs" && <FlowRunsTab onDenied={onDenied} />}
     {tab === "audit" && <AuditTab onDenied={onDenied} />}

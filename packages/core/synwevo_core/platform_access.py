@@ -41,7 +41,25 @@ for each (the brief asks that each be written here):
   authored name — so it is a read permission of the same kind as `platform.mail.view`, and the
   three roles that already read the mail outbox hold it (`access_admin`, `support`, `auditor`).
   `api_platform_admin` does not: it manages credentials, and a credential's calls are already
-  in its own console.
+  in its own console. Since B1/B2 it also reads the application catalogue
+  (synwevo_identity.admin_apps): each application's status, access policy and counts — workspaces
+  that turned it on, people who can open it, grants, revocations, running Docs jobs — and which
+  workspaces have it on. Counts and workspace metadata, never a person's name or any content.
+* `platform.apps.manage` is added for the application catalogue's three switches (B1/B2,
+  synwevo_identity.admin_apps): an application on or off platform-wide, its access policy
+  (`members` / `explicit`), and on or off for one workspace — each previewed with its impact, then
+  confirmed with a reason and strict re-authentication. It is held by `super_admin` and
+  `access_admin`, the role that already governs workspaces and accounts: these switches decide who
+  may *use* an application, which is access governance, not a stop switch for support or a read for
+  an auditor. A platform-scope change (on or off platform-wide, either policy change) also needs
+  `platform.config.manage` (decision D12): the registry is platform configuration and loosening
+  opens every never-granted member to the application, so among the built-in roles only the super
+  administrator makes it; the access administrator keeps the per-workspace switch. It grants no
+  business content — the administrator gains no membership, entitlement
+  or token — and it is not a way to grant one person access: per-person grants stay with the
+  workspace's own administrators (members page) and the operator command line. The command line
+  (`synwevo_identity.cli app`) keeps both switches, through the same service methods; it has no
+  policy command.
 * `platform.users.recover` is added for the platform-controlled reset of a person's lost second
   factor (A26, synwevo_identity.admin_second_factor): when both the authenticator app and every
   recovery code are gone, an administrator who confirmed the person's identity outside the
@@ -133,7 +151,8 @@ PERMISSIONS: dict[str, str] = {
     "platform.config.manage": "change platform settings and govern model credentials, routes, prices and cost limits",
     "platform.mail.view": "read the mail outbox metadata",
     "platform.mail.manage": "retry a failed reset or verification mail",
-    "platform.apps.view": "read business application run and flow run metadata (operation, state, timing, error code; never inputs, outputs or content)",
+    "platform.apps.view": "read business application run and flow run metadata (operation, state, timing, error code; never inputs, outputs or content) and the application catalogue's state and counts",
+    "platform.apps.manage": "turn applications on or off platform-wide or for a workspace and change who may use them; never business content",
     "platform.billing.view": "read payments, grants, chargebacks and outstanding wallet balances (amounts and metadata, never conversation content)",
     "platform.billing.manage": "configure the payment provider, grant credit with a reason and lift a dispute freeze",
     "platform.audit.view": "read the platform audit log",
@@ -155,7 +174,7 @@ ROLES: dict[str, frozenset[str]] = {
         "platform.overview.view", "platform.users.view", "platform.users.manage", "platform.users.support",
         "platform.workspaces.view", "platform.workspaces.manage", "platform.orgs.view", "platform.orgs.manage",
         "platform.config.view", "platform.mail.view", "platform.mail.manage", "platform.apps.view",
-        "platform.audit.view", "platform.roles.view"}),
+        "platform.apps.manage", "platform.audit.view", "platform.roles.view"}),
     "support": frozenset({
         "platform.overview.view", "platform.users.view", "platform.users.support", "platform.workspaces.view",
         "platform.orgs.view", "platform.mail.view", "platform.apps.view"}),

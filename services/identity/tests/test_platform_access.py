@@ -166,6 +166,15 @@ ROUTES = [
     ("GET", "/api/admin/app-runs/{run_id}", "platform.apps.view", False),
     ("GET", "/api/admin/flow-runs", "platform.apps.view", False),
     ("GET", "/api/admin/flow-runs/{flow_run_id}", "platform.apps.view", False),
+    # B1/B2 (admin_apps.py): the application catalogue reads with the run records' permission. The
+    # matrix sends a change for one workspace (`platform.apps.manage`): its preview changes nothing
+    # (200), the change itself stops at the strict re-authentication before its body is read. A
+    # platform-scope change also needs `platform.config.manage` (D12): see
+    # test_platform_scope_application_changes_need_configuration_authority.
+    ("GET", "/api/admin/apps", "platform.apps.view", False),
+    ("GET", "/api/admin/apps/{app_id}/workspaces", "platform.apps.view", False),
+    ("POST", "/api/admin/apps/{app_id}/preview", "platform.apps.manage", False),
+    ("POST", "/api/admin/apps/{app_id}/{change}", "platform.apps.manage", True),
     ("GET", "/api/admin/audit", "platform.audit.view", False),
     ("GET", "/api/admin/platform/roles", "platform.roles.view", False),
     ("GET", "/api/admin/users/{uid}/platform-access", "platform.roles.view", False),
@@ -304,7 +313,7 @@ def _path(template, w, *, legacy: str | None = None):
                            suspension_id="rsus_fixture_missing", entry_id="rallow_fixture_missing",
                            report_id=w.get("report_id", "arp_fixture_missing"), user_id=w["plain"]["id"],
                            sid="s_fixture_missing", pid="pk_fixture_missing", iid="xi_fixture_missing",
-                           rid="sfr_fixture_missing")
+                           rid="sfr_fixture_missing", app_id="docweave", change="disable")
 
 
 #: Risk changes the matrix reaches with valid bodies but no matching state: past the permission
@@ -352,6 +361,13 @@ def _call(client, method, path, w):
         # not exist; a permitted role stops at the strict re-authentication, so nothing is revoked.
         return post(client, path, {"reason": REASON, "ids": ["iv_fixture_missing"]}
                     if path == "/api/admin/invitations/revoke" else {"reason": REASON})
+    if path.startswith("/api/admin/apps/"):
+        # B1/B2: a permitted role previews switching Synwevo Docs off in the plain account's
+        # workspace (200, nothing changes); the change carries a well-formed but unconfirmed body
+        # and stops at the re-authentication.
+        return post(client, path, {"change": "disable", "workspace_id": w["wid"]} if path.endswith("/preview") else
+                    {"reason": REASON, "preview_token": "matrix-not-confirmed", "idempotency_key": "matrix_app_change_0001",
+                     "workspace_id": w["wid"]})
     if path.startswith("/api/admin/notification-recovery/"):
         return post(client, path, {"reason": REASON, "preview_token": "matrix-not-confirmed",
                                    "idempotency_key": "matrix_notification_recovery_0001"}
@@ -470,6 +486,32 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
     assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action='admin.organization.lifecycle'")
     assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action='admin.user.bulk'")
     assert not world["store"].one("SELECT 1 FROM audit_events WHERE action LIKE 'admin.invitation.%' AND result='ok'")
+    assert world["store"].one("SELECT status FROM apps WHERE id='docweave'")["status"] == "active"
+    assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action LIKE 'admin.app.%'")
+
+
+@pytest.mark.parametrize("role", ROLE_ORDER)
+def test_platform_scope_application_changes_need_configuration_authority(world, role):
+    """D12 (admin_apps.py): switching an application for the whole platform or changing its policy
+    needs `platform.config.manage` besides `platform.apps.manage` — the super administrator's alone
+    among the built-in roles — at the preview and at the change, both before the strict
+    re-authentication. The access administrator keeps the switch for one workspace (the matrix)."""
+    from synwevo_core.apps import DOCS_APP_ID
+    c = world["login"](holder(world, role))
+    preview = post(c, f"/api/admin/apps/{DOCS_APP_ID}/preview", {"change": "policy_explicit"})
+    change = post(c, f"/api/admin/apps/{DOCS_APP_ID}/policy_explicit",
+                  {"reason": REASON, "preview_token": "matrix-not-confirmed", "idempotency_key": "matrix_app_scope_0001"})
+    missing = next((p for p in ("platform.apps.manage", "platform.config.manage") if p not in ROLES[role]), None)
+    if missing:
+        for r in (preview, change):
+            assert r.status_code == 403 and r.json()["error"] == "platform_permission_denied", (role, r.text)
+            assert r.json()["detail"]["permission"] == missing, role
+    else:
+        assert preview.status_code == 200 and preview.json()["scope"] == "platform", preview.text
+        assert change.status_code == 403 and change.json()["error"] == "reauth_required", change.text
+    assert [r for r in ROLES if {"platform.apps.manage", "platform.config.manage"} <= ROLES[r]] == [SUPER_ADMIN]
+    assert world["store"].one("SELECT access_policy FROM apps WHERE id='docweave'")["access_policy"] == "members"
+    assert not world["store"].one("SELECT 1 FROM admin_operations WHERE action LIKE 'admin.app.%'")
 
 
 def test_no_platform_permission_sees_404_everywhere_including_owners_and_workspace_admins(world):

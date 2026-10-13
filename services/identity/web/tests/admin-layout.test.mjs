@@ -29,6 +29,14 @@ test('navigation uses effective permissions, keeps API administration in the she
   // Agent reports and suspensions are account governance (platform.users.view); its rule lists need platform.config.*.
   // A47: every workspace's invitations read with the workspace view.
   assert.deepEqual(nav.adminGroups(support).flatMap(group => group.items.map(item => item.id)), ['users', 'workspaces', 'invitations', 'agent-safety']);
+  // B1/B2: the application catalogue reads with platform.apps.view, first in the applications group;
+  // the run records reading with the same permission stay their own pages in their own group.
+  const apps = nav.adminGroups(new Set(['platform.apps.view', 'platform.mail.view', 'api_platform.manage']));
+  assert.deepEqual(apps.map(group => [group.label, group.items.map(item => item.id)]),
+    [['应用与业务', ['apps', 'mail', 'api-platform']], ['运行与数据', ['app-runs', 'flow-runs']]]);
+  assert.equal(nav.resolveAdminPage('/admin', 'apps', new Set(['platform.apps.view'])), 'apps');
+  assert.equal(nav.resolveAdminPage('/admin', 'apps', new Set(['platform.apps.manage'])), null, 'managing is not reading');
+  assert.equal(nav.resolveAdminPage('/admin', 'apps', new Set(['platform.billing.view'])), 'finance');
 });
 
 test('legacy links resolve only to a permitted view; API direct links cannot bypass the required permission', () => {
@@ -83,6 +91,19 @@ test('the actual Admin entry mounts ModelProviderTab and adapts view/manage gran
   }
 });
 
+test('the actual Admin entry mounts the application catalogue and offers its changes only with platform.apps.manage', () => {
+  const shell = admin.default();
+  // The catalogue words itself with the active locale (`t` outside the hook); pin it for the render.
+  const render = permissions => { ui.setLocale('zh-Hans'); return renderToStaticMarkup(shell.props.children({ held: new Set(permissions), active: 'apps' })); };
+  const readonly = render(['platform.apps.view']);
+  assert.match(readonly, /应用目录/);
+  assert.match(readonly, /正在加载应用目录…/);
+  assert.match(readonly, /你的平台角色可以查看应用目录，但不能启用、停用应用或修改访问策略。/);
+  assert.doesNotMatch(render(['platform.apps.view', 'platform.apps.manage']), /你的平台角色可以查看应用目录/);
+  // the run pages are not the catalogue
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(MemoryRouter, null, shell.props.children({ held: new Set(['platform.apps.view']), active: 'app-runs' }))), /应用目录/);
+});
+
 test('navigation links preserve language and origin context without carrying a previous view filter', () => {
   assert.equal(nav.adminHref('users', '?lang=zh-Hant&from=platform&tab=audit&q=example'), '/admin?lang=zh-Hant&from=platform&tab=users');
   assert.equal(nav.adminHref('api-platform', '?lang=en&tab=audit'), '/admin/api-platform?lang=en');
@@ -94,7 +115,7 @@ test('navigation links preserve language and origin context without carrying a p
 });
 
 test('navigation has one current link and every label has both translations', () => {
-  const held = new Set(['platform.overview.view', 'platform.users.view', 'platform.roles.view', 'platform.workspaces.view', 'platform.orgs.view', 'platform.config.view', 'platform.mail.view', 'platform.audit.view', 'api_platform.manage']);
+  const held = new Set(['platform.overview.view', 'platform.users.view', 'platform.roles.view', 'platform.workspaces.view', 'platform.orgs.view', 'platform.config.view', 'platform.mail.view', 'platform.apps.view', 'platform.audit.view', 'api_platform.manage']);
   const groups = nav.adminGroups(held);
   for (const group of groups) for (const label of [group.label, ...group.items.map(item => item.label)]) {
     assert.ok(ui.hasMessage(label), label);

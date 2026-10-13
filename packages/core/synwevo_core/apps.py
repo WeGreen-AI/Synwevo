@@ -188,7 +188,12 @@ class Apps:
         Turning it off is a withdrawal like any other and is journalled inside the same
         transaction (a journal failure rolls it back), so a restore from a backup taken while it
         was on keeps it off. Turning it on is not journalled, the same as enabling it for a
-        workspace."""
+        workspace.
+
+        Turning it off also deletes the deployment's "held back" marker of a business application
+        (`SUITE_UNRELEASED_PREFIX`): the switch-off is the operator's (command line or admin
+        console) from then on, and a later release of the application must not turn it back on
+        — `bootstrap_suite_app` re-activates only what it switched off itself."""
         from . import journal
         if status not in ("active", "disabled"):
             raise ValueError(status)
@@ -196,7 +201,32 @@ class Apps:
             changed = t.execute("UPDATE apps SET status=?, updated_at=? WHERE id=? AND status<>?",
                                 (status, now(), app_id, status)).rowcount > 0
             if changed and status == "disabled":
+                t.execute("DELETE FROM meta WHERE key=?", (SUITE_UNRELEASED_PREFIX + app_id,))
                 journal.record(self.store, "app_disabled", app_id=app_id)
+        return changed
+
+    def set_access_policy(self, app_id: str, policy: str) -> bool:
+        """Change who may use an application: ``members`` (membership of a workspace that turned
+        it on is enough, unless revoked) or ``explicit`` (only a granted entitlement). The policy
+        is the application's, platform-wide. Returns whether anything changed.
+
+        Tightening to ``explicit`` is a withdrawal — every member without a grant loses the
+        application — and is journalled inside the same transaction as the UPDATE, with a receipt
+        in `meta` that commits with it (`journal.record_app_policy_tightened`): a journal failure
+        rolls it back, and a restore into a database without the receipt — one from before the
+        tightening, or one taken before it committed — comes back ``explicit``, while a database
+        that holds the receipt keeps whatever it says, a later loosening included. Loosening is not
+        journalled, the same as turning an application on (`set_status`). Neither touches an
+        entitlement row: grants stay granted and revocations stay revoked either way.
+        """
+        from . import journal
+        if policy not in ("members", "explicit"):
+            raise ServiceError(400, "bad_policy", f"未知的访问策略 {policy!r}（members / explicit）")
+        with self.store.tx() as t:
+            changed = t.execute("UPDATE apps SET access_policy=?, updated_at=? WHERE id=? AND access_policy<>?",
+                                (policy, now(), app_id, policy)).rowcount > 0
+            if changed and policy == "explicit":
+                journal.record_app_policy_tightened(self.store, app_id=app_id)
         return changed
 
     # ------------------------------------------------------------------ eligibility
@@ -487,6 +517,22 @@ def messages_origin(store: Store) -> str | None:
     return f"{u.scheme}://{u.netloc}" if u.scheme and u.netloc else None
 
 
+#: `meta` key prefix (+ application id) that `bootstrap_suite_app` writes when it switches off an
+#: application the deployment does not release (``SYNWEVO_SUITE_APPS``), and removes when it is
+#: released again — which also turns the application back on.
+SUITE_UNRELEASED_PREFIX = "suite_unreleased:"
+
+
+def suite_unreleased(store: Store, app_id: str) -> bool:
+    """Whether the deployment held this business application back at the serving process's last
+    start: its operations do not exist there, and the next start switches it off again whatever
+    the registry says. Read from the marker, the one signal that crosses processes — the
+    account service cannot ask ``SYNWEVO_SUITE_APPS`` of the process that serves the application.
+    An application an operator had switched off before the deployment stopped releasing it
+    carries no marker (`bootstrap_suite_app` only marks what it switches off itself)."""
+    return bool(store.one("SELECT 1 FROM meta WHERE key=?", (SUITE_UNRELEASED_PREFIX + app_id,)))
+
+
 def bootstrap_suite_app(store: Store, ident: Identity, *, app_id: str, name: str, icon: str,
                         launch_url: str | None, released: bool) -> dict | None:
     """Register one business application of the workplace origin. Run by the process that serves
@@ -501,7 +547,7 @@ def bootstrap_suite_app(store: Store, ident: Identity, *, app_id: str, name: str
     """
     if app_id not in SUITE_APP_IDS:
         raise ValueError(f"unknown suite application {app_id}")
-    marker = f"suite_unreleased:{app_id}"
+    marker = SUITE_UNRELEASED_PREFIX + app_id
     apps = Apps(store, ident)
     if not released:
         with store.tx() as t:
