@@ -722,6 +722,9 @@ INDEXES = [
     ("ix_mail_notification_ref", "mail_outbox", ("kind", "ref_id")),
     # The platform's invitation oversight (A47) pages every workspace's invitations newest first.
     ("ix_inv_created", "invitations", ("created_at",)),
+    # An organization's workspaces (tenant organization pages, the platform organization list and
+    # detail, A34) without scanning every personal workspace.
+    ("ix_ws_org", "workspaces", ("organization_id", "created_at", "id")),
 ]
 
 V2_COLUMNS = [

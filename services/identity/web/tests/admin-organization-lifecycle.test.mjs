@@ -17,6 +17,8 @@ const WEB = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(WEB + "package.json");
 const React = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
+// A34: the tab keeps the open organization's detail in the address, so it renders inside a router.
+const { MemoryRouter } = require("react-router-dom");
 
 // Explicit browser-environment fixture, as in admin-legacy.test.mjs.
 const storage = new Map();
@@ -91,7 +93,8 @@ function tab(locale, held, items = ROWS) {
     "/api/admin/organizations": { items },
     "/api/admin/ownership/orphans": { data: { as_of: T, limit: 50, workspaces: { total: 0, items: [] }, organizations: { total: 0, items: [] } } },
   };
-  return render(locale, React.createElement(tabs.OrganizationsTab, { onDenied() {}, held }));
+  return render(locale, React.createElement(MemoryRouter, { initialEntries: ["/admin?tab=organizations"] },
+    React.createElement(tabs.OrganizationsTab, { onDenied() {}, held })));
 }
 const row = (html, id) => html.split("<tr").find((part) => part.includes(id)).split("</tr>")[0];
 const label = (locale, action) => tx(locale, dialog.LIFECYCLE_ACTION_LABELS[action]);

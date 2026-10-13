@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { post, qs } from "@synwevo/auth-client";
-import { fmtTime, t as tr, useI18n, useToast } from "@synwevo/ui";
+import { fmtTime, formatNumber, t as tr, useI18n, useToast } from "@synwevo/ui";
 import { useDebounced } from "../lib/hooks";
 import { useAdminData, useAdminPage } from "./data";
 import { ActionDialog } from "./ActionDialog";
 import { NotificationRecovery } from "./NotificationRecovery";
 import { OwnershipRecovery } from "./OwnershipRecovery";
-import { OrganizationLifecycleDialog, LIFECYCLE_ACTION_LABELS, type LifecycleAction } from "./OrganizationLifecycleDialog";
+import { OrganizationDetailDialog, useOrganizationView } from "./OrganizationDetail";
+import { OrganizationLifecycleDialog, LIFECYCLE_ACTION_LABELS, lifecycleActions, recoverable, type LifecycleAction } from "./OrganizationLifecycleDialog";
 import { PageControls } from "./ListControls";
 import { MAIL_STATE, fmtDuration } from "./labels";
 import { permitted, type Held } from "./access";
@@ -146,12 +147,8 @@ export function MailTab({ onDenied, held }: Props) {
 }
 
 type Organization = { id: string; name: string; status: string; role: string | null; members: number; workspaces: number; recover_until: number | null };
-/** A35: the transitions the platform path offers from each status. `recover` is offered for a
- *  deleted organization and disabled once its window has closed (the server refuses it too). */
-export function lifecycleActions(status: string): LifecycleAction[] {
-  return status === "deleted" ? ["recover"] : [status === "active" ? "freeze" : "unfreeze", "delete"];
-}
-export const recoverable = (org: { recover_until: number | null }, now = Date.now()) => !!org.recover_until && org.recover_until * 1000 > now;
+/** A35: the transitions the platform path offers from each status (OrganizationLifecycleDialog.tsx). */
+export { lifecycleActions, recoverable };
 export function OrganizationsTab({ onDenied, held }: Props) {
   useI18n();
   const t = tr;
@@ -162,6 +159,8 @@ export function OrganizationsTab({ onDenied, held }: Props) {
   const load = useAdminPage<Organization>(`/api/admin/organizations${qs({ q: query, status })}`, onDenied);
   const [action, setAction] = useState<{ org: Organization; kind: LifecycleAction } | null>(null);
   const toast = useToast();
+  // A34: the open organization's detail is kept in the address (`org`), so it survives a reload.
+  const detail = useOrganizationView();
   const names: Record<string, string> = { active: t("正常"), frozen: t("已冻结"), deleted: t("已删除") };
   return <><section className="card card-b col gap12">
     <div className="row gap12 wrap"><h2 className="grow">{t("组织治理")}</h2><button className="btn sm" onClick={load.reload} disabled={load.loading}>{t("刷新")}</button></div>
@@ -170,17 +169,21 @@ export function OrganizationsTab({ onDenied, held }: Props) {
     <div className="row gap12 wrap"><label className="field grow">{t("搜索组织名称或编号")}<input className="input" type="search" maxLength={100} value={q} onChange={e => setQ(e.target.value)} /></label>
       <label className="field">{t("状态")}<select className="input" value={status} onChange={e => setStatus(e.target.value)}><option value="">{t("全部状态")}</option>{Object.entries(names).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label></div>
     {load.err && <p className="notice err" role="alert">{load.err}</p>}{load.loading && <p role="status">{t("加载中…")}</p>}
-    <div className="list-wrap"><table className="gov" aria-label={t("组织治理")} aria-busy={load.loading}><thead><tr>{["组织", "状态", "成员", "工作空间", "操作"].map(label => <th scope="col" className={label === "操作" ? "act" : undefined} key={label}>{t(label)}</th>)}</tr></thead>
+    <div className="list-wrap admin-cards-wrap"><table className="gov admin-cards-table" aria-label={t("组织治理")} aria-busy={load.loading}><thead><tr>{["组织", "状态", "成员", "工作空间", "操作"].map(label => <th scope="col" className={label === "操作" ? "act" : undefined} key={label}>{t(label)}</th>)}</tr></thead>
       <tbody>{!load.loading && !load.err && load.data?.items.map(org => <tr key={org.id}>
-        <th scope="row">{org.name}<div className="who2 mono">{org.id}</div></th><td>{names[org.status]}{org.recover_until && <span className="cell-note">{t("恢复期限：{time}", { time: fmtTime(org.recover_until) })}</span>}</td><td>{org.members}</td><td>{org.workspaces}</td>
-        <td className="act"><div className="row gap4 wrap">{org.role && <a className="btn sm" href={`/organizations/${encodeURIComponent(org.id)}`}>{t("组织设置")}</a>}
+        <th scope="row">{org.name}<div className="who2 mono">{org.id}</div></th><td data-label={t("状态")}><div>{names[org.status]}{org.recover_until && <span className="cell-note">{t("恢复期限：{time}", { time: fmtTime(org.recover_until) })}</span>}</div></td><td data-label={t("成员")}>{formatNumber(org.members)}</td><td data-label={t("工作空间")}>{formatNumber(org.workspaces)}</td>
+        <td className="act" data-label={t("操作")}><div className="row gap4 wrap">
+          {/* A34: read-only governance metadata, member or not; the settings page stays the members' */}
+          {held.has("platform.orgs.view") && <button type="button" className="btn sm" aria-label={t("查看组织详情：{name}", { name: org.name })} onClick={() => detail.open(org.id)}>{t("详情")}</button>}
+          {org.role && <a className="btn sm" href={`/organizations/${encodeURIComponent(org.id)}`}>{t("组织设置")}</a>}
           {/* The platform path (A35): offered by the caller's permission, not by a membership role. */}
           {!manage.disabled && lifecycleActions(org.status).map(kind => <button type="button" className="btn sm" key={kind} disabled={kind === "recover" && !recoverable(org)} onClick={() => setAction({ org, kind })}>{t(LIFECYCLE_ACTION_LABELS[kind])}</button>)}
           {!manage.disabled && org.status === "deleted" && !recoverable(org) && <span className="muted small">{t("恢复期限已过，不能再恢复。")}</span>}</div></td>
-      </tr>)}{!load.loading && !load.err && !load.data?.items.length && <tr><td colSpan={5}>{t("没有匹配的组织。")}</td></tr>}</tbody>
+      </tr>)}{!load.loading && !load.err && !load.data?.items.length && <tr className="empty-row"><td colSpan={5}>{t("没有匹配的组织。")}</td></tr>}</tbody>
     </table></div><PageControls offset={load.offset} total={load.data?.total || 0} busy={load.loading || !!load.err} onPage={load.setOffset} />
     {action && <OrganizationLifecycleDialog org={action.org} action={action.kind}
       onClose={() => setAction(null)} onDone={() => { setAction(null); load.reload(); toast(t("组织状态已更新"), "ok"); }} />}
+    {detail.id && <OrganizationDetailDialog id={detail.id} held={held} onClose={detail.close} onChanged={load.reload} />}
   </section>
   {/* A37: the organizations without a usable owner, and the handover to one of their members */}
   <OwnershipRecovery kind="organization" held={held} onDenied={onDenied} onChanged={load.reload} /></>;

@@ -50,6 +50,8 @@ def test_v5_upgrade_preserves_identity_business_and_legacy_claim(tmp_path, claim
     for table in ("organization_idempotency", "organization_avatars", "organization_memberships",
                   "api_platform_bindings", "api_platform_approvals", "api_platform_calls", "account_recoveries"):
         store.execute(f"DROP TABLE {table}")
+    # A v5 install has no index over the organization link either (ix_ws_org, added with A34).
+    store.execute("DROP INDEX IF EXISTS ix_ws_org")
     for table, col, _ in V6_COLUMNS + [("workspaces", "organization_id", "")]:
         store.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
     store.execute("DROP TABLE organizations")
@@ -67,6 +69,7 @@ def test_v5_upgrade_preserves_identity_business_and_legacy_claim(tmp_path, claim
         assert Auth(migrated).secret() == root_secret
         assert Keys(migrated).active() == signing
         assert migrated.all("SELECT id FROM organizations") == []
+        assert migrated.one("SELECT 1 AS ok FROM sqlite_master WHERE type='index' AND name='ix_ws_org'")
         assert migrated.one("SELECT locale,timezone FROM users WHERE id=?", (uid,)) == {
             "locale": "zh-Hans", "timezone": "UTC"}
         assert Identity(migrated).ensure_personal_workspace(uid)["id"] == personal

@@ -91,6 +91,13 @@ ROUTES = [
     ("POST", "/api/admin/invitations/{iid}/revoke", "platform.workspaces.manage", True),
     ("POST", "/api/admin/invitations/revoke", "platform.workspaces.manage", True),
     ("GET", "/api/admin/organizations", "platform.orgs.view", False),
+    # A34 (admin_org_detail.py): any organization's governance metadata, read with the listing's
+    # permission by an administrator who is not a member. The plain account is no member of the
+    # matrix organization, so the effective-permissions route answers its state refusal.
+    ("GET", "/api/admin/organizations/{oid}", "platform.orgs.view", False),
+    ("GET", "/api/admin/organizations/{oid}/workspaces", "platform.orgs.view", False),
+    ("GET", "/api/admin/organizations/{oid}/members", "platform.orgs.view", False),
+    ("GET", "/api/admin/organizations/{oid}/members/{uid}/permissions", "platform.orgs.view", False),
     # The lifecycle preview changes nothing; the act is confirmed and dangerous (A35).
     ("POST", "/api/admin/organizations/{oid}/preview", "platform.orgs.manage", False),
     ("POST", "/api/admin/organizations/{oid}/{action}", "platform.orgs.manage", True),
@@ -323,6 +330,8 @@ RISK_STATE_REFUSALS = {
                        "/api/admin/diagnostics/registration": (400, "bad_email"),
                        "/api/admin/users/{uid}/platform-access/simulate": (400, "bad_simulation"),
                        "/api/admin/users/{uid}/access": (400, "bad_access_query"),
+                       # The plain account is no member of the matrix organization (A34).
+                       "/api/admin/organizations/{oid}/members/{uid}/permissions": (404, "not_member"),
                        # The plain account has no second factor to reset (A26).
                        "/api/admin/users/{uid}/second-factor-reset/preview": (409, "nothing_to_reset"),
                        # No stored payment key in the matrix; authorized readers reach this refusal.

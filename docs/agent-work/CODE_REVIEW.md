@@ -538,6 +538,13 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 风险/未做：指纹按当前密钥，重叠期内由旧密钥验签的接收方看到的是新密钥指纹（行记"用哪把签"，当前+旧两把都签在头里）。
 - 验证：新增 4 例 + 两应用 webhook 契约/投递/加固/重投/CLI/示例 254 项与迁移测试通过。
 
+## CR-127 · A34 平台只读组织详情：治理元数据、成员、自定义角色、待决导入与复制、有效权限解释（2026-10-13，本轮新增，本地已验证）
+
+- 位置：packages/core/synwevo_core/organizations.py（`member_page`：从 `Organizations.members` 抽出的无鉴权成员分页，租户返回形状与顺序不变；`USABLE_ACCOUNT_CONDITION`；搜索不再按已删除账户保留的地址键匹配）；store.py（索引 `ix_ws_org`）；platform_access.py（三项权限说明更正：`platform.orgs.view`、`platform.orgs.manage`、`platform.apps.manage`）；services/identity/synwevo_identity/admin_org_detail.py（新：详情、空间分页、成员分页、成员有效权限四条只读路由，延迟读快照，按读者语言附组织权限目录）；admin_routes.py（include；`list_organizations` 每行两次计数改为分组查询、`q` 按字面匹配）；前端 governance/OrganizationDetail.tsx、org-detail.messages.ts、GovernanceTabs.tsx（“详情”入口、窄屏卡片、地址栏 `org` 恢复）、OrganizationLifecycleDialog.tsx（共用动作表）、labels.ts、admin.css。
+- 审查要点：此前只有成员能读组织（非成员 404），控制台只在管理员本人是成员时给出设置链接；平台管理不得借成员身份行事。本包只读：不建立任何成员关系、资格、会话或令牌，读取不写审计（与其他平台读取一致），租户路由对非成员管理员仍 404、Docs 仍拒绝；只返回治理元数据，不含项目或模板名称、导入行地址与文件、复制清单、邀请令牌或文档内容；没有 `platform.users.view` 时地址为空且搜索不按地址匹配（防止探测）。
+- 审查发现（只读对抗性审查，均已修正）：(中) 已删除账户的地址被抹去但地址键保留，成员搜索（含租户原有搜索）仍能用旧地址找到该账户 → 只对未删除账户按地址键匹配；(低) 按组织查空间全表扫描 → `ix_ws_org`；(低) 已过截止的待批/已批复制仍计为未完成 → 读取时按当前步骤截止过滤，不写库；(低) 尚未规划的导入行数为 0 → 说明为“已规划行数”，界面按状态措辞。
+- 验证：定向 187 + 相邻 113 项（后端子代理）、审查后 org detail 15 项 + 权限矩阵通过；账户前端 247 项、六个前端工作区 684 项 node 测试、五守卫 + 图标与 Logo、根 typecheck/build、infra 单元测试通过（07:17Z）；完整根套件 6062 通过、2 失败（v5 升级夹具删除被新索引覆盖的列，夹具已修正并重跑通过）、2 跳过，详见 EVIDENCE 同日条目。未在浏览器中实际操作（焦点、窄屏只由渲染测试覆盖）。
+
 ## CR-126 · B1/B2 应用目录的平台管理：全局与按空间启停、访问策略，带影响预览（2026-10-13，本轮新增，本地已验证）
 
 - 位置：packages/core/synwevo_core/apps.py（`Apps.set_access_policy`：收紧时同事务写 `app_policy_tightened`；`suite_unreleased()`）；journal.py（新日志种类及重放：恢复后改为 explicit）；platform_access.py（`platform.apps.manage`：super_admin、access_admin）；services/identity/synwevo_identity/admin_apps.py（新：列表、按空间列表、预览与确认）；admin_routes.py（include）；admin_actions.py（新 scope `apps` 与六个动作）；cli.py（说明控制台走同一服务层）；前端 governance/AppsTab.tsx、AppChangeDialog.tsx、apps.messages.ts、access.ts、admin/navigation.ts、Admin.tsx、PlatformAccess.tsx、labels.ts 与两个消息文件。

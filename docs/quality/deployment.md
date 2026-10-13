@@ -915,7 +915,7 @@ through the pre-fix transport, which lacked explicit certificate verification.
 
 2026-10-13 05:00Z `git push origin HEAD:main`，`5e1f0ca9..3c3e47fb`（CR-125 A47 平台邀请监管）。推送前：完整根套件 6004 通过/0 失败/2 跳过，账户前端 221 项、五守卫、根 typecheck/build 通过。运行 [38349263315](https://github.com/WeGreen-AI/Synwevo/actions/runs/38349263315)：verify 作业未启动（0 个步骤，计费注解相同），deploy 跳过；生产仍为 `synwevo:e99212d`。计费恢复后重跑最新运行（`gh run rerun 38349263315 --failed`）即可验证并部署 main 头部。 05:23Z 第 24 次重跑（attempt 2）、06:23Z 第 25 次重跑（attempt 3）：verify 仍 0 个步骤、注解相同，deploy 跳过；下一次≈07:23Z。
 
-2026-10-13 06:46Z `git push origin HEAD:main`，`6a656300..cb5a735d`（CR-126 B1/B2 应用目录的平台管理）。推送前：最终树完整根套件 6049 通过/0 失败/2 跳过，六个前端工作区 669 项 node 测试、五守卫、图标与 Logo 检查、根 typecheck/build、infra/production 单元测试 12 项通过；工作树干净（提交树即测试树）。运行 [38358664413](https://github.com/WeGreen-AI/Synwevo/actions/runs/38358664413)：verify 作业未启动（0 个步骤，计费注解相同），deploy 跳过；生产仍为 `synwevo:e99212d`。计费恢复后重跑最新运行（`gh run rerun 38358664413 --failed`）即可验证并部署 main 头部；下一次每小时重跑≈07:23Z。
+2026-10-13 06:46Z `git push origin HEAD:main`，`6a656300..cb5a735d`（CR-126 B1/B2 应用目录的平台管理）。推送前：最终树完整根套件 6049 通过/0 失败/2 跳过，六个前端工作区 669 项 node 测试、五守卫、图标与 Logo 检查、根 typecheck/build、infra/production 单元测试 12 项通过；工作树干净（提交树即测试树）。运行 [38358664413](https://github.com/WeGreen-AI/Synwevo/actions/runs/38358664413)：verify 作业未启动（0 个步骤，计费注解相同），deploy 跳过；生产仍为 `synwevo:e99212d`。计费恢复后重跑最新运行（`gh run rerun 38358664413 --failed`）即可验证并部署 main 头部。07:09Z 第 26 次重跑（attempt 2）：verify 仍 0 个步骤、注解相同，deploy 跳过；下一次≈08:09Z。
 
 ## 2026-10-11 393b066 未部署（GitHub Actions 计费阻断）
 

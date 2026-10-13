@@ -42,6 +42,13 @@ export const LIFECYCLE_WARNINGS: Record<LifecycleAction, string> = {
   recover: "恢复不撤销任何东西：组织回到删除前的状态；之前撤销的会话、令牌和邀请不会恢复。",
 };
 export const PLATFORM_NOTE = "此操作由平台执行并写入审计记录；不会给任何平台管理员带来成员身份、资格或业务文档访问。";
+/** The transitions the platform path offers from each status. `recover` is offered for a
+ *  deleted organization and disabled once its window has closed (the server refuses it too).
+ *  Shared by the organizations list and the organization detail (OrganizationDetail.tsx). */
+export function lifecycleActions(status: string): LifecycleAction[] {
+  return status === "deleted" ? ["recover"] : [status === "active" ? "freeze" : "unfreeze", "delete"];
+}
+export const recoverable = (org: { recover_until: number | null }, now = Date.now()) => !!org.recover_until && org.recover_until * 1000 > now;
 /** Freeze and delete revoke the organization's authority (sessions, tokens, invitations, approvals);
  *  unfreeze and recover revoke nothing. */
 export const revokes = (action: LifecycleAction) => action === "freeze" || action === "delete";

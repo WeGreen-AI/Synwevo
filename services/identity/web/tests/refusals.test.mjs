@@ -67,6 +67,9 @@ const SERVER = [
   { file: ID + "admin_invitations.py", surfaces: ["admin"] },
   // B1/B2: the application catalogue — the preview and the change (governance/AppChangeDialog.tsx)
   { file: ID + "admin_apps.py", surfaces: ["admin"] },
+  // A34: the platform's read-only organization detail — the detail, its member list and the permission
+  // explainer (governance/OrganizationDetail.tsx)
+  { file: ID + "admin_org_detail.py", surfaces: ["admin"] },
   { file: ID + "ownership.py", surfaces: ["account", "admin"] },
   { file: ID + "admin_settings.py", surfaces: ["admin"] },
   { file: ID + "admin_model_prices.py", surfaces: ["admin"] },
@@ -149,6 +152,8 @@ const SERVER = [
   // A35: the platform-scope lifecycle transition is reached from the administration page only
   // (governance/OrganizationLifecycleDialog.tsx); owners' tenant route keeps `transition`.
   { file: CORE + "organizations.py", fns: ["platform_transition"], surfaces: ["admin"] },
+  // A34: the member page both the tenant members list and the platform's organization detail read
+  { file: CORE + "organizations.py", fns: ["member_page"], surfaces: ["org", "admin"] },
   { file: CORE + "organizations.py", surfaces: ["org"] },
   { file: CORE + "org_roles.py", surfaces: ["org"] },
   { file: CORE + "data_flow.py", surfaces: [], why: "transfer refusals are met in the business applications (Agent, Forms, flows), which word them; the organization page reaches only the cap setter, after Organizations.update has refused an invalid value in its own words" },

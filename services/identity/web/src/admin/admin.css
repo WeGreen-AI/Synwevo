@@ -74,3 +74,18 @@
   /* an invitation that can no longer be revoked has no checkbox: no empty line on its card */
   .admin-content table.gov.admin-invitations-table td.pick:empty { display: none; }
 }
+
+/* A34: one organization's detail (governance/OrganizationDetail.tsx). Organization, workspace, role
+   and people's names are chosen by people and may be long or unbroken: they wrap inside the panel
+   instead of widening it. Permission and role chips wrap too (a badge is one line elsewhere). */
+.org-detail-name { overflow-wrap: anywhere; }
+.org-detail :is(dd, th, td, strong, h4) { overflow-wrap: anywhere; }
+.org-detail-chips .badge, .org-detail-roles .badge { white-space: normal; height: auto; min-height: 20px; padding-block: 2px; overflow-wrap: anywhere; }
+.org-detail-roles { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.org-detail-roles li { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.org-detail .stat { flex: 1 1 140px; min-width: 0; }
+.org-detail h4 { margin: 0; }
+@media (max-width: 720px) {
+  .org-detail .stat { flex-basis: calc(50% - 6px); padding: 10px 12px; }
+  .org-detail .stat .v { font-size: 20px; }
+}

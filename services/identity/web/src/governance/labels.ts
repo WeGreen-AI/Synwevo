@@ -11,6 +11,7 @@ import "./bulk-accounts.messages";
 import "./second-factor.messages";
 import "./invitations.messages";
 import "./apps.messages";
+import "./org-detail.messages";
 export { ROLES, ROLE_RANK, canExport, isAbort } from "../lib/labels";
 export type { Role } from "../lib/labels";
 // Read translations at render time; imported enum labels must not freeze the initial locale.
@@ -129,6 +130,12 @@ const errors: Record<string, string> = {
   bad_change: "不支持的更改，请刷新页面后重试。",
   portal_required: "平台本身依赖这个应用，不能停用它或改为仅限明确授权。",
   app_not_released: "当前部署没有发布这个应用，不能在这里启用；启用后下次启动也会被重新停用。",
+  // A34: the platform's read-only organization detail (governance/OrganizationDetail.tsx, which words
+  // `no_organization` for an organization that is gone rather than for a non-member). The member list's
+  // filter and paging are this console's own controls; the permissions explainer names a member.
+  not_member: "这个账户已不是该组织的成员；请刷新成员列表。",
+  bad_role: "请选择有效的角色。",
+  invalid_field: "有字段无效，请检查输入后重试。",
 };
 /** One item of a batch the server refused: its sentence when catalogued, else this page's wording
  *  for its code (lib/refusals.ts) — a mixed batch answers 200, so the item carries no status. */

@@ -34,6 +34,7 @@ from synwevo_core.organizations import Organizations
 from synwevo_core.sessions import admin_capable, Sessions
 from synwevo_core.store import LEGACY_WORKSPACE_NAME, Store, now
 
+from .invites import like_escape
 from .profile import deletion_counts, deletion_state
 
 REAUTH_SCOPE = "admin"
@@ -63,6 +64,10 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
     # declares its own `/organizations/{oid}/preview` first for the same reason.
     r.include_router(build_ownership_recovery_router(store, ident, audit))
     r.include_router(build_organization_lifecycle_router(store, ident, audit))
+    # A34: the read-only organization detail — GETs only, so neither router above (POSTs only)
+    # can take one of its paths; ahead of the parent's routes like the other organization routers.
+    from .admin_org_detail import build_router as build_organization_detail_router
+    r.include_router(build_organization_detail_router(store, audit))
     # A18: `/users/bulk-preview` and `/users/bulk` are declared ahead of every `/users/{uid}…`
     # route below, so neither literal segment is ever read as an account id.
     from .admin_bulk import build_router as build_bulk_accounts_router
@@ -451,18 +456,31 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, maile
                            status: str = Query("", pattern="^(|active|frozen|deleted)$"),
                            limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0, le=2**63-1),
                            snapshot: int | None = Query(None, ge=0, le=2**63-1)):
+        """The organizations, newest first. `q` matches a substring of the name or the id, as
+        literal text (`%` and `_` are not wildcards); `status` filters. Each row carries the
+        caller's own role in it (or null), its member count and its undeleted workspace count —
+        counted for the page's rows in one grouped query each, not once per row."""
         actor = _admin(request, "platform.orgs.view")
+        pattern = f"%{like_escape(q)}%"
         page = _page("organizations", columns="id,name,status,created_at,recover_until",
-                     where="(?='' OR name LIKE ? OR id LIKE ?) AND (?='' OR status=?)",
-                     params=(q, f"%{q}%", f"%{q}%", status, status), order="created_at DESC,id DESC",
+                     where="(?='' OR name LIKE ? ESCAPE '\\' OR id LIKE ? ESCAPE '\\') AND (?='' OR status=?)",
+                     params=(q, pattern, pattern, status, status), order="created_at DESC,id DESC",
                      limit=limit, offset=offset, snapshot=snapshot)
         mine = {o["id"]: o["role"] for o in Organizations(store, ident).list_for_user(actor["id"])}
+        ids = [org["id"] for org in page["items"]]
+        members, workspaces = {}, {}
+        if ids:
+            marks = ",".join("?" * len(ids))
+            members = {row["organization_id"]: row["n"] for row in store.all(
+                f"SELECT organization_id, COUNT(*) AS n FROM organization_memberships WHERE organization_id IN ({marks}) "
+                "GROUP BY organization_id", tuple(ids))}
+            workspaces = {row["organization_id"]: row["n"] for row in store.all(
+                f"SELECT organization_id, COUNT(*) AS n FROM workspaces WHERE organization_id IN ({marks}) "
+                "AND deleted_at IS NULL GROUP BY organization_id", tuple(ids))}
         for org in page["items"]:
             org["role"] = mine.get(org["id"])
-            org["members"] = store.one("SELECT COUNT(*) AS n FROM organization_memberships "
-                                       "WHERE organization_id=?", (org["id"],))["n"]
-            org["workspaces"] = store.one("SELECT COUNT(*) AS n FROM workspaces WHERE organization_id=? "
-                                          "AND deleted_at IS NULL", (org["id"],))["n"]
+            org["members"] = members.get(org["id"], 0)
+            org["workspaces"] = workspaces.get(org["id"], 0)
         return page
 
     # The lifecycle acts (`POST /organizations/{oid}/preview` and `/{action}`) are the platform-scope

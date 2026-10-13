@@ -24,10 +24,13 @@ LIFECYCLE_ACTIONS = ("freeze", "unfreeze", "delete", "recover")
 #: The organization as platform governance sees it (A35): lifecycle columns only — no role,
 #: usage, policies or avatar, which are the members' view (`Organizations.get`).
 PLATFORM_VIEW_COLUMNS = ("id", "name", "status", "deleted_at", "recover_until", "previous_status", "version")
+#: A member whose account can act (`current_membership`'s rule): active and undeleted. Written
+#: against the alias `u` (users).
+USABLE_ACCOUNT_CONDITION = "u.status='active' AND u.deleted_at IS NULL"
 #: An organization owner who can act (`_keep_owner`'s rule, shared with the platform's orphan list
 #: and `recover_owner`): the membership's role is owner and the account is active and undeleted.
 #: Written against the aliases `m` (organization_memberships) and `u` (users).
-USABLE_OWNER_CONDITION = "m.role='owner' AND u.status='active' AND u.deleted_at IS NULL"
+USABLE_OWNER_CONDITION = "m.role='owner' AND " + USABLE_ACCOUNT_CONDITION
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS organizations (
@@ -157,6 +160,56 @@ def audit_reason(value) -> str:
 def platform_view(store: Store, oid: str) -> dict | None:
     """The PLATFORM_VIEW_COLUMNS of one organization, or None when there is no such row."""
     return store.one(f"SELECT {','.join(PLATFORM_VIEW_COLUMNS)} FROM organizations WHERE id=?", (oid,))
+
+
+def member_page(store: Store, oid: str, *, q="", role="", offset=0, limit=50, match_email: bool = True,
+                usable: bool = False) -> dict:
+    """One page of an organization's members as `Organizations.members` lists them — owners, then
+    admins, then members, each by joining time — with no authority check: the caller decides who
+    may read it (the tenant's `org.members.view`, the platform's `platform.orgs.view`, A34).
+
+    `q` (≤100) matches the address key or the display name, `role` one base role; 400 `bad_role`,
+    400 `invalid_field`. `match_email=False` matches display names only: a reader who is not shown
+    addresses must not find one by probing. `usable=True` adds whether each account can act
+    (USABLE_ACCOUNT_CONDITION). Rows: `{user_id, role, joined_at, email, display_name,
+    account_status, custom_roles: [{id, name}]}`; the page: `{items, total, offset, limit,
+    active_owner_count}`. Joins an enclosing transaction or read snapshot."""
+    if role and role not in ROLES:
+        raise ServiceError(400, "bad_role", "请选择有效的组织角色", {"field": "role"})
+    if not isinstance(q, str) or len(q) > 100 or type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 200:
+        raise ServiceError(400, "invalid_field", "搜索或分页参数无效")
+    where, args = "m.organization_id=?", [oid]
+    if q.strip():
+        escaped = q.strip().casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        if match_email:
+            # A deleted account keeps its address key reserved but erased: never matched by it.
+            where += " AND ((u.deleted_at IS NULL AND u.email_key LIKE ? ESCAPE '\\') OR lower(u.display_name) LIKE ? ESCAPE '\\')"
+            args += [f"%{escaped}%"] * 2
+        else:
+            where += " AND lower(u.display_name) LIKE ? ESCAPE '\\'"
+            args.append(f"%{escaped}%")
+    if role:
+        where += " AND m.role=?"
+        args.append(role)
+    base = " FROM organization_memberships m JOIN users u ON u.id=m.user_id WHERE " + where
+    extra = f", ({USABLE_ACCOUNT_CONDITION}) AS usable" if usable else ""
+    rows = store.all("SELECT m.user_id,m.role,m.created_at AS joined_at,u.email,u.display_name, "
+                     "u.status AS account_status" + extra + base + " ORDER BY CASE m.role WHEN 'owner' THEN 0 "
+                     "WHEN 'admin' THEN 1 ELSE 2 END,m.created_at,m.user_id LIMIT ? OFFSET ?", tuple(args + [limit, offset]))
+    names = {}
+    if rows:
+        marks = ",".join("?" for _ in rows)
+        for a in store.all("SELECT a.user_id, r.id, r.name FROM organization_role_assignments a JOIN organization_roles r ON r.id=a.role_id "
+                           f"WHERE a.organization_id=? AND a.user_id IN ({marks}) ORDER BY r.name", (oid, *[r["user_id"] for r in rows])):
+            names.setdefault(a["user_id"], []).append({"id": a["id"], "name": a["name"]})
+    for row in rows:
+        if usable:
+            row["usable"] = bool(row["usable"])
+        row["custom_roles"] = names.get(row["user_id"], [])
+    owners = store.one("SELECT COUNT(*) AS n FROM organization_memberships m JOIN users u ON u.id=m.user_id "
+                       f"WHERE m.organization_id=? AND {USABLE_OWNER_CONDITION}", (oid,))["n"]
+    return {"items": rows, "total": store.one("SELECT COUNT(*) AS n" + base, tuple(args))["n"],
+            "offset": offset, "limit": limit, "active_owner_count": owners}
 
 
 def lifecycle_values(org: dict, action: str, ts: float) -> dict:
@@ -379,37 +432,11 @@ class Organizations:
 
     def members(self, oid, actor_id, *, q="", role="", offset=0, limit=50):
         _, caller = self.require(oid, actor_id, permission="org.members.view")
-        if role and role not in ROLES:
-            raise ServiceError(400, "bad_role", "请选择有效的组织角色", {"field": "role"})
-        if not isinstance(q, str) or len(q) > 100 or type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 200:
-            raise ServiceError(400, "invalid_field", "搜索或分页参数无效")
-        where, args = "m.organization_id=?", [oid]
-        if q.strip():
-            escaped = q.strip().casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            where += " AND (u.email_key LIKE ? ESCAPE '\\' OR lower(u.display_name) LIKE ? ESCAPE '\\')"
-            args += [f"%{escaped}%"] * 2
-        if role:
-            where += " AND m.role=?"
-            args.append(role)
-        base = " FROM organization_memberships m JOIN users u ON u.id=m.user_id WHERE " + where
-        rows = self.store.all("SELECT m.user_id,m.role,m.created_at AS joined_at,u.email,u.display_name, "
-                              "u.status AS account_status" + base + " ORDER BY CASE m.role WHEN 'owner' THEN 0 "
-                              "WHEN 'admin' THEN 1 ELSE 2 END,m.created_at,m.user_id LIMIT ? OFFSET ?", tuple(args + [limit, offset]))
-        names = {}
-        if rows:
-            marks = ",".join("?" for _ in rows)
-            for a in self.store.all("SELECT a.user_id, r.id, r.name FROM organization_role_assignments a JOIN organization_roles r ON r.id=a.role_id "
-                                    f"WHERE a.organization_id=? AND a.user_id IN ({marks}) ORDER BY r.name", (oid, *[r["user_id"] for r in rows])):
-                names.setdefault(a["user_id"], []).append({"id": a["id"], "name": a["name"]})
-        for row in rows:
+        page = member_page(self.store, oid, q=q, role=role, offset=offset, limit=limit)
+        for row in page["items"]:
             row["is_self"] = row["user_id"] == actor_id
             row["manageable"] = not row["is_self"] and (caller["role"] == "owner" or row["role"] == "member")
-            row["custom_roles"] = names.get(row["user_id"], [])
-        owners = self.store.one("SELECT COUNT(*) AS n FROM organization_memberships m JOIN users u ON u.id=m.user_id "
-                                "WHERE m.organization_id=? AND m.role='owner' AND u.status='active' "
-                                "AND u.deleted_at IS NULL", (oid,))["n"]
-        return {"items": rows, "total": self.store.one("SELECT COUNT(*) AS n" + base, tuple(args))["n"],
-                "offset": offset, "limit": limit, "active_owner_count": owners, "single_owner": owners <= 1,
+        return {**page, "single_owner": page["active_owner_count"] <= 1,
                 "caller": {"user_id": actor_id, "role": caller["role"]}}
 
     def _target(self, oid, uid):
