@@ -20,7 +20,7 @@ const MID_RUN = ['funds', 'org_funds', 'frozen', 'org_frozen', 'org_limit', 'org
 /** The form in each language; a short qualifier ("at the old price") may sit between "no" and "new model call". */
 const FORM = {
   'zh-Hans': /没有.{0,6}发起新的模型调用[\s\S]*也没有为此扣费/,
-  en: /no new model call was made[\s\S]*nothing was charged for it/,
+  en: /no new model call was made[\s\S]*nothing was charged for it/i,
   'zh-Hant': /沒有.{0,6}發起新的模型呼叫[\s\S]*也沒有為此扣費/,
 } as const;
 
