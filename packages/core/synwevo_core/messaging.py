@@ -45,6 +45,17 @@ The rules the schema encodes (decision record in docs/platform/messaging.md):
   Groups stay shared spaces: the blocked person's messages there remain visible, but they create
   no inbox item, no @ mark and no digest mail for the blocker. The blocked person is not told;
   a refused send says only 「暂时无法向对方发送消息」. Moderation (reports) is untouched.
+* **The organization's state closes all of its conversations at once (B3).** One check
+  (`Messaging._closed`, worst first): an organization deleted past its recovery window (or gone)
+  is LOST — answered as if the member had been removed (404); Synwevo Message switched off
+  platform-wide (`apps.status`) or for the organization (`organization_apps`) is DISABLED —
+  `403 messages_disabled`; an organization frozen, or deleted and still recoverable, is PAUSED —
+  `409 organization_unavailable` (a project's discussion whose workspace is paused keeps its own
+  `403 workspace_unavailable`). Membership is checked first, so a non-member still gets 404.
+  Nothing is deleted or rewritten: memberships, history, read positions, pins and mutes stay, and
+  everything is as it was once the organization is available again. Listings, search, sync and
+  the badge leave closed conversations out in SQL, before any limit. Moderation of reports and the
+  account export go on regardless.
 """
 from __future__ import annotations
 
@@ -52,14 +63,16 @@ import json
 import sqlite3
 import os
 import re
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from . import quarantine
+from .apps import MESSAGES_APP_ID, app_disabled, organization_app_row
+from .config import MESSAGES_NAME
 from .errors import ServiceError
 from .identity import Identity
 from .organizations import Organizations, current_membership
 from .store import Store, new_id, now
-from .workspace_availability import AVAILABLE, PAUSED
+from .workspace_availability import AVAILABLE, LOST, PAUSED, lifecycle_state
 from . import messaging_search as fts
 from .messaging_presence import Presence
 
@@ -263,6 +276,116 @@ BLOCKED_BY_ME = "你已屏蔽对方，解除后才能发送"
 BLOCKED_NEUTRAL = "暂时无法向对方发送消息"
 
 
+#: B3: Synwevo Message switched off for the conversation's organization, or platform-wide. A state
+#: of a conversation next to the workspace rule's PAUSED and LOST; precedence, worst first:
+#: LOST > DISABLED (platform) > DISABLED (organization) > PAUSED.
+DISABLED = "disabled"
+#: What `403 messages_disabled` says, per scope, in the three languages the shells use (the API
+#: message is the zh-Hans one; every shell words the code from its own catalogue).
+MESSAGES_DISABLED_TEXT = {
+    "organization": {"zh-Hans": f"该组织已停用 {MESSAGES_NAME}：会话暂时无法查看或发送，所有记录都会保留",
+                     "zh-Hant": f"該組織已停用 {MESSAGES_NAME}：會話暫時無法查看或傳送，所有記錄都會保留",
+                     "en": f"{MESSAGES_NAME} is turned off for this organization: its conversations can't be read or "
+                           "written for now. Nothing is deleted."},
+    "platform": {"zh-Hans": f"{MESSAGES_NAME} 已在平台停用：会话暂时无法查看或发送，所有记录都会保留",
+                 "zh-Hant": f"{MESSAGES_NAME} 已在平台停用：會話暫時無法查看或傳送，所有記錄都會保留",
+                 "en": f"{MESSAGES_NAME} is turned off on the platform: conversations can't be read or written for now. "
+                       "Nothing is deleted."},
+}
+#: What `409 organization_unavailable` says for a conversation of a frozen organization, or one
+#: deleted and still recoverable (G2).
+ORGANIZATION_UNAVAILABLE_TEXT = {"zh-Hans": "该组织当前不可用，会话已暂停",
+                                 "zh-Hant": "該組織目前不可用，會話已暫停",
+                                 "en": "This organization is unavailable right now; its conversations are paused."}
+
+
+def messages_disabled_refusal(organization_id: str | None, scope: str) -> ServiceError:
+    """`403 messages_disabled`: Synwevo Message is switched off for the conversation's organization
+    (`scope` organization) or platform-wide (`scope` platform). Only a member is ever told."""
+    return ServiceError(403, "messages_disabled", MESSAGES_DISABLED_TEXT[scope]["zh-Hans"],
+                        {"organization_id": organization_id, "app_id": MESSAGES_APP_ID, "scope": scope})
+
+
+def organization_unavailable_refusal(organization_id: str | None) -> ServiceError:
+    """`409 organization_unavailable` (the code and status every organization gate already uses):
+    the organization is frozen, or deleted and still recoverable. Its conversations stay as they
+    are and come back with it."""
+    return ServiceError(409, "organization_unavailable", ORGANIZATION_UNAVAILABLE_TEXT["zh-Hans"],
+                        {"organization_id": organization_id})
+
+
+class Closure(NamedTuple):
+    """Why a conversation (or a whole organization's) is closed to its members now."""
+    state: str                    # LOST, DISABLED or PAUSED
+    scope: str | None             # DISABLED: platform | organization; PAUSED: workspace | organization
+    organization_id: str | None
+
+    def refusal(self) -> ServiceError:
+        if self.state == LOST:
+            # Will not come back: the same nothing as after the member was removed.
+            return ServiceError(404, "no_conversation", "找不到该会话")
+        if self.state == DISABLED:
+            return messages_disabled_refusal(self.organization_id, self.scope or "organization")
+        if self.scope == "workspace":
+            from .messaging_bridge import paused_refusal
+            return paused_refusal()
+        return organization_unavailable_refusal(self.organization_id)
+
+
+class ClosedSet(NamedTuple):
+    """What a listing leaves out for one person (`Messaging._closed_ids`), read once per listing:
+    project discussions closed by their workspace, organizations closed as a whole (any state but
+    AVAILABLE, by `organization_state`), and the platform-wide switch."""
+    conversations: dict[str, str]    # cid -> PAUSED | LOST
+    organizations: dict[str, str]    # oid -> LOST | DISABLED | PAUSED
+    platform: bool
+
+
+def _evaluate(org: dict | None, switch: str | None, platform_off: bool, ts: float) -> tuple[str, str | None]:
+    life = lifecycle_state(org, ts)
+    if life == LOST:
+        return LOST, None
+    if platform_off:
+        return DISABLED, "platform"
+    if switch == "disabled":
+        return DISABLED, "organization"
+    if life == PAUSED:
+        return PAUSED, "organization"
+    return AVAILABLE, None
+
+
+def organization_state(store: Store, organization_id: str | None, ts: float | None = None, *,
+                       platform_off: bool | None = None) -> tuple[str, str | None]:
+    """`(state, scope)` of Synwevo Message in one organization now, worst first: LOST (the
+    organization is gone, or deleted past its recovery window), DISABLED (`platform`: switched off
+    platform-wide; `organization`: switched off for it), PAUSED (`organization`: frozen, or deleted
+    and still recoverable — `workspace_availability`'s rule) or AVAILABLE. Three primary-key reads;
+    shared with the notification re-check (`Notifier.messages_closed`)."""
+    ts = now() if ts is None else ts
+    if platform_off is None:
+        platform_off = app_disabled(store, MESSAGES_APP_ID)
+    org = store.one("SELECT status, deleted_at, recover_until FROM organizations WHERE id=?",
+                    (organization_id,)) if organization_id else None
+    row = organization_app_row(store, organization_id, MESSAGES_APP_ID) if organization_id else None
+    return _evaluate(org, (row or {}).get("status"), platform_off, ts)
+
+
+def closed_organizations(store: Store, uid: str, *, platform_off: bool) -> dict[str, str]:
+    """`{organization_id: LOST|DISABLED|PAUSED}` for every organization `uid` has an active
+    conversation membership in that is not available now — one grouped read, so a listing can
+    leave them out by `organization_id` before its limit."""
+    rows = store.all("SELECT x.oid, o.status, o.deleted_at, o.recover_until, a.status AS switch_status FROM "
+                     "(SELECT DISTINCT c.organization_id AS oid FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id "
+                     "WHERE m.user_id=? AND m.left_at IS NULL) x LEFT JOIN organizations o ON o.id=x.oid "
+                     "LEFT JOIN organization_apps a ON a.organization_id=x.oid AND a.app_id=?", (uid, MESSAGES_APP_ID))
+    ts, out = now(), {}
+    for r in rows:
+        state, _ = _evaluate(r if r["status"] is not None else None, r["switch_status"], platform_off, ts)
+        if state != AVAILABLE:
+            out[r["oid"]] = state
+    return out
+
+
 def blocks_for_export(store: Store, uid: str) -> list[dict]:
     """The person's own block list for their account export: whom they blocked and when — never
     who blocked them."""
@@ -326,41 +449,144 @@ class Messaging:
             raise ServiceError(404, "no_conversation", "找不到该会话")
         # organization membership is checked on every read and write, not only at join time
         self._org_member(conv["organization_id"], uid)
-        state = self._closed(conv)
-        if state == PAUSED:
-            # A project's discussion while its workspace is frozen or deleted-but-recoverable: the
-            # members stay (the bridge's sweep removes nobody for it), so every read and write is
-            # refused here instead, and works again as before once the workspace is back.
-            from .messaging_bridge import paused_refusal
-            raise paused_refusal()
-        if state:
-            # Its workspace will not come back: the same nothing as after the sweep has removed
-            # this member, at once rather than up to a sweep later.
-            raise ServiceError(404, "no_conversation", "找不到该会话")
+        # Only then the organization's and the workspace's state: a person who is not in the
+        # conversation learns nothing from it (404 above). A closed conversation keeps its members
+        # (no sweep removes anybody for a pause or a switch-off), so every read and write is
+        # refused here instead, and works again as before once it is open.
+        closed = self._closed(conv)
+        if closed:
+            raise closed.refusal()
         return conv, m
 
-    def _closed(self, conv: dict) -> str | None:
-        """PAUSED or LOST while `conv` is a project's discussion whose workspace is not available
-        (`messaging_bridge.conversation_availability`); None for every other conversation."""
-        if conv.get("purpose") != "object":
-            return None
-        from .messaging_bridge import conversation_availability
-        state = conversation_availability(self.store, conv["id"])
-        return None if state == AVAILABLE else state
+    def _closed(self, conv: dict) -> Closure | None:
+        """Why `conv` is closed to its members now, worst first, or None (B3):
 
-    def _closed_ids(self, uid: str) -> dict[str, str]:
-        """The caller's closed project discussions, once per listing (`messaging_bridge.
-        closed_conversations`)."""
+        * LOST — its organization is gone or deleted past its recovery window, or it is a project's
+          discussion whose workspace will not come back: answered as if the member had been
+          removed, at once rather than a sweep later;
+        * DISABLED — Synwevo Message is switched off platform-wide (scope `platform`) or for its
+          organization (scope `organization`);
+        * PAUSED — a project's discussion whose workspace is frozen or deleted-but-recoverable
+          (scope `workspace`, `workspace_unavailable`, A44), or any conversation of an organization
+          that is (scope `organization`, `organization_unavailable`, G2).
+
+        Re-read on every call (three primary-key reads, four for a project's discussion) and again
+        inside the write transactions of send, forward, open_dm and create_group."""
+        oid = conv.get("organization_id")
+        org_state, scope = organization_state(self.store, oid)
+        obj = AVAILABLE
+        if conv.get("purpose") == "object":
+            from .messaging_bridge import conversation_availability
+            obj = conversation_availability(self.store, conv["id"])
+        if LOST in (org_state, obj):
+            return Closure(LOST, None, oid)
+        if org_state == DISABLED:
+            return Closure(DISABLED, scope, oid)
+        if obj == PAUSED:
+            return Closure(PAUSED, "workspace", oid)
+        if org_state == PAUSED:
+            return Closure(PAUSED, "organization", oid)
+        return None
+
+    def _still_open(self, conv: dict) -> None:
+        """Inside a write transaction: the same check again, so a write that passed `_member`
+        before a switch-off (or a freeze) committed cannot land after it — the switch-off's own
+        transaction holds the writer lock until it commits."""
+        closed = self._closed(conv)
+        if closed:
+            raise closed.refusal()
+
+    def _still_open_org(self, oid: str) -> None:
+        """`_still_open` for a conversation that does not exist yet (open_dm, create_group)."""
+        closed = self._org_closed(oid)
+        if closed:
+            raise closed.refusal()
+
+    def _org_closed(self, oid: str) -> Closure | None:
+        state, scope = organization_state(self.store, oid)
+        return None if state == AVAILABLE else Closure(state, scope, oid)
+
+    def _org_open(self, oid: str, uid: str) -> dict:
+        """`_org_member`, then the organization's state: what starting a conversation needs
+        (directory, a direct message, a group). A non-member still gets 404 first."""
+        m = self._org_member(oid, uid)
+        closed = self._org_closed(oid)
+        if closed:
+            raise closed.refusal()
+        return m
+
+    def _org_filter(self, oid: str, uid: str) -> None:
+        """A listing or search narrowed to one organization: a member of a disabled or paused one
+        is told why it is empty; anyone else gets the empty answer they always got."""
+        if current_membership(self.store, oid, uid):
+            closed = self._org_closed(oid)
+            if closed and closed.state != LOST:
+                raise closed.refusal()
+
+    def require_messages_on(self, oid: str | None) -> None:
+        """The switch alone (platform-wide, then the organization's): for an entry that has no
+        conversation membership to check yet — a project's discussion opened from Docs
+        (`messaging_bridge.ObjectConversations`), before anything is written."""
+        if app_disabled(self.store, MESSAGES_APP_ID):
+            raise messages_disabled_refusal(oid, "platform")
+        row = organization_app_row(self.store, oid, MESSAGES_APP_ID) if oid else None
+        if row and row["status"] == "disabled":
+            raise messages_disabled_refusal(oid, "organization")
+
+    def _closed_ids(self, uid: str) -> ClosedSet:
+        """What the caller's listings leave out, once per listing: closed project discussions
+        (`messaging_bridge.closed_conversations`), closed organizations (`closed_organizations`)
+        and the platform-wide switch."""
         from .messaging_bridge import closed_conversations
-        return closed_conversations(self.store, uid)
+        platform = app_disabled(self.store, MESSAGES_APP_ID)
+        return ClosedSet(closed_conversations(self.store, uid), closed_organizations(self.store, uid, platform_off=platform), platform)
 
     @staticmethod
-    def _not_closed(column: str, closed: dict[str, str]) -> tuple[str, list]:
-        """A SQL condition (and its one argument) leaving `closed` out — applied before LIMIT, so
-        a closed discussion never takes the place of a readable result."""
-        if not closed:
-            return "1=1", []
-        return f"{column} NOT IN (SELECT value FROM json_each(?))", [json.dumps(sorted(closed))]
+    def _not_closed(column: str, closed: ClosedSet, org_column: str | None = None, *,
+                    keep: frozenset = frozenset()) -> tuple[str, list]:
+        """A SQL condition (and its arguments) leaving `closed` out — applied before LIMIT, so a
+        closed conversation never takes the place of a readable result. `column` is the
+        conversation id; `org_column` its organization id when the query has it (a closed
+        organization is left out by that, not by listing its conversations), else a subquery on
+        `conversations`. States in `keep` stay in (the stream keeps paused and disabled
+        conversations known; only a loss drops them)."""
+        if closed.platform and DISABLED not in keep:
+            return "0=1", []
+        conds, args = [], []
+        cids = sorted(cid for cid, state in closed.conversations.items() if state not in keep)
+        if cids:
+            conds.append(f"{column} NOT IN (SELECT value FROM json_each(?))")
+            args.append(json.dumps(cids))
+        oids = sorted(oid for oid, state in closed.organizations.items() if state not in keep)
+        if oids:
+            if org_column:
+                conds.append(f"{org_column} NOT IN (SELECT value FROM json_each(?))")
+            else:
+                conds.append(f"{column} NOT IN (SELECT id FROM conversations WHERE organization_id IN (SELECT value FROM json_each(?)))")
+            args.append(json.dumps(oids))
+        return (" AND ".join(conds) or "1=1"), args
+
+    def organization_switches(self, uid: str) -> dict[str, dict]:
+        """Synwevo Message's switch in every organization `uid` is a member of:
+        `{oid: {"enabled", "scope", "changed_at"}}` — `scope` `platform` or `organization` when it
+        is off; `changed_at` the later of the two switches' times (what tells one change from the
+        next). Lifecycle (frozen, deleted) is not a switch and is not here."""
+        app = self.store.one("SELECT status, updated_at FROM apps WHERE id=?", (MESSAGES_APP_ID,))
+        off = bool(app) and app["status"] == "disabled"
+        rows = self.store.all("SELECT m.organization_id AS oid, a.status, a.updated_at FROM organization_memberships m "
+                              "LEFT JOIN organization_apps a ON a.organization_id=m.organization_id AND a.app_id=? "
+                              "WHERE m.user_id=?", (MESSAGES_APP_ID, uid))
+        out = {}
+        for r in rows:
+            stamps = [x for x in (r["updated_at"], app["updated_at"] if app else None) if x is not None]
+            scope = "platform" if off else ("organization" if r["status"] == "disabled" else None)
+            out[r["oid"]] = {"enabled": scope is None, "scope": scope, "changed_at": max(stamps) if stamps else None}
+        return out
+
+    def disabled_organizations_for(self, uid: str) -> list[str]:
+        """The organizations of `uid` where Synwevo Message is switched off (theirs or the
+        platform's), sorted — what the conversation list adds as `disabled_organizations`."""
+        return sorted(oid for oid, s in self.organization_switches(uid).items() if not s["enabled"])
 
     def _manager(self, cid: str, uid: str, *, owner: bool = False) -> tuple[dict, dict]:
         conv, m = self._member(cid, uid)
@@ -500,8 +726,11 @@ class Messaging:
         knew, so a membership closed by another process (organization removal on the account
         service, a moderation decision) reaches the open tab within one tick. A project discussion
         whose workspace will not come back (LOST) is left out at once, as the sweep will remove
-        the member; a paused one stays (it is refused live and comes back as it was)."""
-        cond, extra = self._not_closed("m.conversation_id", {cid: s for cid, s in self._closed_ids(uid).items() if s != PAUSED})
+        the member; a paused one stays (it is refused live and comes back as it was) — and so does
+        a conversation of an organization where Synwevo Message is switched off (B3): it is refused
+        live, the open tab is told by the stream's `organization` event, and it comes back as it was."""
+        cond, extra = self._not_closed("m.conversation_id", self._closed_ids(uid), "c.organization_id",
+                                       keep=frozenset({PAUSED, DISABLED}))
         rows = self.store.all("SELECT m.conversation_id, c.organization_id FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id "
                               f"WHERE m.user_id=? AND m.left_at IS NULL AND {cond}", (uid, *extra))
         orgs: dict[str, bool] = {}
@@ -521,9 +750,16 @@ class Messaging:
     def co_members(self, uid: str) -> list[str]:
         """Everyone who shares an active conversation with `uid` — the audience of that person's
         presence changes. Organization membership is re-checked per conversation elsewhere; a
-        closed membership is already out of this set."""
-        rows = self.store.all("SELECT DISTINCT m2.user_id AS u FROM conversation_members m1 JOIN conversation_members m2 ON m2.conversation_id=m1.conversation_id "
-                              "WHERE m1.user_id=? AND m1.left_at IS NULL AND m2.left_at IS NULL AND m2.user_id<>?", (uid, uid))
+        closed membership is already out of this set, and so is a conversation of an organization
+        that is closed as a whole (B3: switched off, paused or lost) — nobody there is shown."""
+        platform = app_disabled(self.store, MESSAGES_APP_ID)
+        if platform:
+            return []
+        closed = ClosedSet({}, closed_organizations(self.store, uid, platform_off=False), False)
+        cond, extra = self._not_closed("m1.conversation_id", closed, "c.organization_id")
+        rows = self.store.all("SELECT DISTINCT m2.user_id AS u FROM conversation_members m1 JOIN conversations c ON c.id=m1.conversation_id "
+                              "JOIN conversation_members m2 ON m2.conversation_id=m1.conversation_id "
+                              f"WHERE m1.user_id=? AND m1.left_at IS NULL AND m2.left_at IS NULL AND m2.user_id<>? AND {cond}", (uid, uid, *extra))
         return [r["u"] for r in rows]
 
     def presence_audience(self, uid: str) -> list[str]:
@@ -566,8 +802,9 @@ class Messaging:
     # ------------------------------------------------------------------ conversations
     def directory(self, oid: str, uid: str, q: str = "", limit: int = 20) -> list[dict]:
         """People a member may start a conversation with: active members of the same
-        organization, by name. Names only — no addresses, no other organizations."""
-        self._org_member(oid, uid)
+        organization, by name. Names only — no addresses, no other organizations. Not while the
+        organization is closed (B3: switched off, paused)."""
+        self._org_open(oid, uid)
         like = f"%{q.strip()}%" if q and q.strip() else "%"
         rows = self.store.all("SELECT u.id, u.display_name, u.email FROM organization_memberships m JOIN users u ON u.id=m.user_id "
                               "WHERE m.organization_id=? AND u.status='active' AND u.deleted_at IS NULL AND u.id<>? "
@@ -578,7 +815,7 @@ class Messaging:
     def open_dm(self, oid: str, uid: str, other: str) -> dict:
         if other == uid:
             raise ServiceError(400, "invalid_field", "不能和自己私聊", {"field": "user_id"})
-        self._org_member(oid, uid)
+        self._org_open(oid, uid)
         self._org_member(oid, other)
         key = f"{oid}:{min(uid, other)}:{max(uid, other)}"
         if not self.store.one("SELECT 1 AS x FROM conversations WHERE dm_key=?", (key,)):
@@ -587,6 +824,7 @@ class Messaging:
             self._guard_dm({"kind": "dm", "dm_key": key}, uid)
         ts = now()
         with self.store.tx() as t:
+            self._still_open_org(oid)
             conv = t.execute("SELECT * FROM conversations WHERE dm_key=?", (key,)).fetchone()
             if conv:
                 conv = dict(conv)
@@ -610,7 +848,7 @@ class Messaging:
 
     def create_group(self, oid: str, uid: str, *, name: str, member_ids: list[str], description: str | None = None,
                      workspace_id: str | None = None) -> dict:
-        self._org_member(oid, uid)
+        self._org_open(oid, uid)
         name = (name or "").strip()
         if not 1 <= len(name) <= MAX_NAME:
             raise ServiceError(400, "invalid_field", f"群名称需要 1–{MAX_NAME} 个字符", {"field": "name", "limit": MAX_NAME})
@@ -629,6 +867,7 @@ class Messaging:
         ts = now()
         cid = new_id("cv")
         with self.store.tx() as t:
+            self._still_open_org(oid)
             t.execute("INSERT INTO conversations (id,organization_id,kind,workspace_id,name,description,created_by,created_at,updated_at) VALUES (?,?,'group',?,?,?,?,?,?)",
                       (cid, oid, workspace_id, name, description, uid, ts, ts))
             t.execute("INSERT INTO conversation_members (conversation_id,user_id,role,joined_at,joined_seq,notify,updated_at) VALUES (?,?,'owner',?,0,'all',?)", (cid, uid, ts, ts))
@@ -1078,8 +1317,10 @@ class Messaging:
     def list_conversations(self, uid: str, *, organization_id: str | None = None) -> list[dict]:
         where, args = "m.user_id=? AND m.left_at IS NULL", [uid]
         if organization_id:
+            self._org_filter(organization_id, uid)
             where += " AND c.organization_id=?"; args.append(organization_id)
-        cond, extra = self._not_closed("c.id", self._closed_ids(uid))       # a closed project discussion: not listed
+        # a closed project discussion, or any conversation of a closed organization: not listed
+        cond, extra = self._not_closed("c.id", self._closed_ids(uid), "c.organization_id")
         where += f" AND {cond}"; args.extend(extra)
         rows = self.store.all(f"SELECT c.*, m.role AS m_role, m.joined_seq AS m_joined_seq, m.last_read_seq AS m_last_read_seq, m.muted AS m_muted, "
                               f"m.pinned AS m_pinned, m.notify AS m_notify, m.muted_until AS m_muted_until, m.marked_unread AS m_marked_unread, "
@@ -1102,7 +1343,7 @@ class Messaging:
     def unread_total(self, uid: str) -> dict:
         """The badge: unread messages across the caller's conversations, silent ones excluded. A
         conversation the reader marked unread counts as one when it has no unread message."""
-        cond, extra = self._not_closed("c.id", self._closed_ids(uid))       # what cannot be read is not counted
+        cond, extra = self._not_closed("c.id", self._closed_ids(uid), "c.organization_id")   # what cannot be read is not counted
         rows = self.store.all("SELECT c.organization_id, c.last_seq, m.last_read_seq, m.joined_seq, m.muted, m.muted_until, m.marked_unread FROM conversations c JOIN conversation_members m ON m.conversation_id=c.id "
                               f"WHERE m.user_id=? AND m.left_at IS NULL AND {cond}", (uid, *extra))
         total, conversations = 0, 0
@@ -1242,6 +1483,7 @@ class Messaging:
         use_fts = fts.usable_for(info, q)
         where, args = ["m.user_id=?", "m.left_at IS NULL", "x.seq>=m.joined_seq", "x.kind='text'", "x.deleted_at IS NULL", self._NOT_HIDDEN], [uid, uid]
         if organization_id:
+            self._org_filter(organization_id, uid)
             where.append("c.organization_id=?"); args.append(organization_id)
         if conversation_id:
             where.append("x.conversation_id=?"); args.append(conversation_id)
@@ -1255,7 +1497,7 @@ class Messaging:
             where.append("x.created_at>=?"); args.append(float(since))
         if until is not None:
             where.append("x.created_at<=?"); args.append(float(until))
-        cond, extra = self._not_closed("x.conversation_id", self._closed_ids(uid))
+        cond, extra = self._not_closed("x.conversation_id", self._closed_ids(uid), "c.organization_id")
         where.append(cond); args.extend(extra)
         limit = max(1, min(int(limit or 50), 100))
         if use_fts:
@@ -1322,6 +1564,7 @@ class Messaging:
                 mentions.append(mid)
         ts = now()
         with self.store.tx() as t:
+            self._still_open(conv)
             if client_id:
                 dup = t.execute("SELECT * FROM messages WHERE conversation_id=? AND sender_id=? AND client_id=?", (cid, uid, client_id)).fetchone()
                 if dup:
@@ -1535,6 +1778,9 @@ class Messaging:
             per_client = f"{client_id}-{n}" if client_id else None
             ts = now()
             with self.store.tx() as t:
+                # the source's words must not leave a conversation closed meanwhile, nor land in one
+                self._still_open(src_conv)
+                self._still_open(conv)
                 if per_client:
                     dup = t.execute("SELECT * FROM messages WHERE conversation_id=? AND sender_id=? AND client_id=?", (cid, uid, per_client)).fetchone()
                     if dup:
@@ -1618,7 +1864,7 @@ class Messaging:
         cursor = now()
         limit = max(1, min(int(limit or 500), 500))
         closed = self._closed_ids(uid)
-        cond, extra = self._not_closed("c.id", closed)
+        cond, extra = self._not_closed("c.id", closed, "c.organization_id")
         rows = self.store.all("SELECT c.*, m.role AS m_role, m.joined_seq AS m_joined_seq, m.last_read_seq AS m_last_read_seq, m.muted AS m_muted, m.pinned AS m_pinned, "
                               "m.notify AS m_notify, m.muted_until AS m_muted_until, m.marked_unread AS m_marked_unread, m.history_from AS m_history_from, m.last_read_at AS m_last_read_at "
                               "FROM conversation_members m JOIN conversations c ON c.id=m.conversation_id "

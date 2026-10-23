@@ -684,7 +684,11 @@ class Notifier:
         report of a message in one, a Docs, Forms or project-copy item — whose workspace is not
         available now — frozen, deleted (recoverable or not), itself or its organization — is
         `workspace_unavailable` (A44, `workspace_closed`): the app refuses every read of it, so
-        nothing about it leaves by mail or push either. Security items are never stale. `d` is a
+        nothing about it leaves by mail or push either. A conversation item, or a report of a
+        message, whose organization has Synwevo Message switched off (or the platform has) is
+        `messages_disabled` (B3), and a report of a message in a frozen or deleted organization is
+        `organization_unavailable` (G2; `messages_closed`): skipped, never re-sent once it is back;
+        the inbox item stays. Security items are never stale. `d` is a
         delivery/queue row joined with its notification (`due_deliveries` / `due_push`)."""
         if d.get("severity") == "critical":
             return None
@@ -694,6 +698,9 @@ class Notifier:
             return "notification gone"
         if row["read_at"] or row["archived_at"]:
             return "read in app"
+        closed = self.messages_closed(row)
+        if closed:
+            return closed
         if self.workspace_closed(row):
             return "workspace_unavailable"
         if d.get("category") == "conversation" and row["object_kind"] == "conversation" and row["object_id"]:
@@ -746,6 +753,35 @@ class Notifier:
             from .workspace_availability import AVAILABLE, availability
             return availability(self.store, row["workspace_id"]) != AVAILABLE
         return False
+
+    def messages_closed(self, row: dict) -> str | None:
+        """Why an item about a conversation must not leave by mail or push because of its
+        organization (B3): `messages_disabled` while Synwevo Message is switched off for the
+        conversation's organization, or platform-wide — for a conversation item and for a report
+        of a message in it (`message_report`: the managers' to-do and the reporter's outcome);
+        `organization_unavailable` for such a report while the organization is frozen, deleted or
+        gone (G2 — a conversation item of such an organization is already `no longer a member`,
+        `conversation_unread`). None otherwise. The item stays in the inbox; skipped mail is not
+        sent again when the organization comes back."""
+        if row.get("category") != "conversation" or not row.get("object_id"):
+            return None
+        if row.get("object_kind") == "conversation":
+            cid = row["object_id"]
+        elif row.get("object_kind") == "message_report":
+            cid = self._reported_conversation(row["object_id"])
+        else:
+            return None
+        conv = self.store.one("SELECT organization_id FROM conversations WHERE id=?", (cid,)) if cid else None
+        if not conv:
+            return None
+        from .messaging import DISABLED, organization_state
+        from .workspace_availability import AVAILABLE
+        state, _ = organization_state(self.store, conv["organization_id"])
+        if state == DISABLED:
+            return "messages_disabled"
+        if state != AVAILABLE and row.get("object_kind") == "message_report":
+            return "organization_unavailable"
+        return None
 
     def _reported_conversation(self, rid: str) -> str | None:
         """The conversation of the message a report is about (the report keeps it too, for a
@@ -824,7 +860,7 @@ class Notifier:
         the reader chose `preview` = full — so a recalled message is never mailed and, by default,
         no message text is."""
         item = self.render(row, locale)
-        if self.workspace_closed(row):
+        if self.messages_closed(row) or self.workspace_closed(row):
             # `stale_reason` skips these before they are rendered; should one be rendered anyway,
             # no comment excerpt, message text or announcement leaves with it.
             item["body"] = ""

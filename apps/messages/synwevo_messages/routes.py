@@ -260,14 +260,27 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
         """The caller's organizations — the scope a conversation is started in. On the account
         origin the page read `/api/auth/organizations`; that route is the account service's and
         is refused here by role, so the application answers the same question from the shared
-        layer (id, name, status, the caller's role — nothing about members)."""
+        layer (id, name, status, the caller's role — nothing about members). `messages_enabled`
+        (B3): whether Synwevo Message is on there — false while the platform switched it off for
+        that organization, or platform-wide."""
         from synwevo_core.organizations import Organizations
-        items = Organizations(store, ident).list_for_user(uid_of(request))
+        uid = uid_of(request)
+        items = Organizations(store, ident).list_for_user(uid)
+        switches = svc.organization_switches(uid)
+        for item in items:
+            item["messages_enabled"] = switches.get(item["id"], {"enabled": True})["enabled"]
         return {"items": items, "total": len(items)}
 
     @r.get("/conversations")
     def list_conversations(request: Request, organization_id: str = Query("")):
-        return {"items": svc.list_conversations(uid_of(request), organization_id=organization_id or None)}
+        """`disabled_organizations` (B3, additive): the caller's organizations where Synwevo Message
+        is switched off — their conversations are left out of `items` and every read of them is
+        `403 messages_disabled`; `platform_disabled` says the platform-wide switch is the reason."""
+        uid = uid_of(request)
+        from synwevo_core.apps import MESSAGES_APP_ID, app_disabled
+        return {"items": svc.list_conversations(uid, organization_id=organization_id or None),
+                "disabled_organizations": svc.disabled_organizations_for(uid),
+                "platform_disabled": app_disabled(store, MESSAGES_APP_ID)}
 
     # /unread-count is answered by the shared session router (synwevo_auth_client.session_routes)
     # on every origin, so the platform bar's badge works on the portal and in Docs as well.
@@ -805,6 +818,31 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
     def _sse(ev: dict) -> bytes:
         return f"id: {ev['id']}\nevent: {ev.get('type', 'event')}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n".encode()
 
+    def _switch_changes(uid: str, known: dict[str, dict]) -> dict[str, dict]:
+        """Heartbeat re-check of Synwevo Message's switch in each of the person's organizations
+        (B3): an organization switched off or back on since the tab last looked is announced as
+        `{"type": "organization", "organization_id", "change": "messages_disabled" |
+        "messages_enabled", "scope"}`, once per change across all of the person's tabs; the tab
+        reloads its list. Open streams are never cut — a stream belongs to a person, not to an
+        organization. Returns the switches now."""
+        current = svc.organization_switches(uid)
+        for oid, now_state in current.items():
+            before = known.get(oid)
+            if before is None or before["enabled"] == now_state["enabled"]:
+                continue
+            change = "messages_enabled" if now_state["enabled"] else "messages_disabled"
+            hub.publish_once(f"switch:{uid}:{oid}:{change}:{now_state['changed_at']}", [uid],
+                             {"type": "organization", "organization_id": oid, "change": change,
+                              "scope": now_state["scope"] or before["scope"], "detected": "heartbeat"})
+        return current
+
+    def _open_now(cid: str) -> bool:
+        """Whether a live event about `cid` may reach its members' tabs: not while the conversation
+        is closed (`Messaging._closed`). Membership is the publisher's (events go to current
+        members only), so it is not asked again here."""
+        conv = store.one("SELECT * FROM conversations WHERE id=?", (cid,))
+        return conv is None or svc._closed(conv) is None
+
     def _lost_memberships(uid: str, known: set[str]) -> set[str]:
         """Heartbeat re-check (docs/platform/messaging.md §7.10): conversations the tab knew that
         the person may no longer see — closed by this process or another (organization removal on
@@ -843,8 +881,15 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
 
         async def gen():
             last_sent: int | None = None
+            # What the live loop may pass on, per conversation, re-read at least once per heartbeat
+            # interval (G3): nothing about a conversation closed now — by its organization
+            # (switched off, paused, lost) or its project's workspace — reaches the tab, as a
+            # replay drops it (`_still_allowed`); the `removed` notice always does.
+            allowed: dict[str, bool] = {}
+            allowed_at = time.monotonic()
             try:
                 known = set(await run_in_threadpool(svc.visible_conversation_ids, uid))
+                switches = await run_in_threadpool(svc.organization_switches, uid)
                 current = hub.current_id()
                 hello = {"heartbeat_s": HEARTBEAT_S, "last_event_id": current, "typing_ttl_s": TYPING_TTL_S, "presence": _presence_definition(),
                          "replay": cursor is not None}
@@ -868,6 +913,14 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
                         ev = await asyncio.wait_for(q.get(), timeout=HEARTBEAT_S)
                         if last_sent is not None and ev.get("id", 0) <= last_sent:
                             continue                                    # already replayed from the ring
+                        cid = ev.get("conversation_id")
+                        if cid and not (ev.get("type") == "conversation" and ev.get("change") == "removed"):
+                            if time.monotonic() - allowed_at > HEARTBEAT_S:
+                                allowed, allowed_at = {}, time.monotonic()
+                            if cid not in allowed:
+                                allowed[cid] = await run_in_threadpool(_open_now, cid)
+                            if not allowed[cid]:
+                                continue
                         yield _sse(ev)
                         last_sent = ev["id"]
                     except asyncio.TimeoutError:
@@ -875,7 +928,9 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
                             yield b"event: end\ndata: {\"reason\": \"session\"}\n\n"
                             break
                         yield b": ping\n\n"
+                        allowed, allowed_at = {}, time.monotonic()
                         known = await run_in_threadpool(_lost_memberships, uid, known)
+                        switches = await run_in_threadpool(_switch_changes, uid, switches)
                         await run_in_threadpool(_sweep_presence)
             finally:
                 hub.unsubscribe(uid, q)

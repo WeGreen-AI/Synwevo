@@ -55,5 +55,23 @@ def availability(store: Store, workspace_id, ts: float | None = None) -> str:
     return max(state, _state(org, ts), key=_ORDER.index)
 
 
+def organization_availability(store: Store, organization_id, ts: float | None = None) -> str:
+    """AVAILABLE, PAUSED or LOST for the organization itself (no workspace asked): the same rule
+    `availability` applies to a workspace's organization. What closes every conversation of an
+    organization (`synwevo_core.messaging`, B3/G2): they belong to the organization, not to a
+    workspace."""
+    if not isinstance(organization_id, str) or not organization_id:
+        return LOST
+    ts = now() if ts is None else ts
+    org = store.one("SELECT status, deleted_at, recover_until FROM organizations WHERE id=?", (organization_id,))
+    return _state(org, ts)
+
+
+def lifecycle_state(row: dict | None, ts: float | None = None) -> str:
+    """`_state` for a lifecycle row the caller already read (`status`, `deleted_at`,
+    `recover_until`; None = no such row, LOST) — for a listing that reads many at once."""
+    return _state(row, now() if ts is None else ts)
+
+
 def paused(store: Store, workspace_id, ts: float | None = None) -> bool:
     return availability(store, workspace_id, ts) == PAUSED

@@ -79,6 +79,14 @@ EVENT_KINDS = ("docs.comment", "docs.job_finished", "copy.decided", "copy.finish
 SKIPPED_NO_CONVERSATION = "skipped_no_conversation"
 SKIPPED_OBJECT_GONE = "skipped_object_gone"
 SKIPPED_ARCHIVED = "skipped_archived"
+#: A card for a conversation that is closed when the worker reaches it (B3, G3): Synwevo Message
+#: switched off for its organization or platform-wide; its organization or its project's workspace
+#: paused (frozen, or deleted and recoverable); or lost. Skipped, not held: a held row would stay
+#: at the head of `pending()` (oldest first, 50 at a time) and starve every other organization's
+#: cards. Nothing skipped is replayed when the conversation opens again.
+SKIPPED_MESSAGES_DISABLED = "skipped_messages_disabled"
+SKIPPED_PAUSED = "skipped_paused"
+SKIPPED_LOST = "skipped_lost"
 MAX_ATTEMPTS = 10
 # A person's own message queued by another process (Suite on the workplace origin), delivered
 # here so that fan-out, notifications and digests behave exactly as for a message typed in Message.
@@ -86,7 +94,7 @@ USER_MESSAGE = "user.message"
 #: Definite refusals at delivery. Recorded on the row; the sender's receipt becomes failed.
 USER_MESSAGE_REFUSALS = frozenset({"archived", "audience_changed", "no_conversation", "not_member",
                                    "account_unavailable", "blocked", "message_too_long", "empty_message",
-                                   "workspace_unavailable"})
+                                   "workspace_unavailable", "messages_disabled", "organization_unavailable"})
 #: A reader's standing towards an object (`Objects.standing`): may open it now; may again once its
 #: workspace is available (paused — frozen, or deleted and still recoverable); or not at all.
 OPEN = "open"
@@ -389,6 +397,11 @@ class ObjectConversations:
     def _anchor_for(self, app: str, kind: str, object_id: str, uid: str) -> dict:
         anchor = self.objects.anchor(app, kind, object_id)
         state = self.objects.standing(anchor, uid) if anchor else LOST
+        if state in (OPEN, PAUSED):
+            # Synwevo Message switched off for the object's organization or platform-wide (B3):
+            # refused before anything is read or written (`open` would enrol the caller first).
+            # Outranks a pause, as everywhere; told only to someone whose own access stands.
+            self.messaging.require_messages_on(anchor.get("organization_id"))
         if state == PAUSED:
             # Only someone whose own access stands is told: they know the project already.
             raise paused_refusal()
@@ -424,6 +437,7 @@ class ObjectConversations:
             raise ServiceError(409, "organization_unavailable", "该组织当前不可用")
         created = joined = False
         with self.store.tx() as t:
+            self.messaging.require_messages_on(oid)       # again under the writer lock: a switch-off may have committed since
             m = t.execute("SELECT conversation_id FROM object_conversations WHERE app=? AND kind=? AND object_id=?", (app, anchor["kind"], anchor["id"])).fetchone()
             if m:
                 cid = m["conversation_id"]
@@ -772,6 +786,11 @@ class BridgeWorker:
         conv = self.store.one("SELECT * FROM conversations WHERE id=?", (cid,))
         if not conv or conv["archived_at"]:
             return self._skip(row, SKIPPED_ARCHIVED)
+        closed = self.messaging._closed(conv)
+        if closed:
+            # No card into a conversation its members cannot read now (B3, G3): it would reach
+            # their open tabs and their digests. Skipped, never held (see SKIPPED_MESSAGES_DISABLED).
+            return self._skip(row, {LOST: SKIPPED_LOST, PAUSED: SKIPPED_PAUSED}.get(closed.state, SKIPPED_MESSAGES_DISABLED))
         card = build_card(self.store, self.ident, row)
         if not card:
             return self._skip(row, SKIPPED_OBJECT_GONE)
