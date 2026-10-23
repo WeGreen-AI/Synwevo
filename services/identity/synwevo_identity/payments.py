@@ -817,14 +817,19 @@ class TopupService:
 
     def _revive(self, payment_id: str) -> None:
         """Apply disputes that arrived before this payment's credit (out of order), now that it
-        is credited: they were kept in the inbox, waiting ('failed') or rejected as unknown."""
+        is credited: they were kept in the inbox, waiting ('failed') or rejected as unknown.
+
+        A replay that ends failed or rejected (e.g. dispute_payment_mismatch against the payment
+        just credited) alerts administrators like any other delivery (review rr-money-2); the
+        payment_not_credited wait stays exempt in _ended."""
         rows = self.store.all("SELECT event_id,type,facts_json,payload_sha256 FROM payment_webhook_inbox "
                               "WHERE provider=? AND environment=? AND type='charge.dispute.created' "
                               "AND status IN ('failed','rejected') AND result_code IN (?,?) "
                               "AND json_extract(facts_json,'$.payment_intent')=?",
                               (PROVIDER, self.environment, *WAITING_DISPUTE_CODES, payment_id))
         for row in rows:
-            self._replay(row, attempt=False)
+            status, code = self._replay(row, attempt=False)
+            self._ended(status, code)
 
     def _credit_expected(self, payment_id: str) -> bool:
         """Did one of our checkouts report this payment (not rejected), so its credit may follow?"""
