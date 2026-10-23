@@ -171,9 +171,15 @@ to keep. So:
   as `billing_run_time_too_short` ("not sent, not charged").
 * `Ledger.dispatch(..., send_window=gateway.send_window)` repeats the check under the writer
   lock, so time spent between reserving and the send boundary cannot slip a send past its hold.
-* A quote cannot choose a run shorter than one send: `RunQuotes.issue` refuses
-  `run_seconds < send_window` (`run_time_too_short`) and the offer publishes
-  `run_seconds_min`, which the budget dialog uses as the input's minimum.
+* A run cannot be shorter than one send: `RunQuotes.issue` (legacy quote) refuses
+  `run_seconds < send_window` (`run_time_too_short`) and the offer publishes `run_seconds_min`;
+  the automatic authorization (`issue_automatic`, send-and-go) uses `min(3600, route.valid_until − now)`
+  and refuses `route_confirmation_expired` when less than one send is left.
+* rr-money-1 (legacy path): a quote's deadline is fixed when it is issued, so `quotes.bind` refuses
+  `run_time_too_short` when `deadline − now < send_window`, and the quote's `expires_at` is
+  `max(now+1, min(now+300, deadline − send_window))` — a quote never stays acceptable for a run that
+  could no longer make one call. The automatic path has no issue-to-bind gap: the deadline is fixed
+  at admission.
 
 Remaining (accepted) late cases are platform faults, never a payer charge: a crash after the
 stream and before settlement whose recovery runs after the deadline, or a settlement transaction

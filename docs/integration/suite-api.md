@@ -64,7 +64,7 @@ python -m synwevo_identity.cli client register crm-sync --app platform --name "C
 
 ### 1.3 不在这个接口里的
 
-* **个人 Agent 的一切**（会话、记忆、个人自动化、报价、预算、付款同意、发起对话）：没有路由，也没有 scope；
+* **个人 Agent 的一切**（会话、记忆、个人自动化、发起对话与其自动运行授权、开始使用步骤与条款接受、预算、付款同意、旧报价）：没有路由，也没有 scope；
   能力层对任何 `via="api"` 调用一律返回 403 `person_required`。
 * 跨工作空间写入（`forms.form.duplicate`）：凭据只属于一个工作空间。
 * 服务账户的订阅、面向本人或空间管理员的订阅列表：尚未提供（§2.6 末尾）。异步操作的结果通过对应应用的读取操作或

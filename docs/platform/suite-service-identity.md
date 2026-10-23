@@ -150,7 +150,7 @@ Extract 的同类问题：`task.correct` / `task.confirm` 是下游（`dataprep.
 | 写操作（`need=write`） | `<app>.write` + 本人角色 | `<app>.write` |
 | 管理操作（`need=manage`：表结构、审批模板、Agent 空间策略） | `<app>.write` + 本人为所有者/管理员 | **不开放**。结构与模板治理属于人；确有需要时另设 `<app>.manage` 并要求所有者单独审批 |
 | 人的决定（`unattended=False`） | `<app>.decide` | **永不** |
-| 个人操作（Agent、预算、同意、报价） | 不可达 | 不可达 |
+| 个人操作（Agent 发送与自动运行授权、开始使用步骤与条款接受、预算、同意、旧报价） | 不可达 | 不可达 |
 | 跨工作空间写入 | 不可达 | 不可达 |
 | 导出（把数据带出平台） | 本人的导出权 | 第一版不开放（§7） |
 

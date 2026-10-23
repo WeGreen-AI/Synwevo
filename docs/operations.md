@@ -556,8 +556,9 @@ DeepSeek 不公布 RPM/TPM，只有按模型的账户并发上限：`deepseek-fl
 | 9 | `risk.balance_warn` ≥ `risk.balance_close` + `daily_budget` | 预警到停止之间不足一天的支出，来不及充值 |
 | 10 | `risk.reconcile_tolerance` 起步 1 元，`risk.pending_alert` 约为 `unknown_budget` 的一半 | 容差过小会把定档与断流的合理差异当作漂移（model-risk.md §7） |
 
-每人的额度不在这里设置：单次运行最多 12 次调用、1 小时（代码固定），运行预算来自本人确认的报价；个人日/周/月上限与持续同意上限由本人
-在 Agent 设置中填写，未设置个人上限时付费运行不开始。
+每人的额度不在这里设置：单次运行最多 12 次调用、1 小时（代码固定）；每条回答的最高金额默认为当前路线单次调用预留 × 12，本人可在
+Agent 设置中调低（`run_budget_cap`），发送时服务端自动签发并绑定运行授权；个人日/周/月上限由本人在首次使用的「开始使用」步骤或
+Agent 设置中填写，未设置或已停用个人上限时付费发送在准入时即被拒绝（`billing_payer_budget_not_configured` / `_disabled`）。
 
 ### 11.3 首次生产开放（放行名单阶段）的起点
 
