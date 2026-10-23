@@ -459,20 +459,40 @@ class Agent:
 
     # ================================================================ turns
     def start_turn(self, user: dict, cid: str, text: str | None, *, parent_id: str | None,
-                   regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None, context_refs: list[dict] | None = None, file_refs: list[dict] | None = None) -> dict:
+                   regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None,
+                   context_refs: list[dict] | None = None, file_refs: list[dict] | None = None,
+                   payer: dict | None = None, automatic: bool = False, issued: dict | None = None) -> dict:
+        """Admit a send. ``automatic`` (set only by ``ops.start_turn`` for the person's own send from
+        the page, ``via=ui``) lets a paid turn start without ``quote_id``/``consent_id``: the run
+        authorization is issued and bound inside the admission transaction (send-and-go, D-1);
+        ``issued`` is its audit record and ``payer`` the chosen payer. Every other caller keeps
+        the explicit requirement."""
         # Who may use the Agent at all, the separate consent for the provider this message would
         # go to, and the content rules come first: a refused message is never stored or sent.
         # The input refusal is recorded outside the admission transaction (that rolls back).
         self.conversation(user["id"], cid)                  # 404 for anyone but the owner
         self._check_person(user["id"], self._credential(user["id"]))
+        if automatic and getattr(self.provider, "quotes", None) is not None and not quote_id and not consent_id:
+            # The published terms, AI use rules and pricing are accepted once, in the Agent's
+            # one-time start step (agent.terms.accept), before the first automatic paid run and
+            # again after a document changes; a send never infers that acceptance.
+            missing = TermsAcceptances(self.store).missing(user["id"])
+            if missing:
+                raise ServiceError(409, "terms_acceptance_required",
+                                   "开始使用 Synwevo Agent 前，需要先接受当前版本的服务条款、AI 使用规范与定价",
+                                   {"documents": missing})
         if not regenerate_of:
             check_input(self.store, user["id"], (text or "").strip(), conversation_id=cid)
         # The active-turn check, quota and every message insert form one admission decision.
         with self.store.tx():
-            return self._start_turn(user, cid, text, parent_id=parent_id, regenerate_of=regenerate_of, quote_id=quote_id, consent_id=consent_id, context_refs=context_refs, file_refs=file_refs)
+            return self._start_turn(user, cid, text, parent_id=parent_id, regenerate_of=regenerate_of, quote_id=quote_id,
+                                    consent_id=consent_id, context_refs=context_refs, file_refs=file_refs,
+                                    payer=payer, automatic=automatic, issued=issued)
 
     def _start_turn(self, user: dict, cid: str, text: str | None, *, parent_id: str | None,
-                    regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None, context_refs: list[dict] | None = None, file_refs: list[dict] | None = None) -> dict:
+                    regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None,
+                    context_refs: list[dict] | None = None, file_refs: list[dict] | None = None,
+                    payer: dict | None = None, automatic: bool = False, issued: dict | None = None) -> dict:
         """A new user message (or a regeneration of an answer) and the turn that answers it."""
         row = self.conversation(user["id"], cid)
         if row["status"] != "active":
@@ -541,20 +561,37 @@ class Agent:
         if quotes is not None:
             if quote_id and consent_id:
                 raise ServiceError(409, "billing_authorization_conflict", "请只选择一种付款授权")
+            if payer is not None and (quote_id or consent_id):
+                # An explicit authorization names its payer already; a second answer is a conflict.
+                raise ServiceError(409, "billing_authorization_conflict", "请只选择一种付款授权")
             if not quote_id and not consent_id:
-                raise ServiceError(409, "billing_authorization_required", "请先查看并确认本次运行的价格与预算")
-            try:
-                if consent_id:
-                    quote_id = quotes.consents.issue(user["id"], consent_id, row, text=text,
-                        parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs, file_refs=file_refs)
-                quotes.bind(user["id"], quote_id, row, turn_id=turn_id, text=text,
+                if not automatic:
+                    raise ServiceError(409, "billing_authorization_required", "请先查看并确认本次运行的价格与预算")
+                # Send-and-go: the run authorization is issued and bound here, in the admission
+                # transaction, so a refusal stores nothing and the deadline is fixed at admission.
+                try:
+                    quote_id = quotes.issue_automatic(user["id"], row, text=text, parent_id=parent_id,
+                        regenerate_of=regenerate_of, payer=payer, context_refs=context_refs, file_refs=file_refs, issued=issued)
+                    quotes.bind(user["id"], quote_id, row, turn_id=turn_id, text=text, parent_id=parent_id,
+                                regenerate_of=regenerate_of, context_refs=context_refs, file_refs=file_refs)
+                except BillingError as exc:
+                    raise ServiceError(409, "billing_" + exc.code, "本次回答未能开始，消息没有发送，也没有扣费",
+                                       getattr(exc, "detail", None)) from None
+            else:
+                try:
+                    if consent_id:
+                        quote_id = quotes.consents.issue(user["id"], consent_id, row, text=text,
                             parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs, file_refs=file_refs)
-            except BillingError as exc:
-                raise ServiceError(409, "billing_" + exc.code, "本次预算授权已变化，请重新获取报价") from None
-            # A confirmed paid run is the person's first paid use of the published terms, AI use
-            # rules and pricing versions in force (synwevo_core.terms); recorded once per version.
-            TermsAcceptances(self.store).record_paid_use(user["id"], context=f"paid_run:{turn_id}")
-        elif quote_id is not None or consent_id is not None:
+                    quotes.bind(user["id"], quote_id, row, turn_id=turn_id, text=text,
+                                parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs, file_refs=file_refs)
+                except BillingError as exc:
+                    raise ServiceError(409, "billing_" + exc.code, "本次预算授权已变化，请重新获取报价") from None
+                # A confirmed paid run (legacy explicit quote or continuing consent) is the person's
+                # first paid use of the published terms, AI use rules and pricing versions in force
+                # (synwevo_core.terms); recorded once per version. The automatic path requires the
+                # acceptance to exist beforehand (start_turn) and never infers it.
+                TermsAcceptances(self.store).record_paid_use(user["id"], context=f"paid_run:{turn_id}")
+        elif quote_id is not None or consent_id is not None or payer is not None:
             raise ServiceError(409, "billing_not_configured", "付费模型服务尚未配置")
         with self.store.tx() as t:
             t.execute("INSERT INTO agent_messages (id,conversation_id,user_id,parent_id,role,status,body,created_at,updated_at) "
