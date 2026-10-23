@@ -183,7 +183,7 @@ export function ModelPriceMarkups({ manage, onDenied }: { manage: boolean; onDen
   return <section className="card card-b col gap12" aria-labelledby={`${id}-title`} aria-busy={listing.loading} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
     <h3 id={`${id}-title`}>{t('售价加价（成本价 × 倍率）')}</h3>
     <p className="small">{t('售价由已发布的成本价乘以管理员设定的倍率生成，按相同时段计价；可为低谷时段单独设定倍率。倍率不低于 1，不会低于成本销售。')}</p>
-    <p className="small">{t('发布只保存一个不可修改的新售价版本，不改变任何路线。要让用户按新售价付费，请在「模型提供方」中让路线采用该售价；采用后，用户尚未使用的报价与持续同意会失效并要求重新确认。')}</p>
+    <p className="small">{t('发布只保存一个不可修改的新售价版本，不改变任何路线。要让用户按新售价付费，请在「模型提供方」中让路线采用该售价；采用后，之后开始的回答按新售价计费，正在进行的回答在下一次模型调用前停止，聊天页会提示价格已更新。')}</p>
     <p className="notice info">{t('加价环境：{environment}', { environment: environmentName(environment) })}</p>
     {listing.err && <p className="notice err" role="alert">{t(listing.err)}</p>}
     {environment === null && <p className="notice warn">{t('计费环境尚未配置，加价发布已禁用。')}</p>}
@@ -255,7 +255,7 @@ export function ModelPriceMarkups({ manage, onDenied }: { manage: boolean; onDen
         </table></div>
         <p>{plan.replaces_price_id ? t('此模型最近一次加价售价为 {price}；它仍保留，路线采用哪一个由「模型提供方」决定。', { price: plan.replaces_price_id })
           : t('这是此模型的第一个加价售价。')}</p>
-        <p>{t('发布不改变任何路线、报价或已结算费用。路线采用新售价后，用户尚未使用的报价与持续同意会失效并要求重新确认。')}</p>
+        <p>{t('发布不改变任何路线、运行授权或已结算费用。路线采用新售价后，之后开始的回答按新售价计费，正在进行的回答在下一次模型调用前停止。')}</p>
         <p className="small">{t('服务器确认预览有效至 {time}。', { time: time(plan.expires_at) })}</p>
         {attempt && <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{t('原发布理由：{reason}', { reason: attempt.body.reason })}</p>}
         {uncertain && <p className="notice warn">{t('重试将发送完全相同的原请求、理由和请求编号，即使原预览已经到期。不会创建另一笔发布。')}</p>}
