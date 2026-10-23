@@ -21,11 +21,31 @@ def update(g, payload=None, key=None, **kwargs):
 
 
 def test_factory_refuses_unconfigured_budget_without_a_network_attempt(governed):
+    # Legacy explicit-quote path: admitted, refused at the first call (unchanged).
     g=governed;configure(g,payer_budget=False);fund(g)
     tid=start(g);g.agent._run(tid)
     assert g.store.one('SELECT error_code FROM agent_turns WHERE id=?',(tid,))['error_code']=='billing_payer_budget_not_configured'
     assert g.seen==[] and g.store.all('SELECT * FROM billing_attempts')==[]
     assert not g.store.one("SELECT 1 FROM billing_calls WHERE status='reserved'")
+
+
+@pytest.mark.parametrize('state,code',[('missing','billing_payer_budget_not_configured'),('disabled','billing_payer_budget_disabled')])
+def test_an_automatic_send_reads_the_personal_limit_policy_at_admission_and_stores_nothing(governed,state,code):
+    """Send-and-go (D-4): a personal payer without an enabled policy is refused before the message,
+    turn or authorization is stored — not admitted and then refused at the first call."""
+    from synwevo_core.terms import TermsAcceptances
+    g=governed;configure(g,payer_budget=(state=='disabled'));fund(g)
+    TermsAcceptances(g.store).record_paid_use(g.user['id'],context='fixture:agent_setup')   # FIXTURE: the start step was done
+    if state=='disabled':
+        update(g,{**body(1),'enabled':False})
+    with pytest.raises(ServiceError) as caught:
+        g.suite.caps.invoke('agent.turn.start',{'conversation_id':g.conversation['id'],'text':'Read my forms'},
+                            user_id=g.user['id'],via='ui',idempotency_key='auto-no-limit')
+    assert (caught.value.status,caught.value.code)==(409,code)
+    assert caught.value.message=='本次回答未能开始，消息没有发送，也没有扣费'
+    for table in ('agent_turns','agent_messages','agent_model_quotes','billing_calls','billing_attempts','billing_runs'):
+        assert g.store.all(f'SELECT * FROM {table}')==[],table
+    assert g.seen==[]
 
 
 @pytest.mark.parametrize('field',['daily_budget','weekly_budget','monthly_budget','enabled'])

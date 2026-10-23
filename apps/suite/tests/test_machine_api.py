@@ -241,6 +241,7 @@ def test_operations_that_are_a_persons_own_have_no_machine_door(api):
     # named, so opting the Agent in — or losing one of these — fails here rather than passing quietly
     for must in ("agent.turn.start", "agent.turn.quote", "agent.quote.get", "agent.quote.revoke",
                  "agent.billing.budget.get", "agent.billing.budget.set", "agent.billing.offer",
+                 "agent.setup.get", "agent.terms.accept",
                  "agent.conversation.list", "agent.memory.list", "agent.flow.start",
                  "agent.workspace_policy.set", "forms.form.duplicate"):
         assert must in closed, must
@@ -700,9 +701,10 @@ def test_no_kind_of_credential_reaches_spending_or_consent(api):
     from synwevo_core.oidc import Clients, Grants
     p = api.people
     spending = sorted(op.id for op in api.caps.registry.operations() if op.id.startswith(
-        ("agent.consent.", "agent.turn.", "agent.quote.", "agent.billing.")))
+        ("agent.consent.", "agent.turn.", "agent.quote.", "agent.billing.", "agent.setup.", "agent.terms.")))
     for must in ("agent.consent.create", "agent.consent.get", "agent.consent.list", "agent.consent.revoke",
-                 "agent.turn.start", "agent.turn.quote", "agent.quote.get", "agent.billing.budget.set"):
+                 "agent.turn.start", "agent.turn.quote", "agent.quote.get", "agent.billing.budget.set",
+                 "agent.setup.get", "agent.terms.accept"):
         assert must in spending, must
     Clients(p.store).register(client_id="dir-svc", app_id="platform", name="Fixture directory", redirect_uris=[],
                               kind="service", workspace_id=p.a, confidential=True, api_scopes="workspace.read",
