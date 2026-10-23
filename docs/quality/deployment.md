@@ -1,6 +1,55 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-10-08 15:21 UTC
+## Current release · 2026-10-23 19:45 UTC — 217d66d4, deployed through the host receiver (GitHub Actions blocked)
+
+**Running source: `217d66d405c355dcecf44114a86ebf4813b1cee4`** (origin/main; 71 commits since e99212d8: CR-112–CR-131 —
+Admin governance A18/A22/A26/A34/A35/A37/A44/A47, application catalogue B1/B2, service-layer audit WP1–WP11, the top-up
+fix CR-128, security-journal write-ahead CR-130/131). Receipt from `/opt/synwevo/bin/receive.py`:
+`{"deployed": "synwevo:217d66d405c355dcecf44114a86ebf4813b1cee4", "backup": "/opt/synwevo/backups/20261023T194549Z"}`
+(19:45:49 → 19:46:11 UTC). Pre-upgrade backup manifest identifies e99212d8 (99 blob files); not a restore drill.
+
+**Why not the pipeline:** every Actions run since 2026-10-13 ended before any job started with "The job was not started
+because recent account payments have failed or your spending limit needs to be increased" (run 38437521899 attempts 1–3,
+the last at 07:21 UTC today after the owner reported billing restored; the organization's 2,000 free minutes were exhausted
+in October). On the owner's choice (2026-10-23) the `verify` job was reproduced on the operator's Mac against a clean
+detached checkout of 217d66d4 and the same `git archive` tarball was handed to the same receiver by the host administrator
+(`SSH_ORIGINAL_COMMAND="deploy <sha>" /opt/synwevo/bin/receive.py < source.tar.gz`, i.e. exactly what the deploy key's
+forced command runs). The archive was compressed once with GNU gzip 1.13 (`gzip -n`, 39,085,658 bytes, sha256 `40ce9863…`)
+because the receiver pins each SHA to its first archive digest. Return to the pipeline once Actions runs again; **every
+rerun instruction below for runs older than 217d66d4 is obsolete** — rerunning an older run would push older code over
+the migrated database.
+
+**Local verify (CI mirror, 2026-10-23 07:16–08:09 UTC), all passed:** Python 3.12.6 venv from the lock; guards
+(`check_boundaries`, `check_brand`, `check_design`, `check_component_names`, `brand_assets --check`, `app_icon_assets
+--check`); `npm run typecheck`, `npm run build`, `npm test --workspaces` (ui 19, auth-client 41, docs-web 145,
+messages-web 25, suite-web 145, account-web 121 — 0 failures); `test_sheet_live_clients.py` with `SYNWEVO_SHEET_CLIENTS=
+required`; infra unittest; Python SDK 55 passed + 57 subtests (one interrupt-cancellation test timed out once under host
+load and passed on three isolated reruns and one full rerun); TypeScript SDK 48. Runtime image built from the receiver's
+extraction (umask 077) — `synwevo:ci` 435 MB, read-only non-root import check ok — and the full suite in
+`Dockerfile.verify` with `--memory 3g --cpus 2`: **6394 passed, 5 skipped, 0 failed** (27 min; the mount had to be a
+Docker volume, because SQLite cannot lock files on a macOS bind mount).
+
+**Pre-deploy safety review (adversarial, read-only):** migration rehearsal on a database built by e99212d8 — additive
+only (+1 table `second_factor_resets`, +5 indexes, +12 job-event triggers, +9 columns), first start of all four roles
+concurrently clean, second start a no-op, 122 non-empty tables row-identical except in-flight work tables that change
+identically under the old code, security journal byte-identical, no notification burst (the new release *pauses* work of
+frozen workspaces where the old one acted on it); host review — no infra/CI/dependency/compose/nginx/receiver change, no
+new environment variable; behaviour review — no first-start sweep. Production facts checked read-only before the deploy:
+one platform role holder (super_admin), no webhook subscriptions (so the widened role scopes and new event types affect
+nobody), receiver idle gate clear, 160 GB free. Follow-ups recorded: the release archive is at 74.5% of the receiver's
+50 MiB cap because of committed evidence PNGs (export-ignore before the next cycle); after this release any restore or
+verify-restore must use 217d66d4-or-newer tooling (older `journal.py` rejects the new kinds); Agent OCR of images/scans is
+now on for the allowlisted Agent (watch portal memory).
+
+**Post-deploy checks (19:47 UTC, read-only):** `/readyz` 200 on synwevo.com, workplace, accounts, docwave and message;
+accounts/docs/portal/messages all `synwevo:217d66d4…` and healthy, gateway recreated; `/api/auth/state` carries the five
+hosts and `wallet_offered: true`; anonymous `topup-options` 401; no traceback or error in the last 10 minutes of any role's
+log; memory accounts 108 MiB, docs 95 MiB, portal 130 MiB, messages 81 MiB. **Not changed by this deploy and still the
+owner's to do:** the DeepSeek route (revision 1) expired 2026-10-15T11:00Z — paid Agent calls are refused until it is
+renewed in Admin; payment settings are still revision 3 of 2026-10-08 with card + wechat_pay + alipay — the card-only
+publication reported on 2026-10-23 did not create a new revision.
+
+## 2026-10-08 15:21 UTC — a41ea08a (historical; superseded above)
 
 **Running source: a41ea08a50b9047c8cf5bdd23ab982751b50d38c.** [Actions37792532752](https://github.com/WeGreen-AI/Synwevo/actions/runs/37792532752) verify/deploy succeeded. Runtime 5453 passed, 5 skipped, 242 deprecation warnings; original guards/build/type/frontend/SDK checks retained. All four application OCI revisions/current.json match; six containers healthy; five public domains, JavaScript assets, anonymous authorization boundaries and OIDC start verified. The Agent gateway/recovery/ledger file hashes match the locally verified source. Backup: `/opt/synwevo/backups/20261008T152122Z`.
 
