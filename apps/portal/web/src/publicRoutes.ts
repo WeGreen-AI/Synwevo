@@ -32,15 +32,15 @@ export const PUBLIC_META: Record<PublicPage, { title: string; description: strin
   service: { title: "服务说明 · Synwevo", description: "Synwevo 是什么、有哪些应用与角色、如何注册、有哪些限制、遇到问题找谁。" },
   terms: { title: "服务条款 · Synwevo", description: "使用 Synwevo 的条款：账户、钱包与充值（不可退款）、按量计费、免费额度、组织付费与 AI 输出。" },
   "ai-use": { title: "AI 使用规范 · Synwevo", description: "使用 Synwevo Agent 时不允许的内容与行为、内容安全如何执行，以及 AI 生成内容的标识。" },
-  pricing: { title: "定价 · Synwevo", description: "Synwevo Agent 如何计费：人民币钱包、按实际用量扣费、运行前确认价格与上限、免费额度与组织付费。" },
+  pricing: { title: "定价 · Synwevo", description: "Synwevo Agent 如何计费：人民币钱包、按实际用量扣费、每条回答的最高金额、免费额度与组织付费。" },
 };
 
 /** Version and effective date of the versioned documents — the same values as
  *  synwevo_core.terms.DOCUMENTS (tests/integration/test_portal_public.py keeps them equal). */
 export const DOCUMENT_VERSIONS: Record<"terms" | "ai-use" | "pricing", { version: string; effective: string }> = {
-  terms: { version: "2026-10-05", effective: "2026-10-05" },
+  terms: { version: "2026-10-24", effective: "2026-10-24" },
   "ai-use": { version: "2026-10-05", effective: "2026-10-05" },
-  pricing: { version: "2026-10-05", effective: "2026-10-05" },
+  pricing: { version: "2026-10-24", effective: "2026-10-24" },
 };
 
 /** True on the workspace host (production: workplace.synwevo.com), where the server marks the

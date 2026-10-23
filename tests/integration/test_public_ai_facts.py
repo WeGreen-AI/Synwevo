@@ -56,6 +56,28 @@ def test_versioned_documents_print_the_versions_of_record():
         assert shell and shell.groups() == (version, effective), document
 
 
+#: Promises the public pages must no longer make (owner decision 2026-10-23, "send-and-go"): a
+#: person sends and the Agent starts; nothing is confirmed per run or re-confirmed after a price
+#: change. What every page must say instead: each answer has a maximum amount.
+BANNED_PROMISES = ("确认最高预算", "确认后才会扣费", "需要重新确认", "你确认的上限",
+                   "確認最高預算", "重新確認", "confirm a maximum", "confirm again", "maximum you confirmed")
+PER_ANSWER_MAXIMUM = ("每条回答的最高金额", "每則回答的最高金額", "maximum for each answer")
+
+
+def test_public_pages_make_no_per_run_confirmation_promise():
+    from synwevo_portal.public import COPY
+    sources = {name: (WEB / name).read_text("utf-8")
+               for name in ("PublicPages.tsx", "PublicHome.tsx", "messages.ts", "publicRoutes.ts")}
+    for locale in ("zh-Hans", "zh-Hant", "en"):
+        sources[f"public.py[{locale}]"] = repr(COPY[locale])
+    for name, text in sources.items():
+        for promise in BANNED_PROMISES:
+            assert promise not in text, (name, promise)
+    everything = "\n".join(sources.values())
+    for statement in PER_ANSWER_MAXIMUM:
+        assert statement in everything, statement
+
+
 def test_deployment_facts_follow_the_agent_registry_and_model_configuration(portal, monkeypatch):  # noqa: F811
     from synwevo_portal.public import agent_fact, deployment_facts
     api, store, ident = portal

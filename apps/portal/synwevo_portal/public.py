@@ -100,7 +100,7 @@ COPY: dict[str, dict] = {
                 "description": "使用 Synwevo 的条款：账户、钱包与充值（不可退款）、按量计费、免费额度、组织付费与 AI 输出。",
                 "heading": "使用 Synwevo 的约定。",
                 "paragraphs": [
-                    "版本 {terms}，自 {terms_effective} 起生效。首次付费使用 Synwevo Agent 时，记录你接受的版本。",
+                    "版本 {terms}，自 {terms_effective} 起生效。开始使用 Synwevo Agent 时一次性接受，并记录你接受的版本。",
                     "充值一经完成不可退款；钱包余额只能用于 Synwevo 的服务，不能转让、提现或兑换现金。AI 生成的内容可能有误，仅供参考。",
                 ],
                 "label": "服务条款",
@@ -117,11 +117,11 @@ COPY: dict[str, dict] = {
             },
             "pricing": {
                 "title": "定价 · Synwevo",
-                "description": "Synwevo Agent 如何计费：人民币钱包、按实际用量扣费、运行前确认价格与上限、免费额度与组织付费。",
+                "description": "Synwevo Agent 如何计费：人民币钱包、按实际用量扣费、每条回答的最高金额、免费额度与组织付费。",
                 "heading": "用多少，付多少。",
                 "paragraphs": [
                     "版本 {pricing}，自 {pricing_effective} 起生效。目前只有 Synwevo Agent 按用量收费，以人民币计价。",
-                    "每次运行前显示当前单价与价格版本，并由你确认最高预算；充值不可退款。",
+                    "Agent 输入框旁显示当前单价与每条回答的最高金额，发送即开始；充值不可退款。",
                 ],
                 "label": "定价",
             },
@@ -167,7 +167,7 @@ COPY: dict[str, dict] = {
                 "description": "使用 Synwevo 的條款：帳戶、錢包與儲值（不可退款）、按量計費、免費額度、組織付費與 AI 輸出。",
                 "heading": "使用 Synwevo 的約定。",
                 "paragraphs": [
-                    "版本 {terms}，自 {terms_effective} 起生效。首次付費使用 Synwevo Agent 時，記錄你接受的版本。",
+                    "版本 {terms}，自 {terms_effective} 起生效。開始使用 Synwevo Agent 時一次性接受，並記錄你接受的版本。",
                     "儲值一經完成不可退款；錢包餘額只能用於 Synwevo 的服務，不能轉讓、提現或兌換現金。AI 產生的內容可能有誤，僅供參考。",
                 ],
                 "label": "服務條款",
@@ -184,11 +184,11 @@ COPY: dict[str, dict] = {
             },
             "pricing": {
                 "title": "定價 · Synwevo",
-                "description": "Synwevo Agent 如何計費：人民幣錢包、按實際用量扣費、執行前確認價格與上限、免費額度與組織付費。",
+                "description": "Synwevo Agent 如何計費：人民幣錢包、按實際用量扣費、每則回答的最高金額、免費額度與組織付費。",
                 "heading": "用多少，付多少。",
                 "paragraphs": [
                     "版本 {pricing}，自 {pricing_effective} 起生效。目前只有 Synwevo Agent 按用量收費，以人民幣計價。",
-                    "每次執行前顯示當前單價與價格版本，並由你確認最高預算；儲值不可退款。",
+                    "Agent 輸入框旁顯示當前單價與每則回答的最高金額，傳送即開始；儲值不可退款。",
                 ],
                 "label": "定價",
             },
@@ -234,7 +234,7 @@ COPY: dict[str, dict] = {
                 "description": "The terms for using Synwevo: account, wallet and top-ups (non-refundable), usage-based charges, the free allowance, organisation payment and AI output.",
                 "heading": "The terms of using Synwevo.",
                 "paragraphs": [
-                    "Version {terms}, in effect from {terms_effective}. Your first paid use of Synwevo Agent records the version you accepted.",
+                    "Version {terms}, in effect from {terms_effective}. You accept it once when you start using Synwevo Agent, and the version you accepted is recorded.",
                     "Top-ups are final and non-refundable; wallet balance can be used only for Synwevo services and cannot be transferred, withdrawn or exchanged for cash. AI-generated content may be wrong and is for reference only.",
                 ],
                 "label": "Terms of service",
@@ -251,11 +251,11 @@ COPY: dict[str, dict] = {
             },
             "pricing": {
                 "title": "Pricing · Synwevo",
-                "description": "How Synwevo Agent is charged: a CNY wallet, charges for actual usage, the price and maximum confirmed before each run, the free allowance and organisation payment.",
+                "description": "How Synwevo Agent is charged: a CNY wallet, charges for actual usage, a maximum for each answer, the free allowance and organisation payment.",
                 "heading": "Pay for what you use.",
                 "paragraphs": [
                     "Version {pricing}, in effect from {pricing_effective}. Today only Synwevo Agent is charged by usage, priced in Chinese yuan (CNY).",
-                    "Before each run you see the current unit prices and price version and confirm a maximum budget; top-ups are non-refundable.",
+                    "The Agent message box shows the current unit prices and each answer's maximum, and sending starts the answer; top-ups are non-refundable.",
                 ],
                 "label": "Pricing",
             },
