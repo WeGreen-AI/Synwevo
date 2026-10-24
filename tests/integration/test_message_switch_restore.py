@@ -162,3 +162,28 @@ def test_an_older_restore_refuses_the_new_kind_rather_than_skipping_it(recovery)
         assert _switch(copy, oa) is None
     finally:
         w.snapshot._close(copy)
+
+
+def test_an_older_database_gains_the_table_on_open_and_every_organization_stays_on(recovery):
+    """Additive schema: a database an older release left (no `organization_apps`) gets the table the
+    next time it is opened, with no row — on everywhere, nothing adopted. A read-only look at it
+    (`migrate=False`) answers "on" instead of failing."""
+    from synwevo_core.apps import disabled_organizations, organization_app_row
+    w = recovery
+    oa, ob, ga, gb = _two_organizations(w)
+    w.store.execute("DROP TABLE organization_apps")          # FIXTURE: the database as an older release left it
+    looking = Store(w.data, migrate=False)
+    try:
+        assert organization_app_row(looking, oa, MESSAGES_APP_ID) is None
+        assert disabled_organizations(looking, MESSAGES_APP_ID) == set()
+    finally:
+        c = getattr(looking._local, "c", None)       # read-only: nothing to checkpoint, just close it
+        if c is not None:
+            c.close()
+    reopened = Store(w.data)
+    try:
+        assert reopened.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='organization_apps'")
+        assert reopened.one("SELECT COUNT(*) AS n FROM organization_apps")["n"] == 0
+        assert Messaging(reopened, Identity(reopened)).get(ga, w.b["id"])["id"] == ga
+    finally:
+        w.snapshot._close(reopened)
