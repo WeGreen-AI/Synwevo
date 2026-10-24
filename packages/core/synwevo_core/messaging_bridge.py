@@ -790,7 +790,7 @@ class BridgeWorker:
         if closed:
             # No card into a conversation its members cannot read now (B3, G3): it would reach
             # their open tabs and their digests. Skipped, never held (see SKIPPED_MESSAGES_DISABLED).
-            return self._skip(row, {LOST: SKIPPED_LOST, PAUSED: SKIPPED_PAUSED}.get(closed.state, SKIPPED_MESSAGES_DISABLED))
+            return self._skip(row, _closed_skip(closed))
         card = build_card(self.store, self.ident, row)
         if not card:
             return self._skip(row, SKIPPED_OBJECT_GONE)
@@ -800,6 +800,11 @@ class BridgeWorker:
             body = body.get(card.get("state") or "", f"{APPS[row['app']]}")
         ts = now()
         with self.store.tx() as t:
+            # Again under the writer lock: a switch-off, a freeze or a loss that committed since the
+            # check above leaves no card either — the row is skipped in this transaction, the same way.
+            closed = self.messaging._closed(conv)
+            if closed:
+                return self._skip(row, _closed_skip(closed))
             dup = t.execute("SELECT id FROM messages WHERE conversation_id=? AND sender_id=? AND client_id=?", (cid, sender, row["id"])).fetchone()
             if dup:
                 mid = dup["id"]                                 # a crash between the insert and the mark: same card, not a second one
@@ -822,6 +827,11 @@ class BridgeWorker:
         except Exception:  # noqa: BLE001 - the card is delivered; the sweep retries
             log.exception("reconciling %s after delivery failed", cid)
         return "delivered"
+
+
+def _closed_skip(closed) -> str:
+    """The outbox code of a card skipped because its conversation is closed (`Messaging._closed`)."""
+    return {LOST: SKIPPED_LOST, PAUSED: SKIPPED_PAUSED}.get(closed.state, SKIPPED_MESSAGES_DISABLED)
 
 
 def build_card(store: Store, ident: Identity, row: dict) -> dict | None:

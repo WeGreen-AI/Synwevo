@@ -29,6 +29,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from synwevo_core import messaging_bridge
 from synwevo_core.apps import DOCS_APP_ID, MESSAGES_APP_ID, Apps, disabled_organizations, organization_app_disabled
 from synwevo_core.errors import ServiceError
 from synwevo_core.messaging import Messaging, messaging_export
@@ -434,6 +435,39 @@ def test_a_card_into_a_paused_project_discussion_is_skipped(org):
     c.ident.set_workspace_frozen(wid, False)
     _comment(c, PA, "cm_b3p002", w.ann)
     assert worker.run_once()["delivered"] == 1
+
+
+def test_a_card_whose_switch_off_commits_after_the_workers_check_is_skipped(org):
+    """int-b3-2: the worker reads the switch again inside its write transaction. A switch-off that
+    commits after its first check leaves no card in A's discussion; the row is skipped with the
+    same code, so nothing appears in A's history once it is back on. FIXTURE: the switch-off
+    commits from a patched `build_card` (after the first check, before the write), put back with
+    setattr(original)."""
+    c = org
+    w = _world(c)
+    _, ca, _ = _projects(c, w)
+    store, worker = c.ident.store, c.api.state.bridge_worker
+    cards = lambda: store.one("SELECT COUNT(*) AS n FROM messages m JOIN message_cards k ON k.message_id=m.id WHERE m.conversation_id=?", (ca,))["n"]  # noqa: E731
+    _comment(c, PA, "cm_b3race01", w.ann)
+    original = messaging_bridge.build_card
+
+    def switching_off(*args, **kwargs):
+        out = original(*args, **kwargs)
+        _off(c)
+        return out
+    messaging_bridge.build_card = switching_off
+    try:
+        result = worker.run_once()
+    finally:
+        messaging_bridge.build_card = original
+    assert organization_app_disabled(store, w.a, MESSAGES_APP_ID)                    # the switch-off did commit first
+    assert result == {"delivered": 0, "skipped": 1, "failed": 0} and cards() == 0
+    row = store.one("SELECT last_error, delivered_at FROM messaging_outbox WHERE event_id='comment:cm_b3race01'")
+    assert row["last_error"] == SKIPPED_MESSAGES_DISABLED and row["delivered_at"]
+    _on(c)
+    assert worker.run_once() == {"delivered": 0, "skipped": 0, "failed": 0} and cards() == 0, "skipped, not replayed"
+    _comment(c, PA, "cm_b3race02", w.ann)
+    assert worker.run_once()["delivered"] == 1 and cards() == 1                       # the control
 
 
 def test_a_queued_suite_send_into_a_disabled_organization_fails_with_the_code(org):
