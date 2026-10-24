@@ -124,7 +124,11 @@ the cost line under each answer).
   `expected_revision`. The button reads "Agree and send" with a message waiting, otherwise "Agree
   and start". The writes run in the order (a), (b), (c) and only then is the message sent; any
   failure stops there, keeps the message and says one step is unfinished (a newer document or notice
-  version is shown for acceptance). Opening the step (by Send or from a refusal) reads
+  version is shown for acceptance). The step words an update ("… has been updated. Review and
+  accept the new version.", without "you only do this once") only when `agent.setup.get` reports
+  an earlier accepted version (`terms.documents[].accepted_version`, `provider_consent.accepted_version`);
+  otherwise it is the first-use wording. The `terms_acceptance_required` refusal is neutral ("you
+  need to accept the current version of …"). Opening the step (by Send or from a refusal) reads
   `agent.setup.get` again and shows it loading until the fresh state arrives; leaving Agent settings
   reads it again too. A step with nothing left to record offers no "Agree and send": it says setup
   is complete and only offers "check again". The step returns only when a document or consent

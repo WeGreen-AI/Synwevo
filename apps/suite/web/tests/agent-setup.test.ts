@@ -278,3 +278,42 @@ test('W4: a step with nothing left to record never offers an "Agree and send" th
   }
   h.unmount();
 });
+
+test('W5: the "updated" wording appears only when the server reports an earlier accepted version; otherwise it is the first-use wording', async () => {
+  const updated = core.translate('en', copy.chatCopy.setupTermsUpdated[0]), intro = core.translate('en', copy.chatCopy.setupIntro[0]);
+  // First use: no document was ever accepted (S4: accepted_version null), or a server without the field.
+  const fresh = documents(false).map((d) => ({ ...d, accepted_version: null }));
+  for (const state of [fixtureSetup({ terms: { complete: false, documents: fresh } }), fixtureSetup()]) {
+    const h = await cardFixture(state);
+    assert.ok(h.text().includes(intro), 'the "only once" intro');
+    assert.ok(!h.text().includes(updated), h.text());
+    h.unmount();
+  }
+  // A new version of a document the person accepted before (FIXTURE: terms 2026-10-05 accepted, 2026-10-24 in force).
+  const bumped = documents(true).map((d) => d.id === 'terms' ? { ...d, accepted: false, accepted_version: '2026-10-05' } : { ...d, accepted_version: d.version });
+  const again = await cardFixture(fixtureSetup({ provider_consent: { provider: 'deepseek', version: '2026-10-05', accepted: true, accepted_version: '2026-10-05' },
+    terms: { complete: false, documents: bumped }, limits: { ...fixtureSetup().limits, configured: true, enabled: true } }));
+  assert.ok(again.text().includes(updated), again.text());
+  assert.ok(again.elements().some((el) => el.props.role === 'status' && strings(el.props.children).includes(updated)));
+  assert.ok(!again.text().includes(intro), 'no "you only do this once" for a re-acceptance');
+  assert.equal(again.checkboxes().length, 1, 'only the documents are asked for');
+  again.unmount();
+  // A new version of the data-sharing notice someone agreed to before is a re-acceptance too: no "only once".
+  const consentAgain = await cardFixture(fixtureSetup({ provider_consent: { provider: 'deepseek', version: '2026-11-01', accepted: false, accepted_version: '2026-10-05' },
+    terms: { complete: true, documents: documents(true) }, limits: { ...fixtureSetup().limits, configured: true, enabled: true } }));
+  assert.ok(!consentAgain.text().includes(intro), consentAgain.text());
+  assert.ok(!consentAgain.text().includes(updated), 'the documents did not change');
+  consentAgain.unmount();
+  // The field is checked like every other one.
+  assert.throws(() => setup.validateSetup(fixtureSetup({ terms: { complete: false, documents: documents(false).map((d) => ({ ...d, accepted_version: 5 })) } })));
+  assert.doesNotThrow(() => setup.validateSetup(fixtureSetup({ terms: { complete: false, documents: bumped } })));
+});
+
+test('W5: the terms refusal reads neutrally (first use or a new version), in three languages', () => {
+  const [zh, en, hant] = copy.chatCopy.refusedTerms;
+  assert.equal(zh, '需要先接受当前版本的《服务条款》《AI 使用规范》与《定价》。消息没有发送，也没有扣费。');
+  assert.equal(hant, '需要先接受目前版本的《服務條款》《AI 使用規範》與《定價》。訊息沒有傳送，也沒有扣費。');
+  assert.equal(en, 'You need to accept the current version of the Terms of service, the AI use rules and the Pricing first. The message was not sent and nothing was charged.');
+  assert.equal(core.translate('en', zh), en); assert.equal(core.translate('zh-Hant', zh), hant);
+  assert.doesNotMatch(zh + en + hant, /已更新|updated/);
+});
