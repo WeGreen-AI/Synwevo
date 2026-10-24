@@ -8,7 +8,7 @@ import { providerConsentCopy, type ProviderConsentText } from "./provider-consen
 
 /** agent.provider_consent.get — the separate, versioned consent to send content to DeepSeek
  *  (synwevo_core.agent_safety). The chat's "consent" refusal links here (#ag-provider-consent). */
-interface ConsentState {
+export interface ConsentState {
   provider: "deepseek";
   version: string;
   effective_at: string;
@@ -19,6 +19,34 @@ interface ConsentState {
   accepted_at: number | null;
   required: boolean;
   history: { provider: string; version: string; action: "accepted" | "withdrawn"; at: number }[];
+}
+
+/** The notice itself, exactly as versioned by PROVIDER_TERMS: the same text in Agent settings and
+ *  in the one-time "Start using Synwevo Agent" step (AgentSetup), so the consent a person gives
+ *  in either place is to the same words. `newTab` opens the links in a new tab (the setup step
+ *  keeps an unsent message in the composer) and names that for screen readers. */
+export function ProviderConsentFacts({ facts, siteUrl, newTab }: {
+  facts: Pick<ConsentState, "processor" | "version" | "effective_at">;
+  siteUrl?: string | null;
+  newTab?: string;
+}) {
+  const { t, locale } = useI18n();
+  const c = (key: ProviderConsentText, params?: Record<string, string>) => t(providerConsentCopy[key][0], params);
+  const target = newTab ? { target: "_blank", rel: "noopener noreferrer" } : {};
+  const opens = newTab ? <span className="sr-only">{newTab}</span> : null;
+  return <>
+    <p>{c("intro")}</p>
+    <dl className="ag-consent-facts">
+      <div><dt>{c("processor")}</dt><dd>{facts.processor[locale] ?? facts.processor["zh-Hans"]}</dd></div>
+      <div><dt>{c("location")}</dt><dd>{c("locationCN")}</dd></div>
+      <div><dt>{c("training")}</dt><dd>{c("trainingPolicy")}</dd></div>
+      <div><dt>{c("scope")}</dt><dd>{c("scopeText")}</dd></div>
+    </dl>
+    <p className="muted small">{c("withdrawNote")}</p>
+    <p className="muted small">{c("version", { version: facts.version, date: facts.effective_at })}
+      {" · "}<a href={publicHref(siteUrl, "privacy", locale)} {...target}>{c("privacy")}{opens}</a>
+      {" · "}<a href={publicHref(siteUrl, "ai-use", locale)} {...target}>{c("rules")}{opens}</a></p>
+  </>;
 }
 
 export default function ProviderConsent() {
@@ -58,17 +86,7 @@ export default function ProviderConsent() {
     <div className="card-h"><h2 id="ag-provider-consent-title">{c("title")}</h2></div>
     <div className="card-b col gap12">
       {state === null && !error ? <Loading /> : state && <>
-        <p>{c("intro")}</p>
-        <dl className="ag-consent-facts">
-          <div><dt>{c("processor")}</dt><dd>{state.processor[locale] ?? state.processor["zh-Hans"]}</dd></div>
-          <div><dt>{c("location")}</dt><dd>{c("locationCN")}</dd></div>
-          <div><dt>{c("training")}</dt><dd>{c("trainingPolicy")}</dd></div>
-          <div><dt>{c("scope")}</dt><dd>{c("scopeText")}</dd></div>
-        </dl>
-        <p className="muted small">{c("withdrawNote")}</p>
-        <p className="muted small">{c("version", { version: state.version, date: state.effective_at })}
-          {" · "}<a href={publicHref(auth?.site_url, "privacy", locale)}>{c("privacy")}</a>
-          {" · "}<a href={publicHref(auth?.site_url, "ai-use", locale)}>{c("rules")}</a></p>
+        <ProviderConsentFacts facts={state} siteUrl={auth?.site_url} />
         <div role="status" aria-live="polite">
           {state.accepted ? <p className="notice ok">{c("accepted", { date: when(state.accepted_at) })}</p>
             : changed ? <p className="notice warn">{c("changed", { version: state.accepted_version! })}</p>

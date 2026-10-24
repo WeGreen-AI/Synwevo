@@ -1,7 +1,7 @@
 import { ApiError } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { Failure } from "../../shared/states";
-import { consentCopy } from "./consent.messages";
+import { chatCopy } from "./chat.messages";
 import { contextErrorKey } from "./context";
 import { contextCopy } from "./context.messages";
 
@@ -14,23 +14,17 @@ const errors: Record<string, string> = {
   billing_welcome_capacity: "今日赠送名额已满，请稍后再试。",
   agent_not_configured: "模型服务未配置。请先打开 Agent 设置。",
   provider_history_incompatible: "模型提供方已变化，请新建会话继续。",
-  billing_authorization_required: "请先确认本次运行的价格与预算。",
-  billing_authorization_conflict: "请只选择一种付款授权。",
-  billing_consent_not_found: "这项持续付款授权不可用，请核对当前会话。",
-  billing_consent_revoked: "持续付款授权已撤销，尚未开始的付费调用已停止。",
-  billing_consent_expired: "持续付款授权已到期，请重新核对价格与范围。",
-  billing_consent_exhausted: "持续付款授权的运行次数已用完。继续前请查看已有结果，再重新授权。",
-  billing_consent_scope_changed: "会话的工作空间范围已变化，请撤销旧付款授权并重新核对。",
-  billing_consent_model_changed: "模型或价格条件已变化，请撤销旧付款授权并重新核对。",
-  billing_consent_conversation_unavailable: "此会话目前无法使用持续付款授权。",
-  billing_consent_explicit_scope_required: "请先在会话中明确选择工作空间范围，再设置持续付款授权。",
-  billing_consent_already_exists: "此会话已有持续付款授权，请先查看或撤销原授权。",
-  billing_consent_limit_exceeded: "有效的持续付款授权已达到上限，请先撤销不再需要的授权。",
-  billing_consent_invalid_expiry: "请选择未来一年内的到期时间，或明确选择持续有效至撤销。",
-  billing_consent_expiry_required: "请选择到期时间，或明确选择持续有效至撤销。",
-  billing_consent_total_too_large: consentCopy.totalOverflow[0],
-  consent_pending_operation: consentCopy.pending[0],
-  consent_state_unavailable: consentCopy.loadError[0],
+  // The page sends no quote or consent any more (send-and-go): either code means the server could
+  // not start the answer as asked. Nothing was stored, sent or charged.
+  billing_authorization_required: "这次回答未能开始，消息没有发送，也没有扣费。请刷新页面后重新发送。",
+  billing_authorization_conflict: "这次回答未能开始，消息没有发送，也没有扣费。请刷新页面后重新发送。",
+  // Legacy continuing payment consents (no longer created by this page) that stop an older run.
+  billing_consent_not_found: "原有的持续付款授权已不再适用，没有发起新的模型调用，也没有为此扣费。可以重新发送。",
+  billing_consent_revoked: "原有的持续付款授权已不再适用，没有发起新的模型调用，也没有为此扣费。可以重新发送。",
+  billing_consent_expired: "原有的持续付款授权已不再适用，没有发起新的模型调用，也没有为此扣费。可以重新发送。",
+  billing_consent_exhausted: "原有的持续付款授权已不再适用，没有发起新的模型调用，也没有为此扣费。可以重新发送。",
+  billing_consent_scope_changed: "原有的持续付款授权已不再适用，没有发起新的模型调用，也没有为此扣费。可以重新发送。",
+  billing_consent_conversation_unavailable: "原有的持续付款授权已不再适用，没有发起新的模型调用，也没有为此扣费。可以重新发送。",
   billing_traffic_wait_timeout: "模型调用排队超过等待上限，当前调用尚未发送，请稍后重试。",
   billing_traffic_queue_full: "模型调用排队已满，当前调用尚未发送，请稍后再试。",
   billing_traffic_payer_queue_full: "你的模型调用排队已满，当前调用尚未发送，请等待已排队的调用完成。",
@@ -41,8 +35,9 @@ const errors: Record<string, string> = {
   model_traffic_unavailable: "模型调用容量暂时无法核对，当前消息尚未发送",
   billing_insufficient_funds: "可用余额不足，后续调用尚未开始。",
   billing_usage_pending: "上次模型调用的用量待核实，后续调用已暂停。",
-  billing_run_budget_exceeded: "本次运行已达到授权预算，后续调用尚未开始。",
-  billing_run_time_too_short: "本次运行剩余的时间不足以完成一次模型调用，本次没有发送，也不扣费。请重新确认运行时间后继续。",
+  // The same sentences as the chat's refusals (rr-glue-2): true mid-run, no re-confirmation.
+  billing_run_budget_exceeded: chatCopy.refusedRunBudget[0],
+  billing_run_time_too_short: chatCopy.refusedRunTime[0],
   billing_payer_budget_not_configured: "请在 Agent 设置中配置个人日、周、月支出上限。当前调用尚未发送。",
   billing_payer_budget_disabled: "个人支出已暂停，当前调用尚未发送。可在 Agent 设置中核对。",
   billing_payer_daily_budget_exceeded: "个人今日支出上限不足以容纳本次预留，当前调用尚未发送。",

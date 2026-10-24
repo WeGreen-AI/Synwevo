@@ -33,3 +33,18 @@ test("the settings page asks for this consent before anything else", () => {
   assert.match(section, /agent\.provider_consent\.accept/);
   assert.match(section, /version: state\.version/);   // accepts exactly the version shown
 });
+
+test("the one-time setup step shows the very same notice, with its own separate box and the version shown", () => {
+  const dir = join(import.meta.dirname, "..", "src", "apps", "agent");
+  const section = readFileSync(join(dir, "ProviderConsent.tsx"), "utf8");
+  const card = readFileSync(join(dir, "AgentSetup.tsx"), "utf8");
+  // One component renders the versioned facts in both places (PROVIDER_TERMS keeps its version).
+  assert.match(section, /export function ProviderConsentFacts/);
+  assert.match(section, /<ProviderConsentFacts facts=\{state\}/);
+  assert.match(card, /import \{ ProviderConsentFacts \} from "\.\/ProviderConsent"/);
+  assert.match(card, /<ProviderConsentFacts facts=\{facts\}/);
+  // The card records it with the existing operation, for exactly the version it showed, before the terms.
+  assert.match(card, /write\("agent\.provider_consent\.accept", \{ version: facts!\.version \}\)/);
+  assert.ok(card.indexOf('"agent.provider_consent.accept"') < card.indexOf('"agent.terms.accept"'));
+  assert.ok(card.indexOf('"agent.terms.accept"') < card.indexOf('"agent.billing.budget.set"'));
+});

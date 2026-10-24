@@ -1,5 +1,6 @@
 import { ApiError } from '@synwevo/auth-client/api';
 import { formatAmount, parseBudget, type Unit } from './budget';
+import type { PayerBudgetText } from './payer-budget.messages';
 
 export const budgetPeriods = ['daily', 'weekly', 'monthly'] as const;
 export type BudgetPeriod = typeof budgetPeriods[number];
@@ -109,6 +110,17 @@ export function payerBudgetCode(error: unknown): string {
   return typeof code === 'string' ? code.replace(/^billing_/, '') : '';
 }
 
+/** Which payer-budget sentence words a refused budget read or write (the fallback otherwise). */
+export function payerBudgetErrorText(error: unknown, fallback: PayerBudgetText): PayerBudgetText {
+  const messages: Record<string, PayerBudgetText> = {
+    payer_budget_conflict: 'conflict', payer_budget_not_configured: 'notConfigured', payer_budget_disabled: 'budgetDisabled',
+    payer_daily_budget_exceeded: 'dailyExceeded', payer_weekly_budget_exceeded: 'weeklyExceeded', payer_monthly_budget_exceeded: 'monthlyExceeded',
+    payer_budget_capacity: 'capacity', payer_budget_inconsistent: 'inconsistent', invalid_integer: 'invalidAmount',
+    invalid_payer_budget: 'invalidAmount', unknown_sale_unit: 'unknownUnit', not_configured: 'unavailable',
+    unknown_operation: 'unavailable', app_unavailable: 'unavailable',
+  };
+  return messages[payerBudgetCode(error)] ?? fallback;
+}
 export function uncertainBudgetFailure(error: unknown, retrying: boolean): boolean {
   if (!(error instanceof ApiError) || error.upstream) return true;
   // A replay can be refused before reaching the original receipt (e.g. permissions changed).

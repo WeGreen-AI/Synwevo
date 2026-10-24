@@ -287,7 +287,7 @@ function AccessForm({ settings, onChanged }: { settings: AgentSettings; onChange
         onChange={(e) => { setPrefer(e.target.checked); write.dismiss(); }} /><span>{t("优先使用个人密钥")}</span></label>
       <p className="muted small">{settings.personal_key_supported
         ? t("启用后优先使用已保存且可解密的个人密钥，否则使用平台凭据。未启用时优先使用平台凭据；平台未配置时仍会尝试个人密钥。平台专用的工作空间不会自动切换凭据。")
-        : t("已保存的个人密钥偏好保留，但在当前付费模型服务中不可用。请求使用平台凭据并按已确认的报价收费。")}</p>
+        : t("已保存的个人密钥偏好保留，但在当前付费模型服务中不可用。请求使用平台凭据，按实际用量计费。")}</p>
       <label className="field"><span>{t("推理投入")}</span>
         <select className="input" value={effort} disabled={locked} onChange={(e) => { setEffort(e.target.value as Effort); write.dismiss(); }}>
           {settings.efforts.map((value) => <option key={value} value={value}>{t(effortLabels[value] ?? value)}</option>)}

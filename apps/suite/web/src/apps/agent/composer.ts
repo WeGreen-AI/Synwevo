@@ -1,18 +1,32 @@
-/** The money facts beside the composer: balance, the tightest limit, the most this turn can cost,
- *  and where to top up. Pure functions over server values; nothing is estimated here. */
-import { formatAmount, formatRate, type Offer, type Pricing } from './budget';
+/** The money facts beside the composer: balance, the tightest limit, the most this answer can
+ *  cost, and where to top up. Pure functions over server values; nothing is estimated here. */
+import { formatAmount, formatRate, type Pricing } from './budget';
 import type { ChatText } from './chat.messages';
 
+export interface MoneyUnit { code: string; scale: number }
+/** The per-answer run bound the server will issue at the next send (`agent.billing.status.run`,
+ *  design §3): every `<units>` is a decimal string of integer sale units. `maximum` is the
+ *  default (one call's hold × `max_calls`) or the person's lower cap; `usable` says whether a
+ *  send can be admitted with it (false: the cap is below one call's hold). */
+export interface RunBound {
+  maximum: string; default: string; cap: string | null; source: 'default' | 'personal_cap';
+  per_call_hold: string; max_calls: number; run_seconds: number; usable: boolean;
+}
+/** The pricing the person's last answer ran under, when it differs from the offer now
+ *  (`agent.billing.status.price_notice`, design D-7): information, never a gate. */
+export interface PriceNoticeFacts { previous: Pricing & { off_peak_rates?: unknown }; previous_run_at: number }
 export interface BillingStatus {
   available: boolean;
   reason?: 'not_configured' | 'unavailable' | null;
   environment?: 'test' | 'live' | null;
   model?: string | null;
-  unit?: { code: string; scale: number } | null;
+  unit?: MoneyUnit | null;
   per_call_hold?: string | null;
   balance?: { booked: string; held: string; available: string } | null;
   limit?: { configured: boolean; enabled: boolean; usage_state: string | null; remaining: string | null;
     period: 'daily' | 'weekly' | 'monthly' | null } | null;
+  run?: RunBound | null;
+  price_notice?: PriceNoticeFacts | null;
 }
 
 const MINOR = /^-?(0|[1-9][0-9]{0,30})$/;
@@ -40,13 +54,16 @@ export function limitLine(status: BillingStatus | null | undefined): { key: Chat
   return { key: 'limitRemaining', amount: limit.remaining, period };
 }
 
-/** The most this turn can cost before it is sent: the active consent's per-run budget, else the
- *  offer's per-call hold (the quote dialog then fixes the run's total before anything is sent). */
-export function turnMaximum(consent: { budget: string; unit: { code: string; scale: number } } | null | undefined,
-                            offer: { per_call_hold: string; unit: { code: string; scale: number } } | null | undefined):
-  { key: 'turnMaximum' | 'turnMaximumCall'; amount: string; unit: { code: string; scale: number } } | null {
-  if (consent && big(consent.budget) !== null) return { key: 'turnMaximum', amount: consent.budget, unit: consent.unit };
-  if (offer && big(offer.per_call_hold) !== null) return { key: 'turnMaximumCall', amount: offer.per_call_hold, unit: offer.unit };
+/** The most the next answer can cost, before sending: the run bound the server reports
+ *  (`status.run.maximum`, in the status unit). A server without it (older) still reports the
+ *  per-call hold, which is then shown as such; nothing is multiplied in the page. */
+export function turnMaximum(status: Pick<BillingStatus, 'run' | 'unit' | 'per_call_hold'> | null | undefined):
+  { key: 'turnMaximum' | 'turnMaximumCall'; amount: string; unit: MoneyUnit } | null {
+  const unit = status?.unit;
+  if (!unit) return null;
+  const run = status?.run;
+  if (run && big(run.maximum) !== null) return { key: 'turnMaximum', amount: run.maximum, unit };
+  if (big(status?.per_call_hold) !== null) return { key: 'turnMaximumCall', amount: status!.per_call_hold!, unit };
   return null;
 }
 
@@ -99,8 +116,9 @@ export function perMillion(pricing: Pick<Pricing, 'rates' | 'per_tokens' | 'unit
 export interface PriceChange { field: ChatText; before: string; after: string }
 type RateKey = 'input_uncached' | 'input_cached' | 'output';
 export interface PriceDisplay { rate?: (pricing: Pricing, key: RateKey) => string; amount?: (minor: string, unit: Pricing['unit']) => string }
-/** What changed between the terms a person last confirmed and the terms on offer now. Equality is
- *  decided on exact values; `display` only chooses how a changed rate or amount is written. */
+/** What changed between the pricing of the person's last answer and the pricing on offer now.
+ *  Equality is decided on exact values; `display` only chooses how a changed rate or amount is
+ *  written. */
 export function priceChanges(before: Pricing, after: Pricing, display: PriceDisplay = {}): PriceChange[] {
   const out: PriceChange[] = [];
   const add = (field: ChatText, a: string, b: string, shown?: () => [string, string]) => {
@@ -119,26 +137,6 @@ export function priceChanges(before: Pricing, after: Pricing, display: PriceDisp
   if (sameUnit) add('changedHold', formatAmount(before.per_call_hold, before.unit), formatAmount(after.per_call_hold, after.unit),
     display.amount && (() => [display.amount!(before.per_call_hold, before.unit), display.amount!(after.per_call_hold, after.unit)]));
   return out;
-}
-
-/** Same fixed terms: a quote is accepted in one step only when it matches what was shown. */
-export function samePricing(a: Pricing, b: Pricing): boolean {
-  return priceChanges(a, b).length === 0 && a.environment === b.environment && a.terms_ref === b.terms_ref
-    && a.per_tokens === b.per_tokens;
-}
-
-/** The limits a re-confirmation in one step reuses: the previous per-run budget, call count and
- *  time limit, but only when they still fit the new offer; otherwise null (fill them in again). */
-export function renewalParams(previous: { budget: string; max_calls: number; run_seconds: number },
-                              offer: Pick<Offer, 'per_call_hold' | 'max_calls_limit' | 'run_seconds_limit' | 'run_seconds_min' | 'unit'>,
-                              previousUnit: { code: string; scale: number }): { budget: string; max_calls: number; run_seconds: number } | null {
-  const budget = big(previous.budget), hold = big(offer.per_call_hold);
-  if (budget === null || hold === null || budget <= 0n || budget < hold
-    || previousUnit.code !== offer.unit.code || previousUnit.scale !== offer.unit.scale
-    || !Number.isSafeInteger(previous.max_calls) || previous.max_calls < 1 || previous.max_calls > offer.max_calls_limit
-    || !Number.isSafeInteger(previous.run_seconds) || previous.run_seconds < (offer.run_seconds_min ?? 1)
-    || previous.run_seconds > offer.run_seconds_limit) return null;
-  return { budget: previous.budget, max_calls: previous.max_calls, run_seconds: previous.run_seconds };
 }
 
 /** Enter sends; Shift+Enter is a new line; an input method's composition (Chinese, Japanese,

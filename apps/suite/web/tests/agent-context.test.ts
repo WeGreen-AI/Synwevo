@@ -185,10 +185,6 @@ test('five is a hard selection limit, duplicates stay unchanged, and only exact 
   assert.equal(helpers.contextReferences([]), undefined);
   assert.deepEqual(helpers.contextSpaces([...spaces, { ...spaces[0], workspace_id: 'ws_denied', processing: 'none' }], null), spaces);
   assert.deepEqual(helpers.contextSpaces(spaces, ['ws_b']), [spaces[1]]); assert.deepEqual(helpers.contextSpaces(spaces, []), []);
-  const a = { conversation_id: 'conv_fixture', text: 'Fixture', context_refs: [resolved().reference] };
-  assert.equal(budget.sameIntent(a, { ...a, context_refs: [{ ...a.context_refs[0] }] }), true);
-  assert.equal(budget.sameIntent(a, { ...a, context_refs: [{ ...a.context_refs[0], snapshot: 'b'.repeat(64) }] }), false);
-  assert.equal(budget.sameIntent(a, { ...a, context_refs: undefined }), false);
 });
 
 test('three-language dialog/chips/source cards disclose business boundaries and never render unsafe links or hidden sources', () => {
@@ -263,14 +259,19 @@ test('Chat disables the picker in every blocked state and changes its key when s
   h.unmount();
 });
 
-async function appFixture(billing = true, withConsent = false) {
+/** FIXTURE `agent.setup.get` (send-and-go contract §3): everything done, or the terms still to accept. */
+function setupFixture(complete: boolean) {
+  return { required: true, complete, provider_consent: null,
+    terms: { complete, documents: [{ id: 'terms', version: 'fixture-1', effective: '2026-10-24', accepted: complete }] },
+    limits: { configured: true, enabled: true, revision: 1, unit: { code: 'CNY', scale: 2 }, suggested: null } };
+}
+
+async function appFixture(billing = true, setupComplete = true) {
   const chat = await server.ssrLoadModule('/src/apps/agent/Chat.tsx');
-  const controls = await server.ssrLoadModule('/src/apps/agent/ConsentControls.tsx');
-  const consents = await server.ssrLoadModule('/src/apps/agent/consent.ts');
+  const setupCard = await server.ssrLoadModule('/src/apps/agent/AgentSetup.tsx');
   const current = conversation({ scope: ['ws_a'] });
   const writes: any[] = [], navigations: string[] = [];
   let failure: unknown, route: string | undefined = current.id;
-  const consent = { id: 'consent_fixture', conversation_id: current.id, scope: ['ws_a'], status: 'active', expires_at: null, remaining_runs: 2 };
   const h = await compiled('index.tsx', {}, {
     'react-router-dom': { ...router, useMatch: (path: string) => path === '/agent/c/:cid' && route ? { params: { cid: route } } : null,
       useLocation: () => ({ pathname: route ? `/agent/c/${route}` : '/agent' }), useNavigate: () => (path: string) => navigations.push(path) },
@@ -280,76 +281,65 @@ async function appFixture(billing = true, withConsent = false) {
     '../../shared/catalog': { useApp: () => ({ app: { id: 'agent' } }) },
     './useConversation': { useConversation: () => ({ value: route ? { ...current, id: route } : undefined, refresh: async () => {}, connection: 'connected' }) },
     './useHistory': { useHistory: () => ({ rows: [], cursor: null }) },
-    './ConsentControls': { ...controls, useConversationConsents: () => ({ data: withConsent ? [consent] : [], refresh() {} }) },
-    // Actual consent writer; only its surrounding read state is a fixture.
-    './consent': { ...consents },
     '../../shared/ops': { newKey: () => `fixture_key_${writes.length}`, read: async (operation: string) => {
       if (operation === 'agent.settings.get') return { active: true, billing: { required: billing } };
       if (operation === 'agent.workspace_policy.list') return { workspaces: spaces };
+      if (operation === 'agent.setup.get') return setupFixture(setupComplete);
       return null;
     }, op: async (operation: string, input: any, options: any) => {
       writes.push({ operation, input, options }); if (failure) throw failure;
-      return { status: 'succeeded', output: operation === 'agent.turn.quote'
-        ? { id: 'quote_fixture', payer_user_id: 'usr_fixture' } : operation === 'agent.conversation.create' ? { id: 'conv_new_fixture' } : { turn_id: 'turn_fixture' } };
+      return { status: 'succeeded', output: operation === 'agent.conversation.create' ? { id: 'conv_new_fixture' } : { turn_id: 'turn_fixture' } };
     } },
   }, 'app');
   await settle(); h.render(); await settle(); h.render();
-  return { ...h, writes, navigations, consent, fail: (value: any) => { failure = value; },
+  const fixture = { ...h, writes, navigations, fail: (value: any) => { failure = value; },
     route: (id?: string) => { route = id; h.render(); },
     chat: () => h.find((el) => el.type === chat.default).props,
-    dialog: () => h.find((el) => typeof el.props.onQuote === 'function').props };
+    card: () => all(fixture.chat().aside).filter((el) => el.type === setupCard.default) };
+  return fixture;
 }
 
-test('direct, quoted, renewed and consent-paid starts preserve exact context refs through the actual AgentApp', async () => {
+test('billed or not, a send starts at once and carries the exact context refs through the actual AgentApp', async () => {
   const refs = [resolved().reference, resolved(item('table_fixture', 'ws_a', 'table'), 'b'.repeat(64)).reference];
   const direct = await appFixture(false);
-  await direct.chat().send('Fixture question', refs);
+  assert.equal(await direct.chat().send('Fixture question', refs), true);
   assert.deepEqual(plain(direct.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture question', context_refs: refs });
   direct.unmount();
-  const quoted = await appFixture();
-  assert.equal(await quoted.chat().send('Fixture question', refs), false); quoted.render();
-  assert.equal(quoted.dialog().intent.context_refs, refs);
-  const params = { budget: '500', max_calls: 3, run_seconds: 300 };
-  const quote = await quoted.dialog().onQuote(params);
-  await quoted.dialog().onQuote({ ...params, budget: '600' });
-  for (const write of quoted.writes) assert.deepEqual(plain(write.input.context_refs), refs);
-  await quoted.dialog().onConfirm(quote); quoted.render();
-  assert.deepEqual(plain(quoted.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture question', context_refs: refs, quote_id: 'quote_fixture' });
-  assert.equal(quoted.chat().sentDraft, 1); quoted.unmount();
-  const active = await appFixture(true, true);
-  assert.equal(await active.chat().send('Fixture consent', refs), true);
-  assert.deepEqual(plain(active.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture consent', context_refs: refs, consent_id: 'consent_fixture' });
-  active.unmount();
-  const created = await appFixture();
-  await created.chat().send('Fixture new consent', refs); created.render();
-  await created.dialog().consent.send(created.consent, false); created.render();
-  assert.deepEqual(plain(created.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture new consent', context_refs: refs, consent_id: 'consent_fixture' });
-  assert.equal(created.chat().sentDraft, 1); created.unmount();
+  // Billing configured (send-and-go): the same single request, no quote and no dialog in between.
+  const billed = await appFixture();
+  assert.equal(await billed.chat().send('Fixture question', refs), true);
+  assert.deepEqual(billed.writes.map((w) => w.operation), ['agent.turn.start']);
+  assert.deepEqual(plain(billed.writes[0].input), { conversation_id: 'conv_fixture', text: 'Fixture question', context_refs: refs });
+  billed.unmount();
+  // The one-time setup step keeps the refs with the message and sends them when it is done.
+  const first = await appFixture(true, false);
+  assert.equal(await first.chat().send('Fixture first use', refs), false); first.render();
+  assert.deepEqual(first.writes, []);
+  await first.card()[0].props.onComplete(); first.render();
+  assert.deepEqual(plain(first.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture first use', context_refs: refs });
+  assert.equal(first.chat().sentDraft, 1); first.unmount();
 });
 
-test('quote cancellation retains draft intent; source refusals expose the actionable error and never clear sentDraft', async () => {
+test('a refused start keeps the draft; source refusals expose the actionable error and never clear sentDraft', async () => {
   const h = await appFixture(); const refs = [resolved().reference];
-  await h.chat().send('Fixture question', refs); h.render();
-  h.dialog().onClose(); h.render(); assert.equal(h.chat().sentDraft, 0);
-  await h.chat().send('Fixture question', refs); h.render();
   const refusal = new client.ApiError(409, 'context_changed', 'Fixture server refusal'); h.fail(refusal);
-  await assert.rejects(h.dialog().onQuote({ budget: '500', max_calls: 3, run_seconds: 300 })); h.render();
-  assert.equal(h.elements().filter((el) => typeof el.props.onQuote === 'function').length, 0);
+  await assert.rejects(h.chat().send('Fixture question', refs)); h.render();
   assert.ok(h.elements().some((el) => el.props.error === refusal)); assert.equal(h.chat().sentDraft, 0);
-  assert.deepEqual(plain(h.writes.at(-1).input.context_refs), refs); h.unmount();
+  assert.deepEqual(plain(h.writes.at(-1).input.context_refs), refs);
+  assert.ok(h.writes.every((w) => w.operation === 'agent.turn.start')); h.unmount();
 });
 
 test('new-conversation refs survive creation; regeneration never auto-attaches the selected/history sources', async () => {
   const h = await appFixture(); const refs = [resolved().reference]; h.route(undefined);
   await h.chat().send('Fixture first question', refs); h.render();
   assert.equal(h.writes[0].operation, 'agent.conversation.create');
-  assert.equal(h.dialog().intent.conversation_id, 'conv_new_fixture'); assert.equal(h.dialog().intent.context_refs, refs);
-  h.dialog().onClose(); h.render(); h.route('conv_fixture');
+  assert.deepEqual(plain(h.writes[1].input), { conversation_id: 'conv_new_fixture', text: 'Fixture first question', context_refs: refs });
+  h.route('conv_fixture');
   await h.chat().act('agent.turn.start', { conversation_id: 'conv_fixture', regenerate_of: 'message_fixture' }); h.render();
-  assert.equal(h.dialog().intent.context_refs, undefined);
-  h.dialog().onClose(); h.render();
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', regenerate_of: 'message_fixture' });
   await h.chat().act('agent.turn.start', { conversation_id: 'conv_fixture', text: 'Fixture explicit', parent_message_id: 'parent_fixture', context_refs: refs }); h.render();
-  assert.equal(h.dialog().intent.context_refs, refs); assert.equal(h.dialog().intent.parent_message_id, 'parent_fixture'); h.unmount();
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture explicit', parent_message_id: 'parent_fixture', context_refs: refs });
+  h.unmount();
 });
 
 test('the picker and its dialog are outside the composer form; narrow layout and shared focus handling are retained', async () => {

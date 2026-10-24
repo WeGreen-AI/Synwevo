@@ -99,9 +99,10 @@ async function compiled(file: string, initialProps: any, overrides: Record<strin
 }
 
 /** The actual AgentApp (index.tsx) over FIXTURE reads and writes. */
-async function appFixture({ billing = true, setup = fixtureSetup(), status = fixtureStatus(), route: initial = 'conv_fixture' as string | undefined } = {}) {
+/** `route: null` opens the page without a conversation (a new one is created by the send). */
+async function appFixture({ billing = true, setup = fixtureSetup(), status = fixtureStatus(), route: initial = 'conv_fixture' as string | null } = {}) {
   const writes: any[] = [], reads: string[] = [], navigations: string[] = [];
-  let failure: unknown, route = initial;
+  let failure: unknown, route: string | undefined = initial ?? undefined;
   const h = await compiled('index.tsx', {}, {
     'react-router-dom': { ...router, useMatch: (path: string) => path === '/agent/c/:cid' && route ? { params: { cid: route } } : null,
       useLocation: () => ({ pathname: route ? `/agent/c/${route}` : '/agent' }), useNavigate: () => (path: string) => navigations.push(path) },
@@ -125,12 +126,13 @@ async function appFixture({ billing = true, setup = fixtureSetup(), status = fix
     } },
   }, 'app');
   await settle(); h.render(); await settle(); h.render(); await settle(); h.render();
-  return { ...h, writes, reads, navigations, fail: (value: any) => { failure = value; },
+  const fixture = { ...h, writes, reads, navigations, fail: (value: any) => { failure = value; },
     route: (id?: string) => { route = id; h.render(); },
     chat: () => h.find((el) => el.type === chat.default).props,
-    money: () => h.chat().status.props.money,
-    card: () => all(h.chat().aside).filter((el) => el.type === setupModule.default),
+    money: () => fixture.chat().status.props.money,
+    card: () => all(fixture.chat().aside).filter((el) => el.type === setupModule.default),
     dialogs: () => h.elements().filter((el) => typeof el.props.onQuote === 'function' || typeof el.props.onConfirm === 'function') };
+  return fixture;
 }
 
 test('a billed send with setup complete issues exactly one agent.turn.start, with no quote, consent or dialog', async () => {
@@ -147,7 +149,7 @@ test('a billed send with setup complete issues exactly one agent.turn.start, wit
 });
 
 test('a new conversation is created first, then started in one request; context and file refs stay at top level', async () => {
-  const h = await appFixture({ route: undefined });
+  const h = await appFixture({ route: null });
   const refs = [{ kind: 'form', workspace_id: 'ws_a', resource_id: 'form_fixture', snapshot: 'a'.repeat(64) }];
   const files = [{ file_id: 'file_fixture', snapshot: 'b'.repeat(64) }];
   assert.equal(await h.chat().send('Fixture first', refs, files), true);
@@ -199,7 +201,7 @@ test('no code path of the page issues a quote or a continuing consent', async ()
 test('a send while setup is incomplete keeps the draft, issues nothing and opens the setup card with focus', async () => {
   const h = await appFixture({ setup: fixtureSetup({ complete: false, terms: { complete: false, documents: fixtureSetup().terms.documents.map((d: any) => ({ ...d, accepted: false })) } }) });
   assert.equal(h.card().length, 0);
-  assert.equal(await h.chat().send('Fixture draft'), false);
+  assert.equal(await h.chat().send('Fixture draft'), false); h.render();
   assert.deepEqual(h.writes, []);
   assert.equal(h.card().length, 1);
   const card = h.card()[0].props;

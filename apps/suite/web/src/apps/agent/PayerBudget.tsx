@@ -6,7 +6,7 @@ import { Empty, Failure, Loading } from '../../shared/states';
 import { formatAmount } from './budget';
 import {
   budgetDirty, budgetLocked, budgetPeriods, createBudgetEditor, parsePayerBudget, payerBudgetCode,
-  validatePayerBudgets, type BudgetEditorState, type BudgetField, type PayerBudgetEditor,
+  payerBudgetErrorText, validatePayerBudgets, type BudgetEditorState, type BudgetField, type PayerBudgetEditor,
   type PayerBudgetItem, type PayerBudgets,
 } from './payer-budget';
 import { payerBudgetCopy, type PayerBudgetText } from './payer-budget.messages';
@@ -18,16 +18,8 @@ function useText() {
   const { t, locale } = useI18n();
   return { m: (key: PayerBudgetText, params?: Params) => t(payerBudgetCopy[key][0], params), locale };
 }
-export function payerBudgetErrorText(error: unknown, fallback: PayerBudgetText): PayerBudgetText {
-  const messages: Record<string, PayerBudgetText> = {
-    payer_budget_conflict: 'conflict', payer_budget_not_configured: 'notConfigured', payer_budget_disabled: 'budgetDisabled',
-    payer_daily_budget_exceeded: 'dailyExceeded', payer_weekly_budget_exceeded: 'weeklyExceeded', payer_monthly_budget_exceeded: 'monthlyExceeded',
-    payer_budget_capacity: 'capacity', payer_budget_inconsistent: 'inconsistent', invalid_integer: 'invalidAmount',
-    invalid_payer_budget: 'invalidAmount', unknown_sale_unit: 'unknownUnit', not_configured: 'unavailable',
-    unknown_operation: 'unavailable', app_unavailable: 'unavailable',
-  };
-  return messages[payerBudgetCode(error)] ?? fallback;
-}
+/** Kept here as well for existing importers; the words live beside the budget model. */
+export { payerBudgetErrorText };
 function ErrorNotice({ error, fallback, retry }: { error: unknown; fallback: PayerBudgetText; retry?: () => void }) {
   const { m } = useText();
   return <div>

@@ -16,14 +16,15 @@ import * as router from 'react-router-dom';
 
 globalThis.window ??= { location: new URL('http://127.0.0.1/agent/c/conv_fixture'), history: { state: null, replaceState() {} },
   addEventListener() {}, removeEventListener() {}, setInterval: () => 0, clearInterval() {} } as any;
-let server: any, ui: any, core: any, setup: any, copy: any, consentCopy: any;
+let server: any, ui: any, core: any, setup: any, copy: any, consentCopy: any, providerConsent: any;
 before(async () => {
   server = await testServer({ plugins: [{ name: 'setup-fixture-locale', enforce: 'pre', transform(code, id) {
     if (id.endsWith('/ui/src/i18n.tsx')) return code.replace("() => 'zh-Hans' as const", 'getLocale');
   } }] });
   ui = await server.ssrLoadModule('@synwevo/ui'); core = await server.ssrLoadModule('@synwevo/ui/i18n-core');
-  [setup, copy, consentCopy] = await Promise.all([server.ssrLoadModule('/src/apps/agent/AgentSetup.tsx'),
-    server.ssrLoadModule('/src/apps/agent/chat.messages.ts'), server.ssrLoadModule('/src/apps/agent/provider-consent.messages.ts')]);
+  [setup, copy, consentCopy, providerConsent] = await Promise.all([server.ssrLoadModule('/src/apps/agent/AgentSetup.tsx'),
+    server.ssrLoadModule('/src/apps/agent/chat.messages.ts'), server.ssrLoadModule('/src/apps/agent/provider-consent.messages.ts'),
+    server.ssrLoadModule('/src/apps/agent/ProviderConsent.tsx')]);
 });
 after(async () => { ui?.setLocale('zh-Hans'); await server?.close(); });
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -119,9 +120,17 @@ test('the card is a labelled region that takes focus, shows only the missing ite
   assert.deepEqual(h.inputs().map((el) => el.props.value), ['10.00', '30.00', '100.00']);
   assert.equal(h.submit().disabled, true);
   assert.equal(strings(h.submit().children), core.translate('en', copy.chatCopy.setupAgreeSend[0]));
-  // The provider's facts are the same text the Settings card shows (ProviderConsent), not a paraphrase.
-  assert.ok(h.text().includes(core.translate('en', consentCopy.providerConsentCopy.intro[0])));
-  assert.ok(h.text().includes('Fixture DeepSeek processor'));
+  // The provider's facts are the very notice the Settings card shows (ProviderConsentFacts), not a
+  // paraphrase, with its links opening in a new tab so the kept message is not lost.
+  const facts = h.find((el) => el.type === providerConsent.ProviderConsentFacts);
+  assert.equal(facts.props.facts, consentFacts);
+  assert.equal(facts.props.siteUrl, 'https://site.fixture.test');
+  ui.setLocale('en');
+  const notice = renderToStaticMarkup(React.createElement(router.MemoryRouter, null, facts));
+  assert.ok(notice.includes(core.translate('en', consentCopy.providerConsentCopy.intro[0])), notice);
+  assert.ok(notice.includes('Fixture DeepSeek processor'), notice);
+  assert.equal(notice.match(/target="_blank" rel="noopener noreferrer"/g)?.length, 2, notice);
+  ui.setLocale('zh-Hans');
   // The three documents are linked on the public site.
   const links = h.elements().filter((el) => el.type === 'a').map((el) => el.props.href);
   for (const page of ['terms', 'ai-use', 'pricing']) assert.ok(links.includes(`https://site.fixture.test/en/${page}`), page);
