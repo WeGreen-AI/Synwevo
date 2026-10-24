@@ -107,13 +107,21 @@ async function compiled(file: string, initialProps: any, overrides: Record<strin
 
 /** The actual AgentApp (index.tsx) over FIXTURE reads and writes. */
 /** `route: null` opens the page without a conversation (a new one is created by the send). */
-async function appFixture({ billing = true, setup = fixtureSetup(), status: initialStatus = fixtureStatus() as any,
+async function appFixture({ billing = true, setup: initialSetup = fixtureSetup() as any, status: initialStatus = fixtureStatus() as any,
   route: initial = 'conv_fixture' as string | null, offer: initialOffer = fixtureOffer() as any, globals = {} as Record<string, unknown> } = {}) {
   const writes: any[] = [], reads: string[] = [], navigations: string[] = [];
-  let failure: unknown, route: string | undefined = initial ?? undefined, status = initialStatus, offer = initialOffer;
+  let failure: unknown, route: string | undefined = initial ?? undefined, status = initialStatus, offer = initialOffer, setup = initialSetup;
+  /** Agent settings is a route inside the same AgentApp (no conversation is open there). */
+  let onSettings = false;
+  /** Errors the next requests meet, one each, before `failure` (e.g. a lost connection). */
+  const next: unknown[] = [];
+  /** FIXTURE of the server's idempotency record (capabilities `_prior` / `_replay`): a key the
+   *  server answered with a refusal is answered again with 409 idempotent_failure carrying that
+   *  code; a request that never reached it (a network failure) leaves no record. */
+  const answered = new Map<string, unknown>();
   const h = await compiled('index.tsx', {}, {
-    'react-router-dom': { ...router, useMatch: (path: string) => path === '/agent/c/:cid' && route ? { params: { cid: route } } : null,
-      useLocation: () => ({ pathname: route ? `/agent/c/${route}` : '/agent' }), useNavigate: () => (path: string) => navigations.push(path) },
+    'react-router-dom': { ...router, useMatch: (path: string) => path === '/agent/c/:cid' && route && !onSettings ? { params: { cid: route } } : null,
+      useLocation: () => ({ pathname: onSettings ? '/agent/settings' : route ? `/agent/c/${route}` : '/agent' }), useNavigate: () => (path: string) => navigations.push(path) },
     '@synwevo/ui': { ...ui, useI18n: () => ({ t: (key: string) => key, locale: 'en' }), useDialog: () => ({}) },
     '@synwevo/auth-client': { ...client, useSession: () => ({ me: { id: 'usr_fixture', display_name: 'Fixture user' }, state: { site_url: 'https://site.fixture.test' } }),
       get: async () => fixturePayers() },
@@ -129,15 +137,26 @@ async function appFixture({ billing = true, setup = fixtureSetup(), status: init
       if (operation === 'agent.setup.get') return setup;
       return null;
     }, op: async (operation: string, input: any, options: any) => {
-      writes.push({ operation, input, options }); if (failure) throw failure;
+      writes.push({ operation, input, options });
+      const replayed = options?.key && answered.get(`${operation}:${options.key}`);
+      if (replayed) throw new client.ApiError(409, 'idempotent_failure', 'fixture', { run_id: 'run_fixture', code: (replayed as any).code });
+      const error = next.length ? next.shift() : failure;
+      if (error) {
+        if (options?.key && !((error as any).status === 0 || (error as any).upstream)) answered.set(`${operation}:${options.key}`, error);
+        throw error;
+      }
       return { status: 'succeeded', output: operation === 'agent.conversation.create' ? { id: 'conv_new_fixture' } : { turn_id: 'turn_fixture', user_message_id: 'msg_u', assistant_message_id: 'msg_a' } };
     } },
   }, 'app', globals);
   await settle(); h.render(); await settle(); h.render(); await settle(); h.render();
   const fixture = { ...h, writes, reads, navigations, fail: (value: any) => { failure = value; },
+    failNext: (...errors: unknown[]) => { next.push(...errors); },
     /** The server's state moves on (an administrator adopted a new price): later reads return these. */
-    serve: (next: { status?: any; offer?: any }) => { status = next.status ?? status; offer = next.offer ?? offer; },
+    serve: (later: { status?: any; offer?: any; setup?: any }) => {
+      status = later.status !== undefined ? later.status : status; offer = later.offer ?? offer; setup = later.setup ?? setup; },
     route: (id?: string) => { route = id; h.render(); },
+    /** Open Agent settings (true) or go back to the conversation (false), then let the reads settle. */
+    settings: async (open: boolean) => { onSettings = open; h.render(); for (let i = 0; i < 3; i++) { await settle(); h.render(); } },
     chat: () => h.find((el) => el.type === chat.default).props,
     money: () => fixture.chat().status.props.money,
     card: () => all(fixture.chat().aside).filter((el) => el.type === setupModule.default),
@@ -450,5 +469,65 @@ test('when the setup step\'s send is refused, "send again" sends the message as 
   assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture draft, edited', ...SEEN });
   assert.equal(h.chat().sentDraft, 1);
   assert.equal(h.chat().onDraft, undefined, 'sent: the page stops following the composer');
+  h.unmount();
+});
+
+// ---------------------------------------------------------------- addendum-2 (integrated review of f834ae50)
+
+test('W1: every explicit send is a new attempt with a new key, so a cause fixed in between is never answered with the replayed refusal', async () => {
+  const h = await appFixture();
+  const starts = () => h.writes.filter((w) => w.operation === 'agent.turn.start');
+  // FIXTURE: the terms are not accepted yet; the server refuses the send (and records the refusal under its key).
+  h.fail(new client.ApiError(409, 'terms_acceptance_required', 'fixture'));
+  await assert.rejects(h.chat().send('Fixture question'), (e: any) => e.code === 'terms_acceptance_required');
+  await settle(); h.render();
+  // The person finishes the setup step (the terms are now accepted) and its button sends the kept message.
+  h.fail(undefined);
+  h.chat().onSetup({ text: 'Fixture question' }); h.render(); await settle(); h.render(); await settle(); h.render();
+  await h.card()[0].props.onComplete(); await settle(); h.render();
+  assert.equal(starts().length, 2);
+  assert.deepEqual(plain(starts()[1].input), plain(starts()[0].input), 'the same message, unchanged');
+  assert.notEqual(starts()[1].options.key, starts()[0].options.key, 'a new attempt, not the refused one');
+  assert.equal(h.chat().sentDraft, 1, 'it starts');
+  // A refused regenerate, repeated after the cause is fixed (the maximum raised in Agent settings).
+  const regenerate = { conversation_id: 'conv_fixture', regenerate_of: 'msg_a' };
+  h.fail(new client.ApiError(409, 'billing_run_cap_below_call_hold', 'fixture', { per_call_hold: '39', cap: '30', unit: UNIT }));
+  await assert.rejects(h.chat().act('agent.turn.start', regenerate), (e: any) => e.code === 'billing_run_cap_below_call_hold');
+  h.fail(undefined);
+  await h.chat().act('agent.turn.start', regenerate);
+  assert.equal(starts().length, 4);
+  assert.notEqual(starts()[3].options.key, starts()[2].options.key);
+  // And the plain composer: the same text sent again after a refusal is a new attempt too.
+  h.fail(new client.ApiError(429, 'agent_busy', 'fixture'));
+  await assert.rejects(h.chat().send('Fixture again'));
+  h.fail(undefined);
+  assert.equal(await h.chat().send('Fixture again'), true);
+  assert.equal(new Set(starts().map((w) => w.options.key)).size, starts().length, 'no key is ever sent twice by a click');
+  h.unmount();
+});
+
+test('W1: an attempt that got no answer is retried automatically with its own key; any answer from the server ends it', async () => {
+  const waits: number[] = [];
+  const instant = (fn: () => void, ms: number) => { waits.push(ms); return setTimeout(fn, 0); };
+  const h = await appFixture({ globals: { setTimeout: instant } });
+  const starts = () => h.writes.filter((w) => w.operation === 'agent.turn.start');
+  // FIXTURE: the connection drops, then a gateway in front of Synwevo cannot reach it; the third try is answered.
+  h.failNext(new client.ApiError(0, 'network', 'fixture'), new client.ApiError(504, 'upstream_unavailable', 'fixture', { status: 504 }, true));
+  assert.equal(await h.chat().send('Fixture over a bad connection'), true);
+  assert.equal(starts().length, 3);
+  assert.equal(new Set(starts().map((w) => w.options.key)).size, 1, 'the same attempt, so a lost response is never run twice');
+  assert.equal(waits.length, 2);
+  // Retries are bounded: a connection that stays down ends the attempt with the network error.
+  const down = new client.ApiError(0, 'network', 'fixture');
+  h.failNext(down, down, down);
+  await assert.rejects(h.chat().send('Fixture offline'), (e: any) => e.code === 'network');
+  assert.equal(starts().length, 6);
+  assert.equal(new Set(starts().slice(3).map((w) => w.options.key)).size, 1);
+  // An answer from Synwevo (a refusal, or its own server error) is final: never retried automatically.
+  h.failNext(new client.ApiError(409, 'billing_price_changed', 'fixture', { current: {} }));
+  await assert.rejects(h.chat().send('Fixture refused'));
+  h.failNext(new client.ApiError(500, 'internal_error', 'fixture'));
+  await assert.rejects(h.chat().send('Fixture failed'));
+  assert.equal(starts().length, 8);
   h.unmount();
 });

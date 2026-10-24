@@ -61,7 +61,6 @@ function AgentApp() {
   const currentConversation = useRef(id);
   currentConversation.current = id;
   const [spaces, setSpaces] = useState<Workspace[]>([]);
-  const intents = useRef(new Map<string, string>());
   const retryCreate = useRef<string | undefined>(undefined);
   function contextRefused(error: unknown, input: Record<string, unknown>) {
     if (!contextErrorKey(error) && !fileErrorKey(error)) return;
@@ -165,15 +164,24 @@ function AgentApp() {
     if (userId) rememberPayer(userId, next);
   }
 
+  /** One explicit action of the person (Send, Regenerate, "send again", the setup step's button)
+   *  is one attempt with one fresh idempotency key (addendum-2 W1). The key is sent again only by
+   *  the automatic retry of that same attempt when it got no answer from the server (the
+   *  connection failed, or a gateway in front of Synwevo could not reach it), so a lost response
+   *  is answered from the server's record of the attempt instead of running it twice. Any answer
+   *  from the server ends the attempt: the next click is a new one, so a cause fixed in between
+   *  (terms accepted, the maximum raised, the price read again, a top-up) is never met with the
+   *  replay of the earlier refusal. */
   const write = useCallback(async (operation: string, input: Record<string, unknown>) => {
-    const signature = JSON.stringify([operation, input]);
-    const key = intents.current.get(signature) ?? newKey();
-    intents.current.set(signature, key);
-    let result;
-    try { result = await op(operation, input, { key }); }
-    catch (error) { contextRefused(error, input); throw error; }
-    intents.current.delete(signature);
-    return result.output;
+    const key = newKey();
+    for (let attempt = 0; ; attempt += 1) {
+      try { return (await op(operation, input, { key })).output; }
+      catch (error) {
+        if (attempt < NO_ANSWER_RETRIES.length && unanswered(error)) { await pause(NO_ANSWER_RETRIES[attempt]); continue; }
+        contextRefused(error, input);
+        throw error;
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -366,6 +374,16 @@ function AgentApp() {
     </div>
   </div>;
 }
+
+/** The waits before the automatic retries of an attempt that got no answer (W1): two, then the
+ *  attempt ends with the connection error and the message stays in the composer. */
+const NO_ANSWER_RETRIES = [1000, 3000];
+/** No answer from Synwevo: the request may or may not have arrived, so only the same key may ask again. */
+function unanswered(error: unknown): boolean {
+  return error instanceof ApiError && ((error.status === 0 && error.code === "network")
+    || (error.upstream && [502, 503, 504].includes(error.status)));
+}
+const pause = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
 
 function checkTurn(value: { turn_id?: unknown }) {
   if (!value || typeof value.turn_id !== "string" || !value.turn_id) throw new Error("invalid_turn_response");
