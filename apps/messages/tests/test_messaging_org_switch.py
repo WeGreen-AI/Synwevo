@@ -644,3 +644,9 @@ def test_an_organization_past_its_recovery_window_loses_its_conversations_at_onc
         assert r.status_code == 404 and r.json()["error"] == "no_conversation", r.text
     assert _ids(c) == [w.gb]
     assert w.g not in Messaging(store, c.ident).visible_conversation_ids(w.ann)              # an open tab drops it
+    # LOST outranks the platform's switch too: A stays the same nothing, while B names the platform
+    assert Apps(store, c.ident).set_status(MESSAGES_APP_ID, "disabled")
+    for r in (c.get(f"{M}/conversations/{w.g}"), c.post(f"{M}/conversations/{w.dm}/messages", headers=h,
+                                                         json={"body": "after the window, platform off", "client_id": "b3-lost-p"})):
+        assert r.status_code == 404 and r.json()["error"] == "no_conversation", r.text
+    _refused(c.get(f"{M}/conversations/{w.gb}"), w.b, "platform")
