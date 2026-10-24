@@ -90,8 +90,11 @@ the cost line under each answer).
   costs at most …" from `agent.billing.status.run.maximum` (`run: {maximum, default, cap, source,
   per_call_hold, max_calls, run_seconds, usable, price_id, route_version, price_key?}`), "reading
   the most this answer can cost…" while the status loads, and "the most this answer can cost cannot
-  be shown right now" when it cannot be read or has no run. Send is never disabled for a money
-  reason; the server's refusal says why.
+  be shown right now" when it cannot be read or has no run. When `run.usable` is false it shows no
+  maximum: a cap below one call's hold says so with that hold, a cap that cannot be used (another
+  unit, unreadable) says so — both with a link to Agent settings — and otherwise "the model service
+  is unavailable right now". Send is never disabled for a money reason; the server's refusal says
+  why.
 * **The price shown is the price sent** (contract addendum AD-1, addendum-2 W3/S2). Every paid send
   and regenerate repeats the price the composer showed: `seen_price_id` = `run.price_id`, and
   `seen_route_version` = `run.price_key` when the server reports one (a digest of what the person

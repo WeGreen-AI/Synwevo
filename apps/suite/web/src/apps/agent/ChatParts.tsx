@@ -123,10 +123,13 @@ export function PriceChangeList({ before, after }: { before: Pricing; after: Pri
 export function TurnMaximum({ maximum }: { maximum: MaximumShown | null }) {
   const { c, locale } = useChatText();
   if (!maximum) return null;
-  if (!("amount" in maximum)) return <span className="ag-max">{c(maximum.key)}</span>;
+  // The person's own cap cannot be used (W8): the way on is Agent settings.
+  const settings = maximum.key === "turnMaximumCapLow" || maximum.key === "turnMaximumCapUnusable"
+    ? <> <Link to="/agent/settings">{c("nextSettings")}</Link></> : null;
+  if (!("amount" in maximum)) return <span className="ag-max">{c(maximum.key)}{settings}</span>;
   let amount: string;
   try { amount = formatMoney(maximum.amount, maximum.unit, locale); } catch { return null; }
-  return <span className="ag-max">{c(maximum.key, { amount })}</span>;
+  return <span className="ag-max">{c(maximum.key, { amount })}{settings}</span>;
 }
 
 /** "Thinking" without revealing the reasoning itself. */

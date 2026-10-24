@@ -586,3 +586,41 @@ test('W1: an attempt that got no answer is retried automatically with its own ke
   assert.equal(starts().length, 8);
   h.unmount();
 });
+
+test('W8: the composer honours run.usable: an unusable cap says so with the way to Agent settings, never "at most <default>"', async () => {
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const run = fixtureStatus().run;
+  const unusable = (over: Record<string, unknown>) => fixtureStatus({ run: { ...run, usable: false, ...over } });
+  const pending = fixtureSetup({ complete: false, terms: { complete: false, documents: fixtureSetup().terms.documents.map((d: any) => ({ ...d, accepted: false })) } });
+  // FIXTURE (quotes.run_bound): a cap below one call's hold reports the default as maximum with usable=false.
+  const low = await appFixture({ status: unusable({ cap: '30', source: 'personal_cap' }), setup: pending });
+  assert.deepEqual(low.chat().maximum.props.maximum, { key: 'turnMaximumCapLow', amount: '39', unit: UNIT });
+  // The setup step's terms sentence then names no amount it could not honour.
+  assert.equal(await low.chat().send('Fixture'), false); low.render(); await settle(); low.render(); await settle(); low.render();
+  assert.equal(low.card()[0].props.maximum, null);
+  low.unmount();
+  // A cap that cannot be read (cap null) or is in another unit: unusable, said without a figure.
+  for (const status of [unusable({ cap: null, source: 'personal_cap' }), unusable({ cap: '100', source: 'personal_cap' })]) {
+    const h = await appFixture({ status });
+    assert.deepEqual(h.chat().maximum.props.maximum, { key: 'turnMaximumCapUnusable' }, JSON.stringify(status.run));
+    h.unmount();
+  }
+  // Not the person's cap (the route's validity is nearly over): the service, not a settings matter.
+  for (const status of [unusable({}), unusable({ maximum: '300', cap: '300', source: 'personal_cap' })]) {
+    const h = await appFixture({ status });
+    assert.deepEqual(h.chat().maximum.props.maximum, { key: 'turnMaximumPaused' }, JSON.stringify(status.run));
+    h.unmount();
+  }
+  // Rendered: the cap problems link to Agent settings; nothing says "at most".
+  const html = (maximum: unknown) => renderToStaticMarkup(React.createElement(router.MemoryRouter, null, React.createElement(parts.TurnMaximum, { maximum })));
+  const capLow = html({ key: 'turnMaximumCapLow', amount: '39', unit: UNIT });
+  assert.match(capLow, /低于一次调用的预留金额 ¥0\.39/); assert.match(capLow, /href="\/agent\/settings"/);
+  assert.doesNotMatch(capLow, /最多/);
+  assert.match(html({ key: 'turnMaximumCapUnusable' }), /href="\/agent\/settings"/);
+  assert.doesNotMatch(html({ key: 'turnMaximumPaused' }), /href=/);
+  const copy = await server.ssrLoadModule('/src/apps/agent/chat.messages.ts');
+  for (const key of ['turnMaximumCapLow', 'turnMaximumCapUnusable', 'turnMaximumPaused']) {
+    const [source, en, hant] = copy.chatCopy[key];
+    assert.equal(core.translate('en', source), en, key); assert.equal(core.translate('zh-Hant', source), hant, key);
+  }
+});

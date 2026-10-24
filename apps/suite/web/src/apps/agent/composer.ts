@@ -135,16 +135,28 @@ export function seenPrice(status: Pick<BillingStatus, 'run'> | null | undefined)
     ? { seen_price_id: price, seen_route_version: route } : {};
 }
 
-/** What the composer says beside Send when billing applies (addendum-2 W3): the most this answer
- *  can cost, as the server reports it with the price a send repeats; "reading" while the status
- *  loads; or, honestly, that it cannot be shown. A paid send is held in the last two cases. */
-export type MaximumShown = { key: 'turnMaximum' | 'turnMaximumCall'; amount: string; unit: MoneyUnit }
-  | { key: 'turnMaximumLoading' | 'turnMaximumUnavailable' };
+/** What the composer says beside Send when billing applies: the most this answer can cost, as the
+ *  server reports it with the price a send repeats; "reading" while the status loads, or, honestly,
+ *  that it cannot be shown (addendum-2 W3: a paid send is held in both). When the run bound is not
+ *  usable (W8) it says why instead of a maximum no send can run at: the person's cap is below one
+ *  call's hold (with that hold) or cannot be used — both a matter for Agent settings — or else the
+ *  service cannot take a send right now (the route's validity is nearly over). */
+export type MaximumShown = { key: 'turnMaximum' | 'turnMaximumCall' | 'turnMaximumCapLow'; amount: string; unit: MoneyUnit }
+  | { key: 'turnMaximumLoading' | 'turnMaximumUnavailable' | 'turnMaximumCapUnusable' | 'turnMaximumPaused' };
 export function composerMaximum(status: BillingStatus | null | undefined): MaximumShown {
   if (status === undefined) return { key: 'turnMaximumLoading' };
   const shown = turnMaximum(status);
   if (!shown || shown.key !== 'turnMaximum' || !('seen_price_id' in seenPrice(status))) return { key: 'turnMaximumUnavailable' };
-  return shown;
+  const run = status!.run!;   // turnMaximum gave the run's maximum, so both are there
+  if (run.usable) return shown;
+  if (run.source === 'personal_cap') {
+    const cap = big(run.cap), hold = big(run.per_call_hold), max = big(run.maximum), all = big(run.default);
+    // quotes.run_bound: an honoured cap binds min(cap, default) and is at least one call's hold.
+    const honoured = cap !== null && hold !== null && max !== null && all !== null && cap >= hold && max === (cap < all ? cap : all);
+    if (!honoured) return cap !== null && hold !== null && cap < hold
+      ? { key: 'turnMaximumCapLow', amount: run.per_call_hold, unit: shown.unit } : { key: 'turnMaximumCapUnusable' };
+  }
+  return { key: 'turnMaximumPaused' };
 }
 
 /** What changed between the pricing of the person's last answer and the pricing on offer now.

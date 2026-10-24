@@ -71,6 +71,10 @@ export const chatCopy = {
   // While the run bound is read, or when it cannot be shown: a paid send waits for it (addendum-2 W3).
   turnMaximumLoading: ['正在读取本次回答的最高金额…', 'Reading the most this answer can cost…', '正在讀取本次回答的最高金額…'],
   turnMaximumUnavailable: ['暂时无法显示本次回答的最高金额', 'The most this answer can cost cannot be shown right now', '暫時無法顯示本次回答的最高金額'],
+  // The run bound is not usable (addendum-2 W8): the person's cap, or the service right now.
+  turnMaximumCapLow: ['你设定的每条回答上限低于一次调用的预留金额 {amount}，现在发送会被拒绝。', 'The maximum per answer you set is below one call’s hold, {amount}, so a send would be refused now.', '你設定的每則回答上限低於一次呼叫的預留金額 {amount}，現在傳送會被拒絕。'],
+  turnMaximumCapUnusable: ['你设定的每条回答上限现在无法使用（计价单位已变化或无法读取），发送会被拒绝。', 'The maximum per answer you set cannot be used now (the pricing unit changed, or it cannot be read), so a send would be refused.', '你設定的每則回答上限現在無法使用（計價單位已變化或無法讀取），傳送會被拒絕。'],
+  turnMaximumPaused: ['模型服务暂时不可用，现在发送会被拒绝。', 'The model service is unavailable right now, so a send would be refused.', '模型服務暫時無法使用，現在傳送會被拒絕。'],
   turnMaximumHint: ['发送后立即开始，按实际用量扣费，费用显示在回答下方。', 'Sending starts the answer right away. You pay for actual usage, shown under the answer.', '傳送後立即開始，按實際用量扣費，費用顯示在回答下方。'],
   // Price notice (design D-7): information only, never a gate.
   priceNotice: ['价格已更新，之后的回答按新价格计费。', 'Prices have changed. Answers from now on are charged at the new price.', '價格已更新，之後的回答按新價格計費。'],
