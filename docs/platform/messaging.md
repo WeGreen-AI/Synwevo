@@ -102,7 +102,7 @@ Store 启动时以兼容方式补建仅覆盖未绑定记录的 `(expires_at,id)
 | 单一写入源 | 账户源对旧 `/api/auth/messaging/…`：注册表有该应用时**每次请求**答 `410 moved`（不缓存，注册即生效，两个进程不会各自扇出）；`GET /messages[/{cid}]` 答 `303 <消息源>/auth/start?next=/c/{cid}`（地址只来自注册表，`cid` 必须匹配 `cv_…`，否则落到列表）。没有该应用的部署：组装层（唯一可同时见到两个包的地方）在 `accounts` 角色上挂旧前缀兜底，账户外壳不再有消息页。 注册表**没有**该应用时（未添加，或本次发布到隧道主机名就绪之间的窗口），账户源在 `/messages`、`/messages/{cid}`、`/c/{cid}` 直接提供消息外壳本身（外壳按本源角色把接口前缀改为 `/api/auth/messaging`），会话照常可用；应用注册后同一标签页收到 `410 moved` 时外壳自行跳到新源（CI-66 补充）。 |
 | 网关规则 | `ROLES` 加 `messages`：放行 `/api/messaging/`、`/auth/`、`APP_ACCOUNT_PATHS`（含 `unread-count`），拒绝账户面、`/api/portal/`、Docs 业务 API 与旧 `/api/auth/messaging/*`；其它角色对 `/api/messaging/` 的拒绝点名消息源地址。`ACCOUNT_LEVEL_PREFIXES` 加 `/api/messaging/`：`all` 角色上不套 Docs 的工作空间/资格检查。 |
 | 浏览器状态 | 草稿（`synwevo.msg.draft.*`）、Enter 偏好、标签页空间上下文按源隔离，旧源上的不迁移；一次性代价。 |
-| 发布与回滚 | 无 schema 变化。运维：隧道公开主机名 `message.synwevo.com` → 网关；`compose.yaml` 加 `messages` 服务（角色 `messages`，`SYNWEVO_APP_URL/PUBLIC_URL=https://message.wegreen.ltd`，`messages-web`/`messages`，clamd 两项）；`nginx.conf` 加 server 块（`/api/messaging/stream` 长读超时）；`client register --client-id messages-web --app messages --redirect https://message.wegreen.ltd/auth/callback --post-logout …/signed-out --backchannel …/auth/backchannel-logout`；消息进程首次启动写入注册表行。回滚：`app disable messages` **不**让账户源恢复旧前缀——自 Admin D7 修复（2026-10-04）起，410/303 只看注册表里有没有该应用的行（`messages_registered_url`），停用后账户源仍答 410 / 交给消息源，不会出现第二个写入源；停用只让新的登录拿不到使用资格。真正回到账户源处理会话需要回退镜像。停用是否同时终止消息源上已有的会话，待所有者决定（admin-coverage §4.2 第 7 项）。 |
+| 发布与回滚 | 无 schema 变化。运维：隧道公开主机名 `message.synwevo.com` → 网关；`compose.yaml` 加 `messages` 服务（角色 `messages`，`SYNWEVO_APP_URL/PUBLIC_URL=https://message.wegreen.ltd`，`messages-web`/`messages`，clamd 两项）；`nginx.conf` 加 server 块（`/api/messaging/stream` 长读超时）；`client register --client-id messages-web --app messages --redirect https://message.wegreen.ltd/auth/callback --post-logout …/signed-out --backchannel …/auth/backchannel-logout`；消息进程首次启动写入注册表行。回滚：`app disable messages` **不**让账户源恢复旧前缀——自 Admin D7 修复（2026-10-04）起，410/303 只看注册表里有没有该应用的行（`messages_registered_url`），停用后账户源仍答 410 / 交给消息源，不会出现第二个写入源；停用只让新的登录拿不到使用资格。真正回到账户源处理会话需要回退镜像。自 B3（§9）起，平台级停用对消息源上已登录的会话同样生效：每次请求答 `403 messages_disabled`（scope platform），事件流在下一次心跳告知（G1；admin-coverage §4.2 第 7 项部分已定）；是否同时结束这些登录会话，仍待所有者决定。 |
 | 验证 | `apps/messages/tests`（7 项：自描述与角色拒绝、私聊/阅读位置/收件箱已读、群历史与撤权、附件链、事件流、链接卡片、公告与举报提交）；`tests/integration/test_messages_origin.py`（5 项：旧路径 410/303 切换、四源 `messages_url`、SSO 落点与通知目标、平台级退出、注册表资格）；`test_messaging_mail.py`（私信邮件规则，随路由搬到组装层套件）；`ui_e2e_messaging.py` / `ui_e2e_shell.py` 改为驱动消息源（verification.md §16.74）。 |
 
 ## 7. API 契约（第九轮，CI-74）
@@ -231,7 +231,7 @@ SSE `receipt`：`{type:'receipt', conversation_id, user_id, last_read_seq, at}`�
 
 ### 7.12 `/readyz` 的 `checks.messaging`
 
-服务会话的进程（角色 `messages`，`all` 亦然）的就绪检查多一项 `messaging`：`{send_failed, stream_replays, stream_resyncs, stream_refused, typing_events, presence_events, search_queries, stream_connections, presence_tracked, ring_events}`，全是本进程计数（后三项是当前值），**只有数字**，不含任何名字、id 或正文；不影响就绪判定。
+服务会话的进程（角色 `messages`，`all` 亦然）的就绪检查多一项 `messaging`：`{send_failed, stream_replays, stream_resyncs, stream_refused, stream_events, typing_events, presence_events, search_queries, stream_connections, presence_tracked, ring_events}`，全是本进程计数（后三项是当前值；`stream_events` 是各流实际推送的实时事件数，B3 起：被关闭会话的事件不计入，因为不推送），**只有数字**，不含任何名字、id 或正文；不影响就绪判定。
 
 ### 7.13 撤权矩阵（本批测试覆盖）
 
@@ -433,3 +433,20 @@ Docs 对象（工作空间范围）在消息（组织范围）里有一个**对�
 逐读者渲染在读侧（`decorate_message`），不在写侧；引用（`_access`）不随卡片输出；`payload` 不参与拼链接；非成员一律 404；组织成员资格由 `Messaging._member` 每次重查；
 工作空间成员资格丢失 → 卡片即刻中性、≤ 60 s 或下一张卡片时离开会话（`test_a_reader_who_lost_the_object_sees_a_neutral_card_and_then_loses_the_conversation`、集成用例 bob 段）；
 限额：对象会话打开 60/人/小时；日志不记录正文与标题。
+
+## 9. 按组织开关（B3）及 G1 / G2 / G3（2026-10-24）
+
+**决策记录。**
+
+| 项目 | 结论 |
+|---|---|
+| 问题与基线 | 平台只能在全平台启停 Message（`apps.status`），而且停用只拦新登录：消息源上已登录的会话照常读写（G1）。会话属于组织，不属于工作空间，所以 B1 的按空间开关管不到它。组织被冻结或删除（仍在恢复期）时，普通会话仍可读写，只有项目讨论随工作空间暂停（G2）。桥接 worker 会把卡片投进暂停的讨论，事件流也会把它推到已打开的标签页（G3）。 |
+| 选择 | 平台管理员以 `platform.apps.manage`（每租户变更，D12）按组织停用或启用 Message：表 `organization_apps`（无行即开启；不设外键，恢复时可重放进早于该组织的备份）；停用与安全日志 `organization_app_disabled` 同一事务（通用回执），启用不记日志、把行改为 `active` 而不删除（`updated_at` 供恢复判断）。唯一判断 `Messaging._closed`，优先级 **LOST > DISABLED(平台) > DISABLED(组织) > PAUSED**：组织已删除且过了恢复期（或没有恢复期，遗留删除）→ 与被移出相同的 404；Message 在全平台或该组织停用 → `403 messages_disabled`，`detail {organization_id, app_id: "messages", scope: "platform" \| "organization"}`；组织冻结或删除后仍在恢复期 → `409 organization_unavailable`，`detail {organization_id}`；项目讨论的工作空间暂停仍是 `403 workspace_unavailable`。先查成员关系，非成员仍是 404。 |
+| 读与写 | 列表、搜索、同步与角标在 SQL 中（LIMIT 之前）排除关闭的组织；按组织筛选时，该组织的成员得到拒绝而不是空列表。每个写操作在写事务内复核：发送、转发（来源与**全部**目标先复核再写，拒绝时什么都不写）、编辑与表情回应（`AND deleted_at IS NULL`，撤回或移除先到则 `409 already_gone`，CR-050 遗留）、加人、公告、头像、附件上传、私聊、建群、打开项目讨论（`_join` 之前）。 |
+| 事件流 | 流属于人，不属于组织，不切断。心跳（25 s）复核开关，变化时每人每次变化发一次 `{"type": "organization", "organization_id", "change": "messages_disabled" \| "messages_enabled", "scope"}`；外壳收到后重读组织、列表与打开的会话。实时事件与重放都丢弃关闭会话的事件（G3）。 |
+| 卡片、Agent 与通知 | 卡片投进关闭的会话时**跳过而不是保留**（`skipped_messages_disabled` / `skipped_paused` / `skipped_lost`）：保留会让 `pending()` 的队首被占住，饿死其他组织的卡片；重新启用后不补发。排队的 Suite/Agent 发送失败，错误码 `messages_disabled`。邮件与推送在发送时复核：会话与举报相关的项跳过，原因 `messages_disabled`（冻结组织的举报项为 `organization_unavailable`），站内通知保留，不补发。 |
+| 不受影响 | 不删除任何数据（消息、附件、索引、卡片、举报、通知）；成员关系、历史、已读位置、置顶与静音都保留，重新启用后与停用前一致。组织的举报处理照常（A44）；个人账户导出仍含本人在该组织发出的消息；离开组织、删除账户的簿记照常写系统行。门户卡片与「消息」入口不隐藏：只属于该组织的人打开后看到空列表和说明。本轮不给组织所有者发收件箱通知。 |
+| 管理入口 | 应用目录的 Message 行显示「N 个组织已停用」与「按组织管理」；组织列表（`GET /api/admin/apps/{app_id}/organizations`）可搜索、分页；变更走预览 → 理由 → 重新验证。预览影响：受影响成员、有会话的成员、将无可用消息的成员、会话（群/私聊/项目讨论）、待处理举报、待发邮件与推送、待投卡片、已登录会话（成员在所有入口的会话；账户服务分不出 Message 标签页）、打开的事件流（`null`：流在消息进程内存中，无法统计，最迟 25 秒内不再收到该组织事件）。记录：平台审计 `admin.app.organization_disable` / `_enable`，组织日志 `organization.app.disable` / `.enable`（`by: platform`）。CLI：`app disable|enable messages --organization <id>`。组织生命周期预览说明冻结、删除对会话的影响（G2）。 |
+| 外壳 | 列表上方的说明（礼貌的实时区域）：逐个点名停用的组织（或暂停的组织），全平台停用时只说一次；已丢失的组织不说。打开的会话被关闭时，在会话位置显示服务端的拒绝句子，而不是「找不到」；按组织筛选的列表其组织关闭时回到全部组织；不在停用或不可用的组织里提供新会话；会话中发送被拒时重读列表，未发出的文字放回输入框。三语言。 |
+| 发布与恢复 | 增量 schema（`CREATE TABLE IF NOT EXISTS`，每次打开执行，无版本步进）。恢复：停用前的备份恢复后该组织重新停用、其他组织不变；含回执且之后已启用的备份保持启用；日志行与提交之间的备份会被补上停用；日志写入失败的尝试作废，不重放；没有组织行也能重放。**发布说明：旧版恢复程序遇到 `organization_app_disabled` 会拒绝整份日志（按设计失败关闭）——恢复含此类日志的数据需用本版本或更新的恢复程序。** 回滚到旧代码：表被忽略，按组织的停用不再生效（全平台开关不受影响）。 |
+| 验证 | `apps/messages/tests/test_messaging_org_switch.py`（A 的成员发送与列表得到 `messages_disabled`，B 不受影响，非成员仍 404，竞态，卡片不饿死，Agent 发送失败，通知，事件流，G1/G2）；`services/identity/tests/test_admin_apps_organizations.py`（列表、预览影响与说明、执行与记录、拒绝、权限、过期预览、幂等、日志失败 503 不改变任何东西、CLI）；`tests/integration/test_message_switch_restore.py`；`test_journal_intents.py`；`test_suite_adapters.py`；`test_notifications_message_switch.py`；外壳 `tests/availability.test.ts`，管理台 `admin-apps.test.mjs`。 |

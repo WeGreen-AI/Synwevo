@@ -80,7 +80,7 @@ python scripts/check_boundaries.py
 | 表 | 所有者 | 谁写 |
 |---|---|---|
 | `users`、`user_passwords`、`sessions`、`webauthn_credentials`、`totp_secrets`、`recovery_codes`、`mfa_tickets`、`email_tokens`、`invitations`、`bootstrap_tokens`、`auth_attempts` | 账户服务 | `synwevo_identity` |
-| `workspaces`、`memberships`、`apps`、`workspace_apps`、`app_entitlements`、`audit_events` | 平台（账户权威） | `synwevo_core`（读写），账户服务的管理后台与 CLI（治理） |
+| `workspaces`、`memberships`、`apps`、`workspace_apps`、`organization_apps`（B3：按组织停用的应用，目前只有 Message）、`app_entitlements`、`audit_events` | 平台（账户权威） | `synwevo_core`（读写），账户服务的管理后台与 CLI（治理） |
 | `oauth_clients`、`oauth_codes`、`oauth_tokens`、`oidc_keys`、`client_sessions`、`rp_auth_requests`、`rp_logout_seen` | 平台身份协议 | 账户服务签发，`synwevo_core.oidc` 存取与校验 |
 | `projects`、`source_files`、`templates`、`template_versions`、`mapping_revs`、`jobs`、`job_items`、`job_runs`、`job_events`、`artifacts`、`idempotency`、`webhook_deliveries`、`api_keys`、`blob_grants` | Synwevo Docs | `synwevo_docs` |
 | `meta`、`ui_users`、`mail_outbox` | 平台基础 | `synwevo_core` / 账户服务 |
