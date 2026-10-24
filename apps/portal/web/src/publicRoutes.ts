@@ -36,7 +36,7 @@ export const PUBLIC_META: Record<PublicPage, { title: string; description: strin
 };
 
 /** Version and effective date of the versioned documents — the same values as
- *  synwevo_core.terms.DOCUMENTS (tests/integration/test_portal_public.py keeps them equal). */
+ *  synwevo_core.terms.DOCUMENTS (tests/integration/test_public_ai_facts.py keeps them equal). */
 export const DOCUMENT_VERSIONS: Record<"terms" | "ai-use" | "pricing", { version: string; effective: string }> = {
   terms: { version: "2026-10-24", effective: "2026-10-24" },
   "ai-use": { version: "2026-10-05", effective: "2026-10-05" },
