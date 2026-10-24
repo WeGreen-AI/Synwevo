@@ -87,7 +87,9 @@ async function compiled(entry: string, initialProps: any, overrides: Record<stri
     unmount: () => effects.forEach((effect) => effect?.cleanup?.()) };
 }
 
-async function capFixture(cap: unknown = null, money: unknown = status()) {
+/** `capFixture(cap)` reads the default status; `capFixture(cap, undefined)` mounts while it loads. */
+async function capFixture(cap: unknown = null, ...given: unknown[]) {
+  const money = given.length ? given[0] : status();
   const writes: { operation: string; input: any }[] = [];
   const changes: any[] = [];
   let reply: any = (input: any) => settings(input.clear_run_budget_cap ? null : { amount: input.run_budget_cap, unit: UNIT });
@@ -221,4 +223,50 @@ test('W2: a saved or cleared maximum reads agent.billing.status again here and t
   assert.equal(statusReads(), 3); assert.deepEqual(told, [1, 1]);
   assert.equal(cap().props.status.run.source, 'default');
   h.unmount();
+});
+
+test('W7: the saved maximum is in its box once the status arrives, Save waits for a change, and "below one call" warns only for a cap below the hold', async () => {
+  const save = (x: any) => x.elements().find((el: any) => el.type === 'button' && el.props.type === 'submit');
+  const warning = (x: any) => x.elements().some((el: any) => el.props.role === 'status' && strings(el.props.children).includes('Cannot be lower than one call’s hold'));
+  // FIXTURE: Agent settings mounts the card while agent.billing.status is still loading (AnswerBilling passes undefined).
+  const h = await capFixture({ amount: '200', unit: UNIT }, undefined);
+  h.render({ status: status({ run: run({ maximum: '200', cap: '200', source: 'personal_cap' }) }) });
+  assert.equal(h.radios()[1].props.checked, true);
+  assert.equal(h.amount().props.value, '2.00', 'the saved maximum is shown in its box');
+  assert.equal(save(h).props.disabled, true, 'nothing changed: nothing to save');
+  h.submit(); await settle(); h.render();
+  assert.deepEqual(h.writes, []);
+  assert.ok(!h.elements().some((el) => el.props.role === 'alert'), 'no invalid-amount alert for an untouched box');
+  // The same amount written differently is no change either; another amount is.
+  h.amount().props.onChange({ target: { value: '2' } }); h.render();
+  assert.equal(save(h).props.disabled, true);
+  h.amount().props.onChange({ target: { value: '3' } }); h.render();
+  assert.equal(save(h).props.disabled, false);
+  // A status read again later does not overwrite what the person is typing.
+  h.render({ status: status({ run: run({ maximum: '200', cap: '200', source: 'personal_cap' }) }) });
+  assert.equal(h.amount().props.value, '3');
+  h.unmount();
+  // Choosing "custom" without an amount saves nothing yet.
+  const fresh = await capFixture();
+  fresh.radios()[1].props.onChange(); fresh.render();
+  assert.equal(save(fresh).props.disabled, true);
+  fresh.unmount();
+  // Unusable for another reason than the cap (FIXTURE: the route's validity is nearly over): no "below one call" warning.
+  const other = await capFixture({ amount: '300', unit: UNIT }, status({ run: run({ maximum: '300', cap: '300', source: 'personal_cap', usable: false }) }));
+  assert.equal(warning(other), false);
+  other.unmount();
+  // A cap below the hold warns; once a higher cap is saved the warning goes, also before the status is read again.
+  const low = await capFixture({ amount: '10', unit: UNIT }, status({ run: run({ maximum: '10', cap: '10', source: 'personal_cap', usable: false }) }));
+  assert.equal(warning(low), true);
+  assert.equal(low.amount().props.value, '0.10');
+  low.amount().props.onChange({ target: { value: '1.00' } }); low.render();
+  low.submit(); await settle(); await settle(); low.render();
+  assert.deepEqual(plain(low.writes.at(-1).input), { run_budget_cap: '100' });
+  low.render({ settings: low.changes.at(-1) });     // AccessSettings hands the saved settings back
+  assert.equal(warning(low), false, 'the saved cap is above the hold');
+  assert.equal(low.amount().props.value, '1.00');
+  assert.equal(save(low).props.disabled, true);
+  low.render({ status: status({ run: run({ maximum: '100', cap: '100', source: 'personal_cap' }) }) });
+  assert.equal(warning(low), false);
+  low.unmount();
 });

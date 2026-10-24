@@ -255,13 +255,26 @@ export function RunCapSettings({ settings, status, onChanged }: {
   const current = cap && unit && sameUnit(cap.unit, unit) ? majorUnits(cap.amount, unit) : "";
   const [mode, setMode] = useState<"default" | "custom">(cap ? "custom" : "default");
   const [amount, setAmount] = useState(current);
+  // Until the person types, the box shows the saved maximum (addendum-2 W7): its unit comes with
+  // agent.billing.status, which may arrive after the card mounted.
+  const typing = useRef(false);
+  useEffect(() => { if (!typing.current) setAmount(current); }, [current]);
   const [issue, setIssue] = useState<ChatText | null>(null);
   const money = (minor: string, u: MoneyUnit) => { try { return formatMoney(minor, u, locale); } catch { return formatAmount(minor, u); } };
-  const changed = mode === "default" ? !!cap : amount.trim() !== current || !cap;
+  let typed: string | null = null;
+  if (unit && amount.trim()) { try { typed = parseBudget(amount.trim(), unit.scale); } catch { typed = null; } }
+  // Nothing to save: the default kept, an empty box, or the saved maximum written either way.
+  const changed = mode === "default" ? !!cap
+    : !!amount.trim() && !(cap && unit && sameUnit(cap.unit, unit) && typed === cap.amount);
   const unitChanged = !!cap && !!unit && !sameUnit(cap.unit, unit);
+  // "Cannot be lower than one call's hold" is said only of a saved maximum below the current hold,
+  // not of every bound the server cannot use right now.
+  const below = !!cap && !!unit && sameUnit(cap.unit, unit) && !!run && /^[0-9]+$/.test(cap.amount)
+    && /^[0-9]+$/.test(run.per_call_hold) && BigInt(cap.amount) < BigInt(run.per_call_hold);
   function saved(value: AgentSettings) {
     onChanged(value);
     const next = value.billing?.run_budget_cap ?? null;
+    typing.current = false;
     setMode(next ? "custom" : "default");
     setAmount(next && unit && sameUnit(next.unit, unit) ? majorUnits(next.amount, unit) : "");
   }
@@ -287,7 +300,7 @@ export function RunCapSettings({ settings, status, onChanged }: {
       {status === undefined && <Loading />}
       {cap && <p>{c("runCapCurrent", { amount: money(cap.amount, cap.unit) })}</p>}
       {unitChanged ? <p className="notice warn" role="status">{c("runCapUnitChanged")}</p>
-        : run && !run.usable && hold ? <p className="notice warn" role="status">{c("runCapMinimum", { amount: hold })}</p> : null}
+        : below && hold ? <p className="notice warn" role="status">{c("runCapMinimum", { amount: hold })}</p> : null}
       <form className="col gap12" noValidate onSubmit={save}>
         <fieldset className="col gap8 ag-plain-fieldset" disabled={write.locked}>
           <legend className="sr-only">{c("runCapTitle")}</legend>
@@ -301,7 +314,7 @@ export function RunCapSettings({ settings, status, onChanged }: {
             <span>{c("runCapAmount", { unit: unit.code })}</span>
             <input className="input" id={`${id}-amount`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false} maxLength={128}
               value={amount} aria-invalid={issue != null} aria-describedby={[hold ? `${id}-minimum` : "", issue ? `${id}-issue` : ""].filter(Boolean).join(" ") || undefined}
-              onChange={(event) => { setAmount(event.target.value); setIssue(null); write.dismiss(); }} />
+              onChange={(event) => { typing.current = true; setAmount(event.target.value); setIssue(null); write.dismiss(); }} />
           </label>}
           {mode === "custom" && hold && <p className="muted small" id={`${id}-minimum`}>{c("runCapMinimum", { amount: hold })}</p>}
         </fieldset>
