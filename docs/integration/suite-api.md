@@ -67,7 +67,8 @@ python -m synwevo_identity.cli client register crm-sync --app platform --name "C
 * **个人 Agent 的一切**（会话、记忆、个人自动化、发起对话与其自动运行授权、开始使用步骤与条款接受、预算、付款同意、旧报价）：没有路由，也没有 scope；
   能力层对任何 `via="api"` 调用一律返回 403 `person_required`。页面发送时回传它显示的价格
   （`seen_price_id` / `seen_route_version`，取自 `agent.billing.status.run`；与准入时生效的价格不同即 409
-  `billing_price_changed`，什么也不保存）同样只属于本人在页面的发送，见 `docs/platform/agent-run-budgets.md`。
+  `billing_price_changed`，什么也不保存）同样只属于本人在页面的发送；页面的任何付费发送（包括旧报价与持续授权）都要求本人事先接受当前版本的
+  条款（否则 409 `terms_acceptance_required`），见 `docs/platform/agent-run-budgets.md`。
 * 跨工作空间写入（`forms.form.duplicate`）：凭据只属于一个工作空间。
 * 服务账户的订阅、面向本人或空间管理员的订阅列表：尚未提供（§2.6 末尾）。异步操作的结果通过对应应用的读取操作或
   `GET /runs/{id}` 查询；发生了什么用事件流拉取（§2.5）或签名 Webhook 推送（§2.6）。

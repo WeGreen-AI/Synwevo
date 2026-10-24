@@ -18,6 +18,7 @@ from synwevo_core.billing.catalogue import PriceCatalogue
 from synwevo_core.billing.cost_settings import CostSettings
 from synwevo_core.billing.provider_settings import ProviderSettings
 from synwevo_core.errors import ServiceError
+from synwevo_core.terms import DOCUMENTS, TermsAcceptances
 from synwevo_suite.agent.configuration import GovernedDeepSeek, configured_provider
 from .test_agent_metering import Wire, complete, event, USAGE
 
@@ -104,6 +105,14 @@ def fund(g):
         provider='fixture-payment', merchant_id='fixture-merchant', amount_minor=1000, currency='XTS',
         unit=UNIT, credit_units=1000000, exchange_version='fixture-exchange')
     fixture_ledger.credit_verified_payment(receipt)
+
+
+def accept_terms(g):
+    """FIXTURE: the person did the Agent's one-time start step and accepted the terms, AI use
+    rules and pricing at their current versions (test_agent_setup.py tests the step itself). A
+    paid send from the page needs it on every authorization, a legacy quote or consent too."""
+    TermsAcceptances(g.store).accept(g.user['id'], {d: v for d, (v, _) in DOCUMENTS.items()},
+                                     context='fixture:agent_setup')
 
 
 def start(g):

@@ -58,8 +58,13 @@ detail `{documents}`) → input rules → the admission transaction (the existin
 `billing_payer_budget_not_configured`, disabled → `billing_payer_budget_disabled` — so a person
 without limits is refused before anything is stored, not at the first call) → bind. Every
 `BillingError` on this path is 409 `billing_<code>` with the message
-本次回答未能开始，消息没有发送，也没有扣费. The automatic path never infers terms acceptance;
-`record_paid_use` stays on the legacy `quote_id`/`consent_id` paths only.
+本次回答未能开始，消息没有发送，也没有扣费. The automatic path never infers terms acceptance.
+Neither does a legacy `quote_id`/`consent_id` send from the page (an older cached bundle, AD-4):
+the same gate applies before anything is stored (409 `terms_acceptance_required`, detail
+`{documents}`), so the person is asked to accept a new version in the start step instead of having
+it recorded at their next paid run. `record_paid_use` stays only for a flow or automation starting
+a paid run on the legacy quote path (a continuing consent is the page's alone), whose behaviour is
+unchanged.
 
 **The one-time start step.** `agent.setup.get` (`need=personal`, `agent=never`) says what is
 still missing before the first automatic paid run — the provider data consent (recorded by
@@ -120,10 +125,12 @@ happens while quoting. A quote stays acceptable for `max(now+1, min(now+300, dea
 send_window))` and `bind` refuses `run_time_too_short` when `deadline − now < send_window`
 (rr-money-1): a quote cannot be accepted for a run that could no longer make one call.
 
-`agent.turn.start` with `quote_id` is the user's acceptance. The quote can authorize one turn
-only. Binding it and inserting the turn use the **same Store instance and transaction**;
-failed admission rolls both back. A new key cannot spend the same quote again. Changed text,
-branch, conversation revision/scope or route requires a new quote. `agent.quote.get` and
+`agent.turn.start` with `quote_id` is the user's acceptance of that run's price and bound. From
+the page it also needs the current terms, AI use rules and pricing accepted beforehand (above); it
+never records them. The quote can authorize one turn only. Binding it and inserting the turn use
+the **same Store instance and transaction**; failed admission rolls both back. A new key cannot
+spend the same quote again. Changed text, branch, conversation revision/scope or route requires a
+new quote. `agent.quote.get` and
 `agent.quote.revoke` require the owner and matching conversation. Revocation prevents future
 dispatch, while already incurred usage remains eligible for the original settlement rules.
 Account, app, source access, source processing policy, cancellation and payment authority remain

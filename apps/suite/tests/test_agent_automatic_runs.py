@@ -610,3 +610,49 @@ def test_a_second_passing_between_the_automatic_issue_and_its_bind_does_not_refu
     deadline = json.loads(row["terms_json"])["deadline"]
     assert deadline == row["created_at"] + 200 and row["accepted_turn_id"]
     assert row["expires_at"] == deadline - g.model.send_window < row["created_at"] + 300
+
+
+# ------------------------------------------------------------------ 18. acceptance is never inferred, legacy path too (AD-4)
+def accepted_an_earlier_version(store, uid):
+    """FIXTURE: the person accepted the documents before their current versions took effect."""
+    for document in DOCUMENTS:
+        store.execute("INSERT INTO agent_terms_acceptances (user_id,document,version,accepted_at,context) VALUES (?,?,?,?,?)",
+                      (uid, document, "2000-01-01", 1, "fixture:earlier-version"))
+
+
+def test_a_legacy_authorization_sent_from_the_page_after_a_version_change_asks_for_acceptance_first(paid):
+    g = paid
+    uid = g.user["id"]
+    accepted_an_earlier_version(g.store, uid)
+    before = TermsAcceptances(g.store).history(uid)
+    assert {d["id"] for d in TermsAcceptances(g.store).missing(uid)} == set(DOCUMENTS)
+    q = g.issue()
+    with g.store.tx():
+        consent = g.quotes.consents.create(uid, g.issue()["id"], max_runs=3, expires_at=None, until_revoked=True)
+    for authorization in ({"quote_id": q["id"]}, {"consent_id": consent["id"]}):
+        err = refused(send, g, **authorization)
+        assert (err.status, err.code) == (409, "terms_acceptance_required"), authorization
+        assert {d["id"] for d in err.detail["documents"]} == set(DOCUMENTS)
+        assert g.store.all("SELECT * FROM agent_turns") == [] and g.store.all("SELECT * FROM agent_messages") == []
+        assert g.store.one("SELECT COUNT(*) AS n FROM agent_model_quotes WHERE accepted_turn_id IS NOT NULL")["n"] == 0
+        assert len(quotes_of(g)) == 2, "持续授权没有签发新的运行授权"
+        assert TermsAcceptances(g.store).history(uid) == before, "没有替本人记录新版本"
+    assert g.seen == []
+    # After the person accepts the current versions, the same legacy send is admitted and records nothing more.
+    current = [{"id": d, "version": v} for d, (v, _) in DOCUMENTS.items()]
+    g.agent.caps.invoke("agent.terms.accept", {"documents": current}, user_id=uid, idempotency_key="accept-current")
+    accepted = TermsAcceptances(g.store).history(uid)
+    out = send(g, quote_id=q["id"])["output"]
+    assert g.quotes.get(uid, q["id"])["turn_id"] == out["turn_id"]
+    assert TermsAcceptances(g.store).history(uid) == accepted
+
+
+@pytest.mark.parametrize("via", ["flow", "automation"])
+def test_other_callers_on_the_legacy_path_keep_recording_the_versions_at_the_paid_run(paid, via):
+    g = paid
+    uid = g.user["id"]
+    accepted_an_earlier_version(g.store, uid)
+    q = g.issue()
+    out = send(g, via=via, quote_id=q["id"])["output"]
+    added = [r for r in TermsAcceptances(g.store).history(uid) if r["context"] == "paid_run:" + out["turn_id"]]
+    assert {(r["document"], r["version"]) for r in added} == {(d, v) for d, (v, _) in DOCUMENTS.items()}

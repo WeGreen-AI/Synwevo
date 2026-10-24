@@ -12,8 +12,15 @@ import uuid
 import pytest
 
 from synwevo_core.errors import ServiceError
-from .test_agent_governed_factory import governed, configure, fund, publish
+from .test_agent_governed_factory import accept_terms, governed, configure, fund, publish
 from .test_agent_metering import complete
+
+
+@pytest.fixture(autouse=True)
+def started(governed):
+    """FIXTURE: every person here has done the Agent's one-time start step; a consent spent from
+    the page needs the current terms accepted beforehand (test_agent_automatic_runs.py, AD-4)."""
+    accept_terms(governed)
 
 
 def quote(g, conversation=None, *, user=None, budget=5000, run_seconds=300):

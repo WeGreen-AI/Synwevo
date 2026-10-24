@@ -6,10 +6,12 @@ these constants; the pages print the same values and a test keeps them equal.
 
 A person accepts them once, before their first Agent run, in the Agent's one-time "start using"
 step (``accept``, recorded with the step's operation run as context); a new version of a document
-is asked for once more before the next run (``missing``). The legacy quote and continuing-consent
-paths still record the versions in force at a confirmed paid run (``record_paid_use``). Nothing
-here infers acceptance: a send that finds a document unaccepted is refused before anything is
-stored, and the acceptance rows are kept with the account's other consent records.
+is asked for once more before the next run (``missing``). A send from the page needs that
+acceptance beforehand, whatever authorization it carries (automatic, or a legacy quote or
+continuing consent from an older page). Only a caller other than the page (a flow or an
+automation) starting a paid run on the legacy quote path still records the versions in force at
+that run (``record_paid_use``). A send that finds a document unaccepted is refused before
+anything is stored, and the acceptance rows are kept with the account's other consent records.
 """
 from __future__ import annotations
 
@@ -44,8 +46,9 @@ class TermsAcceptances:
 
     def record_paid_use(self, user_id: str, *, context: str) -> list[str]:
         """Record the current version of each document unless already recorded; returns the
-        documents newly recorded. Called inside the paid run's admission transaction (legacy
-        quote and consent paths)."""
+        documents newly recorded. Called inside the paid run's admission transaction when a
+        caller other than the page (a flow or an automation) starts a run on the legacy quote
+        path. A send from the page never records here: it needs ``missing() == []`` beforehand."""
         added = []
         for document, (version, _) in DOCUMENTS.items():
             if self.store.execute("INSERT OR IGNORE INTO agent_terms_acceptances (user_id,document,version,accepted_at,context) "
@@ -61,7 +64,7 @@ class TermsAcceptances:
 
     def missing(self, user_id: str) -> list[dict]:
         """The documents whose version in force the person has not accepted: ``[{id, version,
-        effective}]``, empty when the automatic run path may start."""
+        effective}]``, empty when a paid send from the page may start (automatic or legacy)."""
         accepted = self.accepted(user_id)
         return [d for d in current_documents() if not accepted[d["id"]]]
 

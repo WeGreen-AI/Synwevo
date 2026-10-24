@@ -859,7 +859,8 @@ def register(registry, agent: Agent, store, identity) -> None:
         return agent.start_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
             regenerate_of=i.regenerate_of, quote_id=i.quote_id, consent_id=i.consent_id,
             context_refs=[r.model_dump() for r in i.context_refs], file_refs=[r.model_dump() for r in i.file_refs],
-            payer=payer, automatic=automatic, issued=issued, seen=(seen or None) if automatic else None)
+            payer=payer, automatic=automatic, issued=issued, seen=(seen or None) if automatic else None,
+            in_page=c.via == "ui")
 
     op(id="agent.setup.get", title=T("开始使用 Agent 的准备", "開始使用 Agent 的準備", "Start-using-Agent checklist"),
        summary="What the person still has to do once before their first paid run: the provider data consent, "

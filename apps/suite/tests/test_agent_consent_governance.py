@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from .test_agent_governed_factory import governed, configure, fund, publish, KEY, UNIT
+from .test_agent_governed_factory import accept_terms, governed, configure, fund, publish, KEY, UNIT
 from .test_agent_metering import complete
 
 
@@ -24,7 +24,7 @@ def send(g, consent_id, key):
 
 
 def test_factory_consumes_two_runs_with_fixed_terms_without_duplicate_charges(governed):
-    g = governed; configure(g); fund(g)
+    g = governed; configure(g); fund(g); accept_terms(g)
     consent = approve(g)
     assert consent['total_maximum'] == '10000'
     assert g.store.all('SELECT * FROM billing_calls') == []
@@ -50,7 +50,7 @@ def test_factory_consumes_two_runs_with_fixed_terms_without_duplicate_charges(go
 
 @pytest.mark.parametrize('change', ['consent', 'payer_budget', 'credential', 'scope'])
 def test_continuing_consent_does_not_bypass_current_dispatch_gates(governed, monkeypatch, change):
-    g = governed; configure(g); fund(g)
+    g = governed; configure(g); fund(g); accept_terms(g)
     consent = approve(g)
     tid = send(g, consent['id'], 'fixture-gated-send')['output']['turn_id']
     ledger = g.provider.gateway.ledger

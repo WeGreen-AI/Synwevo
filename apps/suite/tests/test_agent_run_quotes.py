@@ -12,6 +12,7 @@ from synwevo_suite.agent.gateway import MeteredTurnProvider
 from synwevo_suite.agent.provider import Credential
 from synwevo_suite.agent.quotes import RunQuotes
 from .test_agent_metering import gateway  # explicit isolated Store/Ledger/transport fixture
+from .test_agent_governed_factory import accept_terms
 
 
 @pytest.fixture
@@ -163,6 +164,7 @@ def test_quote_terms_immutable_and_revoke_irreversible(paid):
 
 def test_shared_operations_quote_start_replay_and_revoke(paid):
     g=paid;caps=g.agent.caps;uid=g.user['id']
+    accept_terms(g)   # FIXTURE: the start step was done; a page send on a legacy quote needs it (AD-4)
     assert caps.store is g.store
     offer=caps.inspect('agent.billing.offer',{},user_id=uid)
     assert offer['max_calls_limit']==12 and offer['per_call_hold']=='297'
