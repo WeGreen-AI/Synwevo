@@ -19,9 +19,9 @@ from .store import Store, now
 
 #: document id (public page) → (version, effective date). Change a page's wording → new version.
 DOCUMENTS: dict[str, tuple[str, str]] = {
-    "terms": ("2026-10-05", "2026-10-05"),
+    "terms": ("2026-10-24", "2026-10-24"),
     "ai-use": ("2026-10-05", "2026-10-05"),
-    "pricing": ("2026-10-05", "2026-10-05"),
+    "pricing": ("2026-10-24", "2026-10-24"),
 }
 
 

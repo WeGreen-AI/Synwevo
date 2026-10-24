@@ -118,6 +118,45 @@ def test_a_dispute_for_a_reported_but_not_yet_credited_payment_waits_for_the_cre
     assert inbox(world, "evt_dispute_waiting")["status"] == "processed" and cny_booked(world) == 0
 
 
+def test_revive_then_mismatch_alerts_admins(world, alerts):
+    """rr-money-2: a dispute kept waiting for its payment's credit is replayed when the credit
+    arrives (_revive); if that replay ends rejected (here: another currency than the credited
+    payment) administrators are alerted exactly as they would be on a direct delivery."""
+    world["configure"]()
+    c, order, session = created(world)
+    assert deliver(world, session_event(order, paid=False, session_id=session)).json()["status"] == "ignored"
+    assert deliver(world, dispute_event("revived_usd", currency="usd")).status_code == 500, "付款已报告、尚未入账：等待入账"
+    assert inbox(world, "evt_dispute_revived_usd")["result_code"] == "payment_not_credited" and alerts == []
+    paid_event = session_event(order, kind="checkout.session.async_payment_succeeded", session_id=session)
+    assert deliver(world, paid_event).json()["status"] == "processed"
+    assert inbox(world, "evt_dispute_revived_usd") == {"status": "rejected", "result_code": "dispute_payment_mismatch", "attempts": 1}
+    assert alerts == ["dispute_payment_mismatch"], "入账后重放的争议被拒绝也要提醒管理员，且只提醒一次"
+    assert cny_booked(world) == 10**7 and world["store"].all("SELECT * FROM billing_account_freezes") == []
+    assert c.get("/api/auth/wallet/topup-options").json().get("reason") != "wallet_frozen"
+    world["api"].state.topups.process_pending()
+    assert alerts == ["dispute_payment_mismatch"], "清扫任务不再碰已拒绝的行"
+
+
+def test_revive_keeps_the_payment_not_credited_exemption(world, alerts):
+    """A replay inside _revive that still ends failed/payment_not_credited (a concurrent worker
+    re-refusing the same wait) is the provider's ordinary ordering, not a failure: no alert."""
+    from synwevo_identity.payments import TopupService
+    world["configure"]()
+    _, order, session = created(world)
+    assert deliver(world, session_event(order, paid=False, session_id=session)).json()["status"] == "ignored"
+    assert deliver(world, dispute_event("still_waiting")).status_code == 500
+    service = world["api"].state.topups
+    replayed = []
+    with pytest.MonkeyPatch.context() as patched:   # scoped: the alerts double above stays in place
+        patched.setattr(TopupService, "_replay",
+                        lambda self, row, *, attempt: replayed.append(row["event_id"]) or ("failed", "payment_not_credited"))
+        service._revive("pi_fixture1")
+    assert replayed == ["evt_dispute_still_waiting"] and alerts == []
+    paid_event = session_event(order, kind="checkout.session.async_payment_succeeded", session_id=session)
+    assert deliver(world, paid_event).json()["status"] == "processed"
+    assert inbox(world, "evt_dispute_still_waiting")["status"] == "processed" and alerts == []
+
+
 @pytest.mark.parametrize("worker", ["webhook", "sweep"])
 @pytest.mark.parametrize("pause_at", ["unknown_payment", "result"])
 def test_concurrent_credit_and_dispute_are_reconciled_once(world, alerts, monkeypatch, worker, pause_at):

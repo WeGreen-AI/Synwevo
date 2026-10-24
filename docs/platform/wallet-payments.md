@@ -167,7 +167,8 @@ Stripe 对密钥本身的明确回答不是“暂时不可用”：HTTP 401 且�
    调用 `Ledger.credit_verified_payment`，其校验回调在账本事务内重新读取收件箱行并核对订单、金额、币种、支付单号与
    付款状态。重复投递、同一付款的另一事件都不会重复入账。金额/币种/会话不符的事件记为 `rejected`、不入账、返回 200
    以停止重试；处理失败返回 500 让 Stripe 重试，账户进程的清理任务每小时也会重放未处理的收件箱行。
-   **失败告警**：收件箱事件以 `failed` 或 `rejected` 结束（含重放路径 `process_pending`），以及进不了收件箱的投递
+   **失败告警**：收件箱事件以 `failed` 或 `rejected` 结束（含重放路径 `process_pending`，以及入账时重放先到争议的
+   `_revive`——CR rr-money-2 前该路径不告警），以及进不了收件箱的投递
    （签名 `signature_missing|malformed|mismatch|stale`、`payload_too_large`、`payload_invalid`、
    `environment_mismatch`、`event_conflict`），都调用 `alert_payment_webhook_failure`，通知有
    `platform.config.manage` 的平台管理员（站内与邮件），每个环境、渠道、代码每个 UTC 日一次。告警只带渠道名
@@ -218,7 +219,8 @@ Stripe 对密钥本身的明确回答不是“暂时不可用”：HTTP 401 且�
 - **询问**（Stripe 状态 `warning_*`，银行只是询问、未扣走资金）：只冻结、不扣回（记录 `inquiry=1`、争议单位 0）。
   冻结已经保证这笔余额不能再被花掉；若询问升级为新的争议对象，按上一条的封顶规则扣回。同一争议对象状态升级
   （`charge.dispute.updated` / `funds_withdrawn`）本期不处理，钱包保持冻结，由管理员处理。
-- **商户或币种与已入账付款不符**：拒绝（`dispute_payment_mismatch`），不扣回、不冻结，并提醒管理员。
+- **商户或币种与已入账付款不符**：拒绝（`dispute_payment_mismatch`），不扣回、不冻结，并提醒管理员——直接投递、清扫
+  重放和入账后重放先到的争议（`_revive`）都一样，每个环境、渠道、代码每个 UTC 日一次。
 - **本平台没有入账的付款的争议**（同一 Stripe 账户的其他业务、被拒绝的充值）：本平台的结账从未报告过该付款时，
   拒绝（`dispute_payment_unknown`）并提醒管理员，不再无限重试；若该付款之后在这里入账（事件乱序），入账时立即应用
   这项争议。本平台的结账已报告该付款、只是尚未入账时，记为失败让 Stripe 重试，入账时同样立即应用。

@@ -29,7 +29,7 @@ export default function PrivacySection({ profile, onDeleted }: { profile: Profil
     <ErrorNotice error={error} />
     {due ? <div className="notice warn" role="status"><b>{t('注销申请已受理')}</b><p>{t('账户已停用。请在 {date} 前使用邮箱中的恢复链接取消注销。', { date: timeText(due, locale, profile.timezone) })}</p>
       <a href="/login" className="btn">{t('返回登录')}</a></div> : <>
-      <p className="muted">{t('导出你的资料、成员关系、安全活动，以及你发出的消息、所在会话与消息设置。不含组织文档、他人的消息或登录密钥。')} {t('也包含 Agent 对话的可见文字、记忆、设置、数据同意、报价与钱包流水；不含模型的思考过程、工具读取的业务数据或密钥。')}</p>
+      <p className="muted">{t('导出你的资料、成员关系、安全活动，以及你发出的消息、所在会话与消息设置。不含组织文档、他人的消息或登录密钥。')} {t('也包含 Agent 对话的可见文字、记忆、设置、数据同意、条款接受记录、运行授权与钱包流水；不含模型的思考过程、工具读取的业务数据或密钥。')}</p>
       <PasswordProof value={password} onChange={setPassword} />
       <div><button className="btn" disabled={busy || !password} onClick={() => void perform('export')}>{t('导出个人数据')}</button></div>
       <div className="account-danger col gap8"><h3>{t('申请注销账户')}</h3>
