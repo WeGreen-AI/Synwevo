@@ -230,3 +230,28 @@ test('what is still needed is decided from the server state and the payer', () =
   }
   assert.deepEqual(setup.validateSetup(fixtureSetup()), fixtureSetup());
 });
+
+test('the step keeps its layout as an information or a warning notice, and touch-sized buttons only under a coarse pointer', async () => {
+  // Both variants are .notice regions: the readable step (info) and the step that could not be read (warn).
+  const readable = await cardFixture();
+  assert.equal(readable.tree().props.className, 'notice info ag-setup');
+  readable.unmount();
+  const unreadable = await cardFixture(null as any, { onRetryRead() {}, onDismiss() {} });
+  assert.equal(unreadable.tree().props.className, 'notice warn ag-setup');
+  unreadable.unmount();
+  const css = readFileSync(new URL('../src/apps/agent/agent.css', import.meta.url), 'utf8');
+  const rule = (selector: string) => css.match(new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
+  // The layout outranks the shared .notice (any stylesheet order) and holds for both variants;
+  // only the information variant turns its body text to the text colour.
+  assert.match(rule('.notice.ag-setup'), /display: grid/);
+  assert.match(rule('.notice.ag-setup'), /padding: var\(--sp-3\) var\(--sp-4\)/);
+  assert.doesNotMatch(rule('.notice.ag-setup'), /color:/);
+  assert.match(rule('.notice.info.ag-setup'), /color: var\(--text\)/);
+  // design.md: 44 px targets under a coarse pointer, the usual button under a mouse.
+  for (const selector of ['.ag-setup-actions .btn', '.ag-price-notice .btn']) assert.doesNotMatch(rule(selector), /min-height/, selector);
+  assert.match(css, /@media \(pointer: coarse\) \{ \.ag-price-notice \.btn \{ min-height: 44px; \} \}/);
+  // A wrapped legend is the item's first row, not a break in its border.
+  assert.match(rule('.ag-setup-item > legend:not(.sr-only)'), /float: left; width: 100%/);
+  const reduced = css.indexOf('@media (prefers-reduced-motion: reduce) {');
+  assert.ok(reduced >= 0 && css.indexOf('  .notice.ag-setup, .ag-price-notice { animation: none; }', reduced) > reduced);
+});

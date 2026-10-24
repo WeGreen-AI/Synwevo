@@ -284,7 +284,7 @@ export function RunCapSettings({ settings, status, onChanged }: {
       {unitChanged ? <p className="notice warn" role="status">{c("runCapUnitChanged")}</p>
         : run && !run.usable && hold ? <p className="notice warn" role="status">{c("runCapMinimum", { amount: hold })}</p> : null}
       <form className="col gap12" noValidate onSubmit={save}>
-        <fieldset className="col gap8" disabled={write.locked}>
+        <fieldset className="col gap8 ag-plain-fieldset" disabled={write.locked}>
           <legend className="sr-only">{c("runCapTitle")}</legend>
           <label className="check"><input type="radio" name={`${id}-mode`} value="default" checked={mode === "default"}
             onChange={() => { setMode("default"); setIssue(null); write.dismiss(); }} />

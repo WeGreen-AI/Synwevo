@@ -181,27 +181,35 @@ a.ag-chip-link { color: var(--accent); }
 .ag-price-change del { color: var(--muted); }
 .ag-price-change ins { color: var(--text); font-weight: 600; text-decoration: none; }
 .ag-price-notice { display: grid; gap: var(--sp-2); margin: 0 0 var(--sp-2); min-width: 0; overflow-wrap: anywhere; animation: ag-reveal var(--dur-2) var(--ease); }
-.ag-price-notice-text { margin: 0; font-size: var(--fs-3); }
+.ag-price-notice-text { margin: 0; font-size: var(--fs-3); font-weight: 600; }
 .ag-price-notice .ag-price-change { color: var(--text); }
-.ag-price-notice .btn { justify-self: start; white-space: normal; max-width: 100%; min-height: 44px; }
+.ag-price-notice .btn { justify-self: start; white-space: normal; max-width: 100%; }
+@media (pointer: coarse) { .ag-price-notice .btn { min-height: 44px; } }
 /* ---- The one-time "Start using Synwevo Agent" step: an inline region above the composer ---- */
-.ag-setup { display: grid; gap: var(--sp-3); margin: 0 0 var(--sp-2); padding: var(--sp-3) var(--sp-4); min-width: 0;
-  color: var(--text); font-size: var(--fs-3); overflow-wrap: anywhere; animation: ag-reveal var(--dur-2) var(--ease); }
+/* It is a .notice (.info, or .warn when the step cannot be read): two classes so its layout holds
+   whatever order the stylesheets load in, and as .info the soft accent surface keeps body text in
+   the text colour (a .warn step keeps the warning colour). */
+.notice.ag-setup { display: grid; gap: var(--sp-3); margin: 0 0 var(--sp-2); padding: var(--sp-3) var(--sp-4); min-width: 0;
+  font-size: var(--fs-3); overflow-wrap: anywhere; animation: ag-reveal var(--dur-2) var(--ease); }
+.notice.info.ag-setup { color: var(--text); }
 .ag-setup-title { margin: 0; font-size: var(--fs-5); color: var(--text); border-radius: var(--radius-sm); }
 .ag-setup-title:focus { outline: none; }
 .ag-setup-title:focus-visible { box-shadow: var(--focus); }
 .ag-setup-intro, .ag-setup-links { margin: 0; }
 .ag-setup-form { display: grid; gap: var(--sp-3); min-width: 0; }
 .ag-setup-item { display: grid; gap: var(--sp-2); min-width: 0; margin: 0; padding: var(--sp-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
-.ag-setup-item > legend { padding: 0 var(--sp-1); font-weight: 600; }
+/* Floated, the legend is laid out as the item's first row instead of breaking into its border when it wraps. */
+.ag-setup-item > legend:not(.sr-only) { float: left; width: 100%; padding: 0; font-weight: 600; }
 .ag-setup-item p { margin: 0; }
 .ag-setup-item .ag-check { margin: 0; min-height: 44px; font-weight: 600; }
 .ag-setup-item .ag-check input { width: 20px; height: 20px; margin-top: 2px; }
 .ag-setup-limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: var(--sp-2); min-width: 0; }
 .ag-setup-limits .field, .ag-setup-limits .input { min-width: 0; width: 100%; }
 .ag-setup-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-.ag-setup-actions .btn { white-space: normal; max-width: 100%; min-height: 44px; }
-/* Agent settings: the accepted document versions (read-only). */
+/* 44 px under a coarse pointer comes from the shared .btn rule; a mouse sees the usual button. */
+.ag-setup-actions .btn { white-space: normal; max-width: 100%; }
+/* Agent settings: the per-answer maximum's choices (a group without a frame) and the accepted document versions (read-only). */
+.ag-plain-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 .ag-docs { display: grid; gap: var(--sp-2); margin: 0; padding-inline-start: var(--sp-5); overflow-wrap: anywhere; }
 .ag-docs .warn { color: var(--warn); }
 @keyframes ag-reveal { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
@@ -231,7 +239,7 @@ a.ag-chip-link { color: var(--accent); }
 }
 @media (prefers-reduced-motion: reduce) {
   .ag-app * { scroll-behavior: auto; }
-  .ag-setup, .ag-price-notice { animation: none; }
+  .notice.ag-setup, .ag-price-notice { animation: none; }
   .ag-dots i { animation: none; opacity: 1; }
   .ag-markdown.streaming > :last-child::after { animation: none; }
 }

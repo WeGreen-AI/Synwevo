@@ -184,3 +184,14 @@ test('the accepted document versions are listed read-only in three languages, li
   const settingsSource = readFileSync(new URL('../src/apps/agent/Settings.tsx', import.meta.url), 'utf8');
   assert.match(settingsSource, /billing\.required && <AnswerBilling /);
 });
+
+test('the choices are one group for assistive technology without a second frame inside the card', async () => {
+  const h = await capFixture();
+  const groups = h.elements().filter((el) => el.type === 'fieldset');
+  assert.equal(groups.length, 1);
+  assert.match(groups[0].props.className, /\bag-plain-fieldset\b/);
+  assert.equal(h.elements().filter((el) => el.type === 'legend' && el.props.className === 'sr-only').length, 1);
+  const css = readFileSync(new URL('../src/apps/agent/agent.css', import.meta.url), 'utf8');
+  assert.match(css, /\n\.ag-plain-fieldset \{ margin: 0; padding: 0; border: 0; min-width: 0; \}/);
+  h.unmount();
+});
