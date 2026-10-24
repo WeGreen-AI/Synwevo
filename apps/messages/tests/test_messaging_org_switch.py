@@ -32,8 +32,8 @@ import pytest
 from synwevo_core.apps import DOCS_APP_ID, MESSAGES_APP_ID, Apps, disabled_organizations, organization_app_disabled
 from synwevo_core.errors import ServiceError
 from synwevo_core.messaging import Messaging, messaging_export
-from synwevo_core.messaging_bridge import (SKIPPED_MESSAGES_DISABLED, SKIPPED_PAUSED, audience_fingerprint, emit_comment,
-                                           emit_user_message, user_message_state)
+from synwevo_core.messaging_bridge import (SKIPPED_MESSAGES_DISABLED, SKIPPED_PAUSED, ObjectConversations, audience_fingerprint,
+                                           emit_comment, emit_user_message, user_message_state)
 from synwevo_core.notifications import Notifier
 from synwevo_core.organizations import Organizations
 from synwevo_core.store import now
@@ -235,8 +235,11 @@ def test_a_write_that_passed_its_checks_before_the_switch_off_does_not_land_afte
     w = _world(c)
     store = c.ident.store
     svc = Messaging(store, c.ident)
+    # every conversation and membership row too: open_dm and create_group would write new ones
     counts = lambda: (_rows(store, [w.g, w.dm, w.gb]), store.all("SELECT * FROM message_reactions ORDER BY message_id, user_id, emoji"),  # noqa: E731
-                      store.all("SELECT conversation_id, updated_at FROM conversation_avatars ORDER BY conversation_id"))
+                      store.all("SELECT conversation_id, updated_at FROM conversation_avatars ORDER BY conversation_id"),
+                      store.all("SELECT * FROM conversations ORDER BY id"),
+                      store.all("SELECT * FROM conversation_members ORDER BY conversation_id, user_id"))
 
     def switching_off(name, when=lambda *args: True):
         original = getattr(Messaging, name)
@@ -359,6 +362,40 @@ def test_a_project_discussion_opens_and_enrols_nobody_while_disabled(org):
     h = c.sign_in("cid")
     out = c.post(f"{M}/objects/{DOCS_APP_ID}/project/{PA}/conversation", headers=h).json()
     assert out["conversation"]["id"] == ca and out["joined"] is True
+
+
+def test_a_project_discussion_join_that_passed_its_checks_before_the_switch_off_does_not_land_after_it(org):
+    """The in-transaction re-check of `ObjectConversations.open` (B3): a person who may open the
+    project, and passed every check while Message was on, is not enrolled once the switch-off
+    commits before the join's transaction. FIXTURE: the switch-off is written from a patched
+    `_anchor_for`, put back with setattr(original)."""
+    c = org
+    w = _world(c)
+    wid, ca, _ = _projects(c, w)
+    store = c.ident.store
+    cid_user = c.users["cid"]["id"]
+    store.execute("INSERT INTO memberships (workspace_id,user_id,role,can_export,created_at,updated_at,created_by) VALUES (?,?,'viewer',1,?,?,?)",
+                  (wid, cid_user, now(), now(), c.users["owner"]["id"]))
+    objects = ObjectConversations(store, c.ident, Messaging(store, c.ident))
+    members = lambda: store.all("SELECT * FROM conversation_members WHERE conversation_id=? ORDER BY user_id", (ca,))  # noqa: E731
+    before = members()
+    original = ObjectConversations._anchor_for
+
+    def switching_off(self, *args, **kwargs):
+        out = original(self, *args, **kwargs)
+        _off(c)
+        return out
+    ObjectConversations._anchor_for = switching_off
+    try:
+        with pytest.raises(ServiceError) as e:
+            objects.open(DOCS_APP_ID, "project", PA, cid_user)
+    finally:
+        ObjectConversations._anchor_for = original
+    assert (e.value.status, e.value.code) == (403, "messages_disabled")
+    assert organization_app_disabled(store, w.a, MESSAGES_APP_ID)                    # the switch-off did commit first
+    assert members() == before
+    _on(c)
+    assert objects.open(DOCS_APP_ID, "project", PA, cid_user)["joined"] is True        # the control
 
 
 def test_cards_for_a_disabled_organization_are_skipped_and_never_starve_another(org):
