@@ -1,0 +1,167 @@
+{
+  "base": "http://127.0.0.1:33890",
+  "external": "http://127.0.0.1:33891/mcp",
+  "steps": [
+    {
+      "step": "login",
+      "status": 200
+    },
+    {
+      "step": "policy",
+      "outbound_enabled": true,
+      "revision": 1
+    },
+    {
+      "step": "connection.create",
+      "id": "mcpc_31a955e48103",
+      "slug": "weather",
+      "health": "unknown"
+    },
+    {
+      "step": "connection.test",
+      "health": "ok",
+      "protocol_version": "2026-07-28",
+      "server": {
+        "name": "Weather fixture",
+        "version": ""
+      },
+      "tools": [
+        "forecast",
+        "add_note"
+      ],
+      "resources": [
+        "notes://all"
+      ],
+      "prompts": [
+        "summarise"
+      ],
+      "grants": {
+        "forecast": "confirm",
+        "add_note": "confirm"
+      }
+    },
+    {
+      "step": "binding",
+      "alias": "weather"
+    },
+    {
+      "step": "effective_tools",
+      "tools": [
+        [
+          "forecast",
+          "auto"
+        ],
+        [
+          "add_note",
+          "confirm"
+        ]
+      ]
+    },
+    {
+      "step": "turn forecast (read-only, auto)",
+      "turn_status": "succeeded",
+      "assistant_text": "外部服务返回：Sunny in Hong Kong, 24°C, light breeze (fixture).",
+      "tool_calls": [
+        {
+          "operation": "mcp:weather/forecast",
+          "status": "succeeded",
+          "mcp": {
+            "connection": "weather",
+            "connection_name": "Weather",
+            "tool": "forecast",
+            "is_error": false,
+            "duration_ms": 2,
+            "truncated": false,
+            "call_id": "mcpcall_6cb468bea417",
+            "external": true
+          },
+          "result_text": "Sunny in Hong Kong, 24°C, light breeze (fixture)."
+        }
+      ]
+    },
+    {
+      "step": "turn add_note (confirm)",
+      "turn_status": "waiting_confirmation",
+      "card": {
+        "operation": "mcp:weather/add_note",
+        "status": "awaiting_confirmation",
+        "input": {
+          "arguments": {
+            "text": "记一条笔记：周五与设计组对齐 MCP 集成中心的交互。"
+          },
+          "connection": "weather",
+          "tool": "add_note"
+        },
+        "needs_confirmation": true
+      }
+    },
+    {
+      "step": "after confirmation",
+      "turn_status": "succeeded",
+      "tool_call": {
+        "status": "succeeded",
+        "mcp": {
+          "connection": "weather",
+          "connection_name": "Weather",
+          "tool": "add_note",
+          "is_error": false,
+          "duration_ms": 2,
+          "truncated": false,
+          "call_id": "mcpcall_40135cc854ab",
+          "external": true
+        },
+        "result_text": "{\n  \"stored\": 1,\n  \"text\": \"记一条笔记：周五与设计组对齐 MCP 集成中心的交互。\"\n}"
+      },
+      "assistant_text": "外部服务返回：{\n  \"stored\": 1,\n  \"text\": \"记一条笔记：周五与设计组对齐 MCP 集成中心的交互。\"\n}"
+    },
+    {
+      "step": "resource read on the page",
+      "text": "记一条笔记：周五与设计组对齐 MCP 集成中心的交互。",
+      "bytes": 71
+    },
+    {
+      "step": "prompt render on the page",
+      "text": "[user] Summarise the stored notes in a two-line style."
+    },
+    {
+      "step": "call log",
+      "items": [
+        {
+          "origin": "page",
+          "kind": "prompts/get",
+          "name": "summarise",
+          "status": "succeeded",
+          "duration_ms": 4
+        },
+        {
+          "origin": "page",
+          "kind": "resources/read",
+          "name": "notes://all",
+          "status": "succeeded",
+          "duration_ms": 1
+        },
+        {
+          "origin": "agent",
+          "kind": "tools/call",
+          "name": "add_note",
+          "status": "succeeded",
+          "duration_ms": 2
+        },
+        {
+          "origin": "agent",
+          "kind": "tools/call",
+          "name": "forecast",
+          "status": "succeeded",
+          "duration_ms": 2
+        },
+        {
+          "origin": "test",
+          "kind": "discover",
+          "name": null,
+          "status": "succeeded",
+          "duration_ms": 17
+        }
+      ]
+    }
+  ]
+}

@@ -65,6 +65,10 @@ const errors: Record<string, string> = {
   last_owner: "必须保留至少一位正常的所有者。", sole_owner: "请先移交所有权，再退出工作空间。",
   demote_first: "请先撤销该账户的全部平台权限", self_suspend: "不能停用自己的账户",
   policy_changed: "策略已更改，请刷新后重试。",
+  // MCP policy and connections (synwevo_identity.admin_mcp, synwevo_core.mcp_policy; mcp.messages.ts)
+  mcp_policy_bad_revision: "策略版本无效，请重新读取当前策略", mcp_policy_invalid: "MCP 策略不符合要求，请检查各项取值",
+  mcp_policy_revision_conflict: "MCP 策略已变化，请重新预览", mcp_policy_unavailable: "MCP 策略记录暂不可用，请联系管理员检查",
+  mcp_connection_not_found: "连接不存在",
   not_pending_delete: "该账户没有待处理的注销申请。",
   bad_throttle: "请选择要解除的限流记录。",
   bad_access_query: "请指定要解释的工作空间与应用。",

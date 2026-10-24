@@ -1,0 +1,88 @@
+/* The Agent's MCP integration centre. Colours, spacing, radii and motion come only from the
+   shared tokens (scripts/check_design.py); the layout follows the Agent settings page. */
+.mi-page { width: 100%; max-width: 980px; margin: 0 auto; padding: var(--sp-5); min-width: 0; overflow: auto; }
+.mi-page > *, .mi-page .col, .mi-page .card, .mi-page .card-b, .mi-page .field { min-width: 0; }
+.mi-page h1, .mi-page h2, .mi-page h3, .mi-page p, .mi-page code, .mi-page strong, .mi-page dd { overflow-wrap: anywhere; }
+.mi-page .input { width: 100%; max-width: 100%; }
+.mi-page select.input { width: auto; max-width: 100%; }
+.mi-page .card-b { display: flex; flex-direction: column; gap: var(--sp-3); }
+.mi-page .suite-head .small { margin: 0 0 var(--sp-1); }
+.mi-err { color: var(--err); }
+.mi-break { overflow-wrap: anywhere; word-break: break-all; }
+.mi-textarea { height: auto; min-height: 60px; resize: vertical; padding: var(--sp-2); }
+.mi-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.mi-fieldset legend { padding: 0; margin-bottom: var(--sp-1); font-size: var(--fs-2); color: var(--text-2); }
+.mi-fieldset label.check { min-height: 32px; }
+.mi-actions { padding-top: var(--sp-2); }
+.mi-toolbar label { min-width: 0; }
+.mi-feedback:empty { display: none; }
+.mi-error .suite-state { min-height: 0; padding: var(--sp-3); align-items: flex-start; text-align: start; }
+
+/* List rows: a link that is a flex row; the facts wrap on their own line at narrow widths. */
+.mi-row { align-items: center; }
+.mi-row:hover .mi-chevron { color: var(--accent); }
+.mi-row-facts { gap: var(--sp-1) var(--sp-3); }
+.mi-chevron { flex: none; color: var(--muted); font-size: var(--fs-6); line-height: 1; transition: color var(--dur-1) var(--ease); }
+
+/* Facts: label above the value on phones, two columns from tablet width. */
+.mi-facts { display: grid; gap: var(--sp-2); margin: 0; }
+.mi-facts > div { display: grid; gap: var(--sp-1); }
+.mi-facts dt { font-size: var(--fs-2); color: var(--text-2); }
+.mi-facts dd { margin: 0; min-width: 0; }
+@media (min-width: 720px) { .mi-facts > div { grid-template-columns: 11rem minmax(0, 1fr); align-items: start; } }
+
+/* The stepper of a new connection. */
+.mi-steps { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); list-style: none; margin: 0; padding: 0; }
+.mi-steps li { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-3); }
+.mi-steps li.on { color: var(--text); font-weight: 600; }
+.mi-steps li.done { color: var(--text-2); }
+.mi-step-n { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid var(--line-strong); font-size: var(--fs-1); font-weight: 600; transition: background var(--dur-2) var(--ease), color var(--dur-2) var(--ease); }
+.mi-steps li.on .mi-step-n { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.mi-steps li.done .mi-step-n { background: var(--accent-weak); border-color: var(--accent-line); color: var(--accent-strong); }
+
+/* Detail tabs: the shared .tabs rule, wrapping rather than scrolling at narrow widths. */
+.mi-tabs { flex-wrap: wrap; }
+.mi-tabs button { flex: 0 1 auto; padding: 0 var(--sp-3); min-height: 40px; height: auto; white-space: nowrap; }
+.mi-tabs button[aria-selected="true"] { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
+.mi-tab-panel { padding-top: var(--sp-3); }
+.mi-tab-panel[hidden] { display: none; }
+
+/* Tool, resource, prompt and call entries. */
+.mi-entry { padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.mi-entry:first-child { border-top: 0; }
+.mi-entry.removed { color: var(--muted); background: var(--panel-2); }
+.mi-entry h3 { font-size: var(--fs-4); }
+.mi-entry .mi-hints { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.mi-entry-controls { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); align-items: flex-end; }
+.mi-entry-controls label.field { flex: 1 1 200px; }
+.mi-entry-controls select.input { width: 100%; }
+.mi-entry details > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; color: var(--text-2); font-size: var(--fs-2); }
+.mi-entry details[open] > .mi-expand { animation: mi-expand var(--dur-2) var(--ease); }
+.mi-pre { margin: 0; padding: var(--sp-3); max-height: 50vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel-2); font-family: var(--mono); font-size: var(--fs-2); line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mi-pre:focus-visible { outline: none; box-shadow: var(--focus); }
+.mi-preview-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); }
+.mi-call { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-1) var(--sp-3); align-items: start; }
+.mi-call-facts { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); color: var(--muted); font-size: var(--fs-2); }
+.mi-copy { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.mi-example { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.mi-example-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.mi-notice-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); }
+.mi-notice-row p { flex: 1 1 240px; margin: 0; }
+.mi-list-plain { margin: 0; padding-left: var(--sp-4); }
+
+@keyframes mi-expand { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 760px) {
+  .mi-page { padding: var(--sp-4); }
+  .mi-page .suite-head .actions { width: 100%; margin-left: 0; }
+  .mi-page .btn { min-height: 40px; height: auto; white-space: normal; }
+  .mi-page .btn.sm { min-height: 32px; }
+  .mi-call { grid-template-columns: minmax(0, 1fr); }
+  .mi-entry-controls label.field { flex-basis: 100%; }
+  .mi-steps { gap: var(--sp-2); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mi-page *, .mi-page *::before, .mi-page *::after { animation: none; transition: none; }
+}

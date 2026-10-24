@@ -223,3 +223,31 @@ def test_the_document_fetch_goes_only_to_public_https_addresses(env):
     assert not cimd.is_client_id_url("https://client.example.test")             # a path is required
     assert not cimd.is_client_id_url("https://client.example.test/c.json?x=1")
     assert cimd.is_client_id_url(CIMD_ID)
+
+
+def test_an_mcp_client_asking_for_every_advertised_scope_is_narrowed_to_its_registration(env):
+    """A standard MCP client requests the scopes the protected resource metadata lists; a client
+    registered for fewer gets exactly its registration (told in the token response), never more,
+    and a request with no registered business scope left is still refused."""
+    c = login(env)
+    advertised = "dataprep.read dataprep.write extract.read forms.read forms.write tables.read approvals.read offline_access"
+    parked, verifier = authorize(c, "mcp-pre", advertised, workspace_id=env["first"])
+    assert parked.status_code == 303 and parked.headers["location"].startswith("/oauth/consent"), parked.headers.get("location")
+    rid, shown = consent_request(c, parked)
+    assert shown["scopes"] == ["forms.read", "forms.write", "offline_access"]           # what was registered, nothing else
+    done = approve(c, rid)
+    issued = exchange(c, params(done.json()["redirect"])["code"], verifier, "mcp-pre")
+    assert issued.status_code == 200, issued.text
+    assert set(issued.json()["scope"].split()) == {"forms.read", "forms.write", "offline_access"}
+    refused, _ = authorize(c, "mcp-pre", "tables.read extract.read", workspace_id=env["first"])
+    got = params(refused.headers["location"])
+    assert got["error"] == "invalid_scope" and "tables.read" in got["error_description"]
+
+
+def test_a_client_that_is_not_an_mcp_client_is_still_refused_an_unregistered_scope(env):
+    oidc.Clients(env["store"]).register(client_id="crm", app_id="platform", name="Fixture CRM", redirect_uris=[LOCAL_REDIRECT],
+                                        scopes="openid offline_access forms.read")
+    c = login(env)
+    refused, _ = authorize(c, "crm", "openid forms.read forms.write", workspace_id=env["first"])
+    got = params(refused.headers["location"])
+    assert got["error"] == "invalid_scope" and "forms.write" in got["error_description"]

@@ -120,7 +120,9 @@ class Connections:
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname or parts.fragment or parts.username or parts.password:
             raise ServiceError(400, "mcp_url_invalid", "MCP 服务地址必须是 http(s) 绝对地址，不含片段或凭据", {"field": "url"})
-        if parts.scheme == "http" and not self._spec().allow_http and parts.hostname not in ("localhost", "127.0.0.1", "::1"):
+        if parts.scheme == "http" and not self._spec().allow_http:
+            # The same rule as every later use (runtime._destination): plain http only when the
+            # platform policy allows it, loopback included — a saved connection must be usable.
             raise ServiceError(400, "mcp_url_invalid", "MCP 服务地址必须使用 https（管理员可在策略中放开 http）", {"field": "url"})
         refusal = self.policy.destination_refusal(parts.hostname)
         if refusal:

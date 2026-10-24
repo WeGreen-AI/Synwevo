@@ -126,8 +126,13 @@ async def _refuse(send, err: ServiceError, request_id: str | None) -> None:
 def protected_resource_metadata() -> dict:
     """RFC 9728 §2: this resource, who issues its tokens, and the scopes it understands. Built with
     the SDK's model so the shape is the one clients parse."""
+    # The scopes a client asks for when the challenge names none (MCP authorization, "Scope Selection
+    # Strategy": the minimal set for basic use). Reading and changing the applications' records; a
+    # decision taken as the person (`*.decide`) is never asked for by default — a client that needs
+    # it names it explicitly, and the person sees it named on the consent page.
     doc = ProtectedResourceMetadata(resource=mcp_resource(), authorization_servers=[issuer()],
-                                    scopes_supported=list(MCP_SCOPES), bearer_methods_supported=["header"],
+                                    scopes_supported=[s for s in MCP_SCOPES if not s.endswith(".decide")],
+                                    bearer_methods_supported=["header"],
                                     resource_name="Synwevo MCP")
     return doc.model_dump(mode="json", exclude_none=True)
 

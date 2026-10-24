@@ -1,0 +1,127 @@
+{
+  "base": "http://127.0.0.1:33890",
+  "mode": "auto",
+  "steps": [
+    {
+      "step": "protected_resource_metadata",
+      "status": 200,
+      "body": {
+        "resource": "http://127.0.0.1:33890/api/suite/v1/mcp",
+        "authorization_servers": [
+          "http://127.0.0.1:33890"
+        ],
+        "scopes_supported": [
+          "forms.read",
+          "forms.write",
+          "tables.read",
+          "tables.write",
+          "dataprep.read",
+          "dataprep.write",
+          "extract.read",
+          "extract.write",
+          "extract.decide",
+          "approvals.read",
+          "approvals.write",
+          "approvals.decide"
+        ],
+        "bearer_methods_supported": [
+          "header"
+        ],
+        "resource_name": "Synwevo MCP"
+      }
+    },
+    {
+      "step": "unauthenticated_challenge",
+      "status": 401,
+      "www_authenticate": "Bearer error=\"invalid_token\", error_description=\"unauthorized\", resource_metadata=\"http://127.0.0.1:33890/.well-known/oauth-protected-resource/api/suite/v1/mcp\""
+    },
+    {
+      "step": "tools/list",
+      "count": 21,
+      "names": [
+        "forms.form.archive",
+        "forms.form.create",
+        "forms.form.get",
+        "forms.form.list",
+        "forms.form.publish",
+        "forms.form.retire_version",
+        "forms.form.update_draft",
+        "forms.form.version",
+        "forms.public_link.set",
+        "forms.request.close",
+        "forms.request.create",
+        "forms.request.extend",
+        "forms.request.get",
+        "forms.request.list",
+        "forms.request.reissue_link",
+        "forms.submission.accept",
+        "forms.submission.get",
+        "forms.submission.list",
+        "forms.submission.request_changes",
+        "synwevo.run.get",
+        "synwevo.whoami"
+      ]
+    },
+    {
+      "step": "tools/call synwevo.whoami",
+      "is_error": false,
+      "result": {
+        "kind": "delegated",
+        "client_id": "mcp-inspector",
+        "user_id": "u_0ba401a659ea",
+        "workspace_id": "w_29b88682ecaa",
+        "workspace_name": "Demo workspace",
+        "role": "owner",
+        "scopes": [
+          "forms.read",
+          "forms.write"
+        ],
+        "resource": "http://127.0.0.1:33890/api/suite/v1/mcp",
+        "apps": [
+          "forms",
+          "tables"
+        ],
+        "expires_at": 1792814881.181236,
+        "transport": "mcp"
+      }
+    },
+    {
+      "step": "tools/call forms.form.create",
+      "is_error": false,
+      "status": "succeeded",
+      "form_id": "frm_84d9ecd20f8a"
+    },
+    {
+      "step": "tools/call forms.form.create (same idempotency_key)",
+      "replayed": true
+    },
+    {
+      "step": "tools/call forms.form.list",
+      "is_error": false,
+      "titles": [
+        "MCP probe probe-1792813985"
+      ]
+    },
+    {
+      "step": "resources/list",
+      "uris": [
+        "synwevo://whoami",
+        "synwevo://operations"
+      ]
+    },
+    {
+      "step": "resources/read synwevo://whoami",
+      "mime": "application/json"
+    }
+  ],
+  "protocol_version": "2026-07-28",
+  "server_info": {
+    "name": "Synwevo",
+    "title": "Synwevo",
+    "version": "1",
+    "description": null,
+    "website_url": null,
+    "icons": null
+  },
+  "elapsed_s": 0.07
+}

@@ -22,6 +22,24 @@
 | pycrdt | 0.14.6 | MIT | 免费 | 内置文档模板的多人实时协同：服务端的共享文档（y-crdt 的 Python 绑定），与浏览器端 Yjs 同一协议 | 房间在 Docs 进程内存中，状态持久化到唯一数据库；多 worker 部署需要粘性路由（见 docs/platform/docs-collaboration.md） |
 | olefile | 0.47 | BSD | 免费 | 识别 DOC/XLS/PPT 与加密的 OOXML | — |
 
+### 1.1 Model Context Protocol（`apps/suite/requirements.txt`，锁定在 `infra/server/requirements.lock`）
+
+工作空间源站上的 MCP 服务端与 Agent 的 MCP 客户端（[`platform/mcp.md`](platform/mcp.md)）用官方 Python SDK；版本与许可证取自
+`.venv` 中已安装包的元数据，核对日期 2026-10-24。选择理由与研究记录在 `platform/mcp.md` §2.5。
+
+| 组件 | 版本 | 许可证 | 费用 | 用途 | 限制与说明 |
+|---|---|---|---|---|---|
+| **mcp** | 2.3.0（2026-10-02 发布，`Requires-Python >=3.10`） | MIT | 免费 | 官方 MCP Python SDK：入站用低阶 `Server` + `StreamableHTTPSessionManager`（无状态），出站用 `Client` + `streamable_http_client`；实现修订 2026-07-28，并在同一服务端上服务 2025-03-26 / 2025-06-18 / 2025-11-25 的客户端 | v1.x 已进入维护期（只修安全问题），不要回退；只用 Streamable HTTP，不用 stdio |
+| mcp-types | 2.3.0 | MIT | 免费 | SDK 的协议类型（`Tool`、`CallToolResult`、`ProtectedResourceMetadata` 等） | 与 `mcp` 同版本 |
+| httpx2 | 2.13.1 | BSD-3-Clause | 免费 | SDK 的 HTTP 客户端；出站的钉住传输（`PinnedTransport`）建在它上面 | 引入 MCP 之前已在锁文件中，版本未变 |
+| jsonschema | 4.26.0 | MIT | 免费 | 出站：按外部服务公布的 JSON Schema（Draft 2020-12）校验模型给的工具输入 | 依赖 jsonschema-specifications、referencing、rpds-py、attrs |
+| jsonschema-specifications / referencing / rpds-py / attrs | 2025.9.1 / 0.37.0 / 2026.9.1 / 26.1.0 | MIT / MIT / MIT / MIT | 免费 | jsonschema 的依赖（元 schema、`$ref` 解析、持久化数据结构） | — |
+| sse-starlette | 3.5.0 | BSD-3-Clause | 免费 | SDK 服务端的请求级 SSE 响应 | — |
+| opentelemetry-api | 1.45.1 | Apache-2.0 | 免费 | SDK 的可观测性接口（只有 API 包，没有 exporter，不向任何地方发送数据） | 本仓库不配置 exporter |
+| PyJWT | 2.15.1 | MIT | 免费 | SDK 授权模块的依赖 | 本仓库的令牌校验不用它（走账户服务的 `Grants`） |
+
+去掉这一组：移除 `synwevo_suite/app.py` 与 `agent/__init__.py` 里的两处 `install` 调用即可，表与列是加法，数据不丢（`platform/mcp.md` §6）。
+
 ## 2. 系统组件（可选，但决定部分能力）
 
 | 组件 | 验证版本 | 许可证 | 费用 | 用途 | 未安装时 |

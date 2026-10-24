@@ -5,6 +5,7 @@ import { newKey, op, read, type RunStatus } from "../../shared/ops";
 import { Empty, Failure, Loading, RunBadge } from "../../shared/states";
 import PayerBudget from "./PayerBudget";
 import ProviderConsent from "./ProviderConsent";
+import McpBindings from "./integrations/Bindings";
 import "./settings/messages";
 import "./messages";
 
@@ -541,6 +542,7 @@ export default function Settings() {
     <ProviderConsent />
     <AccessSettings />
     <Memories />
+    <McpBindings />
     <WorkspacePolicies />
     <TransferPolicies />
   </div>;

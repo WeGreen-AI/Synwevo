@@ -23,10 +23,12 @@ import { conversationMarkdown, downloadText, exportFileName } from "./exportChat
 import { choosePayer, parsePayers, payerInput, payerKey, payerOf, personal, recallPayer, rememberPayer, samePayer, type Payer } from "./payers";
 import "./messages";
 import { automationCopy } from "./automations.messages";
+import { integrationCopy } from "./integrations/integrations.messages";
 import "./agent.css";
 
 const Settings = lazy(() => import("./Settings"));
 const Automations = lazy(() => import("./Automations"));
+const Integrations = lazy(() => import("./integrations/Integrations"));
 const BudgetDialog = lazy(() => import("./BudgetDialog"));
 
 function AgentApp() {
@@ -35,6 +37,7 @@ function AgentApp() {
   const { app, error: catalogError, reload } = useApp("agent");
   const id = useMatch("/agent/c/:cid")?.params.cid;
   const automations = !!useMatch("/agent/automations");
+  const integrations = !!useMatch("/agent/integrations/*");
   const settings = useLocation().pathname === "/agent/settings";
   const navigate = useNavigate();
   const { value: conversation, error, refresh, connection } = useConversation(id);
@@ -294,11 +297,12 @@ function AgentApp() {
           {history.cursor != null && <button className="btn ghost sm" disabled={history.loadingMore || busy} onClick={() => void history.more()}>{t("加载更多会话")}</button>}
         </nav>
         <NavLink className="btn ghost" to="/agent/automations" onClick={() => setSidebar(false)}>{t(automationCopy.title[0])}</NavLink>
+        <NavLink className="btn ghost" to="/agent/integrations" onClick={() => setSidebar(false)}>{t(integrationCopy.title[0])}</NavLink>
         <NavLink className="btn ghost" to="/agent/settings" onClick={() => setSidebar(false)}>{t("Agent 设置")}</NavLink>
         <Link className="btn ghost" to="/workspace">{t("返回工作空间")}</Link>
       </aside>
       <main className="ag-main">
-        {automations ? <Automations /> : settings ? <Settings /> : <>
+        {automations ? <Automations /> : integrations ? <Integrations /> : settings ? <Settings /> : <>
           <div className="ag-toolbar"><h1>{title ?? t("新会话")}</h1>
             {conversation && <div className="ag-toolbar-actions">
               <button className="btn ghost sm" disabled={busy} onClick={() => void manage("rename")}>{t("重命名会话")}</button>

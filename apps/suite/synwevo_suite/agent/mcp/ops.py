@@ -128,7 +128,11 @@ def inbound_info(store) -> dict:
     spec = McpPolicy(store).current()
     return {"enabled": spec.inbound_enabled, "endpoint": mcp_resource(), "metadata_url": mcp_metadata_url(),
             "issuer": issuer(), "authorization_server_metadata": issuer() + "/.well-known/oauth-authorization-server",
-            "scopes": list(MCP_SCOPES), "protocol_versions": ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"],
+            # What the protected resource metadata advertises (asked for by default), and the decisions
+            # taken as the person, which a client asks for only by naming them (mcp_server/asgi.py).
+            "scopes": [s for s in MCP_SCOPES if not s.endswith(".decide")],
+            "explicit_scopes": [s for s in MCP_SCOPES if s.endswith(".decide")],
+            "protocol_versions": ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"],
             "client_registration": spec.client_registration, "transport": "streamable-http"}
 
 

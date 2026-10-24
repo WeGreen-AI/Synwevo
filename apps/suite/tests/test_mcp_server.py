@@ -82,6 +82,8 @@ async def test_metadata_and_challenge_lead_a_client_to_the_authorization_server(
         assert doc["resource"] == oidc.mcp_resource() == WORKPLACE + "/api/suite/v1/mcp"
         assert doc["authorization_servers"] == [oidc.issuer()]
         assert "forms.read" in doc["scopes_supported"] and "offline_access" not in doc["scopes_supported"]
+        # a decision taken as the person is never asked for by default
+        assert not any(s.endswith(".decide") for s in doc["scopes_supported"]) and "approvals.write" in doc["scopes_supported"]
         refused = await h.post(MCP_URL, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
                                headers={"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2026-07-28",
                                         "Mcp-Method": "tools/list"})

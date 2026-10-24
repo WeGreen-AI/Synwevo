@@ -125,6 +125,19 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         # docweave.write and offline_access, minting API credentials outside the CLI-only
         # registration that is supposed to decide who may hold them.
         unregistered = [s for s in scope.split() if s not in oidc.Clients.allowed_scopes(client)]
+        if unregistered and oidc.mcp_resource() in (client.get("audiences") or []):
+            # An MCP client chooses its scopes from the MCP server's protected resource metadata
+            # (MCP authorization, "Scope Selection Strategy"), which names what the server
+            # understands, not what this client was registered for. Refusing would leave a
+            # standard client unable to authorize at all; granting would widen the registration.
+            # So the request is narrowed to the registration (RFC 6749 §3.3: the server may
+            # ignore part of the requested scope; the token response names what was granted),
+            # and refused only when no business scope is left.
+            scope = " ".join(s for s in scope.split() if s not in unregistered)
+            if not consent_needed(scope) or not any(oidc.api_scope_app(s) for s in scope.split()):
+                return back(error="invalid_scope",
+                            error_description=f"scope not registered for this client: {' '.join(unregistered)}")
+            unregistered = []
         if unregistered:
             return back(error="invalid_scope",
                         error_description=f"scope not registered for this client: {' '.join(unregistered)}")

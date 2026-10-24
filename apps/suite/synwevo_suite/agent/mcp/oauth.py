@@ -114,6 +114,11 @@ class OutboundOAuth:
         if "S256" not in (meta.code_challenge_methods_supported or ["S256"]):
             raise ServiceError(502, "mcp_oauth_unsupported", "授权服务器不支持 PKCE S256")
         scope = scope_hint or (" ".join(prm.scopes_supported) if prm is not None and prm.scopes_supported else None)
+        if "offline_access" in (meta.scopes_supported or []) and "offline_access" not in (scope or "").split():
+            # MCP authorization, "Refresh Tokens": a client MAY ask for offline_access when the
+            # authorization server lists it. Without a refresh token the connection would need the
+            # person's authorization again each time the access token expires.
+            scope = " ".join(filter(None, [scope, "offline_access"]))
         return {"metadata": meta, "resource": resource, "scope": scope}
 
     async def _get_json(self, url: str, owner: str, model):

@@ -13,7 +13,7 @@ export type Held = ReadonlySet<string>;
 export const heldPermissions = (me?: { platform_permissions?: string[] } | null): Held =>
   new Set(me?.platform_permissions || []);
 
-export type Tab = "agent-safety" | "model-provider" | "model-costs" | "model-risk" | "model-prices" | "overview" | "users" | "admins" | "workspaces" | "invitations" | "organizations" | "registration" | "identity" | "mail" | "apps" | "app-runs" | "flow-runs" | "audit" | "payments" | "finance";
+export type Tab = "agent-safety" | "model-provider" | "model-costs" | "model-risk" | "model-prices" | "mcp" | "overview" | "users" | "admins" | "workspaces" | "invitations" | "organizations" | "registration" | "identity" | "mail" | "apps" | "app-runs" | "flow-runs" | "audit" | "payments" | "finance";
 /** The permission each view reads with. Only the views the caller's grants open are drawn. */
 export const TAB_PERMISSION: Record<Tab, string> = {
   overview: "platform.overview.view", users: "platform.users.view", admins: "platform.roles.view",
@@ -21,6 +21,9 @@ export const TAB_PERMISSION: Record<Tab, string> = {
   // A47: every workspace's invitations, masked; revoking them is platform.workspaces.manage.
   invitations: "platform.workspaces.view", organizations: "platform.orgs.view", registration: "platform.config.view",
   "model-provider": "platform.config.view", "model-costs": "platform.config.view", "model-risk": "platform.config.view", "model-prices": "platform.config.view", identity: "platform.config.view", mail: "platform.mail.view",
+  // MCP: the policy, the masked connection overview and the inbound card read with the configuration view;
+  // publishing the policy and disabling a connection are platform.config.manage (admin_mcp).
+  mcp: "platform.config.view",
   // B1/B2: the application catalogue; switching applications and their policy is platform.apps.manage.
   apps: "platform.apps.view",
   "app-runs": "platform.apps.view", "flow-runs": "platform.apps.view", audit: "platform.audit.view",

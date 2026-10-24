@@ -10,6 +10,8 @@ import { chatCopy, type ChatText } from "./chat.messages";
 import { perMillion, priceChanges } from "./composer";
 import { bandText, costSummary, costUnit, formatMoney, formatPerMillion, formatTokens, validTurnCost } from "./cost";
 import type { Refusal } from "./refusals";
+import type { McpCallFacts } from "./types";
+import { useText as useIntegrationText } from "./integrations/shared";
 
 export function useChatText() {
   const { t, locale } = useI18n();
@@ -122,4 +124,24 @@ export function ThinkingStatus() {
     <span className="ag-dots" aria-hidden="true"><i /><i /><i /></span>
     <span>{c("thinking")}</span><span className="ag-thinking-note">{c("thinkingNote")}</span>
   </p>;
+}
+
+/** The facts of an external MCP tool call beside its action card: which connection and tool,
+ *  that it runs outside Synwevo, how long it took, and whether the server answered with an
+ *  error or the result was cut. The arguments and result themselves are the card's Values. */
+export function McpCallLine({ mcp, pending }: { mcp: McpCallFacts; pending: boolean }) {
+  const { m, duration } = useIntegrationText();
+  return <div className="ag-mcp small" data-mcp-connection={mcp.connection}>
+    <p className="row wrap muted small">
+      <span className="badge info">{m("external")}</span>
+      <span>{m("cardConnection", { name: mcp.connection_name })}</span>
+      <span>{m("cardTool", { tool: mcp.tool })}</span>
+      {mcp.duration_ms != null && <span>{m("cardDuration", { time: duration(mcp.duration_ms) })}</span>}
+    </p>
+    {(mcp.is_error || mcp.truncated) && <p className="row wrap">
+      {mcp.is_error && <span className="badge err">{m("cardIsError")}</span>}
+      {mcp.truncated && <span className="badge warn">{m("cardTruncated")}</span>}
+    </p>}
+    {pending && <p className="notice warn">{m("cardExternalWarning")}</p>}
+  </div>;
 }
