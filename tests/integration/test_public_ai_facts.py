@@ -78,6 +78,20 @@ def test_public_pages_make_no_per_run_confirmation_promise():
         assert statement in everything, statement
 
 
+def test_privacy_page_calls_the_exported_quotes_run_authorizations():
+    """Since send-and-go nobody sees a quote: the export's Agent quotes are the run
+    authorizations (agent_records.export, authorization automatic/confirmed/consent). The privacy
+    page names them as the account page does, in all three languages."""
+    pages = (WEB / "PublicPages.tsx").read_text("utf-8")
+    catalogue = (WEB / "messages.ts").read_text("utf-8")
+    assert "数据同意、运行授权、接受的条款版本" in pages
+    for phrase in ("数据同意、运行授权、接受的条款版本", "資料同意、執行授權、接受的條款版本",
+                   "data consents, run authorizations, the terms versions you accepted"):
+        assert phrase in catalogue, phrase
+    for retired in ("数据同意、报价、", "資料同意、報價、", "data consents, quotes,"):
+        assert retired not in pages and retired not in catalogue, retired
+
+
 def test_deployment_facts_follow_the_agent_registry_and_model_configuration(portal, monkeypatch):  # noqa: F811
     from synwevo_portal.public import agent_fact, deployment_facts
     api, store, ident = portal
