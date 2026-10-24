@@ -433,3 +433,22 @@ test('a send started from a function the page handed out earlier still carries t
   assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', regenerate_of: 'msg_fixture', ...NOW });
   h.unmount();
 });
+
+test('when the setup step\'s send is refused, "send again" sends the message as the composer now shows it', async () => {
+  const h = await appFixture({ setup: fixtureSetup({ complete: false, terms: { complete: false, documents: fixtureSetup().terms.documents.map((d: any) => ({ ...d, accepted: false })) } }) });
+  assert.equal(await h.chat().send('Fixture draft'), false); h.render();
+  h.fail(new client.ApiError(409, 'billing_price_changed', 'fixture', { current: { price_id: 'price_fixture_3' } }));
+  await h.card()[0].props.onComplete(); await settle(); h.render();
+  assert.equal(h.card().length, 0);
+  const refused = () => h.elements().filter((el) => el.type === parts.RefusalNotice);
+  assert.equal(refused().length, 1);
+  // The person touches up the kept message in the composer (the chat reports it to the page).
+  assert.equal(typeof h.chat().onDraft, 'function', 'the page follows the composer while the refused message waits');
+  h.chat().onDraft({ text: 'Fixture draft, edited' }); h.render();
+  h.fail(undefined);
+  refused()[0].props.onRetry(); await settle(); h.render();
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture draft, edited', ...SEEN });
+  assert.equal(h.chat().sentDraft, 1);
+  assert.equal(h.chat().onDraft, undefined, 'sent: the page stops following the composer');
+  h.unmount();
+});

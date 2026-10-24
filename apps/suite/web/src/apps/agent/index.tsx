@@ -295,7 +295,9 @@ function AgentApp() {
   const priceNotice: PriceNoticeFacts | null = status?.price_notice
     ?? (shownBefore && offer && (shownBefore.price_id !== offer.price_id || shownBefore.route_version !== offer.route_version)
       ? { previous: shownBefore, previous_run_at: Math.floor(Date.now() / 1000) } : null);
-  // A refusal of the send the setup step made (the draft is still in the composer).
+  // A refusal of the send the setup step made (the draft is still in the composer). While it waits,
+  // the page follows the composer as it does while the step is open, so "send again" sends the
+  // message as it now stands (onDraft below).
   const actionRefusal = actionError != null ? refusalOf(actionError, { organization: organizationPayer }) : null;
   function exportConversation() {
     if (!conversation) return;
@@ -346,7 +348,8 @@ function AgentApp() {
             spaces={spaces} fileClient={fileClient} configured={configured} act={act} send={send} refresh={refresh} sentDraft={sentDraft}
             walletUrl={walletUrl} organizationPayer={organizationPayer} payerName={organizationName}
             onPersonal={organizationPayer && payers[0] ? () => choose(payers[0]) : undefined}
-            onSetup={billingRequired ? openSetup : undefined} onDraft={setupOpen ? updateDraft : undefined}
+            onSetup={billingRequired ? openSetup : undefined}
+            onDraft={setupOpen || (actionRefusal != null && draft != null) ? updateDraft : undefined}
             status={money && <ComposerStatus money={money} disabled={running} />}
             maximum={money && <TurnMaximum maximum={maximum} />}
             hint={money ? t(chatCopy.turnMaximumHint[0]) : undefined}
