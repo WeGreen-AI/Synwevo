@@ -461,11 +461,13 @@ class Agent:
     def start_turn(self, user: dict, cid: str, text: str | None, *, parent_id: str | None,
                    regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None,
                    context_refs: list[dict] | None = None, file_refs: list[dict] | None = None,
-                   payer: dict | None = None, automatic: bool = False, issued: dict | None = None) -> dict:
+                   payer: dict | None = None, automatic: bool = False, issued: dict | None = None,
+                   seen: dict | None = None) -> dict:
         """Admit a send. ``automatic`` (set only by ``ops.start_turn`` for the person's own send from
         the page, ``via=ui``) lets a paid turn start without ``quote_id``/``consent_id``: the run
         authorization is issued and bound inside the admission transaction (send-and-go, D-1);
-        ``issued`` is its audit record and ``payer`` the chosen payer. Every other caller keeps
+        ``issued`` is its audit record, ``payer`` the chosen payer and ``seen`` the price the page
+        displayed (a different price in force refuses the send, AD-1). Every other caller keeps
         the explicit requirement."""
         # Who may use the Agent at all, the separate consent for the provider this message would
         # go to, and the content rules come first: a refused message is never stored or sent.
@@ -487,12 +489,13 @@ class Agent:
         with self.store.tx():
             return self._start_turn(user, cid, text, parent_id=parent_id, regenerate_of=regenerate_of, quote_id=quote_id,
                                     consent_id=consent_id, context_refs=context_refs, file_refs=file_refs,
-                                    payer=payer, automatic=automatic, issued=issued)
+                                    payer=payer, automatic=automatic, issued=issued, seen=seen)
 
     def _start_turn(self, user: dict, cid: str, text: str | None, *, parent_id: str | None,
                     regenerate_of: str | None, quote_id: str | None = None, consent_id: str | None = None,
                     context_refs: list[dict] | None = None, file_refs: list[dict] | None = None,
-                    payer: dict | None = None, automatic: bool = False, issued: dict | None = None) -> dict:
+                    payer: dict | None = None, automatic: bool = False, issued: dict | None = None,
+                    seen: dict | None = None) -> dict:
         """A new user message (or a regeneration of an answer) and the turn that answers it."""
         row = self.conversation(user["id"], cid)
         if row["status"] != "active":
@@ -561,8 +564,8 @@ class Agent:
         if quotes is not None:
             if quote_id and consent_id:
                 raise ServiceError(409, "billing_authorization_conflict", "请只选择一种付款授权")
-            if payer is not None and (quote_id or consent_id):
-                # An explicit authorization names its payer already; a second answer is a conflict.
+            if (payer is not None or seen) and (quote_id or consent_id):
+                # An explicit authorization names its payer and price already; a second answer is a conflict.
                 raise ServiceError(409, "billing_authorization_conflict", "请只选择一种付款授权")
             if not quote_id and not consent_id:
                 if not automatic:
@@ -571,10 +574,16 @@ class Agent:
                 # transaction, so a refusal stores nothing and the deadline is fixed at admission.
                 try:
                     quote_id = quotes.issue_automatic(user["id"], row, text=text, parent_id=parent_id,
-                        regenerate_of=regenerate_of, payer=payer, context_refs=context_refs, file_refs=file_refs, issued=issued)
+                        regenerate_of=regenerate_of, payer=payer, context_refs=context_refs, file_refs=file_refs,
+                        issued=issued, seen=seen)
                     quotes.bind(user["id"], quote_id, row, turn_id=turn_id, text=text, parent_id=parent_id,
                                 regenerate_of=regenerate_of, context_refs=context_refs, file_refs=file_refs)
                 except BillingError as exc:
+                    if exc.code == "price_changed":
+                        # The page showed another price or model than the one in force (AD-1).
+                        raise ServiceError(409, "billing_price_changed",
+                                           "价格或模型已更新，本次没有发送，也没有扣费。请查看新价格后重新发送。",
+                                           exc.detail) from None
                     raise ServiceError(409, "billing_" + exc.code, "本次回答未能开始，消息没有发送，也没有扣费",
                                        getattr(exc, "detail", None)) from None
             else:

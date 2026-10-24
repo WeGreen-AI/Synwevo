@@ -210,14 +210,15 @@ class RunQuotes:
             raise BillingError("payer_budget_disabled")
 
     def issue_automatic(self, user_id, conversation, *, text, parent_id, regenerate_of, payer=None,
-                        context_refs=None, file_refs=None, issued: dict) -> str:
+                        context_refs=None, file_refs=None, issued: dict, seen: dict | None = None) -> str:
         """Mint the run authorization of a person's own send from the page, inside the turn's
         admission transaction; the engine binds it at once with :meth:`bind`.
 
         ``issued`` is the audit record of who asked (``actor_user_id``, ``via``, ``source``,
         ``op_run_id``); it is kept in the immutable quote terms with ``mode`` and ``bound``.
-        No outstanding-quote count (the quote never stays unbound) and no welcome grant (the
-        ledger owns its transaction; the payers read grants it before the first send)."""
+        ``seen`` is the price the page displayed (:meth:`shown_price`). No outstanding-quote
+        count (the quote never stays unbound) and no welcome grant (the ledger owns its
+        transaction; the payers read grants it before the first send)."""
         self._turn_transaction()
         if not isinstance(issued, dict) or issued.get("via") != "ui" or not issued.get("actor_user_id"):
             raise BillingError("automatic_issue_requires_person")
@@ -228,6 +229,7 @@ class RunQuotes:
         run_seconds = self._run_seconds(route)
         sale, _ = self.gateway._prices(route)
         bound = self._bound(user_id, route, sale)
+        self.shown_price(seen, route, sale, bound)
         payer = self._payer(user_id, payer)
         if payer["kind"] == "user":
             self._personal_limits_configured(user_id, sale.unit.code)
@@ -250,10 +252,31 @@ class RunQuotes:
              current["scope_json"], _json(terms), now, now + 1))
         return quote_id
 
+    @staticmethod
+    def shown_price(seen: dict | None, route, sale, bound: dict) -> None:
+        """The price the page showed is the price the send runs at (AD-1). ``seen`` holds the sale
+        price id and route version the person's page displayed (agent.billing.status ``run``).
+        When either is given and differs from what this run would bind, refuse with the current
+        figures (``price_changed``; the admission rolls back, nothing is stored) so the page shows
+        them before the person sends again. A page that sends neither (an older cached bundle)
+        is not checked."""
+        if not seen:
+            return
+        price_id, version = seen.get("price_id"), seen.get("route_version")
+        if (price_id is None or price_id == sale.price_id) and (version is None or version == route.version):
+            return
+        error = BillingError("price_changed")
+        error.detail = {"current": {"price_id": sale.price_id, "route_version": route.version,
+                                    "maximum": str(bound["budget"]), "per_call_hold": str(bound["hold"]),
+                                    "unit": asdict(sale.unit)}}
+        raise error
+
     def run_bound(self, user_id) -> dict | None:
         """What an automatic send would be bound to now (agent.billing.status ``run``); None when
         the route is unusable. ``usable`` is False when the person's cap could not be honoured
-        or the route has less than one send's window left — the send would be refused."""
+        or the route has less than one send's window left — the send would be refused.
+        ``price_id`` and ``route_version`` are what the send would bind; the page sends them back
+        as ``seen_price_id``/``seen_route_version`` (:meth:`shown_price`)."""
         route = self.current_route()
         if not isinstance(route, Route):
             return None
@@ -262,16 +285,18 @@ class RunQuotes:
         default = hold * self.MAX_CALLS
         run_seconds = max(0, min(self.MAX_RUN_SECONDS, route.valid_until - self.ledger._now()))
         usable = run_seconds >= self.gateway.send_window
+        shown = {"price_id": sale.price_id, "route_version": route.version}
         try:
             bound = self._bound(user_id, route, sale)
         except BillingError:
             cap = self.personal_cap(user_id)
             return {"maximum": str(default), "default": str(default), "cap": str(cap["amount"]) if cap else None,
                     "source": "personal_cap" if cap else "default", "per_call_hold": str(hold),
-                    "max_calls": self.MAX_CALLS, "run_seconds": run_seconds, "usable": False}
+                    "max_calls": self.MAX_CALLS, "run_seconds": run_seconds, "usable": False, **shown}
         return {"maximum": str(bound["budget"]), "default": str(default),
                 "cap": None if bound["cap"] is None else str(bound["cap"]), "source": bound["source"],
-                "per_call_hold": str(hold), "max_calls": self.MAX_CALLS, "run_seconds": run_seconds, "usable": usable}
+                "per_call_hold": str(hold), "max_calls": self.MAX_CALLS, "run_seconds": run_seconds, "usable": usable,
+                **shown}
 
     def price_notice(self, user_id, offer: dict) -> dict | None:
         """The person's last bound run compared with the current offer (D-7): the previous pricing

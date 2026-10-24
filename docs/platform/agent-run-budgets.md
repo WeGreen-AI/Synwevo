@@ -33,7 +33,9 @@ never silently ignored. `max_calls = 12`; `run_seconds = min(3600, route.valid_u
 route with less than one send window left refuses `billing_route_confirmation_expired`. The
 deadline is fixed at admission, so the legacy issue-to-bind gap (rr-money-1) does not exist on
 this path. `agent.billing.status.run` shows the bound a send would get now (`maximum`, `default`,
-`cap`, `source`, `per_call_hold`, `max_calls`, `run_seconds`, `usable`).
+`cap`, `source`, `per_call_hold`, `max_calls`, `run_seconds`, `usable`) and the price it would be
+bound at (`price_id`, the sale price in force, and `route_version`, the route version in force:
+the same values the automatic issue would bind now; `run` is null when no route is usable).
 
 **Who pays.** `agent.turn.start` takes `payer_kind: "user" | "organization"` and `payer_id`. The
 person pays by default; an organization only with its current grant (`quotes._payer`, rechecked
@@ -63,12 +65,28 @@ exactly with `fen_to_units`; `suggested` is null for a non-CNY sale unit) saved 
 change never does. Both operations are a person's own: unreachable by machine credentials, and
 `agent.terms.accept` refuses every `via` but `ui`.
 
+**The price the page showed is the price the send runs at (AD-1).** The page sends back the
+`run.price_id` and `run.route_version` it displayed as `agent.turn.start`
+`seen_price_id`/`seen_route_version` (strings, at most 200 characters; both omitted when `run` is
+null). On the automatic path, when either field is present and differs from the price id or route
+version the automatic issue would bind at admission (`RunQuotes.shown_price`, inside the admission
+transaction, after the bound is computed), the send is refused with 409 `billing_price_changed`
+and the message 价格或模型已更新，本次没有发送，也没有扣费。请查看新价格后重新发送。, with detail
+`{"current": {"price_id", "route_version", "maximum", "per_call_hold", "unit": {code, scale}}}`
+(`maximum` is the bound this person would get, their cap included). Nothing is stored: no message,
+turn or authorization. The page then shows the new price and maximum and offers to send again at
+it. A send without either field (an older cached page) is not checked, as before. The fields
+belong to the automatic path: together with `quote_id` or `consent_id` they are
+`billing_authorization_conflict`; on any other caller's path they change nothing.
+
 **Price change.** `agent.billing.status.price_notice` compares the person's last bound run with
 the current offer (route version, sale `price_id`, `per_call_hold`) and carries the previous
-pricing when they differ. It is information only and never blocks a send: the next send runs at
-the new price. A run in progress stops before its next model call (the turn's credential-binding
-fence, or `quotes.authorize` → `billing_model_configuration_changed`); calls already made settle at
-the earlier price. Prices are never changed retroactively.
+pricing when they differ. It is information only and never blocks a send: a send from a page that
+shows the current price runs at it, and a page still showing an earlier one is refused once as
+above, so nobody is bound at a price their page did not show. A run in progress stops before its
+next model call (the turn's credential-binding fence, or `quotes.authorize` →
+`billing_model_configuration_changed`); calls already made settle at the earlier price. Prices are
+never changed retroactively.
 
 **What the automatic path keeps exactly as it was.** Reserved plus spent never exceeds the run's
 budget and calls never exceed `max_calls` (`ledger.reserve_call`); a charge never exceeds its hold

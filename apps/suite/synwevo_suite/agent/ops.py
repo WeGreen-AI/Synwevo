@@ -94,6 +94,11 @@ class StartTurn(_In):
     #: granted them. Only without ``quote_id``/``consent_id`` (those name their payer already).
     payer_kind: Literal["user", "organization"] | None = None
     payer_id: str | None = F(default=None, max_length=200)
+    #: The sale price id and route version the page displayed (agent.billing.status ``run``). An
+    #: automatic send whose price is no longer the one in force is refused (409
+    #: ``billing_price_changed``, nothing stored); absent (an older page) is not checked.
+    seen_price_id: str | None = F(default=None, max_length=200)
+    seen_route_version: str | None = F(default=None, max_length=200)
 
 
 class QuoteTurn(_In):
@@ -205,6 +210,10 @@ class RunBound(_In):
     max_calls: int
     run_seconds: int
     usable: bool
+    #: The sale price id and route version this send would bind (AD-1): the page sends them back
+    #: as ``seen_price_id``/``seen_route_version`` with agent.turn.start.
+    price_id: str
+    route_version: str
 
 
 class PreviousPricing(ModelTerms):
@@ -826,6 +835,11 @@ def register(registry, agent: Agent, store, identity) -> None:
             if getattr(agent.provider, "quotes", None) is None:
                 raise ServiceError(409, "billing_not_configured", "付费模型服务尚未配置")
             payer = {"kind": i.payer_kind or "user", "id": i.payer_id}
+        seen = {key: value for key, value in (("price_id", i.seen_price_id), ("route_version", i.seen_route_version))
+                if value is not None}
+        if seen and (i.quote_id or i.consent_id):
+            # The shown price belongs to the automatic path; an explicit authorization fixes its own.
+            raise ServiceError(409, "billing_authorization_conflict", "请只选择一种付款授权")
         # Only the person in the page starts a paid turn without an explicit authorization: the
         # engine then issues and binds one in the admission transaction (I5: every other caller
         # keeps the explicit requirement).
@@ -834,7 +848,7 @@ def register(registry, agent: Agent, store, identity) -> None:
         return agent.start_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
             regenerate_of=i.regenerate_of, quote_id=i.quote_id, consent_id=i.consent_id,
             context_refs=[r.model_dump() for r in i.context_refs], file_refs=[r.model_dump() for r in i.file_refs],
-            payer=payer, automatic=automatic, issued=issued)
+            payer=payer, automatic=automatic, issued=issued, seen=(seen or None) if automatic else None)
 
     op(id="agent.setup.get", title=T("开始使用 Agent 的准备", "開始使用 Agent 的準備", "Start-using-Agent checklist"),
        summary="What the person still has to do once before their first paid run: the provider data consent, "

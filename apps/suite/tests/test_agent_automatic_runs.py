@@ -433,3 +433,109 @@ def test_the_export_says_how_each_run_was_authorized_and_shows_the_persons_cap(p
     assert out["settings"]["run_budget_cap"] == {"amount": "500", "unit": "FIXTURE-GATEWAY"}
     assert "fixture question" not in json.dumps(out["quotes"]), "导出的授权只有固定条款，没有消息正文"
     assert {(t["document"], t["version"]) for t in out["terms_accepted"]} == {(d, v) for d, (v, _) in DOCUMENTS.items()}
+
+
+# ------------------------------------------------------------------ 15. the price the page showed (AD-1)
+STALE_PRICE = "价格或模型已更新，本次没有发送，也没有扣费。请查看新价格后重新发送。"
+
+
+def shown_run(g):
+    """What the open page displays beside the composer: the ``run`` of agent.billing.status."""
+    return g.agent.caps.invoke("agent.billing.status", {}, user_id=g.user["id"])["output"]["run"]
+
+
+def seen(run):
+    return {"seen_price_id": run["price_id"], "seen_route_version": run["route_version"]}
+
+
+@pytest.mark.parametrize("stale", [{"seen_price_id": "fixture-price-shown-earlier"},
+                                   {"seen_route_version": "fixture-route-shown-earlier"},
+                                   {"seen_price_id": "fixture-price-shown-earlier", "seen_route_version": "fixture-route-v1"}])
+def test_a_send_from_a_page_showing_another_price_is_refused_with_the_current_one_and_nothing_stored(paid, stale):
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    run = shown_run(g)
+    hold = int(g.quotes.offer()["per_call_hold"])
+    assert (run["price_id"], run["route_version"]) == ("fixture-sale", "fixture-route-v1")
+    err = refused(send, g, **stale)
+    assert (err.status, err.code) == (409, "billing_price_changed")
+    assert err.message == STALE_PRICE and "报价" not in err.message
+    assert err.detail == {"current": {"price_id": "fixture-sale", "route_version": "fixture-route-v1",
+                                      "maximum": str(hold * 12), "per_call_hold": str(hold),
+                                      "unit": {"code": "FIXTURE-GATEWAY", "scale": 6}}}, "带回新的最高金额"
+    nothing_stored(g)
+    assert g.seen == []
+
+
+def test_a_send_carrying_the_price_the_page_showed_starts_at_that_price(paid):
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    run = shown_run(g)
+    out = send(g, **seen(run))["output"]
+    terms = json.loads(quotes_of(g)[0]["terms_json"])
+    assert quotes_of(g)[0]["accepted_turn_id"] == out["turn_id"]
+    assert terms["sale"]["price_id"] == run["price_id"] and terms["route"]["version"] == run["route_version"]
+    assert str(terms["budget"]) == run["maximum"] and str(terms["per_call_hold"]) == run["per_call_hold"]
+    # Only one of the two fields: the one present is compared.
+    g.store.execute("UPDATE agent_turns SET status='succeeded'")
+    assert send(g, "fixture question 2", seen_price_id=run["price_id"])["output"]["turn_id"]
+
+
+def test_a_send_without_the_shown_price_is_admitted_as_before(paid):
+    """An old cached page sends neither field: no check (backward compatible)."""
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    out = send(g)["output"]
+    assert out["turn_id"] and len(quotes_of(g)) == 1
+
+
+def test_the_shown_price_is_part_of_the_automatic_path_only(paid):
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    run = shown_run(g)
+    q = g.issue()
+    for authorization in ({"quote_id": q["id"]}, {"consent_id": "consent_" + "0" * 12}):
+        err = refused(send, g, **authorization, **seen(run))
+        assert (err.status, err.code) == (409, "billing_authorization_conflict")
+        err = refused(send, g, **authorization, seen_route_version=run["route_version"])
+        assert (err.status, err.code) == (409, "billing_authorization_conflict")
+    assert g.store.all("SELECT * FROM agent_turns") == [] and g.store.all("SELECT * FROM agent_messages") == []
+    assert g.quotes.get(g.user["id"], q["id"])["turn_id"] is None
+    err = refused(send, g, seen_price_id="x" * 201)
+    assert (err.status, err.code) == (422, "invalid_input")
+
+
+def test_a_price_adopted_while_the_page_was_open_is_refused_once_then_sent_at_the_new_price(governed):
+    g = governed
+    configure(g)
+    fund(g)
+    accept_terms(g.store, g.user["id"])
+    before = shown_run(g)
+    new_price = new_sale_price(g, input_uncached="5")
+    err = refused(send, g, "Read my forms", **seen(before))
+    assert (err.status, err.code) == (409, "billing_price_changed")
+    nothing_stored(g)
+    assert g.seen == []
+    now_shown = shown_run(g)
+    current = err.detail["current"]
+    assert current == {"price_id": now_shown["price_id"], "route_version": now_shown["route_version"],
+                       "maximum": now_shown["maximum"], "per_call_hold": now_shown["per_call_hold"],
+                       "unit": asdict(factory.UNIT)}
+    assert current["price_id"] == new_price != before["price_id"]
+    assert int(current["maximum"]) > int(before["maximum"]), "页面此前显示的最高金额已不再适用"
+    out = send(g, "Read my forms", **seen(now_shown))["output"]
+    terms = json.loads(quotes_of(g)[0]["terms_json"])
+    assert quotes_of(g)[0]["accepted_turn_id"] == out["turn_id"]
+    assert terms["sale"]["price_id"] == new_price and str(terms["budget"]) == now_shown["maximum"], "按页面显示的新价格运行"
+
+
+def test_the_price_refusal_names_the_maximum_this_person_would_get(paid):
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    hold = int(g.quotes.offer()["per_call_hold"])
+    g.agent.caps.invoke("agent.settings.update", {"run_budget_cap": str(2 * hold)}, user_id=g.user["id"],
+                        idempotency_key="cap-fixture")
+    err = refused(send, g, seen_price_id="fixture-price-shown-earlier")
+    assert err.code == "billing_price_changed"
+    assert err.detail["current"]["maximum"] == str(2 * hold) == shown_run(g)["maximum"], "本人上限之下的最高金额"
+    nothing_stored(g)
