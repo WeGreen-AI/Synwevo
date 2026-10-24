@@ -144,7 +144,9 @@ def test_the_cap_is_stored_in_the_sale_unit_shown_in_settings_and_bounds_the_nex
     status = invoke(g, "agent.billing.status")["output"]
     assert status["run"] == {"maximum": str(hold * 12), "default": str(hold * 12), "cap": None, "source": "default",
                              "per_call_hold": str(hold), "max_calls": 12, "run_seconds": status["run"]["run_seconds"], "usable": True,
-                             "price_id": offer["price_id"], "route_version": offer["route_version"]}
+                             "price_id": offer["price_id"], "route_version": offer["route_version"],
+                             "price_key": status["run"]["price_key"]}
+    assert status["run"]["price_key"].startswith("pk1:"), "所付价格的摘要（addendum-2 S2）"
     assert 3600 - 60 <= status["run"]["run_seconds"] <= 3600, "min(3600, 路线剩余有效期)"
     invoke(g, "agent.settings.update", {"run_budget_cap": str(2 * hold)})
     assert invoke(g, "agent.settings.get")["output"]["billing"]["run_budget_cap"] == {"amount": str(2 * hold), "unit": {"code": "CNY", "scale": 6}}
