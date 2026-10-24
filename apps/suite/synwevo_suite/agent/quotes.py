@@ -250,10 +250,14 @@ class RunQuotes:
                  "issued": {"mode": "automatic", "actor_user_id": issued["actor_user_id"], "via": "ui",
                             "source": issued.get("source") or "agent.turn.start",
                             "op_run_id": issued.get("op_run_id"), "bound": bound["source"]}}
+        # The legacy expiry formula (D-10): the clock is whole seconds, so ``now + 1`` could lapse
+        # between this read and bind's. The row is bound in this same transaction and rolled back
+        # on any refusal, so a longer expiry opens no reuse window.
+        expires_at = max(now + 1, min(now + self.QUOTE_TTL, deadline - self.gateway.send_window))
         self.store.execute("INSERT INTO agent_model_quotes(id,environment,namespace,user_id,conversation_id,"
             "binding_digest,scope_json,terms_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (quote_id, self.ledger.environment, self.ledger.namespace, user_id, current["id"], digest,
-             current["scope_json"], _json(terms), now, now + 1))
+             current["scope_json"], _json(terms), now, expires_at))
         return quote_id
 
     @staticmethod

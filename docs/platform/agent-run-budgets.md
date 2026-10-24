@@ -37,7 +37,10 @@ never silently ignored. `issue_automatic` called for anyone but the person in th
 internal invariant violation (`RuntimeError`), not a refusal anyone can meet. `max_calls = 12`; `run_seconds = min(3600, route.valid_until − now)`, and a
 route with less than one send window left refuses `billing_route_confirmation_expired`. The
 deadline is fixed at admission, so the legacy issue-to-bind gap (rr-money-1) does not exist on
-this path. `agent.billing.status.run` shows the bound a send would get now (`maximum`, `default`,
+this path. The automatic authorization's `expires_at` uses the legacy formula
+`max(now+1, min(now+300, deadline − send_window))` (AD-3): the ledger clock is whole seconds, so
+`now+1` could lapse between the issue's and the bind's clock reads and refuse a send at random.
+It is bound in the same transaction and rolled back on any refusal, so this opens no reuse window. `agent.billing.status.run` shows the bound a send would get now (`maximum`, `default`,
 `cap`, `source`, `per_call_hold`, `max_calls`, `run_seconds`, `usable`) and the price it would be
 bound at (`price_id`, the sale price in force, and `route_version`, the route version in force:
 the same values the automatic issue would bind now; `run` is null when no route is usable).

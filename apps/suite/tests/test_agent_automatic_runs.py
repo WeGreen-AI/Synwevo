@@ -582,3 +582,31 @@ def test_an_automatic_issue_for_anyone_but_the_person_is_an_internal_error_not_a
                                      regenerate_of=None, issued=issued)
         assert not isinstance(err.value, (BillingError, ServiceError)), "内部不变量，不是可以展示给本人的拒绝"
     assert quotes_of(g) == []
+
+
+# ------------------------------------------------------------------ 17. the automatic authorization's expiry (AD-3)
+def test_a_second_passing_between_the_automatic_issue_and_its_bind_does_not_refuse_the_send(paid, monkeypatch):
+    """The ledger clock is whole seconds: issue and bind may read either side of a boundary."""
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    original = g.quotes.issue_automatic
+
+    def issue_then_the_clock_moves(*args, **kwargs):
+        quote_id = original(*args, **kwargs)
+        g.ticks[0] += 1
+        return quote_id
+    monkeypatch.setattr(g.quotes, "issue_automatic", issue_then_the_clock_moves)
+    out = send(g)["output"]
+    row = quotes_of(g)[0]
+    assert row["accepted_turn_id"] == out["turn_id"], "跨过整秒仍然绑定"
+    deadline = json.loads(row["terms_json"])["deadline"]
+    assert row["expires_at"] == max(STAMP + 1, min(STAMP + 300, deadline - g.model.send_window)) == STAMP + 300, "与旧报价同一公式"
+    # A route close to its end: the authorization lapses one send window before the deadline.
+    from dataclasses import replace
+    g.store.execute("UPDATE agent_turns SET status='succeeded'")
+    g.route_holder[0] = replace(g.route, valid_until=g.ticks[0] + 200)
+    send(g, "fixture question 2")
+    row = quotes_of(g)[-1]
+    deadline = json.loads(row["terms_json"])["deadline"]
+    assert deadline == row["created_at"] + 200 and row["accepted_turn_id"]
+    assert row["expires_at"] == deadline - g.model.send_window < row["created_at"] + 300
