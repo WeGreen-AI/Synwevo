@@ -134,6 +134,9 @@ export default function Chat({ conversation, loading, error, connection, configu
   const [localFileClient] = useState(createFileClient);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<unknown>();
+  // How to repeat the request a refusal stopped ("send again"): the message as it now stands, or
+  // the same regenerate. The payer and price it carries are added afresh by the page.
+  const retryFailed = useRef<(() => void) | undefined>(undefined);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [newContent, setNewContent] = useState(false);
   const [copied, setCopied] = useState<CopyState>(null);
@@ -176,7 +179,9 @@ export default function Chat({ conversation, loading, error, connection, configu
   }, [conversation?.event_seq, conversation?.head_id]);
   async function action(operation: string, body: Record<string, unknown>) {
     setBusy(true); setFailure(undefined);
-    try { return await act(operation, body); } catch (e) { setFailure(e); } finally { setBusy(false); }
+    try { return await act(operation, body); }
+    catch (e) { retryFailed.current = operation === "agent.turn.start" ? () => void action(operation, body) : undefined; setFailure(e); }
+    finally { setBusy(false); }
   }
   async function submit(e?: FormEvent) {
     e?.preventDefault();
@@ -186,7 +191,7 @@ export default function Chat({ conversation, loading, error, connection, configu
       const refs = fileReferences(selectedFiles, selectedContexts.length);
       const result = refs ? await send(text, contextReferences(selectedContexts), refs) : await send(text, contextReferences(selectedContexts));
       if (result !== false) { setText(""); setSelectedContexts([]); setSelectedFiles([]); stick.current = true; input.current?.focus(); } }
-    catch (e) { setFailure(e); } finally { setBusy(false); }
+    catch (e) { retryFailed.current = () => void submit(); setFailure(e); } finally { setBusy(false); }
   }
   function flash(state: CopyState) {
     setCopied(state);
@@ -288,8 +293,12 @@ export default function Chat({ conversation, loading, error, connection, configu
       {/* A refused send keeps the message: "send again" sends it as it now stands, "finish setup"
           opens the one-time step with it. */}
       {failure != null && (failureRefusal ? <RefusalNotice refusal={failureRefusal} walletUrl={walletUrl} live busy={blocked} onPersonal={onPersonal}
-        onRetry={failureRefusal.next === "retry" ? () => void submit() : undefined}
-        onSetup={failureRefusal.next === "setup" && onSetup ? () => { let draft: Draft | undefined; try { draft = text.trim() ? draftOf() : undefined; } catch { draft = undefined; } onSetup(draft); } : undefined} />
+        onRetry={failureRefusal.next === "retry" ? retryFailed.current : undefined}
+        onSetup={failureRefusal.next === "setup" && onSetup ? () => {
+          let draft: Draft | undefined;
+          try { draft = text.trim() ? draftOf() : undefined; } catch { draft = undefined; }
+          setFailure(undefined); onSetup(draft);   // the step now says what is needed
+        } : undefined} />
         : <Failure error={failure} />)}
       {status}
       <ContextPicker key={pickerScope} spaces={pickerSpaces} selected={selectedContexts} otherCount={selectedFiles.length} disabled={blocked}

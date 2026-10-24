@@ -69,6 +69,8 @@ test('error codes map to the refusal kinds and next steps of the send-and-go con
     ['billing_model_route_unavailable', 'not_configured', null],
     ['billing_not_configured', 'not_configured', null],
     ['billing_model_configuration_changed', 'price_changed', 'retry'],
+    // Addendum AD-1: a send carrying a price the page no longer shows is refused before anything is stored.
+    ['billing_price_changed', 'price_changed', 'retry'],
     ['billing_consent_model_changed', 'price_changed', 'retry'],
     ['billing_price_not_applicable', 'price_changed', 'retry'],
     ['billing_price_route_mismatch', 'price_changed', 'retry'],
@@ -100,6 +102,13 @@ test('error codes map to the refusal kinds and next steps of the send-and-go con
   assert.ok(steps.has('retry') && steps.has('setup'));
   for (const gone of ['nextRequote', 'nextReconfirm', 'nextConsent']) assert.ok(!(gone in copy.chatCopy), gone);
   for (const key of ['nextRetry', 'nextRetryNewPrice', 'nextSetup']) assert.ok(key in copy.chatCopy, key);
+  // Refused at the send (AD-1): the sentence says the message was not sent, in three languages.
+  assert.equal(refusals.refusalOf({ code: 'billing_price_changed' }).text, 'refusedPriceUpdated');
+  const [zh, en, hant] = copy.chatCopy.refusedPriceUpdated;
+  assert.equal(zh, '价格或模型已更新，本次没有发送，也没有扣费。请查看新价格后重新发送。');
+  assert.equal(core.translate('en', zh), en); assert.equal(core.translate('zh-Hant', zh), hant);
+  assert.match(en, /not sent and nothing was charged/); assert.match(hant, /本次沒有傳送，也沒有扣費/);
+  assert.doesNotMatch(zh + en + hant, /确认|確認|confirm/i);
   // The authorization conflicts are generic errors, not refusals with a next step.
   assert.equal(refusals.refusalOf({ code: 'billing_authorization_conflict' }), null);
   assert.equal(refusals.refusalOf({ code: 'billing_authorization_required' }), null);

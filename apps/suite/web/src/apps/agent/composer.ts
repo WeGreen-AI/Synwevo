@@ -11,6 +11,8 @@ export interface MoneyUnit { code: string; scale: number }
 export interface RunBound {
   maximum: string; default: string; cap: string | null; source: 'default' | 'personal_cap';
   per_call_hold: string; max_calls: number; run_seconds: number; usable: boolean;
+  /** The sale price id and route version in force (addendum AD-1): what a send now would be bound to. */
+  price_id?: string | null; route_version?: string | null;
 }
 /** The pricing the person's last answer ran under, when it differs from the offer now
  *  (`agent.billing.status.price_notice`, design D-7): information, never a gate. */
@@ -116,6 +118,18 @@ export function perMillion(pricing: Pick<Pricing, 'rates' | 'per_tokens' | 'unit
 export interface PriceChange { field: ChatText; before: string; after: string }
 type RateKey = 'input_uncached' | 'input_cached' | 'output';
 export interface PriceDisplay { rate?: (pricing: Pricing, key: RateKey) => string; amount?: (minor: string, unit: Pricing['unit']) => string }
+const SEEN = /^[\x21-\x7e]{1,200}$/;
+/** The price the composer showed, repeated on a send (addendum AD-1: `seen_price_id`,
+ *  `seen_route_version`), so the server refuses rather than runs at a price the page did not show
+ *  (409 `billing_price_changed`). Both or neither: without a run bound to show, nothing is sent and
+ *  the server does not check. */
+export function seenPrice(status: Pick<BillingStatus, 'run'> | null | undefined): { seen_price_id: string; seen_route_version: string } | Record<string, never> {
+  const run = status?.run;
+  const price = run?.price_id, route = run?.route_version;
+  return typeof price === 'string' && SEEN.test(price) && typeof route === 'string' && SEEN.test(route)
+    ? { seen_price_id: price, seen_route_version: route } : {};
+}
+
 /** What changed between the pricing of the person's last answer and the pricing on offer now.
  *  Equality is decided on exact values; `display` only chooses how a changed rate or amount is
  *  written. */

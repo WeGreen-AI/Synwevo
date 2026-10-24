@@ -38,8 +38,6 @@ const errors: Record<string, string> = {
   // The same sentences as the chat's refusals (rr-glue-2): true mid-run, no re-confirmation.
   billing_run_budget_exceeded: chatCopy.refusedRunBudget[0],
   billing_run_time_too_short: chatCopy.refusedRunTime[0],
-  // The one-time setup step met a newer version of the terms or pricing (it shows the new one).
-  terms_version_changed: chatCopy.setupTermsUpdated[0],
   terms_acceptance_required: chatCopy.refusedTerms[0],
   billing_payer_budget_not_configured: "请在 Agent 设置中配置个人日、周、月支出上限。当前调用尚未发送。",
   billing_payer_budget_disabled: "个人支出已暂停，当前调用尚未发送。可在 Agent 设置中核对。",

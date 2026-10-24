@@ -3,7 +3,7 @@
  *  claim is made here, and the amounts are arithmetic examples, not the governed prices. */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { transformSync } from 'rolldown/utils';
@@ -327,6 +327,8 @@ test('each refusal maps to a translated sentence and its one next step', () => {
     ['billing_consent_model_changed', 'price_changed', 'retry'],
     ['billing_run_time_too_short', 'run_time', 'retry'],
     ['billing_run_cap_below_call_hold', 'run_cap', 'settings'],
+    // Addendum AD-1: the page showed an older price; one click sends at the new one.
+    ['billing_price_changed', 'price_changed', 'retry'],
     // The platform's per-call maximum cost is a policy limit, not an outage.
     ['billing_cost_call_limit_exceeded', 'call_cap', null],
     // Content safety: a blocked message was never sent; a filtered answer stopped.
@@ -420,6 +422,9 @@ const NOT_IN_CHAT: [string, string][] = [
   ['billing_quote_limit_exceeded billing_quote_requires_turn_transaction',
     'met only when a legacy quote is issued (agent.turn.quote, never asked by this page since send-and-go) or inside the server\'s own admission transaction'],
   ['empty_message', 'the composer never sends an empty message'],
+  // Send-and-go (contract addendum AD-2).
+  ['terms_version_changed', 'met only in the one-time setup step, which words it (the newer version is shown for acceptance)'],
+  ['billing_run_cap_invalid', 'unreachable: the per-answer maximum is validated when it is saved in Agent settings'],
   ['unauthorized', 'an expired session: the shared client catalogue asks the person to sign in again on every page'],
   ['billing_grant_reason_required billing_invalid_grant billing_welcome_already_granted billing_freeze_not_found billing_order_already_funded '
     + 'billing_payment_authority_denied billing_payment_delegation_required billing_payment_environment_mismatch billing_payment_event_conflict '
@@ -445,6 +450,11 @@ const NOT_IN_CHAT: [string, string][] = [
     'ledger invariants and recovery internals: a broken invariant is an internal fault, worded by the generic billing sentence and logged'],
 ];
 const GENERIC = ['费用或授权状态暂不允许继续，请核对后重试。', '未能完成此操作，请核对结果后重试。'];
+/** Codes the send-and-go server (package A: synwevo_suite.agent.setup and its operations) raises.
+ *  Before that server is merged into this tree they are listed but not yet raised; once its
+ *  setup module exists every one of them must be raised, like every other listed code. */
+const SEND_AND_GO_SERVER = existsSync(ROOT + AGENT_DIR + 'setup.py');
+const SEND_AND_GO_CODES = new Set(['terms_version_changed', 'billing_run_cap_invalid']);
 
 test('every refusal the backend can send to the chat has its own honest sentence', () => {
   const codes = serverCodes();
@@ -453,7 +463,9 @@ test('every refusal the backend can send to the chat has its own honest sentence
     'provider_consent_required', 'model_effort_unavailable', 'billing_org_payer_not_granted']) assert.ok(codes.has(code), code);
   const elsewhere = new Map<string, string>();
   for (const [names, why] of NOT_IN_CHAT) for (const code of names.split(' ')) {
-    assert.ok(codes.has(code), `${code} is listed as not shown in the chat but no longer raised (${why})`);
+    if (SEND_AND_GO_SERVER || !SEND_AND_GO_CODES.has(code)) {
+      assert.ok(codes.has(code), `${code} is listed as not shown in the chat but no longer raised (${why})`);
+    }
     elsewhere.set(code, why);
   }
   const t = (source: string) => source;

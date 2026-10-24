@@ -20,14 +20,14 @@ import { createFileClient, fileErrorKey } from './files';
 import { contextErrorKey } from "./context";
 import { useConversation } from "./useConversation";
 import { useHistory } from "./useHistory";
-import { validateOffer } from "./budget";
+import { validateOffer, type Pricing } from "./budget";
 import { chatCopy } from "./chat.messages";
 import { RefusalNotice, TurnMaximum } from "./ChatParts";
 import { ComposerStatus, type ModelOffer } from "./ComposerStatus";
-import { accountHref, turnMaximum, walletHref, type BillingStatus } from "./composer";
+import { accountHref, seenPrice, turnMaximum, walletHref, type BillingStatus, type PriceNoticeFacts } from "./composer";
 import { conversationMarkdown, downloadText, exportFileName } from "./exportChat";
 import { choosePayer, parsePayers, payerInput, payerKey, personal, recallPayer, rememberPayer, type Payer } from "./payers";
-import { refusalOf } from "./refusals";
+import { errorCode, refusalOf } from "./refusals";
 import AgentSetup, { completedSetup, setupNeeded, validateSetup, type SetupState } from "./AgentSetup";
 import PriceNotice from "./PriceNotice";
 import "./messages";
@@ -97,8 +97,17 @@ function AgentApp() {
   // The message waiting in the composer while the setup step is open (sent by its button).
   const [draft, setDraft] = useState<Draft | null>(null);
   const answering = !!conversation?.messages?.some(activeTurn);
+  // Addendum AD-1: the price the composer shows is the price a send runs at. The status is read
+  // again on demand (a refused stale price), when the window regains focus or becomes visible,
+  // and at most every 5 minutes while the page is visible, so a long-open page rarely shows an
+  // out-of-date price; a send that still carries one is refused by the server, never run.
+  const [statusTick, setStatusTick] = useState(0);
+  const statusRead = useRef(0);
+  // The pricing the page was showing when a send was refused for a newer price (a notice, not a gate).
+  const [shownBefore, setShownBefore] = useState<Pricing | null>(null);
   useEffect(() => {
     if (!billingRequired) { setStatus(undefined); setOffer(undefined); return; }
+    statusRead.current = Date.now();
     const abort = new AbortController();
     void Promise.allSettled([
       read<BillingStatus>("agent.billing.status", {}, null, abort.signal),
@@ -111,7 +120,22 @@ function AgentApp() {
       setOffer(valid);
     });
     return () => abort.abort();
-  }, [billingRequired, tick, answering]);
+  }, [billingRequired, tick, answering, statusTick]);
+  useEffect(() => {
+    if (!billingRequired || typeof window === "undefined") return;
+    const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
+    // focus and visibilitychange usually arrive together: one read.
+    const again = (after: number) => { if (visible() && Date.now() - statusRead.current >= after) setStatusTick((n) => n + 1); };
+    const onFocus = () => again(2000);
+    const timer = window.setInterval(() => again(5 * 60_000), 60_000);
+    window.addEventListener("focus", onFocus);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [billingRequired]);
   useEffect(() => {
     if (!billingRequired || !userId) { setSetup(undefined); return; }
     const abort = new AbortController();
@@ -163,9 +187,26 @@ function AgentApp() {
   async function start(next: Draft) {
     let cid = id ?? retryCreate.current;
     if (!cid) { cid = (await write("agent.conversation.create", {})).id; retryCreate.current = cid; }
-    checkTurn(await write("agent.turn.start", { conversation_id: cid, ...next, ...(billingRequired ? payerInput(payer, userId) : {}) }));
+    checkTurn(await startTurn({ conversation_id: cid, ...next }));
     retryCreate.current = undefined;
     navigate(`/agent/c/${cid}`); setTick((n) => n + 1); await refresh();
+  }
+  /** `agent.turn.start` with what billing needs beside the message: the payer, and the price and
+   *  route version the composer showed (AD-1). A refusal for a newer price keeps the message, reads
+   *  the status again and keeps what the page showed for the price notice. */
+  async function startTurn(input: Record<string, unknown>) {
+    const body = billingRequired ? { ...input, ...payerInput(payer, userId), ...seenPrice(status) } : input;
+    try {
+      const out = await write("agent.turn.start", body);
+      setShownBefore(null);
+      return out;
+    } catch (error) {
+      if (errorCode(error) === "billing_price_changed") {
+        if (offer) setShownBefore((before) => before ?? offer);
+        setStatusTick((n) => n + 1);
+      }
+      throw error;
+    }
   }
   /** Open the one-time setup step with the draft kept; focus moves to its heading. */
   function openSetup(next?: Draft) {
@@ -195,8 +236,7 @@ function AgentApp() {
     if (typeof document !== "undefined") document.getElementById("agent-message")?.focus();
   }
   async function act(operation: string, input: Record<string, unknown>) {
-    const body = operation === "agent.turn.start" && billingRequired ? { ...input, ...payerInput(payer, userId) } : input;
-    const result = await write(operation, body);
+    const result = operation === "agent.turn.start" ? await startTurn(input) : await write(operation, input);
     await refresh(); setTick((n) => n + 1);
     return result;
   }
@@ -243,6 +283,11 @@ function AgentApp() {
     environment: payerFacts.environment, welcome: payerFacts.welcome } : null;
   // The most the next answer can cost: the run bound the server reports (status.run.maximum).
   const maximum = turnMaximum(status);
+  // What changed since the person's last answer (server), or since the price this page showed
+  // when a send was refused for a newer one (AD-1). Information only.
+  const priceNotice: PriceNoticeFacts | null = status?.price_notice
+    ?? (shownBefore && offer && (shownBefore.price_id !== offer.price_id || shownBefore.route_version !== offer.route_version)
+      ? { previous: shownBefore, previous_run_at: Math.floor(Date.now() / 1000) } : null);
   // A refusal of the send the setup step made (the draft is still in the composer).
   const actionRefusal = actionError != null ? refusalOf(actionError, { organization: organizationPayer }) : null;
   function exportConversation() {
@@ -299,7 +344,7 @@ function AgentApp() {
             maximum={money && <TurnMaximum maximum={maximum} />}
             hint={money ? t(chatCopy.turnMaximumHint[0]) : undefined}
             aside={money && <>
-              {status?.price_notice != null && <PriceNotice notice={status.price_notice} offer={offer} userId={userId} />}
+              {priceNotice != null && <PriceNotice notice={priceNotice} offer={offer} userId={userId} />}
               {setupOpen && <AgentSetup setup={setup} organizationPayer={organizationPayer} hasDraft={!!draft?.text}
                 maximum={maximum?.key === "turnMaximum" ? { amount: maximum.amount, unit: maximum.unit } : null}
                 siteUrl={auth?.site_url} read={readSetupFact} write={write}

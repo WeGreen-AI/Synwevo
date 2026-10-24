@@ -88,8 +88,19 @@ the cost line under each answer).
   the Agent itself get no automatic path (`billing_authorization_required` without a quote).
 * **The composer** shows the payer, the balance, the tightest remaining limit and "this answer
   costs at most …" from `agent.billing.status.run.maximum` (`run: {maximum, default, cap, source,
-  per_call_hold, max_calls, run_seconds, usable}`; a server without `run` shows the per-call hold,
-  said as such). Send is never disabled for a money reason; the server's refusal says why.
+  per_call_hold, max_calls, run_seconds, usable, price_id, route_version}`; a server without `run`
+  shows the per-call hold, said as such). Send is never disabled for a money reason; the server's
+  refusal says why.
+* **The price shown is the price sent** (contract addendum AD-1). Every send and regenerate repeats
+  the `run.price_id` / `run.route_version` the composer showed as `seen_price_id` /
+  `seen_route_version` (both omitted when there is no `run`; the server then does not check). When
+  an administrator adopted another price meanwhile, the server refuses with 409
+  `billing_price_changed` (`detail.current`: the new price id, route version, maximum, per-call hold
+  and unit) and stores nothing: the message stays in the composer, the status is read again so the
+  composer shows the new maximum, the price notice lists what changed against the price the page had
+  shown, and "send again at the new price" sends it in one click (no dialog; for a refused
+  regenerate it repeats that regenerate). The page also reads the status again when the window
+  regains focus or becomes visible, and at most every 5 minutes while it is visible.
 * **One-time "Start using Synwevo Agent" step** (`AgentSetup.tsx`, an inline region, not a modal).
   When a send needs something the person has not done (`agent.setup.get`), the message stays in the
   composer, focus moves to the step's heading, and the step shows only what is missing: (a) the
@@ -249,7 +260,9 @@ maximum cost (`cost_call_limit_exceeded`, its own sentence: a policy limit, not 
 staged-rollout allowlist, the paid service not configured, the separate DeepSeek data-sharing
 consent (`provider_consent_*`) and the terms not yet accepted (`terms_acceptance_required`), both
 "finish setup" (the one-time step opens with the message kept; `provider_consent_version_changed`
-asks to agree to the new version), a changed model or price ("send again at the new price"), a run
+asks to agree to the new version), a changed model or price, or a send carrying a price the page no longer shows
+(`billing_price_changed`, its own sentence: the message was not sent) ("send again at the new
+price"), a run
 that used up its time (`run_time_too_short`) or a legacy run authorization that no longer opens
 the run (`billing_quote_*`), both "send again", and content safety: a message blocked
 by an input rule (`content_blocked_input`, never sent, nothing charged, the text stays in the

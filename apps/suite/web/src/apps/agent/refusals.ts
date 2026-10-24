@@ -116,6 +116,9 @@ const EXACT: Record<string, RefusalKind> = {
   // A run authorization that no longer opens the run (expired, used, revoked or the conversation moved on).
   billing_quote_expired_or_revoked: 'quote', billing_quote_context_changed: 'quote', billing_quote_already_used: 'quote',
   billing_quote_not_found: 'quote', quote_not_found: 'quote', billing_quote_conversation_unavailable: 'quote',
+  // The page showed a price that is no longer in force (addendum AD-1, seen_price_id /
+  // seen_route_version): nothing was sent; the new price is read and shown, then one click sends.
+  billing_price_changed: 'price_changed',
   // The route's price can no longer be applied: the next send runs at the current price.
   billing_price_not_applicable: 'price_changed', billing_price_route_mismatch: 'price_changed',
   billing_price_not_published: 'price_changed',
@@ -159,6 +162,10 @@ export function refusalKind(code: string): RefusalKind | null {
   return null;
 }
 
+/** A code whose kind and next step are shared but whose moment differs: refused at the send, so
+ *  the sentence says the message was not sent (the kind's own sentence is the mid-run one). */
+const CODE_TEXT: Record<string, ChatText> = { billing_price_changed: 'refusedPriceUpdated' };
+
 /** `organization`: the refused run was charged to an organization (the selected payer for a
  *  fresh refusal; the answer's ledger payer for one in the transcript). */
 export function refusalOf(error: unknown, context: { organization?: boolean } = {}): Refusal | null {
@@ -166,5 +173,5 @@ export function refusalOf(error: unknown, context: { organization?: boolean } = 
   let kind = refusalKind(code);
   if (context.organization && kind === 'funds') kind = 'org_funds';
   if (context.organization && kind === 'frozen') kind = 'org_frozen';
-  return kind ? { kind, code, text: TEXT[kind][0], next: TEXT[kind][1] } : null;
+  return kind ? { kind, code, text: CODE_TEXT[code] ?? TEXT[kind][0], next: TEXT[kind][1] } : null;
 }
