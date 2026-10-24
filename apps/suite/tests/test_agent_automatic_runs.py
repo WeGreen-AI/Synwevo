@@ -363,6 +363,37 @@ def test_replaying_the_same_send_returns_the_same_turn_and_one_authorization(pai
     assert len(quotes_of(g)) == 1 and len(g.store.all("SELECT * FROM agent_turns")) == 1
 
 
+def as_recorded_by_217(g, run_id, recorded):
+    """FIXTURE: rewrite a run record as release 217d66d4 wrote it: that release's whole validated
+    input (its model had fewer optional fields) and a fingerprint of all of it, defaults included."""
+    from synwevo_core.capabilities import canonical, fingerprint
+    g.store.execute("UPDATE op_runs SET input=?, input_hash=? WHERE id=?", (canonical(recorded), fingerprint(recorded), run_id))
+
+
+def test_a_send_retried_across_the_deploy_replays_the_turn_it_started(paid):
+    """int-release-2: the old page keeps the key and the body of a send whose answer was lost
+    while the deploy stopped the gateway; the retry reaches the new release, whose StartTurn and
+    Settings have gained optional fields, and gets the started turn, not idempotency_conflict."""
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    q = g.issue()
+    body = {"conversation_id": g.conversation["id"], "text": "fixture question", "quote_id": q["id"]}
+    first = send(g, key="crossed-the-deploy", **body)
+    as_recorded_by_217(g, first["run_id"], {"context_refs": [], "file_refs": [], "parent_message_id": None,
+                                            "regenerate_of": None, "consent_id": None, **body})
+    again = send(g, key="crossed-the-deploy", **body)
+    assert again["replayed"] and again["output"]["turn_id"] == first["output"]["turn_id"]
+    assert len(g.store.all("SELECT * FROM agent_turns")) == 1
+    saved = g.agent.caps.invoke("agent.settings.update", {"effort": "high"}, user_id=g.user["id"], idempotency_key="crossed-settings")
+    as_recorded_by_217(g, saved["run_id"], {"effort": "high", "prefer_personal_key": None, "memory_enabled": None,
+                                            "personal_key": None, "clear_personal_key": False})
+    again = g.agent.caps.invoke("agent.settings.update", {"effort": "high"}, user_id=g.user["id"], idempotency_key="crossed-settings")
+    assert again["replayed"] and again["run_id"] == saved["run_id"]
+    err = refused(g.agent.caps.invoke, "agent.settings.update", {"effort": "low"}, user_id=g.user["id"],
+                  idempotency_key="crossed-settings")
+    assert err.code == "idempotency_conflict", "不同的参数仍然冲突"
+
+
 # ------------------------------------------------------------------ 11. rr-money-1 on the legacy path
 def test_a_legacy_quote_bound_with_less_than_one_send_left_is_refused_unstored(paid):
     g = paid

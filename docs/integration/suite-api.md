@@ -121,6 +121,10 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 * 有副作用的操作支持 `Idempotency-Key`（或请求体 `idempotency_key`，两者同时给出必须一致）：1–128 个可见 ASCII 字符。
   同键同参返回第一次的结果（`replayed: true`）；同键不同参 409 `idempotency_conflict`；先前失败的同键请求 409
   `idempotent_failure`，不会重新执行。
+  “同参”比较的是校验后的输入，**取默认值的字段不计入**（显式写出默认值与省略相同）：之后的版本给操作新增可选字段，
+  不会让一次未改动的重试变成 `idempotency_conflict`。早先版本按完整输入（含默认值）记下指纹的运行：把本次输入
+  限制到那次保存的输入所含的字段（那时还没有的字段必须取默认值，嵌套成员同理）后，与那次记下的指纹比较。记下的指纹
+  是准绳：保存的输入后来被改写或抹除时，不会被当作同参。
 * 会向他人发出请求、通知或链接的操作，以及处理函数以该键识别重试的操作（契约中 `x-synwevo-idempotency: required`，如
   `forms.request.create`、`extract.file.from_forms`）**必须**带键，否则 400 `idempotency_key_required`。
 * 命名空间是“本人 + 操作 + 工作空间 + 客户端”。轮换客户端密钥或换一个访问令牌不改变命名空间；两个不同客户端使用同一个
