@@ -60,8 +60,18 @@ def test_versioned_documents_print_the_versions_of_record():
 #: person sends and the Agent starts; nothing is confirmed per run or re-confirmed after a price
 #: change. What every page must say instead: each answer has a maximum amount.
 BANNED_PROMISES = ("确认最高预算", "确认后才会扣费", "需要重新确认", "你确认的上限",
-                   "確認最高預算", "重新確認", "confirm a maximum", "confirm again", "maximum you confirmed")
+                   "確認最高預算", "重新確認", "confirm a maximum", "confirm again", "maximum you confirmed",
+                   # Acceptance of a new terms version is never inferred from a paid use: the
+                   # person accepts it before their next use of the Agent (addendum 1, AD-4).
+                   "下一次付费使用会记录", "下一次付費使用會記錄", "next paid use")
 PER_ANSWER_MAXIMUM = ("每条回答的最高金额", "每則回答的最高金額", "maximum for each answer")
+#: How a new terms version is accepted, verbatim in the three locales (addendum 1, AD-4).
+NEW_VERSION_ACCEPTED_BEFORE_USE = (
+    "条款更新时会发布新版本并注明生效日期；新版本生效后，下次使用 Synwevo Agent 前会请你接受新版本，并记录你接受的版本。",
+    "條款更新時會發佈新版本並註明生效日期；新版本生效後，下次使用 Synwevo Agent 前會請你接受新版本，並記錄你接受的版本。",
+    "When these terms change, a new version is published with its effective date; before you next use Synwevo "
+    "Agent after it takes effect, you are asked to accept the new version, and the version you accepted is recorded.",
+)
 
 
 def test_public_pages_make_no_per_run_confirmation_promise():
@@ -76,6 +86,9 @@ def test_public_pages_make_no_per_run_confirmation_promise():
     everything = "\n".join(sources.values())
     for statement in PER_ANSWER_MAXIMUM:
         assert statement in everything, statement
+    assert NEW_VERSION_ACCEPTED_BEFORE_USE[0] in sources["PublicPages.tsx"]
+    for statement in NEW_VERSION_ACCEPTED_BEFORE_USE:
+        assert statement in sources["messages.ts"], statement
 
 
 def test_privacy_page_calls_the_exported_quotes_run_authorizations():
