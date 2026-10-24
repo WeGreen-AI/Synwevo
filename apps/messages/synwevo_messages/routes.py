@@ -597,8 +597,14 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
             log.warning("messaging inbox item skipped: %s", type(e).__name__)
 
     def _tell_readers(cid: str, uid: str, msg: dict) -> None:
-        """The inbox items a stored message creates (`recipients_for` decides who and why)."""
-        conv = svc.get(cid, uid)
+        """The inbox items a stored message creates (`recipients_for` decides who and why). The
+        message is committed already (its transaction re-checked the switch under the writer
+        lock): a switch-off, a freeze or a removal that committed since closes the conversation to
+        its readers, so only the items are skipped — the route still answers for what it stored."""
+        try:
+            conv = svc.get(cid, uid)
+        except ServiceError:
+            return
         preview = (msg["body"][:120] if msg["body"] else "") or ("[附件]" if msg.get("attachment") else "")
         for who, why in svc.recipients_for(cid, msg).items():
             reader = store.one("SELECT last_read_seq FROM conversation_members WHERE conversation_id=? AND user_id=?", (cid, who)) or {}

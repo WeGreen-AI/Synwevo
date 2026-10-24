@@ -453,7 +453,8 @@ class Messaging:
           that is (scope `organization`, `organization_unavailable`, G2).
 
         Re-read on every call (three primary-key reads, four for a project's discussion) and again
-        inside the write transactions of send, forward, open_dm and create_group."""
+        inside every write transaction (`_still_open`); a write that landed is answered from
+        `_after_write`, not refused by a closure that committed after it."""
         oid = conv.get("organization_id")
         org_state, scope = organization_state(self.store, oid)
         obj = AVAILABLE
@@ -826,7 +827,7 @@ class Messaging:
             for who in (uid, other):
                 t.execute("INSERT INTO conversation_members (conversation_id,user_id,role,joined_at,joined_seq,notify,updated_at) VALUES (?,?,'member',?,0,'all',?)", (cid, who, ts, ts))
         self.publish([other], {"type": "conversation", "conversation_id": cid, "change": "added"})
-        return self.get(cid, uid)
+        return self._after_write(cid, uid)
 
     def create_group(self, oid: str, uid: str, *, name: str, member_ids: list[str], description: str | None = None,
                      workspace_id: str | None = None) -> dict:
@@ -857,7 +858,7 @@ class Messaging:
                 t.execute("INSERT INTO conversation_members (conversation_id,user_id,role,joined_at,joined_seq,notify,added_by,updated_at) VALUES (?,?,'member',?,0,'mentions',?,?)", (cid, mid, ts, uid, ts))
             self._system(t, cid, uid, {"event": "created", "name": name, "added": others})
         self.publish(others, {"type": "conversation", "conversation_id": cid, "change": "added"})
-        return self.get(cid, uid)
+        return self._after_write(cid, uid)
 
     def update_group(self, cid: str, uid: str, *, name=None, description=None) -> dict:
         conv, _ = self._manager(cid, uid)
@@ -873,12 +874,14 @@ class Messaging:
             fields.append("description=?"); args.append(str(description).strip() or None)
         if fields:
             with self.store.tx() as t:
+                self._still_open(conv)        # again under the writer lock: a switch-off or a freeze may have committed since
                 t.execute(f"UPDATE conversations SET {', '.join(fields)}, updated_at=? WHERE id=?", (*args, now(), cid))
                 if name is not None:
                     self._system(t, cid, uid, {"event": "renamed", "name": name})
                 if description is not None:
                     self._system(t, cid, uid, {"event": "description", "cleared": args[-1] is None})
             self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
+            return self._after_write(cid, uid)
         return self.get(cid, uid)
 
     def set_announcement(self, cid: str, uid: str, text) -> dict:
@@ -894,7 +897,7 @@ class Messaging:
                       (text, uid if text else None, now() if text else None, now(), cid))
             self._system(t, cid, uid, {"event": "announcement", "cleared": text is None})
         self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
-        return self.get(cid, uid)
+        return self._after_write(cid, uid)
 
     def set_avatar(self, cid: str, uid: str, image_base64: str | None) -> dict:
         """A group's avatar, set (`image_base64`) or removed (None) by its owner/admins. The image
@@ -921,7 +924,7 @@ class Messaging:
                           (cid, image, uid, ts))
             self._system(t, cid, uid, {"event": "avatar", "cleared": image is None})
         self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
-        return self.get(cid, uid)
+        return self._after_write(cid, uid)
 
     def avatar_image(self, cid: str, uid: str) -> dict:
         """The group's avatar bytes for a current member (404 for anyone else, and when there is none)."""
@@ -1075,13 +1078,14 @@ class Messaging:
         if added:
             self.publish(added, {"type": "conversation", "conversation_id": cid, "change": "added"})
             self.publish([u for u in self._active_user_ids(cid) if u not in added], {"type": "conversation", "conversation_id": cid, "change": "updated"})
-        return self.get(cid, uid)
+        return self._after_write(cid, uid)
 
     def remove_member(self, cid: str, uid: str, target: str) -> dict:
         conv, me = self._manager(cid, uid)
         if target == uid:
             raise ServiceError(400, "invalid_field", "请用「退出群聊」离开", {"field": "user_id"})
         with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
             m = t.execute("SELECT * FROM conversation_members WHERE conversation_id=? AND user_id=? AND left_at IS NULL", (cid, target)).fetchone()
             if not m:
                 raise ServiceError(404, "no_member", "该成员不在群里")
@@ -1091,13 +1095,14 @@ class Messaging:
             self._system(t, cid, uid, {"event": "removed", "removed": [target]})
         self.publish([target], {"type": "conversation", "conversation_id": cid, "change": "removed"})
         self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
-        return self.get(cid, uid)
+        return self._after_write(cid, uid)
 
     def leave(self, cid: str, uid: str) -> None:
         conv, me = self._member(cid, uid)
         if conv["kind"] == "dm":
             raise ServiceError(409, "not_a_group", "私聊不能退出；可以设为静音，或屏蔽对方")
         with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
             others = t.execute("SELECT COUNT(*) AS n FROM conversation_members WHERE conversation_id=? AND left_at IS NULL AND user_id<>?", (cid, uid)).fetchone()["n"]
             if me["role"] == "owner" and others:
                 raise ServiceError(409, "owner_must_transfer", "群主退出前请先把群主交接给其他成员，或归档群聊")
@@ -1109,8 +1114,9 @@ class Messaging:
         self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
 
     def transfer(self, cid: str, uid: str, target: str) -> dict:
-        self._manager(cid, uid, owner=True)
+        conv, _ = self._manager(cid, uid, owner=True)
         with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
             m = t.execute("SELECT * FROM conversation_members WHERE conversation_id=? AND user_id=? AND left_at IS NULL", (cid, target)).fetchone()
             if not m or target == uid:
                 raise ServiceError(404, "no_member", "该成员不在群里")
@@ -1118,31 +1124,35 @@ class Messaging:
             t.execute("UPDATE conversation_members SET role='admin', updated_at=? WHERE conversation_id=? AND user_id=?", (now(), cid, uid))
             self._system(t, cid, uid, {"event": "transferred", "to": target})
         self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
-        return self.get(cid, uid)
+        return self._after_write(cid, uid)
 
     def set_role(self, cid: str, uid: str, target: str, role: str) -> dict:
-        self._manager(cid, uid, owner=True)
+        conv, _ = self._manager(cid, uid, owner=True)
         if role not in ("admin", "member") or target == uid:
             raise ServiceError(400, "invalid_field", "角色只能是 admin 或 member", {"field": "role"})
-        n = self.store.execute("UPDATE conversation_members SET role=?, updated_at=? WHERE conversation_id=? AND user_id=? AND left_at IS NULL AND role<>'owner'", (role, now(), cid, target))
-        if not n:
-            raise ServiceError(404, "no_member", "该成员不在群里")
+        with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
+            n = t.execute("UPDATE conversation_members SET role=?, updated_at=? WHERE conversation_id=? AND user_id=? AND left_at IS NULL AND role<>'owner'",
+                          (role, now(), cid, target)).rowcount
+            if not n:
+                raise ServiceError(404, "no_member", "该成员不在群里")
         self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
-        return self.get(cid, uid)
+        return self._after_write(cid, uid)
 
     def archive(self, cid: str, uid: str, archived: bool = True) -> dict:
-        self._manager(cid, uid, owner=True)
+        conv, _ = self._manager(cid, uid, owner=True)
         with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
             t.execute("UPDATE conversations SET archived_at=?, updated_at=? WHERE id=?", (now() if archived else None, now(), cid))
             self._system(t, cid, uid, {"event": "archived" if archived else "unarchived"})
         self.publish(self._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
-        return self.get(cid, uid)
+        return self._after_write(cid, uid)
 
     def set_preferences(self, cid: str, uid: str, *, muted=None, pinned=None, notify=None, muted_until=None, clear_muted_until: bool = False) -> dict:
         """Per-membership switches. `muted_until` (a Unix time ahead of now) silences the
         conversation for a while — unread badge, inbox items and digests skip it until then;
         `muted` is the standing switch. Passing `muted_until: null` clears the timer."""
-        self._member(cid, uid)
+        conv, _ = self._member(cid, uid)
         fields, args = [], []
         if muted is not None:
             fields.append("muted=?"); args.append(1 if muted else 0)
@@ -1163,8 +1173,11 @@ class Messaging:
                 raise ServiceError(400, "invalid_field", "muted_until 需要是未来一年内的时间", {"field": "muted_until"})
             fields.append("muted_until=?"); args.append(until)
         if fields:
-            self.store.execute(f"UPDATE conversation_members SET {', '.join(fields)}, updated_at=? WHERE conversation_id=? AND user_id=?", (*args, now(), cid, uid))
+            with self.store.tx() as t:
+                self._still_open(conv)        # again under the writer lock: a switch-off or a freeze may have committed since
+                t.execute(f"UPDATE conversation_members SET {', '.join(fields)}, updated_at=? WHERE conversation_id=? AND user_id=?", (*args, now(), cid, uid))
             self.publish([uid], {"type": "conversation", "conversation_id": cid, "change": "updated"})
+            return self._after_write(cid, uid)
         return self.get(cid, uid)
 
     def _close(self, t, cid: str, uid: str) -> None:
@@ -1218,6 +1231,17 @@ class Messaging:
     # ------------------------------------------------------------------ reading
     def get(self, cid: str, uid: str) -> dict:
         conv, me = self._member(cid, uid)
+        return self._conv_out(conv, me, uid)
+
+    def _after_write(self, cid: str, uid: str) -> dict:
+        """The conversation as `uid` sees it right after their own write committed. Their write was
+        checked again under the writer lock (`_still_open`) and landed, so a switch-off or a freeze
+        that committed since does not turn it into a refusal (B3): the caller is answered for what
+        they did. Membership still holds (404 otherwise, as `get`)."""
+        conv = self.store.one("SELECT * FROM conversations WHERE id=?", (cid,))
+        me = self.store.one("SELECT * FROM conversation_members WHERE conversation_id=? AND user_id=? AND left_at IS NULL", (cid, uid)) if conv else None
+        if not conv or not me:
+            raise ServiceError(404, "no_conversation", "找不到该会话")
         return self._conv_out(conv, me, uid)
 
     def unread_mentions(self, uid: str, cids: list[str] | None = None) -> dict[str, int]:
@@ -1661,6 +1685,7 @@ class Messaging:
             raise ServiceError(403, "recall_window_closed", f"发出超过 {RECALL_WINDOW_S} 秒的消息不能再撤回，仍可以「删除（仅自己）」", {"recall_window_s": RECALL_WINDOW_S})
         ts = now()
         with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
             t.execute("UPDATE messages SET recalled_at=?, deleted_at=?, body='', attachment_id=NULL WHERE id=?", (ts, ts, mid))
             t.execute("DELETE FROM message_reactions WHERE message_id=?", (mid,))
             if m["attachment_id"]:
@@ -1682,6 +1707,7 @@ class Messaging:
             raise ServiceError(409, "already_gone", "这条消息已经撤回或删除")
         ts = now()
         with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
             t.execute("UPDATE messages SET removed_by=?, deleted_at=?, body='', attachment_id=NULL WHERE id=?", (uid, ts, mid))
             t.execute("DELETE FROM message_reactions WHERE message_id=?", (mid,))
             if m["attachment_id"]:
@@ -1699,7 +1725,10 @@ class Messaging:
         conv, me = self._member(row["conversation_id"], uid)
         if row["seq"] < me["joined_seq"]:
             raise ServiceError(404, "no_message", "找不到该消息")
-        if self.store.execute("INSERT OR IGNORE INTO message_hides (message_id, user_id, created_at) VALUES (?,?,?)", (mid, uid, now())):
+        with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
+            hid = t.execute("INSERT OR IGNORE INTO message_hides (message_id, user_id, created_at) VALUES (?,?,?)", (mid, uid, now())).rowcount
+        if hid:
             self.publish([uid], {"type": "message_hidden", "conversation_id": row["conversation_id"], "message_id": mid, "seq": row["seq"], "hidden": True})
         return {"message_id": mid, "conversation_id": row["conversation_id"], "seq": row["seq"], "hidden": True}
 
@@ -1707,8 +1736,10 @@ class Messaging:
         row = self.store.one("SELECT conversation_id, seq FROM messages WHERE id=?", (mid,))
         if not row:
             raise ServiceError(404, "no_message", "找不到该消息")
-        self._member(row["conversation_id"], uid)
-        self.store.execute("DELETE FROM message_hides WHERE message_id=? AND user_id=?", (mid, uid))
+        conv, _ = self._member(row["conversation_id"], uid)
+        with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
+            t.execute("DELETE FROM message_hides WHERE message_id=? AND user_id=?", (mid, uid))
         self.publish([uid], {"type": "message_hidden", "conversation_id": row["conversation_id"], "message_id": mid, "seq": row["seq"], "hidden": False})
         return {"message_id": mid, "conversation_id": row["conversation_id"], "seq": row["seq"], "hidden": False}
 
@@ -1837,8 +1868,10 @@ class Messaging:
         ts = now()
         moved = target != me["last_read_seq"]
         if moved or me.get("marked_unread"):
-            self.store.execute("UPDATE conversation_members SET last_read_seq=?, last_read_at=CASE WHEN ?<>last_read_seq THEN ? ELSE COALESCE(last_read_at, ?) END, marked_unread=0, updated_at=? "
-                               "WHERE conversation_id=? AND user_id=?", (target, target, ts, ts, ts, cid, uid))
+            with self.store.tx() as t:
+                self._still_open(conv)        # again under the writer lock: a switch-off or a freeze may have committed since
+                t.execute("UPDATE conversation_members SET last_read_seq=?, last_read_at=CASE WHEN ?<>last_read_seq THEN ? ELSE COALESCE(last_read_at, ?) END, marked_unread=0, updated_at=? "
+                          "WHERE conversation_id=? AND user_id=?", (target, target, ts, ts, ts, cid, uid))
             self.publish([uid], {"type": "read", "conversation_id": cid, "last_read_seq": target, "marked_unread": False})
         if moved:
             settings = self._settings_for(self._active_user_ids(cid))
@@ -1853,7 +1886,9 @@ class Messaging:
         """Flag the conversation as unread for this reader without moving the read cursor back:
         it shows in the badge (as one) and in the list until the next read."""
         conv, me = self._member(cid, uid)
-        self.store.execute("UPDATE conversation_members SET marked_unread=1, updated_at=? WHERE conversation_id=? AND user_id=?", (now(), cid, uid))
+        with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
+            t.execute("UPDATE conversation_members SET marked_unread=1, updated_at=? WHERE conversation_id=? AND user_id=?", (now(), cid, uid))
         self.publish([uid], {"type": "read", "conversation_id": cid, "last_read_seq": me["last_read_seq"], "marked_unread": True})
         return {"conversation_id": cid, "last_read_seq": me["last_read_seq"], "marked_unread": True,
                 "unread": max(1, conv["last_seq"] - max(me["last_read_seq"], me["joined_seq"]))}

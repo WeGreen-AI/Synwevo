@@ -314,6 +314,153 @@ def test_a_write_that_passed_its_checks_before_the_switch_off_does_not_land_afte
         assert counts()[1] == before[1]
 
 
+def test_every_other_write_re_checks_the_switch_inside_its_own_transaction(org):
+    """The remaining writes re-read the switch under the writer lock too (review int-b3-3):
+    update_group, remove_member, leave, transfer, set_role, archive, set_preferences, recall,
+    remove, hide, unhide, mark_read and mark_unread. A switch-off that commits after the call's own
+    checks leaves nothing written, so the caller's 403 is true. FIXTURE: the switch-off commits
+    from a patched `_member` (each of them asks it first), put back with setattr(original); the
+    hide row unhide needs is written directly."""
+    c = org
+    w = _world(c)
+    store = c.ident.store
+    svc = Messaging(store, c.ident)
+    state = lambda: (_rows(store, [w.g, w.dm, w.gb]), store.all("SELECT * FROM message_hides ORDER BY message_id, user_id"),  # noqa: E731
+                     store.all("SELECT * FROM message_reactions ORDER BY message_id, user_id, emoji"))
+
+    def hidden():
+        store.execute("INSERT OR IGNORE INTO message_hides (message_id, user_id, created_at) VALUES (?,?,?)", (w.m2, w.ann, now()))
+    cases = [
+        ("update_group", None, lambda: svc.update_group(w.g, w.ann, name="renamed after the switch-off")),
+        ("remove_member", None, lambda: svc.remove_member(w.g, w.ann, w.ben)),
+        ("leave", None, lambda: svc.leave(w.g, w.ben)),
+        ("transfer", None, lambda: svc.transfer(w.g, w.ann, w.ben)),
+        ("set_role", None, lambda: svc.set_role(w.g, w.ann, w.ben, "admin")),
+        ("archive", None, lambda: svc.archive(w.g, w.ann, True)),
+        ("set_preferences", None, lambda: svc.set_preferences(w.g, w.ann, muted=True)),
+        ("recall", None, lambda: svc.recall(w.m1, w.ann)),
+        ("remove", None, lambda: svc.remove(w.m2, w.ann)),
+        ("hide", None, lambda: svc.hide(w.m2, w.ann)),
+        ("mark_read", None, lambda: svc.mark_read(w.g, w.ann, 10 ** 6)),
+        ("mark_unread", None, lambda: svc.mark_unread(w.g, w.ann)),
+        ("unhide", hidden, lambda: svc.unhide(w.m2, w.ann)),
+    ]
+    original = Messaging._member
+    for label, setup, call in cases:
+        if setup:
+            setup()
+        before = state()
+        fired = []
+
+        def switching_off(self, *args, **kwargs):
+            out = original(self, *args, **kwargs)
+            if not fired:
+                fired.append(True)
+                _off(c)
+            return out
+        Messaging._member = switching_off
+        try:
+            with pytest.raises(ServiceError) as e:
+                call()
+        finally:
+            Messaging._member = original
+        assert (e.value.status, e.value.code) == (403, "messages_disabled"), label
+        assert organization_app_disabled(store, w.a, MESSAGES_APP_ID), label        # the switch-off did commit first
+        assert state() == before, f"{label}: written after the switch-off"
+        _on(c)
+    # the controls: with nothing switched off, they go through
+    assert svc.update_group(w.g, w.ann, name="renamed while on")["name"] == "renamed while on"
+    assert svc.unhide(w.m2, w.ann)["hidden"] is False
+    assert svc.mark_read(w.g, w.ann, 10 ** 6)["unread"] == 0
+
+
+def test_a_write_committed_just_before_the_switch_off_is_answered_not_refused(org):
+    """The other side of the same race (int-b3-3): a switch-off that commits right after the
+    write's own commit, before the call reads the conversation back, does not turn what landed
+    into a 403 — the caller is answered for it. FIXTURE: the switch-off commits from the service's
+    publish hook, which runs after the commit."""
+    c = org
+    w = _world(c)
+    store = c.ident.store
+    cid_user = c.users["cid"]["id"]
+    fired = []
+
+    def publish(users, event):
+        if not fired:
+            fired.append(True)
+            _off(c)
+    svc = Messaging(store, c.ident, publish=publish)
+    role = lambda out, who: next(m["role"] for m in out["members"] if m["user_id"] == who)  # noqa: E731
+    cases = [
+        ("update_group", lambda: svc.update_group(w.g, w.ann, name="renamed just before"), lambda out: out["name"] == "renamed just before"),
+        ("set_announcement", lambda: svc.set_announcement(w.g, w.ann, "said just before"), lambda out: out["announcement"] == "said just before"),
+        ("add_members", lambda: svc.add_members(w.g, w.ann, [cid_user]), lambda out: role(out, cid_user) == "member"),
+        ("set_role", lambda: svc.set_role(w.g, w.ann, cid_user, "admin"), lambda out: role(out, cid_user) == "admin"),
+        ("remove_member", lambda: svc.remove_member(w.g, w.ann, cid_user), lambda out: cid_user not in [m["user_id"] for m in out["members"]]),
+        ("set_preferences", lambda: svc.set_preferences(w.g, w.ann, muted=True), lambda out: out["me"]["muted"] is True),
+        ("archive", lambda: svc.archive(w.g, w.ann, True), lambda out: out["archived"] is True),
+        ("transfer", lambda: svc.transfer(w.g, w.ann, w.ben), lambda out: role(out, w.ben) == "owner"),
+        ("open_dm", lambda: svc.open_dm(w.a, w.ann, cid_user), lambda out: out["kind"] == "dm"),
+        ("create_group", lambda: svc.create_group(w.a, w.ann, name="made just before", member_ids=[w.ben]), lambda out: out["name"] == "made just before"),
+    ]
+    for label, call, landed in cases:
+        fired.clear()
+        out = call()
+        assert fired and organization_app_disabled(store, w.a, MESSAGES_APP_ID), label      # the switch-off committed after the write
+        assert landed(out), label
+        _on(c)
+
+
+def test_the_send_route_answers_201_for_a_message_stored_before_the_switch_off(org):
+    """int-b3-4: the route reads the conversation back for the inbox items after the message is
+    committed; a switch-off committed in between skips only those items — the route answers the
+    201 it owes, so the page does not put stored words back as a draft. Forward likewise.
+    FIXTURE: the switch-off commits from a patched step that runs after the commit
+    (`_message_out` for send, `_publish_message` for forward), put back with setattr(original)."""
+    c = org
+    w = _world(c)
+    store = c.ident.store
+    items = lambda: store.one("SELECT COUNT(*) AS n FROM notifications WHERE user_id=? AND object_id=?", (w.ben, w.g))["n"]  # noqa: E731
+
+    def once(name):
+        original, fired = getattr(Messaging, name), []
+
+        def patched(self, *args, **kwargs):
+            out = original(self, *args, **kwargs)
+            if not fired:
+                fired.append(True)
+                _off(c)
+            return out
+        return original, patched
+    h = c.sign_in("ann")
+    before = items()
+    original, patched = once("_message_out")
+    Messaging._message_out = patched
+    try:
+        r = c.post(f"{M}/conversations/{w.g}/messages", headers=h, json={"body": "stored just before", "client_id": "b3-tell1", "mention_ids": [w.ben]})
+    finally:
+        Messaging._message_out = original
+    assert organization_app_disabled(store, w.a, MESSAGES_APP_ID)
+    assert r.status_code == 201, r.text
+    assert r.json()["created"] is True and r.json()["message"]["body"] == "stored just before"
+    assert store.one("SELECT 1 FROM messages WHERE conversation_id=? AND client_id='b3-tell1'", (w.g,))
+    assert items() == before, "no inbox item about a conversation closed by then"
+    _on(c)
+    original, patched = once("_publish_message")
+    Messaging._publish_message = patched
+    try:
+        r = c.post(f"{M}/messages/{w.mb}/forward", headers=h, json={"conversation_ids": [w.g], "client_id": "b3-tell2"})
+    finally:
+        Messaging._publish_message = original
+    assert organization_app_disabled(store, w.a, MESSAGES_APP_ID)
+    assert r.status_code == 201, r.text
+    assert [x["created"] for x in r.json()["items"]] == [True]
+    _on(c)
+    # the control: with nothing switched off, the mention reaches ben's inbox
+    r = c.post(f"{M}/conversations/{w.g}/messages", headers=h, json={"body": "while on", "client_id": "b3-tell3", "mention_ids": [w.ben]})
+    assert r.status_code == 201 and items() == before + 1
+
+
 # ---------------------------------------------------------------- project discussions and cards
 def _projects(c, w):
     """PA in A's workspace (ann, ben members), PB in B's (ann owns it); both discussions opened by
