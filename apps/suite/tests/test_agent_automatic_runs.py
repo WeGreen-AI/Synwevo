@@ -32,8 +32,20 @@ def accept_terms(store, uid):
     TermsAcceptances(store).record_paid_use(uid, context="fixture:agent_setup")
 
 
-def send(g, text="fixture question", *, via="ui", key=None, user=None, **extra):
+def displayed(g, user=None):
+    """What the open page displays beside the composer and repeats on a send (AD-1, addendum-2
+    S1): ``seen_*`` from the ``run`` of agent.billing.status, read as the page reads it (the same
+    handler, without a run record); nothing when the page has no price to show."""
+    run = g.agent.caps.inspect("agent.billing.status", {}, user_id=(user or g.user)["id"]).get("run")
+    return {} if not run else {"seen_price_id": run["price_id"], "seen_route_version": run["price_key"]}
+
+
+def send(g, text="fixture question", *, via="ui", key=None, user=None, shown=True, **extra):
+    """A send. From the page (``via=ui``) without an explicit authorization it carries the price
+    the page displays, as the page does, unless ``shown=False`` or the test names ``seen_*``."""
     payload = {"conversation_id": g.conversation["id"], "text": text, **extra}
+    if shown and via == "ui" and not {"quote_id", "consent_id", "seen_price_id", "seen_route_version"} & set(extra):
+        payload.update(displayed(g, user))
     return g.agent.caps.invoke("agent.turn.start", payload, user_id=(user or g.user)["id"], via=via,
                                idempotency_key=key or uuid.uuid4().hex, **({"scopes": frozenset()} if via == "api" else {}))
 
@@ -363,6 +375,37 @@ def test_replaying_the_same_send_returns_the_same_turn_and_one_authorization(pai
     assert len(quotes_of(g)) == 1 and len(g.store.all("SELECT * FROM agent_turns")) == 1
 
 
+def as_recorded_by_217(g, run_id, recorded):
+    """FIXTURE: rewrite a run record as release 217d66d4 wrote it: that release's whole validated
+    input (its model had fewer optional fields) and a fingerprint of all of it, defaults included."""
+    from synwevo_core.capabilities import canonical, fingerprint
+    g.store.execute("UPDATE op_runs SET input=?, input_hash=? WHERE id=?", (canonical(recorded), fingerprint(recorded), run_id))
+
+
+def test_a_send_retried_across_the_deploy_replays_the_turn_it_started(paid):
+    """int-release-2: the old page keeps the key and the body of a send whose answer was lost
+    while the deploy stopped the gateway; the retry reaches the new release, whose StartTurn and
+    Settings have gained optional fields, and gets the started turn, not idempotency_conflict."""
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    q = g.issue()
+    body = {"conversation_id": g.conversation["id"], "text": "fixture question", "quote_id": q["id"]}
+    first = send(g, key="crossed-the-deploy", **body)
+    as_recorded_by_217(g, first["run_id"], {"context_refs": [], "file_refs": [], "parent_message_id": None,
+                                            "regenerate_of": None, "consent_id": None, **body})
+    again = send(g, key="crossed-the-deploy", **body)
+    assert again["replayed"] and again["output"]["turn_id"] == first["output"]["turn_id"]
+    assert len(g.store.all("SELECT * FROM agent_turns")) == 1
+    saved = g.agent.caps.invoke("agent.settings.update", {"effort": "high"}, user_id=g.user["id"], idempotency_key="crossed-settings")
+    as_recorded_by_217(g, saved["run_id"], {"effort": "high", "prefer_personal_key": None, "memory_enabled": None,
+                                            "personal_key": None, "clear_personal_key": False})
+    again = g.agent.caps.invoke("agent.settings.update", {"effort": "high"}, user_id=g.user["id"], idempotency_key="crossed-settings")
+    assert again["replayed"] and again["run_id"] == saved["run_id"]
+    err = refused(g.agent.caps.invoke, "agent.settings.update", {"effort": "low"}, user_id=g.user["id"],
+                  idempotency_key="crossed-settings")
+    assert err.code == "idempotency_conflict", "不同的参数仍然冲突"
+
+
 # ------------------------------------------------------------------ 11. rr-money-1 on the legacy path
 def test_a_legacy_quote_bound_with_less_than_one_send_left_is_refused_unstored(paid):
     g = paid
@@ -445,11 +488,14 @@ def shown_run(g):
 
 
 def seen(run):
-    return {"seen_price_id": run["price_id"], "seen_route_version": run["route_version"]}
+    """What the page sends back: ``price_id``, and ``price_key`` under seen_route_version (S2)."""
+    return {"seen_price_id": run["price_id"], "seen_route_version": run["price_key"]}
 
 
 @pytest.mark.parametrize("stale", [{"seen_price_id": "fixture-price-shown-earlier"},
-                                   {"seen_route_version": "fixture-route-shown-earlier"},
+                                   {"seen_route_version": "pk1:fixture-key-shown-earlier"},
+                                   # The route version itself is not the price key (S2).
+                                   {"seen_route_version": "fixture-route-v1"},
                                    {"seen_price_id": "fixture-price-shown-earlier", "seen_route_version": "fixture-route-v1"}])
 def test_a_send_from_a_page_showing_another_price_is_refused_with_the_current_one_and_nothing_stored(paid, stale):
     g = paid
@@ -457,10 +503,11 @@ def test_a_send_from_a_page_showing_another_price_is_refused_with_the_current_on
     run = shown_run(g)
     hold = int(g.quotes.offer()["per_call_hold"])
     assert (run["price_id"], run["route_version"]) == ("fixture-sale", "fixture-route-v1")
-    err = refused(send, g, **stale)
+    err = refused(send, g, **{**seen(run), **stale})
     assert (err.status, err.code) == (409, "billing_price_changed")
     assert err.message == STALE_PRICE and "报价" not in err.message
     assert err.detail == {"current": {"price_id": "fixture-sale", "route_version": "fixture-route-v1",
+                                      "price_key": run["price_key"],
                                       "maximum": str(hold * 12), "per_call_hold": str(hold),
                                       "unit": {"code": "FIXTURE-GATEWAY", "scale": 6}}}, "带回新的最高金额"
     nothing_stored(g)
@@ -476,17 +523,48 @@ def test_a_send_carrying_the_price_the_page_showed_starts_at_that_price(paid):
     assert quotes_of(g)[0]["accepted_turn_id"] == out["turn_id"]
     assert terms["sale"]["price_id"] == run["price_id"] and terms["route"]["version"] == run["route_version"]
     assert str(terms["budget"]) == run["maximum"] and str(terms["per_call_hold"]) == run["per_call_hold"]
-    # Only one of the two fields: the one present is compared.
-    g.store.execute("UPDATE agent_turns SET status='succeeded'")
-    assert send(g, "fixture question 2", seen_price_id=run["price_id"])["output"]["turn_id"]
 
 
-def test_a_send_without_the_shown_price_is_admitted_as_before(paid):
-    """An old cached page sends neither field: no check (backward compatible)."""
+@pytest.mark.parametrize("partial", [{}, "price_id only", "route_version only"])
+def test_a_send_without_the_shown_price_is_refused_with_the_current_one_and_nothing_stored(paid, partial):
+    """addendum-2 S1: no deployed page reaches the automatic path without them (the earlier
+    bundle always sent quote_id/consent_id), so a send naming no displayed price is one the page
+    sent while it showed none (loading, unreadable, no run): refused, never run at a price unseen."""
     g = paid
     accept_terms(g.store, g.user["id"])
-    out = send(g)["output"]
-    assert out["turn_id"] and len(quotes_of(g)) == 1
+    run = shown_run(g)
+    fields = {} if partial == {} else ({"seen_price_id": run["price_id"]} if partial == "price_id only"
+                                       else {"seen_route_version": run["route_version"]})
+    err = refused(send, g, shown=False, **fields)
+    hold = int(g.quotes.offer()["per_call_hold"])
+    assert (err.status, err.code, err.message) == (409, "billing_price_changed", STALE_PRICE)
+    assert err.detail["current"]["maximum"] == str(hold * 12) == run["maximum"], "带回页面应显示的最高金额"
+    assert (err.detail["current"]["price_id"], err.detail["current"]["per_call_hold"]) == (run["price_id"], run["per_call_hold"])
+    nothing_stored(g)
+    assert g.seen == []
+    # The page reads the price, shows it, and the person sends again: it starts at that price.
+    out = send(g, **seen(shown_run(g)))["output"]
+    assert quotes_of(g)[0]["accepted_turn_id"] == out["turn_id"]
+
+
+def test_a_page_that_opened_while_the_route_was_unusable_cannot_send_at_a_price_it_never_showed(paid):
+    """int-money-2: the route lapsed, so billing.status has no run and the page shows no maximum;
+    the owner renews it (a new version) before the page re-reads; a send then names no price."""
+    from dataclasses import replace
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    g.route_holder[0] = replace(g.route, valid_until=1)
+    status = g.agent.caps.invoke("agent.billing.status", {}, user_id=g.user["id"])["output"]
+    assert status["available"] is False and status.get("run") is None
+    assert displayed(g) == {}, "页面此时没有可显示的价格"
+    g.route_holder[0] = replace(g.route, version="fixture-route-renewed")
+    err = refused(send, g, shown=False)     # the page still shows no price: it names none
+    assert (err.status, err.code) == (409, "billing_price_changed")
+    assert err.detail["current"]["route_version"] == "fixture-route-renewed"
+    nothing_stored(g)
+    out = send(g)["output"]                 # after the re-read the page shows the price and sends it
+    assert json.loads(quotes_of(g)[0]["terms_json"])["route"]["version"] == "fixture-route-renewed"
+    assert quotes_of(g)[0]["accepted_turn_id"] == out["turn_id"]
 
 
 def test_the_shown_price_is_part_of_the_automatic_path_only(paid):
@@ -519,6 +597,7 @@ def test_a_price_adopted_while_the_page_was_open_is_refused_once_then_sent_at_th
     now_shown = shown_run(g)
     current = err.detail["current"]
     assert current == {"price_id": now_shown["price_id"], "route_version": now_shown["route_version"],
+                       "price_key": now_shown["price_key"],
                        "maximum": now_shown["maximum"], "per_call_hold": now_shown["per_call_hold"],
                        "unit": asdict(factory.UNIT)}
     assert current["price_id"] == new_price != before["price_id"]
@@ -656,3 +735,132 @@ def test_other_callers_on_the_legacy_path_keep_recording_the_versions_at_the_pai
     out = send(g, via=via, quote_id=q["id"])["output"]
     added = [r for r in TermsAcceptances(g.store).history(uid) if r["context"] == "paid_run:" + out["turn_id"]]
     assert {(r["document"], r["version"]) for r in added} == {(d, v) for d, (v, _) in DOCUMENTS.items()}
+
+
+# ------------------------------------------------------------------ 18. what the person pays, not the route version (S2)
+def renew(g, spec=None, **route):
+    """FIXTURE: the owner re-publishes the governed route (evidence/2026-10-11-route-renewal step
+    2): a later valid_until, plus any ``route`` change; a new provider revision, so a new route version."""
+    import time
+    base = spec or g.spec
+    g.spec = {**base, "route": {**base["route"], "valid_until": int(time.time()) + 7 * 86400, **route}}
+    publish(g, {"action": "keep"}, g.spec)
+
+
+def bound_once(g, text="Read my forms"):
+    """FIXTURE: one answer bound (and finished) at the price the page shows now."""
+    out = send(g, text)["output"]
+    g.store.execute("UPDATE agent_turns SET status='succeeded' WHERE id=?", (out["turn_id"],))
+    return out
+
+
+def status_of(g):
+    return g.suite.caps.invoke("agent.billing.status", {}, user_id=g.user["id"])["output"]
+
+
+def shown_key(run):
+    """What a page sends back (S2): the sale price id, and the price key in seen_route_version."""
+    return {"seen_price_id": run["price_id"], "seen_route_version": run["price_key"]}
+
+
+@pytest.mark.parametrize("banded", [False, True])
+def test_a_route_renewal_with_the_same_prices_shows_no_notice_and_refuses_no_send(governed, banded):
+    """int-release-1: a renewal bumps the route version (deepseek:<env>:<revision>) and nothing
+    the person pays; the chat must not say prices changed, and an open page must still send."""
+    g = governed
+    configure(g, banded=banded)
+    fund(g)
+    accept_terms(g.store, g.user["id"])
+    bound_once(g)
+    before = status_of(g)["run"]
+    renew(g)
+    status = status_of(g)
+    after = status["run"]
+    assert after["route_version"] != before["route_version"], "续期产生新的路由版本"
+    assert status["price_notice"] is None, "价格没有变化，聊天页不提示价格已更新"
+    assert after["price_key"] == before["price_key"] and after["maximum"] == before["maximum"]
+    out = send(g, "Read my forms again", **shown_key(before))["output"]
+    terms = json.loads(quotes_of(g)[-1]["terms_json"])
+    assert quotes_of(g)[-1]["accepted_turn_id"] == out["turn_id"]
+    assert terms["route"]["version"] == after["route_version"], "按续期后的路由运行，价格与页面显示的相同"
+    assert str(terms["budget"]) == before["maximum"]
+
+
+def charge_lengths(g):
+    renew(g, {**g.spec, "incomplete_charging": {"length": True}})
+
+
+def new_calendar(g):
+    from synwevo_core.billing.bands import BandSchedules, published_defaults
+    schedules = BandSchedules(g.store, environment="test")
+    with g.store.tx():
+        schedules.append({**published_defaults(), "source_ref": "fixture-calendar:factory-2"},
+                         expected_revision=schedules.read()["revision"], actor_id=g.user["id"],
+                         reason="Fixture calendar change", operation_id=uuid.uuid4().hex)
+
+
+@pytest.mark.parametrize("change, banded", [
+    ("sale price", False), ("call hold", False), ("charged endings", False), ("model", False), ("calendar", True)])
+def test_a_change_in_what_the_person_pays_is_shown_and_refuses_the_page_that_showed_the_earlier_price(governed, change, banded):
+    g = governed
+    configure(g, banded=banded)
+    fund(g)
+    accept_terms(g.store, g.user["id"])
+    bound_once(g)
+    before = status_of(g)["run"]
+    {"sale price": lambda: new_sale_price(g, input_uncached="3"),
+     "call hold": lambda: renew(g, output_token_ceiling=128),
+     "charged endings": lambda: charge_lengths(g),
+     "model": lambda: renew(g, requested_model="fixture-model-next"),
+     "calendar": lambda: new_calendar(g)}[change]()
+    status = status_of(g)
+    now_shown = status["run"]
+    assert now_shown["price_key"] != before["price_key"], change
+    notice = status["price_notice"]
+    assert notice is not None and notice["previous"]["price_key"] == before["price_key"], "提示带上次运行的价格键"
+    if change == "call hold":
+        assert notice["previous"]["price_id"] == now_shown["price_id"] and int(now_shown["maximum"]) > int(before["maximum"])
+    err = refused(send, g, "Read my forms again", **shown_key(before))
+    assert (err.status, err.code) == (409, "billing_price_changed")
+    assert err.detail["current"]["price_key"] == now_shown["price_key"]
+    assert err.detail["current"]["maximum"] == now_shown["maximum"]
+    assert len(quotes_of(g)) == 1, "什么也没保存"
+    out = send(g, "Read my forms again", **shown_key(now_shown))["output"]
+    assert quotes_of(g)[-1]["accepted_turn_id"] == out["turn_id"]
+
+
+def test_the_price_key_is_a_stable_digest_of_what_the_person_pays(paid):
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    run = shown_run(g)
+    assert run["price_key"] == shown_run(g)["price_key"] and run["price_key"].startswith("pk1:")
+    assert len(run["price_key"]) <= 200, "fits seen_route_version"
+    from dataclasses import replace
+    g.route_holder[0] = replace(g.route, version="fixture-route-v2", valid_until=g.route.valid_until + 1)
+    assert shown_run(g)["price_key"] == run["price_key"], "版本与有效期不在价格键里"
+    for changed in (replace(g.route, output_token_ceiling=g.route.output_token_ceiling + 1),
+                    replace(g.route, requested_model="fixture-model-next"),
+                    replace(g.route, charge_incomplete=("length",))):
+        g.route_holder[0] = changed
+        assert shown_run(g)["price_key"] != run["price_key"], changed
+
+
+def test_the_price_key_covers_every_figure_of_the_sale_price(paid):
+    """The digest itself (S2): every rate and off-peak rate, the unit, per-tokens, the price id
+    and one call's hold move it; the stored form of the same facts (a bound quote's terms) does not."""
+    from synwevo_suite.agent.quotes import RunQuotes
+    g = paid
+    sale = g.quotes.gateway._prices(g.route)[0].to_dict()
+    key = RunQuotes.price_key(g.route, sale, 7)
+    assert RunQuotes.price_key(g.route, json.loads(json.dumps(sale)), "7") == key, "存储后的条款给出同一个键"
+    bump = lambda rate: {**rate, "numerator": int(rate["numerator"]) + 1}  # noqa: E731
+    banded = {**sale, "off_peak": {k: sale[k] for k in ("input_uncached", "input_cached", "output")},
+              "band_schedule": "fixture-schedule"}
+    variants = [{**sale, "price_id": "fixture-sale-next"}, {**sale, "per_tokens": int(sale["per_tokens"]) * 10},
+                {**sale, "unit": {**sale["unit"], "scale": int(sale["unit"]["scale"]) + 1}}, banded]
+    variants += [{**sale, rate: bump(sale[rate])} for rate in ("input_uncached", "input_cached", "output")]
+    variants += [{**banded, "off_peak": {**banded["off_peak"], rate: bump(banded["off_peak"][rate])}}
+                 for rate in ("input_uncached", "input_cached", "output")]
+    keys = {RunQuotes.price_key(g.route, variant, 7) for variant in variants}
+    assert key not in keys and len(keys) == len(variants), "每个费率、低谷费率、单位与售价编号都在价格键里"
+    assert RunQuotes.price_key(g.route, sale, 8) != key, "每次调用预留在价格键里"

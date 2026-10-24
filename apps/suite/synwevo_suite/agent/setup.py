@@ -35,8 +35,18 @@ def suggested_limits(unit: Unit | None) -> dict | None:
 
 
 def terms_status(store, user_id: str) -> dict:
-    accepted = TermsAcceptances(store).accepted(user_id)
-    documents = [{**d, "accepted": accepted[d["id"]]} for d in current_documents()]
+    """Each published document at its version in force, whether the person accepted that version,
+    and ``accepted_version``: the version of it the person accepted last (None when never), so
+    the step tells a first use from a re-acceptance after an update (addendum-2 S4). When the
+    version in force is accepted, it is that version."""
+    acceptances = TermsAcceptances(store)
+    accepted = acceptances.accepted(user_id)
+    last = {}
+    for row in acceptances.history(user_id):        # oldest first: the latest acceptance stays
+        last[row["document"]] = row["version"]
+    documents = [{**d, "accepted": accepted[d["id"]],
+                  "accepted_version": d["version"] if accepted[d["id"]] else last.get(d["id"])}
+                 for d in current_documents()]
     return {"complete": all(d["accepted"] for d in documents), "documents": documents}
 
 

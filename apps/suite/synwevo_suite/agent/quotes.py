@@ -80,6 +80,30 @@ class RunQuotes:
                 # A shorter run could not finish even one call inside its hold (gateway.send_window).
                 "run_seconds_min": self.gateway.send_window}
 
+    #: Version prefix of :meth:`price_key`: a different composition is a different key.
+    PRICE_KEY_VERSION = "pk1"
+
+    @classmethod
+    def price_key(cls, route: Route, sale: dict, per_call_hold) -> str:
+        """What the person pays for one answer, as one stable digest (addendum-2 S2): the sale
+        price (``price_id``, unit, per-tokens, rates and off-peak rates and, for a time-banded
+        price, the calendar and calendar revision that decide which of them applies), one call's
+        hold (and with it the maximum), the model and confirmed route, and which incomplete
+        endings are charged. ``sale`` is the stored form (``PriceSnapshot.to_dict``), so a bound
+        quote's terms give the same key as the offer did. The route version, its validity and
+        confirmation references are not in it: a renewal that changes none of these facts
+        changes nothing the person sees and refuses nothing."""
+        banded = sale.get("off_peak") is not None
+        value = {"model": route.requested_model, "confirmed_route": route.confirmed_route,
+                 "charge_incomplete": list(route.charge_incomplete),
+                 "price_id": sale["price_id"], "unit": {"code": sale["unit"]["code"], "scale": int(sale["unit"]["scale"])},
+                 "per_tokens": int(sale["per_tokens"]), "rates": cls._rates(sale), "off_peak_rates": off_peak_rates(sale),
+                 # The calendar revision is carried only in the resolved route version (provider_settings).
+                 "calendar": {"schedule": sale.get("band_schedule"), "revision": route.version.partition(":bands:")[2] or None}
+                             if banded else None,
+                 "per_call_hold": str(per_call_hold)}
+        return f"{cls.PRICE_KEY_VERSION}:" + hashlib.sha256(_json(value).encode()).hexdigest()
+
     @staticmethod
     def payer_of(terms) -> dict:
         """The payer a quote/consent was issued for. Older terms (before org-payments) are personal."""
@@ -260,21 +284,24 @@ class RunQuotes:
              current["scope_json"], _json(terms), now, expires_at))
         return quote_id
 
-    @staticmethod
-    def shown_price(seen: dict | None, route, sale, bound: dict) -> None:
-        """The price the page showed is the price the send runs at (AD-1). ``seen`` holds the sale
-        price id and route version the person's page displayed (agent.billing.status ``run``).
-        When either is given and differs from what this run would bind, refuse with the current
-        figures (``price_changed``; the admission rolls back, nothing is stored) so the page shows
-        them before the person sends again. A page that sends neither (an older cached bundle)
-        is not checked."""
-        if not seen:
-            return
-        price_id, version = seen.get("price_id"), seen.get("route_version")
-        if (price_id is None or price_id == sale.price_id) and (version is None or version == route.version):
+    @classmethod
+    def shown_price(cls, seen: dict | None, route, sale, bound: dict) -> None:
+        """The price the page showed is the price the send runs at (AD-1). ``seen`` holds what the
+        person's page displayed (agent.billing.status ``run``): the sale ``price_id`` and, under
+        the compatible name ``route_version``, the run's :meth:`price_key` (addendum-2 S2: what
+        the person pays, not the bare route version, so a renewal at the same prices refuses
+        nothing). Both are required (S1): no page in use reaches this path without them (the
+        earlier bundle always sent ``quote_id``/``consent_id``), so a send naming no displayed
+        price was sent while the page showed none (loading, unreadable, no ``run``). When either
+        is missing or differs from what this run would bind, refuse with the current figures
+        (``price_changed``; the admission rolls back, nothing is stored) so the page shows them
+        before the person sends again."""
+        seen = seen or {}
+        key = cls.price_key(route, sale.to_dict(), bound["hold"])
+        if seen.get("price_id") == sale.price_id and seen.get("route_version") == key:
             return
         error = BillingError("price_changed")
-        error.detail = {"current": {"price_id": sale.price_id, "route_version": route.version,
+        error.detail = {"current": {"price_id": sale.price_id, "route_version": route.version, "price_key": key,
                                     "maximum": str(bound["budget"]), "per_call_hold": str(bound["hold"]),
                                     "unit": asdict(sale.unit)}}
         raise error
@@ -283,8 +310,9 @@ class RunQuotes:
         """What an automatic send would be bound to now (agent.billing.status ``run``); None when
         the route is unusable. ``usable`` is False when the person's cap could not be honoured
         or the route has less than one send's window left — the send would be refused.
-        ``price_id`` and ``route_version`` are what the send would bind; the page sends them back
-        as ``seen_price_id``/``seen_route_version`` (:meth:`shown_price`)."""
+        ``price_id`` and ``route_version`` are what the send would bind and ``price_key`` what the
+        person would pay (:meth:`price_key`); the page sends back ``price_id`` as
+        ``seen_price_id`` and ``price_key`` as ``seen_route_version`` (:meth:`shown_price`)."""
         route = self.current_route()
         if not isinstance(route, Route):
             return None
@@ -293,7 +321,7 @@ class RunQuotes:
         default = hold * self.MAX_CALLS
         run_seconds = max(0, min(self.MAX_RUN_SECONDS, route.valid_until - self.ledger._now()))
         usable = run_seconds >= self.gateway.send_window
-        shown = {"price_id": sale.price_id, "route_version": route.version}
+        shown = {"price_id": sale.price_id, "route_version": route.version, "price_key": self.price_key(route, sale.to_dict(), hold)}
         unusable = {"maximum": str(default), "default": str(default), "source": "personal_cap", "per_call_hold": str(hold),
                     "max_calls": self.MAX_CALLS, "run_seconds": run_seconds, "usable": False, **shown}
         try:
@@ -312,10 +340,11 @@ class RunQuotes:
                 "per_call_hold": str(hold), "max_calls": self.MAX_CALLS, "run_seconds": run_seconds, "usable": usable,
                 **shown}
 
-    def price_notice(self, user_id, offer: dict) -> dict | None:
-        """The person's last bound run compared with the current offer (D-7): the previous pricing
-        when the route version, sale price or per-call hold differs, else None. Information only;
-        it never blocks a send."""
+    def price_notice(self, user_id, current_key: str) -> dict | None:
+        """The person's last bound run compared with what a send would pay now (D-7, addendum-2
+        S2): the previous pricing when its :meth:`price_key` differs from ``current_key`` (the
+        status's ``run.price_key``), else None. A route renewal at the same prices is no change.
+        Information only; it never blocks a send."""
         row = self.store.one("SELECT terms_json, created_at FROM agent_model_quotes WHERE user_id=? AND environment=? "
                              "AND namespace=? AND accepted_turn_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1",
                              (user_id, self.ledger.environment, self.ledger.namespace))
@@ -323,14 +352,15 @@ class RunQuotes:
             return None
         terms = json.loads(row["terms_json"])
         sale, route = terms["sale"], terms["route"]
+        key = self.price_key(Route(**route), sale, terms["per_call_hold"])
+        if key == current_key:
+            return None
         previous = {"model": route["requested_model"], "confirmed_route": route["confirmed_route"],
                     "route_version": route["version"], "price_id": sale["price_id"], "unit": sale["unit"],
                     "rates": self._rates(sale), "off_peak_rates": off_peak_rates(sale), "per_tokens": sale["per_tokens"],
                     "per_call_hold": str(terms["per_call_hold"]), "terms_ref": sale["terms_ref"],
-                    "environment": self.ledger.environment}
-        same = (previous["route_version"] == offer["route_version"] and previous["price_id"] == offer["price_id"]
-                and previous["per_call_hold"] == offer["per_call_hold"])
-        return None if same else {"previous": previous, "previous_run_at": int(row["created_at"])}
+                    "environment": self.ledger.environment, "price_key": key}
+        return {"previous": previous, "previous_run_at": int(row["created_at"])}
 
     @staticmethod
     def _rates(sale: dict) -> dict:

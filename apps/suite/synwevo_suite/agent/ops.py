@@ -95,9 +95,11 @@ class StartTurn(_In):
     #: granted them. Only without ``quote_id``/``consent_id`` (those name their payer already).
     payer_kind: Literal["user", "organization"] | None = None
     payer_id: str | None = F(default=None, max_length=200)
-    #: The sale price id and route version the page displayed (agent.billing.status ``run``). An
-    #: automatic send whose price is no longer the one in force is refused (409
-    #: ``billing_price_changed``, nothing stored); absent (an older page) is not checked.
+    #: What the page displayed (agent.billing.status ``run``): ``seen_price_id`` is its
+    #: ``price_id``; ``seen_route_version`` keeps its name for compatibility and carries its
+    #: ``price_key`` (what the person pays, not the route version). Required on the automatic
+    #: path: a send without both, or with a price no longer in force, is refused (409
+    #: ``billing_price_changed``, nothing stored).
     seen_price_id: str | None = F(default=None, max_length=200)
     seen_route_version: str | None = F(default=None, max_length=200)
 
@@ -211,14 +213,17 @@ class RunBound(_In):
     max_calls: int
     run_seconds: int
     usable: bool
-    #: The sale price id and route version this send would bind (AD-1): the page sends them back
-    #: as ``seen_price_id``/``seen_route_version`` with agent.turn.start.
+    #: The sale price id and route version this send would bind (AD-1), and ``price_key``, a
+    #: stable digest of what the person pays (addendum-2 S2): the page sends back ``price_id`` as
+    #: ``seen_price_id`` and ``price_key`` as ``seen_route_version`` with agent.turn.start.
     price_id: str
     route_version: str
+    price_key: str = F(min_length=1, max_length=200)
 
 
 class PreviousPricing(ModelTerms):
-    pass
+    #: The previous run's ``price_key``, to compare with ``run.price_key`` (addendum-2 S2).
+    price_key: str | None = None
 
 
 class PriceNotice(_In):
@@ -245,6 +250,10 @@ class TermsDocument(_In):
     version: str
     effective: str
     accepted: bool
+    #: The version of this document the person accepted last, None when never (addendum-2 S4):
+    #: an earlier version here with ``accepted: false`` is a re-acceptance after an update, not
+    #: a first use. Equal to ``version`` when ``accepted`` is true.
+    accepted_version: str | None
 
 
 class TermsStatus(_In):
@@ -521,7 +530,7 @@ def billing_status(agent, user_id: str) -> dict:
     except BillingError:
         run = None
     try:
-        price_notice = quotes.price_notice(user_id, offer)
+        price_notice = quotes.price_notice(user_id, run["price_key"]) if run else None
     except BillingError:
         price_notice = None
     return {"available": True, "environment": quotes.ledger.environment,
