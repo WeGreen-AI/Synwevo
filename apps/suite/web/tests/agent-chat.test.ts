@@ -390,8 +390,11 @@ test('a suspended Agent access says so, without a payment next step, and tells t
  *  the chat (errors.tsx) — never the generic "could not finish" — unless it is listed below with
  *  the reason no chat ever shows it. Billing errors reach the chat as "billing_" + code. */
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+/** The checkout whose server sources are scanned: this one, or another named by AGENT_SCAN_ROOT
+ *  (read only), so a server branch can be checked against this page before the two are merged. */
+const SCAN_ROOT = process.env.AGENT_SCAN_ROOT ? process.env.AGENT_SCAN_ROOT.replace(/\/*$/, '/') : ROOT;
 const AGENT_DIR = 'apps/suite/synwevo_suite/agent/';
-const SOURCES = [...readdirSync(ROOT + AGENT_DIR).filter((f) => f.endsWith('.py')).map((f) => AGENT_DIR + f),
+const SOURCES = [...readdirSync(SCAN_ROOT + AGENT_DIR).filter((f) => f.endsWith('.py')).map((f) => AGENT_DIR + f),
   'packages/core/synwevo_core/agent_safety.py',
   ...['ledger', 'admission', 'risk', 'traffic', 'payer_budgets', 'org_payers', 'models'].map((n) => `packages/core/synwevo_core/billing/${n}.py`)];
 /** Codes built at run time (an HTTP status table, a period name), spelled out. */
@@ -400,7 +403,7 @@ const COMPUTED = ['provider_balance', 'provider_error', 'provider_overloaded', '
 function serverCodes(): Set<string> {
   const codes = new Set<string>(COMPUTED);
   for (const file of SOURCES) {
-    const source = readFileSync(ROOT + file, 'utf8');
+    const source = readFileSync(SCAN_ROOT + file, 'utf8');
     for (const [, kind, code] of source.matchAll(/\b(ServiceError|ProviderError|BillingError|DeepSeekError)\(\s*(?:\d+\s*,\s*)?"([a-z_]+)"/g)) {
       if (code.endsWith('_')) continue;  // a prefix joined at run time ("billing_" + exc.code)
       codes.add(kind === 'BillingError' ? `billing_${code}` : code);
@@ -453,7 +456,7 @@ const GENERIC = ['费用或授权状态暂不允许继续，请核对后重试�
 /** Codes the send-and-go server (package A: synwevo_suite.agent.setup and its operations) raises.
  *  Before that server is merged into this tree they are listed but not yet raised; once its
  *  setup module exists every one of them must be raised, like every other listed code. */
-const SEND_AND_GO_SERVER = existsSync(ROOT + AGENT_DIR + 'setup.py');
+const SEND_AND_GO_SERVER = existsSync(SCAN_ROOT + AGENT_DIR + 'setup.py');
 const SEND_AND_GO_CODES = new Set(['terms_version_changed', 'billing_run_cap_invalid']);
 
 test('every refusal the backend can send to the chat has its own honest sentence', () => {
