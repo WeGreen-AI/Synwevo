@@ -458,10 +458,16 @@ def agent_fact(store, ident) -> dict:
 
     ``released``: the registry row ``agent`` is active (the deployment released it).
     ``provider``: the configured model provider (``SYNWEVO_AGENT_PROVIDER``; deepseek | anthropic).
-    ``model_configured``: that provider has a platform model ready — for DeepSeek an enabled,
-    governed route; for the legacy provider a configured platform key (only its presence is read).
+    ``model_configured``: that provider has a platform model ready now — for DeepSeek an enabled,
+    governed route whose confirmation has not expired (``route.valid_until``) and that no closure
+    holds (upstream 402 or a missing model id, ``ProviderSettings.closure``), the same conditions
+    paid dispatch checks; for the legacy provider a configured platform key (only its presence is
+    read).
+    ``model_paused``: an enabled DeepSeek route exists but is expired or closed, so nothing reaches
+    the model until an administrator confirms or publishes it again; the pages say so instead of
+    "not yet open". Always false for the legacy provider, which has no governed route.
     Unreadable parts are ``None``; the pages then say "could not be read"."""
-    out = {"released": None, "provider": None, "model_configured": None}
+    out = {"released": None, "provider": None, "model_configured": None, "model_paused": None}
     if store is None or ident is None:
         return out
     try:
@@ -476,12 +482,21 @@ def agent_fact(store, ident) -> dict:
         if provider == "deepseek":
             from synwevo_core.billing.provider_settings import ProviderSettings
             environment = env.get("BILLING_ENVIRONMENT")
-            spec = ProviderSettings(store, environment=environment).read()["spec"] if environment in ("test", "live") else None
-            out["model_configured"] = bool(spec and spec.get("enabled"))
+            settings = ProviderSettings(store, environment=environment) if environment in ("test", "live") else None
+            state = settings.read() if settings else None
+            spec = state["spec"] if state else None
+            if spec and spec.get("enabled"):
+                valid_until = (spec.get("route") or {}).get("valid_until")
+                ready = (type(valid_until) is int and valid_until > settings.clock()
+                         and settings.closure(state["revision"]) is None)
+                out["model_configured"], out["model_paused"] = ready, not ready
+            else:
+                out["model_configured"], out["model_paused"] = False, False
         elif provider == "anthropic":
             out["model_configured"] = bool((env.get("AGENT_ANTHROPIC_API_KEY") or "").strip())
+            out["model_paused"] = False
     except Exception:  # noqa: BLE001
-        out["model_configured"] = None
+        out["model_configured"] = out["model_paused"] = None
     return out
 
 

@@ -349,6 +349,7 @@ export const portalMessages = {
   "版本 {version}，自 {date} 起生效。": {"en": "Version {version}, in effect from {date}.", "zh-Hant": "版本 {version}，自 {date} 起生效。"},
   "未开放：不会向 AI 模型发送任何内容": {"en": "Not available: no content is sent to any AI model", "zh-Hant": "未開放：不會向 AI 模型傳送任何內容"},
   "已上线，模型服务尚未开放：不会向 AI 模型发送任何内容": {"en": "Released, model service not yet open: no content is sent to any AI model", "zh-Hant": "已上線，模型服務尚未開放：不會向 AI 模型傳送任何內容"},
+  "已上线，模型服务暂停：不会向 AI 模型发送任何内容": {"en": "Released, model service paused: no content is sent to any AI model", "zh-Hant": "已上線，模型服務暫停：不會向 AI 模型傳送任何內容"},
   "已开放：经你单独同意后，发送给模型提供方 DeepSeek": {"en": "Available: sent to the model provider DeepSeek after your separate consent", "zh-Hant": "已開放：經你單獨同意後，傳送給模型提供方 DeepSeek"},
   "已开放：发送给模型提供方 Anthropic": {"en": "Available: sent to the model provider Anthropic", "zh-Hant": "已開放：傳送給模型提供方 Anthropic"},
   "Synwevo Agent（AI 助手）": {"en": "Synwevo Agent (AI assistant)", "zh-Hant": "Synwevo Agent（AI 助理）"},

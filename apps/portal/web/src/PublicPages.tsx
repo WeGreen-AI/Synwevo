@@ -14,8 +14,9 @@ type Facts = {
     member_import_cleanup?: boolean | null;
   };
   docs: { malware_scanner: "on" | "off" | "down" | null };
-  /** Synwevo Agent: the registry's release state and the configured model (public.py agent_fact). */
-  agent?: { released: boolean | null; provider: "deepseek" | "anthropic" | null; model_configured: boolean | null };
+  /** Synwevo Agent: the registry's release state and the configured model (public.py agent_fact).
+   *  model_paused: an enabled route is expired or closed, so nothing reaches the model for now. */
+  agent?: { released: boolean | null; provider: "deepseek" | "anthropic" | null; model_configured: boolean | null; model_paused?: boolean | null };
 };
 
 type Content = { eyebrow: string; heading: string; lead: string; summary: string[]; sections: Section[] };
@@ -132,7 +133,8 @@ function LiveStatus({ facts, page }: { facts: Facts | null | undefined; page: Pa
   const agentState = facts === undefined ? t("读取中…") : !agent || agent.released === null ? unread
     : !agent.released ? t("未开放：不会向 AI 模型发送任何内容")
     : agent.model_configured === null ? unread
-    : !agent.model_configured ? t("已上线，模型服务尚未开放：不会向 AI 模型发送任何内容")
+    : !agent.model_configured ? (agent.model_paused ? t("已上线，模型服务暂停：不会向 AI 模型发送任何内容")
+      : t("已上线，模型服务尚未开放：不会向 AI 模型发送任何内容"))
     : agent.provider === "deepseek" ? t("已开放：经你单独同意后，发送给模型提供方 DeepSeek")
     : agent.provider === "anthropic" ? t("已开放：发送给模型提供方 Anthropic") : unread;
   rows.unshift([t("Synwevo Agent（AI 助手）"), agentState]);

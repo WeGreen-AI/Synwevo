@@ -203,7 +203,7 @@
 | `accounts.external_providers` | 同上 → `external_providers[].label`（`external.py:171`） | 提供商名列表 / 未启用 |
 | `accounts.registration` | 同上 → `registration`（`open` / `invite` / `closed`） | 开放注册：邮箱验证后即可使用 / 仅凭邀请注册 / 已关闭 |
 | `accounts.mail_sender` | 同上 → `mail_sender`（`null` = 未配置） | `Name <address>` / 未配置 |
-| `agent.released` / `agent.provider` / `agent.model_configured` | 门户进程自己的库与配置（`public.py` `agent_fact`）：注册表 `apps` 行 `agent` 是否 `active`；`SYNWEVO_AGENT_PROVIDER`；DeepSeek = `ProviderSettings(SYNWEVO_BILLING_ENVIRONMENT).read()` 已启用，旧提供方 = 只读平台密钥是否存在 | 未开放：不会向 AI 模型发送任何内容 / 已上线，模型服务尚未开放 / 已开放：经你单独同意后，发送给模型提供方 DeepSeek / 暂时无法读取 |
+| `agent.released` / `agent.provider` / `agent.model_configured` / `agent.model_paused` | 门户进程自己的库与配置（`public.py` `agent_fact`）：注册表 `apps` 行 `agent` 是否 `active`；`SYNWEVO_AGENT_PROVIDER`；DeepSeek = `ProviderSettings(SYNWEVO_BILLING_ENVIRONMENT).read()` 已启用、`route.valid_until` 未过期且 `closure()` 为空才算就绪（与付费派发的检查相同）；已启用但核实过期或被关闭（上游 402、模型 id 缺失）= `model_paused`；旧提供方 = 只读平台密钥是否存在 | 未开放：不会向 AI 模型发送任何内容 / 已上线，模型服务尚未开放 / 已上线，模型服务暂停：不会向 AI 模型发送任何内容 / 已开放：经你单独同意后，发送给模型提供方 DeepSeek / 暂时无法读取 |
 
 规则：只访问配置好的源站（`SYNWEVO_ISSUER` 与应用注册表），不用请求里的任何值；结果缓存 60 s、单次超时 3 s；
 任何读不到的项为 `null`，页面显示「暂时无法读取」而不是默认值；文档不进索引（非公开路径自动带 `X-Robots-Tag: noindex`）。
