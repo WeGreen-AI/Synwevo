@@ -624,3 +624,24 @@ test('W8: the composer honours run.usable: an unusable cap says so with the way 
     assert.equal(core.translate('en', source), en, key); assert.equal(core.translate('zh-Hant', source), hant, key);
   }
 });
+
+test('W2: leaving Agent settings, and saving the maximum there, reads agent.billing.status again, so the composer never shows a stale maximum', async () => {
+  const capped = (amount: string) => fixtureStatus({ run: { ...fixtureStatus().run, maximum: amount, cap: amount, source: 'personal_cap' } });
+  const h = await appFixture({ status: capped('100') });
+  const statusReads = () => h.reads.filter((r) => r === 'agent.billing.status').length;
+  assert.equal(h.chat().maximum.props.maximum.amount, '100');
+  await h.settings(true);
+  // The settings page hands every saved or cleared maximum back to the page.
+  const page = h.find((el) => typeof el.props.onBillingChanged === 'function');
+  const before = statusReads();
+  h.serve({ status: capped('300') });   // FIXTURE: the person raised their maximum to 3.00
+  page.props.onBillingChanged(); await settle(); h.render(); await settle(); h.render();
+  assert.equal(statusReads(), before + 1, 'a save reads the status again');
+  h.serve({ status: capped('250') });   // FIXTURE: and lowered it again before going back
+  await h.settings(false);
+  assert.equal(statusReads(), before + 2, 'leaving the settings reads it again');
+  assert.equal(h.chat().maximum.props.maximum.amount, '250');
+  await h.chat().send('Fixture question');
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture question', ...SEEN });
+  h.unmount();
+});

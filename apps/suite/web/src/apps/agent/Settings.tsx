@@ -199,7 +199,7 @@ function WriteFeedback({ write }: { write: ReturnType<typeof useWrite> }) {
   </div>;
 }
 
-function AccessSettings() {
+function AccessSettings({ onBillingChanged }: { onBillingChanged?: () => void }) {
   const { t } = useI18n();
   const resource = useRead<AgentSettings>("agent.settings.get");
   return <><section className="card" aria-labelledby="ag-access-title">
@@ -210,19 +210,24 @@ function AccessSettings() {
     </div>
   </section>
     {resource.data?.billing.required && <PayerBudget />}
-    {resource.data?.billing.required && <AnswerBilling settings={resource.data} onChanged={resource.setData} />}
+    {resource.data?.billing.required && <AnswerBilling settings={resource.data} onChanged={resource.setData} onBillingChanged={onBillingChanged} />}
   </>;
 }
 
-/** The per-answer maximum and the accepted document versions, read beside each other. */
-function AnswerBilling({ settings, onChanged }: { settings: AgentSettings; onChanged: (value: AgentSettings) => void }) {
+/** The per-answer maximum and the accepted document versions, read beside each other. A saved or
+ *  cleared maximum reads the run bound again here and tells the page (`onBillingChanged`), which
+ *  reads it for the composer (addendum-2 W2), so no maximum on screen is older than the save. */
+export function AnswerBilling({ settings, onChanged, onBillingChanged }: {
+  settings: AgentSettings; onChanged: (value: AgentSettings) => void; onBillingChanged?: () => void;
+}) {
   const status = useRead<BillingStatus>("agent.billing.status");
+  const saved = (value: AgentSettings) => { onChanged(value); status.reload(); onBillingChanged?.(); };
   const setup = useRead<unknown>("agent.setup.get");
   let documents: SetupState | null | undefined;
   if (setup.loading && setup.data === null) documents = undefined;
   else { try { documents = validateSetup(setup.data); } catch { documents = null; } }
   return <>
-    <RunCapSettings settings={settings} status={status.loading && !status.data ? undefined : status.data} onChanged={onChanged} />
+    <RunCapSettings settings={settings} status={status.loading && !status.data ? undefined : status.data} onChanged={saved} />
     <AcceptedDocuments setup={documents} />
   </>;
 }
@@ -657,13 +662,15 @@ function WorkspacePolicies() {
   </section>;
 }
 
-export default function Settings() {
+/** `onBillingChanged`: something that changes what a send is bound to was saved here (the page
+ *  then reads `agent.billing.status` again for the composer). */
+export default function Settings({ onBillingChanged }: { onBillingChanged?: () => void } = {}) {
   const { t } = useI18n();
   return <div className="ag-settings col gap16">
     <header className="suite-head"><div><h1>{t("Agent 设置")}</h1>
       <p className="lede">{t("管理你的模型访问、个人记忆，以及获授权管理的工作空间处理政策。")}</p></div></header>
     <ProviderConsent />
-    <AccessSettings />
+    <AccessSettings onBillingChanged={onBillingChanged} />
     <Memories />
     <WorkspacePolicies />
     <TransferPolicies />

@@ -27,7 +27,7 @@ test("the notice names DeepSeek, storage in China and possible model improvement
 test("the settings page asks for this consent before anything else", () => {
   const settings = readFileSync(join(import.meta.dirname, "..", "src", "apps", "agent", "Settings.tsx"), "utf8");
   const body = settings.slice(settings.indexOf("export default function Settings"));
-  assert.ok(body.indexOf("<ProviderConsent />") > 0 && body.indexOf("<ProviderConsent />") < body.indexOf("<AccessSettings />"));
+  assert.ok(body.indexOf("<ProviderConsent />") > 0 && body.indexOf("<ProviderConsent />") < body.search(/<AccessSettings[ />]/));
   const section = readFileSync(join(import.meta.dirname, "..", "src", "apps", "agent", "ProviderConsent.tsx"), "utf8");
   assert.match(section, /id="ag-provider-consent"/);
   assert.match(section, /agent\.provider_consent\.accept/);

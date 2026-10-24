@@ -195,3 +195,30 @@ test('the choices are one group for assistive technology without a second frame 
   assert.match(css, /\n\.ag-plain-fieldset \{ margin: 0; padding: 0; border: 0; min-width: 0; \}/);
   h.unmount();
 });
+
+test('W2: a saved or cleared maximum reads agent.billing.status again here and tells the page, which reads it for the composer', async () => {
+  const reads: string[] = [], told: number[] = [], changes: any[] = [];
+  let money: any = status({ run: run({ maximum: '10', cap: '10', source: 'personal_cap', usable: false }) });
+  const h = await compiled('AnswerBilling', { settings: settings({ amount: '10', unit: UNIT }), onChanged: (value: any) => changes.push(value),
+    onBillingChanged: () => told.push(1) }, {
+    '../../shared/ops': { newKey: () => 'fixture_key', op: async () => { throw new Error('fixture: no write here'); },
+      read: async (operation: string) => { reads.push(operation); return operation === 'agent.billing.status' ? money : null; } },
+  });
+  await settle(); h.render(); await settle(); h.render();
+  const statusReads = () => reads.filter((r) => r === 'agent.billing.status').length;
+  const cap = () => h.elements().find((el) => typeof el.props.onChanged === 'function' && 'status' in el.props);
+  assert.equal(statusReads(), 1); assert.equal(cap().props.status.run.cap, '10');
+  // FIXTURE: the save went through (RunCapSettings hands back the saved settings); the server now binds 2.00.
+  money = status({ run: run({ maximum: '200', cap: '200', source: 'personal_cap' }) });
+  cap().props.onChanged(settings({ amount: '200', unit: UNIT })); await settle(); h.render(); await settle(); h.render();
+  assert.equal(changes.length, 1);
+  assert.equal(statusReads(), 2, 'the save reads the status again');
+  assert.deepEqual(told, [1], 'and tells the page');
+  assert.equal(cap().props.status.run.cap, '200', 'the card now shows the bound the server will use');
+  // Clearing back to the default is the same.
+  money = status();
+  cap().props.onChanged(settings(null)); await settle(); h.render(); await settle(); h.render();
+  assert.equal(statusReads(), 3); assert.deepEqual(told, [1, 1]);
+  assert.equal(cap().props.status.run.source, 'default');
+  h.unmount();
+});

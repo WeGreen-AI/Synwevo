@@ -125,6 +125,12 @@ function AgentApp() {
     });
     return () => abort.abort();
   }, [billingRequired, tick, answering, statusTick]);
+  // Back from Agent settings, where the maximum (and the setup facts) may have changed (W2).
+  const wasSettings = useRef(settings);
+  useEffect(() => {
+    if (wasSettings.current && !settings) setStatusTick((n) => n + 1);
+    wasSettings.current = settings;
+  }, [settings]);
   useEffect(() => {
     if (!billingRequired || typeof window === "undefined") return;
     const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
@@ -239,6 +245,7 @@ function AgentApp() {
     setSetupOpen(true); setFocusTick((n) => n + 1);
   }
   const readSetupFact = useCallback((operation: string) => read<unknown>(operation, {}, null), []);
+  const rereadStatus = useCallback(() => setStatusTick((n) => n + 1), []);
   const updateDraft = useCallback((next: Draft | null) => setDraft(next), []);
   /** Send the kept message in one request; on success the composer is cleared. A refusal leaves
    *  it in the composer and is shown above it with its next step. */
@@ -348,7 +355,7 @@ function AgentApp() {
         <Link className="btn ghost" to="/workspace">{t("返回工作空间")}</Link>
       </aside>
       <main className="ag-main">
-        {automations ? <Suspense fallback={<Loading />}><Automations /></Suspense> : settings ? <Suspense fallback={<Loading />}><Settings /></Suspense> : <>
+        {automations ? <Suspense fallback={<Loading />}><Automations /></Suspense> : settings ? <Suspense fallback={<Loading />}><Settings onBillingChanged={rereadStatus} /></Suspense> : <>
           <div className="ag-toolbar"><h1>{title ?? t("新会话")}</h1>
             {conversation && <div className="ag-toolbar-actions">
               <button className="btn ghost sm" disabled={busy} onClick={() => void manage("rename")}>{t("重命名会话")}</button>
