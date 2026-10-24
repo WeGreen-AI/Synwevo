@@ -131,6 +131,17 @@ APP_ACTIONS: dict[str, dict] = {
     "suite.agent.file.upload": _a("suite.agent", "上传 Agent 文件", "上傳 Agent 檔案", "Upload an Agent file"),
     "suite.agent.file.download": _a("suite.agent", "下载 Agent 文件", "下載 Agent 檔案", "Download an Agent file"),
     "suite.agent.flow.trigger": _a("suite.agent", "触发器启动自动化", "觸發器啟動自動化", "Trigger starts an automation"),
+    # The Agent's connections to external MCP servers
+    "suite.agent.mcp.connection.create": _a("suite.agent", "添加 MCP 连接", "新增 MCP 連線", "Add an MCP connection"),
+    "suite.agent.mcp.connection.update": _a("suite.agent", "修改 MCP 连接", "修改 MCP 連線", "Update an MCP connection"),
+    "suite.agent.mcp.connection.delete": _a("suite.agent", "删除 MCP 连接", "刪除 MCP 連線", "Delete an MCP connection"),
+    "suite.agent.mcp.connection.enable": _a("suite.agent", "启用 MCP 连接", "啟用 MCP 連線", "Enable an MCP connection"),
+    "suite.agent.mcp.connection.disable": _a("suite.agent", "停用 MCP 连接", "停用 MCP 連線", "Disable an MCP connection"),
+    "suite.agent.mcp.credential.revoke": _a("suite.agent", "撤销 MCP 连接凭据", "撤銷 MCP 連線憑據", "Revoke an MCP connection credential"),
+    "suite.agent.mcp.grant.set": _a("suite.agent", "设置 MCP 工具授权", "設定 MCP 工具授權", "Set an MCP tool grant"),
+    "suite.agent.mcp.binding.set": _a("suite.agent", "设置 Agent 使用的 MCP 连接", "設定 Agent 使用的 MCP 連線", "Set which MCP connection the Agent uses"),
+    "suite.agent.mcp.oauth.start": _a("suite.agent", "开始 MCP 连接的认证", "開始 MCP 連線的認證", "Start an MCP connection authorization"),
+    "suite.agent.mcp.oauth.complete": _a("suite.agent", "完成 MCP 连接的认证", "完成 MCP 連線的認證", "Complete an MCP connection authorization"),
     # Workplace application webhook subscriptions
     "suite.webhook.create": _a("suite.webhooks", "创建 Webhook 订阅", "建立 Webhook 訂閱", "Create a webhook subscription"),
     "suite.webhook.update": _a("suite.webhooks", "修改 Webhook 订阅", "修改 Webhook 訂閱", "Update a webhook subscription"),

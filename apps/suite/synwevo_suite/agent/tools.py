@@ -21,6 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from synwevo_core.capabilities import Capabilities, canonical
 from synwevo_core.errors import ServiceError
 
+from .mcp.tools import MCP_PREFIX
+
 MAX_RESULT_CHARS = 24_000
 MAX_SCHEMA_CHARS = 20_000
 
@@ -199,13 +201,14 @@ def bounded(value: Any) -> tuple[Any, bool]:
 
 class ToolContext:
     def __init__(self, caps: Capabilities, user: dict, scope: list[str] | None, credential_kind: str,
-                 provider: str = "anthropic"):
+                 provider: str = "anthropic", mcp=None):
         self.caps = caps
         self.store = caps.store
         self.user = user
         self.scope = scope                  # None = every workspace the person can use
         self.credential_kind = credential_kind
         self.provider = provider
+        self.mcp = mcp                      # agent.mcp.tools.McpTools: the external tools this person enabled, or None
 
     # ------------------------------------------------------------------ catalogue
     def catalogue(self) -> dict:
@@ -223,12 +226,18 @@ class ToolContext:
 
     def operations_index(self) -> list[dict]:
         usable = {a["id"] for a in self.caps.catalogue(self.user["id"])}
-        return [{"id": op.id, "summary": op.summary, "changes_data": op.side_effect != "none"}
-                for op in sorted(self.caps.registry.operations(), key=lambda o: o.id)
-                if op.app in usable and op.agent != "never"]
+        own = [{"id": op.id, "summary": op.summary, "changes_data": op.side_effect != "none"}
+               for op in sorted(self.caps.registry.operations(), key=lambda o: o.id)
+               if op.app in usable and op.agent != "never"]
+        return own + (self.mcp.index() if self.mcp is not None else [])
 
     def find(self, query: str | None, app: str | None, operation: str | None) -> dict:
         if operation:
+            if operation.startswith(MCP_PREFIX):
+                vop = self.mcp.get(operation) if self.mcp is not None else None
+                if vop is None:
+                    return {"error": {"code": "unknown_operation", "message": f"No operation {operation!r} is available."}}
+                return self.mcp.describe(vop)
             op = self.caps.registry.get(operation)
             if op is None or op.agent == "never" or op.app not in {a["id"] for a in self.caps.catalogue(self.user["id"])}:
                 return {"error": {"code": "unknown_operation", "message": f"No operation {operation!r} is available."}}
@@ -255,6 +264,13 @@ class ToolContext:
         """Check a run_operation request without running it. Returns ``(op, workspace_id, clean_input)``
         or an error dict for the model (and the card)."""
         name = args.get("operation")
+        if isinstance(name, str) and name.startswith(MCP_PREFIX):
+            vop = self.mcp.get(name) if self.mcp is not None else None
+            if vop is None:
+                return {"code": "unknown_operation", "message": f"No operation {name!r}. Use find_operations."}
+            if args.get("workspace_id"):
+                return {"code": "workspace_not_applicable", "message": "External MCP tools do not take a workspace."}
+            return self.mcp.prepare(vop, args.get("input"))
         op = self.caps.registry.get(name) if isinstance(name, str) else None
         if op is None:
             return {"code": "unknown_operation", "message": f"No operation {name!r}. Use find_operations."}

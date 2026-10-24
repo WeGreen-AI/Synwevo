@@ -107,6 +107,10 @@ def install(api: FastAPI, plat, *, docs: Any = None, start_jobs: bool = True,
     # After every application (and the injected adapters) registered: the machine API gets one
     # route per operation that exists in this process, and none for one that does not.
     api.include_router(build_machine_router(ctx))
+    # The same operations as the Model Context Protocol (docs/platform/mcp.md): one endpoint,
+    # tokens for its own audience, every call through Capabilities.invoke like the routes above.
+    from .mcp_server import install as install_mcp_server
+    install_mcp_server(ctx)
     from .common import machine_events, machine_webhooks
     if machine_events.feeds(registry):
         # Signed webhooks push what the event feed serves; without a feed there is nothing to push.

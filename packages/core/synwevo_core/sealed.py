@@ -38,6 +38,9 @@ PURPOSES = {
     # Synwevo Forms fill-in links: kept so an editor can copy a link again (the hash is what
     # opening a link is checked against).
     "forms-fill-link": (b"synwevo/forms-fill-link/v1", b"forms-fill-link"),
+    # Credentials the Agent presents to external MCP servers (a bearer token, an OAuth token set,
+    # a client secret) and the PKCE verifier of an authorization in progress.
+    "mcp-credential": (b"synwevo/mcp-credential/v1", b"mcp-credential"),
     # A person's own AI provider key for their Agent: used server-side only, never returned.
     "agent-provider-key": (b"synwevo/agent-provider-key/v1", b"agent-provider-key"),
     "platform-model-key": (b"synwevo/platform-model-key/v1", b"platform-model-key"),
@@ -60,6 +63,9 @@ SEALED_COLUMNS = (
     ("model_provider_credentials", "environment", "secret_enc", "platform-model-key"),
     ("payment_credentials", "environment", "secret_enc", "platform-payment-key"),
     ("payment_credentials", "environment", "webhook_secret_enc", "platform-payment-key"),
+    ("mcp_connections", "id", "credential_sealed", "mcp-credential"),
+    ("mcp_connections", "id", "oauth_client_secret_sealed", "mcp-credential"),
+    ("mcp_oauth_flows", "id", "code_verifier_sealed", "mcp-credential"),
 )
 
 

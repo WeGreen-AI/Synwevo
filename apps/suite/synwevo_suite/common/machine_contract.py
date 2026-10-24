@@ -404,6 +404,28 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
         return {"200": {"description": "OK", "headers": _headers("200"),
                         "content": {"application/json": {"schema": schema}}}}
 
+    paths[f"{SUITE_V1}/mcp"] = {"post": {**_common({
+        "operationId": "mcp", "tags": ["mcp"],
+        "summary": "The same operations as the Model Context Protocol (Streamable HTTP, JSON-RPC 2.0)",
+        "description": "One JSON-RPC request or notification per POST (protocol revision 2026-07-28; the "
+                       "initialize handshake of revisions 2025-03-26 to 2025-11-25 is served too). Tools are the "
+                       "operations listed in this document that the token's scopes allow, plus synwevo.whoami and "
+                       "synwevo.run.get; resources synwevo://whoami and synwevo://operations. The token must be "
+                       "minted for this endpoint's own URL (RFC 8707 resource); its metadata is at "
+                       "/.well-known/oauth-protected-resource/api/suite/v1/mcp (RFC 9728). See "
+                       "docs/integration/mcp.md.",
+        "requestBody": {"required": True, "content": {"application/json": {"schema": {
+            "type": "object", "required": ["jsonrpc", "method"],
+            "properties": {"jsonrpc": {"const": "2.0"}, "id": {"type": ["string", "integer"]},
+                           "method": {"type": "string"}, "params": {"type": "object"}}}}}},
+        "responses": {"200": {"description": "A JSON-RPC response, as application/json or as a text/event-stream "
+                                             "that carries request-scoped notifications before it",
+                              "headers": _headers("200"),
+                              "content": {"application/json": {"schema": {"type": "object"}},
+                                          "text/event-stream": {"schema": {"type": "string"}}}},
+                      "202": {"description": "A notification was accepted"},
+                      **_errors({"400", "401", "403", "404", "429", "500"})}}, scopes=[]),
+        "x-synwevo-resource": "{workplace origin}/api/suite/v1/mcp"}}
     paths[f"{SUITE_V1}/whoami"] = {"get": _common({
         "operationId": "whoami", "summary": "Who this credential is, for whom, where, and what it may ask for",
         "tags": ["credential"], "responses": {**json_ok(_ref("WhoAmI")), **_errors({"401", "403", "429", "500"})}},

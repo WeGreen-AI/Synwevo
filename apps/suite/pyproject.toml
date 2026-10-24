@@ -12,7 +12,8 @@ requires-python = ">=3.12"
 #   anthropic — the personal Agent's model provider (official SDK)
 #   httpx     — bounded DeepSeek streaming transport
 #   openpyxl  — DataPrep and Tables read and write .xlsx
-dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "starlette", "pydantic", "anthropic", "httpx", "openpyxl"]
+#   mcp       — Model Context Protocol server and client (official SDK)
+dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "starlette", "pydantic", "anthropic", "httpx", "openpyxl", "mcp", "mcp-types", "httpx2", "jsonschema", "anyio"]
 
 [tool.setuptools.packages.find]
 include = ["synwevo_suite*"]

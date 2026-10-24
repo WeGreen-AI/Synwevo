@@ -4,3 +4,11 @@
 openpyxl==3.1.5
 # 个人 Agent 的模型提供方（官方 SDK）。
 anthropic==1.9.0
+# Model Context Protocol: the official Python SDK (server and client), pinned with what it brings.
+# Protocol revision 2026-07-28 with earlier revisions served from the same endpoint; see
+# docs/platform/mcp.md for the research record behind this choice.
+mcp==2.3.0
+mcp-types==2.3.0
+httpx2==2.13.1
+anyio==4.15.1
+jsonschema==4.26.0

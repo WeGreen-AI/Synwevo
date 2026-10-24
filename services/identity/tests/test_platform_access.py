@@ -117,6 +117,14 @@ ROUTES = [
     ("GET", "/api/admin/settings/history", "platform.config.view", False),
     ("POST", "/api/admin/settings/preview", "platform.config.manage", False),
     ("POST", "/api/admin/settings/publish", "platform.config.manage", True),
+    # MCP: the platform policy (signed preview, then publish) and masked oversight of connections
+    ("GET", "/api/admin/mcp/policy", "platform.config.view", False),
+    ("GET", "/api/admin/mcp/policy/history", "platform.config.view", False),
+    ("POST", "/api/admin/mcp/policy/preview", "platform.config.manage", False),
+    ("POST", "/api/admin/mcp/policy/publish", "platform.config.manage", True),
+    ("GET", "/api/admin/mcp/overview", "platform.config.view", False),
+    ("GET", "/api/admin/mcp/connections/{cid}/calls", "platform.config.view", False),
+    ("POST", "/api/admin/mcp/connections/{cid}/disable", "platform.config.manage", True),
     ("GET", "/api/admin/billing/prices", "platform.config.view", False),
     ("GET", "/api/admin/billing/prices/drafts/{draft_id}", "platform.config.view", False),
     ("POST", "/api/admin/billing/prices/drafts", "platform.config.manage", False),
@@ -324,7 +332,8 @@ def _path(template, w, *, legacy: str | None = None):
                            suspension_id="rsus_fixture_missing", entry_id="rallow_fixture_missing",
                            report_id=w.get("report_id", "arp_fixture_missing"), user_id=w["plain"]["id"],
                            sid="s_fixture_missing", pid="pk_fixture_missing", iid="xi_fixture_missing",
-                           rid="sfr_fixture_missing", app_id="docweave", change="disable")
+                           rid="sfr_fixture_missing", app_id="docweave", change="disable",
+                           cid="mcpc_fixture_missing")
 
 
 #: Risk changes the matrix reaches with valid bodies but no matching state: past the permission
@@ -426,6 +435,9 @@ def _call(client, method, path, w):
         return post(client, path, {"decision": "dismissed"} if path.endswith("/decide") else {"reason": REASON})
     if path == "/api/admin/settings/preview":
         return post(client, path, {"expected_revision": 0, "changes": {"notifications.conversation_digest_daily_cap": 9}})
+    if path == "/api/admin/mcp/policy/preview":
+        from synwevo_core.mcp_policy import McpPolicy
+        return post(client, path, {"expected_revision": 0, "spec": {**McpPolicy.default().model_dump(), "outbound_enabled": True}})
     return post(client, path, {"reason": REASON, "status": "suspended", "mode": "open", "role": "auditor",
                                "user_id": "u_fixture_missing"})
 

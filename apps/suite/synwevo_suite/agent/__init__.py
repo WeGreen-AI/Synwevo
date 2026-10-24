@@ -41,6 +41,9 @@ def install(ctx) -> None:
         provider.bind(agent)
     ctx.api.state.agent = agent
     register(ctx.registry, agent, ctx.store, ctx.identity)
+    # The Agent as an MCP client: its connections, their tools and the calls through them.
+    from .mcp import install as install_mcp
+    install_mcp(ctx, agent)
     from .file_routes import install as install_files
     install_files(ctx, agent)
     # The payers this person may charge (shared contract with the chat; org-payments).

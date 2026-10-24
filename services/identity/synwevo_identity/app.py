@@ -227,6 +227,8 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True, control_pl
     api.include_router(build_admin_router(store, identity, sessions, audit, mailer=mailer))
     from .admin_settings import build_router as build_settings_router
     api.include_router(build_settings_router(store, audit))
+    from .admin_mcp import build_router as build_admin_mcp_router
+    api.include_router(build_admin_mcp_router(store, audit))
     from .admin_model_prices import build_router as build_model_prices_router
     api.include_router(build_model_prices_router(store, audit))
     from .admin_model_costs import build_router as build_model_costs_router

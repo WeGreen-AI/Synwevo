@@ -69,6 +69,12 @@ WORKSPACE_API_SCOPES = ("workspace.read", "workspace.members.write")
 SUITE_API_SCOPES = ("forms.read", "forms.write", "tables.read", "tables.write",
                     "dataprep.read", "dataprep.write", "extract.read", "extract.write",
                     "extract.decide", "approvals.read", "approvals.write", "approvals.decide")
+# The Synwevo MCP server (workplace origin, /api/suite/v1/mcp) exposes the same operations as the
+# business applications' operations API to MCP clients, so a token for it carries the same
+# scopes; only the audience differs (`mcp_resource`), because an MCP client names the server
+# by URL and the server must refuse a token minted for anything else.
+MCP_SCOPES = SUITE_API_SCOPES
+MCP_PATH = "/api/suite/v1/mcp"
 ALL_API_SCOPES = API_SCOPES + WORKSPACE_API_SCOPES + SUITE_API_SCOPES
 SUPPORTED_SCOPES = IDENTITY_SCOPES + ALL_API_SCOPES
 
@@ -120,6 +126,22 @@ def workspace_resource() -> str:
 def suite_resource() -> str:
     """The resource indicator (RFC 8707) of the business applications' operations API."""
     return (env.get("SUITE_RESOURCE") or "urn:synwevo:platform:suite").strip()
+
+
+def mcp_resource() -> str:
+    """The canonical URI of the Synwevo MCP server (RFC 8707 `resource`, RFC 9728 `resource`).
+
+    MCP clients name the server they want a token for by its own URL, so unlike the other APIs
+    this audience is an https URL: the MCP endpoint on the workplace origin. Configured through
+    the workplace origin (`SYNWEVO_APP_URL`) or explicitly (`SYNWEVO_MCP_RESOURCE`); without
+    either there is no MCP server to name, and a URN that no client would send stands in so the
+    audience check cannot accidentally pass.
+    """
+    explicit = (env.get("MCP_RESOURCE") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    base = (env.get("APP_URL") or "").strip().rstrip("/")
+    return f"{base}{MCP_PATH}" if base else "urn:synwevo:platform:mcp:unconfigured"
 
 
 def _docs_app_id() -> str:
@@ -471,7 +493,7 @@ def _check_redirect(uri: str) -> None:
         raise ServiceError(400, "bad_redirect", f"回调地址必须是 http/https 绝对地址：{uri!r}")
     if u.fragment:
         raise ServiceError(400, "bad_redirect", "回调地址不能带片段（#…）")
-    if u.scheme == "http" and u.hostname not in ("localhost", "127.0.0.1") \
+    if u.scheme == "http" and u.hostname not in ("localhost", "127.0.0.1", "::1") \
             and not (u.hostname or "").endswith(".localhost"):
         raise ServiceError(400, "bad_redirect", "非本机地址必须使用 https")
 
@@ -889,10 +911,18 @@ def verify_logout_token(raw: str, *, jwks: dict, client_id: str, expected_issuer
     return dict(claims)
 
 
-def discovery() -> dict:
-    """Only the endpoints that actually exist. Advertising more would be a lie a client acts on."""
+def discovery(*, client_id_metadata_documents: bool = False) -> dict:
+    """Only the endpoints that actually exist. Advertising more would be a lie a client acts on.
+
+    Served both as OpenID Connect Discovery and as OAuth 2.0 Authorization Server Metadata
+    (RFC 8414): MCP clients try either. `client_id_metadata_documents` says whether a client may
+    present an https URL as its client id (the platform MCP policy decides); the `iss`
+    authorization-response parameter (RFC 9207) is always sent.
+    """
     iss = issuer()
     return {
+        "authorization_response_iss_parameter_supported": True,
+        "client_id_metadata_document_supported": bool(client_id_metadata_documents),
         "issuer": iss,
         "authorization_endpoint": f"{iss}/oidc/authorize",
         "token_endpoint": f"{iss}/oidc/token",
