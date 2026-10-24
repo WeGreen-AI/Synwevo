@@ -141,7 +141,10 @@ Notes (codes; the console words each by the direction of the change):
   resume it.
 * `delegations_end_at_refresh` — on the same changes, for an application with a registered OAuth
   client: a refresh attempted while its holder is refused revokes the whole grant family
-  (provider_routes, `entitlement_revoked`); switching back does not restore it.
+  (provider_routes, `entitlement_revoked`); switching back does not restore it. Platform-wide and
+  for a workspace only: an organization's switch (B3) is not part of `Apps.check_access`, the
+  question the refresh asks, so it ends no grant and carries neither this note nor
+  `integrations_need_reauthorization`.
 * `approved_credentials_stop` — Synwevo Docs, on a change that takes access away, when at least one
   active API-platform approval's approving owner loses access in its workspace
   (`credentials_stopping` > 0): the API keys and service accounts those approvals govern are refused
@@ -727,7 +730,10 @@ class AppGovernance(SignedPreview):
         """The note codes of the module docstring for this change."""
         app, change = target["app"], target["change"]
         aid = app["id"]
-        clients = bool(self.store.one("SELECT 1 FROM oauth_clients WHERE app_id=? AND disabled_at IS NULL LIMIT 1", (aid,)))
+        # An organization's switch is not part of `Apps.check_access`, the question a refresh asks
+        # (provider_routes): it ends no grant, so it has no client or integration note.
+        clients = target.get("organization") is None and bool(
+            self.store.one("SELECT 1 FROM oauth_clients WHERE app_id=? AND disabled_at IS NULL LIMIT 1", (aid,)))
         notes = ["data_kept"]
         if aid in LINK_GATED:
             notes.append("links_stop")

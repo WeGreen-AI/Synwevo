@@ -20,7 +20,7 @@ import uuid
 import pytest
 
 from synwevo_core import journal, organization_audit
-from synwevo_core.apps import DOCS_APP_ID, MESSAGES_APP_ID, organization_app_row
+from synwevo_core.apps import DOCS_APP_ID, MESSAGES_APP_ID, Apps, organization_app_row
 from synwevo_core.errors import ServiceError
 from synwevo_core.messaging import Messaging
 from synwevo_core.notifications import Notifier
@@ -76,6 +76,10 @@ def switched(cat):
                                       "object_kind": "project", "object_id": "p_b3fix0001", "workspace_id": w["shared"],
                                       "organization_id": a, "actor_id": target, "payload": "{}", "created_at": ts})
     gb = svc.create_group(b, uid["both"], name="Fixture B group", member_ids=[])["id"]
+    # FIXTURE: Message's own web client, as production registers it (`client register --app
+    # messages`, docs/platform/messaging.md) — the notes are asserted as production sees them
+    store.execute("INSERT INTO oauth_clients (client_id, app_id, name, redirect_uris, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+                  ("messages-web", MESSAGES_APP_ID, "Fixture Message web", '["http://message.testserver/auth/callback"]', ts, ts))
     park(w, "plain", w["shared"])                       # one live session of a member of A
     return {**w, "a": a, "b": b, "group": group, "dm": dm, "gb": gb, "svc": svc, "report": report["id"], "mention": mention["id"]}
 
@@ -176,6 +180,9 @@ def test_switching_message_off_and_on_for_one_organization(switched):
     assert out["organization"] == listed(w, a) and out["organization"]["enabled"] is False
     assert out["organization"]["updated_at"] is not None and out["app"]["organizations_disabled"] == 1
     assert organization_app_row(store, a, MESSAGES_APP_ID)["status"] == "disabled"
+    # the OIDC refresh asks `Apps.check_access`, which the organization's switch is not part of: no
+    # grant of the Message client ends, so the notes above name none (`delegations_end_at_refresh`)
+    assert Apps(store, w["ident"]).check_access(plain, MESSAGES_APP_ID, None)[0] is True
     # the member of A is refused on list and read; the member of B is not
     with pytest.raises(ServiceError) as e:
         svc.list_conversations(plain, organization_id=a)
@@ -343,7 +350,9 @@ def test_a_journal_that_cannot_be_written_commits_nothing_for_an_organization(sw
 def test_the_platform_wide_message_preview_says_the_switch_holds_for_signed_in_sessions(switched):
     w = switched
     off = plan(w, "disable", client=w["super"])
-    assert off["scope"] == "platform" and off["notes"] == AWAY_NOTES
+    # platform-wide, the registered Message client's refresh is refused (`Apps.check_access` reads
+    # the application's status): its grants end, unlike for one organization's switch
+    assert off["scope"] == "platform" and off["notes"] == AWAY_NOTES[:1] + ["delegations_end_at_refresh"] + AWAY_NOTES[1:]
     assert off["impact"]["people_losing_access"] == 7
     assert execute(w, "disable", {"reason": REASON, "preview_token": off["preview_token"], "idempotency_key": uuid.uuid4().hex},
                    client=w["super"]).status_code == 200
@@ -351,7 +360,7 @@ def test_the_platform_wide_message_preview_says_the_switch_holds_for_signed_in_s
         w["svc"].get(w["group"], w["uid"]["plain"])
     assert (e.value.code, e.value.detail["scope"]) == ("messages_disabled", "platform")
     on = plan(w, "enable", client=w["super"])
-    assert on["notes"] == BACK_NOTES
+    assert on["notes"] == BACK_NOTES[:1] + ["integrations_need_reauthorization"] + BACK_NOTES[1:]
     # the platform switch outranks an organization's: said in the organization's preview while it is off
     assert plan(w, "disable", organization=w["a"])["notes"] == AWAY_NOTES + ["platform_switch_outranks"]
     docs = plan(w, "disable", app=DOCS_APP_ID, client=w["super"])
