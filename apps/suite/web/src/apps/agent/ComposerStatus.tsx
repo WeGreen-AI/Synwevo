@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { Modal } from "@synwevo/ui";
 import { formatAmount, type Offer } from "./budget";
 import { useChatText } from "./ChatParts";
-import { fundsState, limitLine, perMillion, type BillingStatus } from "./composer";
+import { composerMaximum, fundsState, limitLine, perMillion, type BillingStatus, type MaximumShown } from "./composer";
 import { formatMoney, formatPerMillion } from "./cost";
 import { payerKey, spendable, type Payer, type WelcomeState } from "./payers";
 
@@ -33,15 +33,40 @@ function money(minor: string | null | undefined, unit: { code: string; scale: nu
   try { return formatMoney(minor, unit, locale); } catch { return null; }
 }
 
-export function ModelPicker({ offers, disabled = false }: { offers: ModelOffer[]; disabled?: boolean }) {
+/** The prices a send runs at, as published: the unit prices per million tokens, one call's hold,
+ *  the price version (the sale price id a paid send repeats as `seen_price_id`) and, for the
+ *  model in use, the most one answer can cost now (`maximum`, as the composer shows it). The same
+ *  facts in the model panel beside the composer and in Agent settings (addendum-2 C1: the pricing
+ *  page says both show the unit prices, the price version and the maximum per answer). */
+export function PriceFacts({ offer, maximum }: { offer: ModelOffer; maximum?: MaximumShown }) {
   const { c, locale } = useChatText();
+  const price = (key: "input_uncached" | "input_cached" | "output") => {
+    try { return formatPerMillion(offer, key, locale, perMillion(offer, key)); } catch { return "—"; }
+  };
+  let most: string | null = null;
+  if (maximum) {
+    const amount = "amount" in maximum ? money(maximum.amount, maximum.unit, locale) : null;
+    // A figure only when the composer shows one; otherwise its sentence (being read, cannot be shown, the cap's problem).
+    most = maximum.key === "turnMaximum" ? amount : "amount" in maximum ? (amount ? c(maximum.key, { amount }) : null) : c(maximum.key);
+  }
+  return <dl className="ag-model-prices">
+    <div><dt>{c("tokensUncached")}</dt><dd>{price("input_uncached")}</dd></div>
+    <div><dt>{c("tokensCached")}</dt><dd>{price("input_cached")}</dd></div>
+    <div><dt>{c("tokensOutput")}</dt><dd>{price("output")}</dd></div>
+    <div><dt>{c("modelHold")}</dt><dd>{money(offer.per_call_hold, offer.unit, locale) ?? formatAmount(offer.per_call_hold, offer.unit)}</dd></div>
+    <div><dt>{c("changedPrice")}</dt><dd>{offer.price_id}</dd></div>
+    {maximum && <div><dt>{c("runCapTitle")}</dt><dd>{most ?? c("turnMaximumUnavailable")}</dd></div>}
+  </dl>;
+}
+
+export function ModelPicker({ offers, maximum, disabled = false }: { offers: ModelOffer[];
+  /** The most the next answer can cost, as the composer shows it (for the model in use). */
+  maximum?: MaximumShown; disabled?: boolean }) {
+  const { c } = useChatText();
   const [open, setOpen] = useState(false);
   const id = useId();
   const current = offers[0];
   if (!current) return null;
-  const price = (offer: ModelOffer, key: "input_uncached" | "input_cached" | "output") => {
-    try { return formatPerMillion(offer, key, locale, perMillion(offer, key)); } catch { return "—"; }
-  };
   return <>
     <button type="button" className="btn ghost sm ag-model-button" disabled={disabled} aria-haspopup="dialog" onClick={() => setOpen(true)}>
       {c("modelButton", { model: current.model })}
@@ -58,12 +83,7 @@ export function ModelPicker({ offers, disabled = false }: { offers: ModelOffer[]
           </div>
           <p className="muted small">{c("modelProvider")}</p>
           <h4>{c("modelPrices")}</h4>
-          <dl className="ag-model-prices">
-            <div><dt>{c("tokensUncached")}</dt><dd>{price(offer, "input_uncached")}</dd></div>
-            <div><dt>{c("tokensCached")}</dt><dd>{price(offer, "input_cached")}</dd></div>
-            <div><dt>{c("tokensOutput")}</dt><dd>{price(offer, "output")}</dd></div>
-            <div><dt>{c("modelHold")}</dt><dd>{money(offer.per_call_hold, offer.unit, locale) ?? formatAmount(offer.per_call_hold, offer.unit)}</dd></div>
-          </dl>
+          <PriceFacts offer={offer} maximum={offer === current ? maximum : undefined} />
           <h4>{c("capabilities")}</h4>
           {caps ? <ul className="ag-caps">
             <li>{c("capText")}</li>
@@ -130,7 +150,7 @@ export function ComposerStatus({ money: state, disabled = false }: { money: Mone
       {monthly?.amount && monthly.limit && <span className="ag-chip">{c("orgAllowance", { amount: monthly.amount, limit: monthly.limit })}</span>}
       {test && <span className="badge warn">{c("testWallet")}</span>}
       <span className="spacer" />
-      {state.offer && <ModelPicker offers={[state.offer]} />}
+      {state.offer && <ModelPicker offers={[state.offer]} maximum={composerMaximum(status)} />}
     </div>
     {frozen ? <p className="ag-low is-empty" role="status">
       <span>{c(personalPayer ? "frozenNote" : "orgFrozenNote")}</span>

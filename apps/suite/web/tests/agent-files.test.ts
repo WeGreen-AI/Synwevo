@@ -106,6 +106,12 @@ function setupFixture(complete: boolean) {
     terms: { complete, documents: [{ id: 'terms', version: 'fixture-1', effective: '2026-10-24', accepted: complete }] },
     limits: { configured: true, enabled: true, revision: 1, unit: { code: 'CNY', scale: 2 }, suggested: null } };
 }
+/** FIXTURE `agent.billing.status`: the run bound with the price every paid send repeats (AD-1); a paid
+ *  send without a shown price is held in the page (addendum-2 W3). */
+const SEEN = { seen_price_id: 'price_fixture', seen_route_version: 'fixture-v1' };
+const statusFixture = () => ({ available: true, environment: 'test', unit: { code: 'CNY', scale: 2 }, per_call_hold: '39',
+  run: { maximum: '468', default: '468', cap: null, source: 'default', per_call_hold: '39', max_calls: 12, run_seconds: 3600, usable: true,
+    price_id: SEEN.seen_price_id, route_version: SEEN.seen_route_version }, price_notice: null });
 async function appFixture(billing = true, setupComplete = true) {
   const chat = await server.ssrLoadModule('/src/apps/agent/Chat.tsx');
   const setupCard = await server.ssrLoadModule('/src/apps/agent/AgentSetup.tsx');
@@ -125,6 +131,7 @@ async function appFixture(billing = true, setupComplete = true) {
       if (operation === 'agent.settings.get') return { active: true, billing: { required: billing } };
       if (operation === 'agent.workspace_policy.list') return { workspaces: spaces };
       if (operation === 'agent.setup.get') return setupFixture(setupComplete);
+      if (operation === 'agent.billing.status') return statusFixture();
       return null;
     }, op: async (operation: string, input: any, options: any) => {
       writes.push({ operation, input, options }); if (failure && (!failing || failing === operation)) throw failure;
@@ -399,11 +406,11 @@ test('billed or not, a start carries file_refs at top level and keeps context_re
   assert.deepEqual(plain(direct.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture', context_refs: contexts, file_refs: files }); direct.unmount();
   const billed = await appFixture(); assert.equal(await billed.chat().send('Fixture', contexts, files), true);
   assert.deepEqual(billed.writes.map((w) => w.operation), ['agent.turn.start']);
-  assert.deepEqual(plain(billed.writes[0].input), { conversation_id: 'conv_fixture', text: 'Fixture', context_refs: contexts, file_refs: files }); billed.unmount();
+  assert.deepEqual(plain(billed.writes[0].input), { conversation_id: 'conv_fixture', text: 'Fixture', context_refs: contexts, file_refs: files, ...SEEN }); billed.unmount();
   const first = await appFixture(true, false); assert.equal(await first.chat().send('Fixture', contexts, files), false); first.render();
   assert.deepEqual(first.writes, []); assert.equal(first.chat().sentDraft, 0);
   await first.card()[0].props.onComplete(); first.render();
-  assert.deepEqual(plain(first.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture', context_refs: contexts, file_refs: files });
+  assert.deepEqual(plain(first.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture', context_refs: contexts, file_refs: files, ...SEEN });
   assert.equal(first.chat().sentDraft, 1); first.unmount();
 });
 
@@ -416,11 +423,11 @@ test('file refusals keep the draft; new conversations retain refs and regenerati
   h.fail(undefined);
   // The created conversation is reused for the retry, with the same file refs.
   await h.chat().send('Fixture', undefined, [record().reference]); h.render();
-  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_new_fixture', text: 'Fixture', file_refs: [record().reference] });
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_new_fixture', text: 'Fixture', file_refs: [record().reference], ...SEEN });
   assert.equal(h.writes.filter((w) => w.operation === 'agent.conversation.create').length, 1);
   h.route('conv_fixture');
   await h.chat().act('agent.turn.start', { conversation_id: 'conv_fixture', regenerate_of: 'fixture_message' }); h.render();
-  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', regenerate_of: 'fixture_message' }); h.unmount();
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', regenerate_of: 'fixture_message', ...SEEN }); h.unmount();
 });
 
 test('upload UI accepts a native File, cancels explicitly and offers the same pending attempt after reopening without auto-upload', async () => {

@@ -87,7 +87,9 @@ async function compiled(entry: string, initialProps: any, overrides: Record<stri
     unmount: () => effects.forEach((effect) => effect?.cleanup?.()) };
 }
 
-async function capFixture(cap: unknown = null, money: unknown = status()) {
+/** `capFixture(cap)` reads the default status; `capFixture(cap, undefined)` mounts while it loads. */
+async function capFixture(cap: unknown = null, ...given: unknown[]) {
+  const money = given.length ? given[0] : status();
   const writes: { operation: string; input: any }[] = [];
   const changes: any[] = [];
   let reply: any = (input: any) => settings(input.clear_run_budget_cap ? null : { amount: input.run_budget_cap, unit: UNIT });
@@ -194,4 +196,116 @@ test('the choices are one group for assistive technology without a second frame 
   const css = readFileSync(new URL('../src/apps/agent/agent.css', import.meta.url), 'utf8');
   assert.match(css, /\n\.ag-plain-fieldset \{ margin: 0; padding: 0; border: 0; min-width: 0; \}/);
   h.unmount();
+});
+
+test('W2: a saved or cleared maximum reads agent.billing.status again here and tells the page, which reads it for the composer', async () => {
+  const reads: string[] = [], told: number[] = [], changes: any[] = [];
+  let money: any = status({ run: run({ maximum: '10', cap: '10', source: 'personal_cap', usable: false }) });
+  const h = await compiled('AnswerBilling', { settings: settings({ amount: '10', unit: UNIT }), onChanged: (value: any) => changes.push(value),
+    onBillingChanged: () => told.push(1) }, {
+    '../../shared/ops': { newKey: () => 'fixture_key', op: async () => { throw new Error('fixture: no write here'); },
+      read: async (operation: string) => { reads.push(operation); return operation === 'agent.billing.status' ? money : null; } },
+  });
+  await settle(); h.render(); await settle(); h.render();
+  const statusReads = () => reads.filter((r) => r === 'agent.billing.status').length;
+  const cap = () => h.elements().find((el) => typeof el.props.onChanged === 'function' && 'status' in el.props);
+  assert.equal(statusReads(), 1); assert.equal(cap().props.status.run.cap, '10');
+  // FIXTURE: the save went through (RunCapSettings hands back the saved settings); the server now binds 2.00.
+  money = status({ run: run({ maximum: '200', cap: '200', source: 'personal_cap' }) });
+  cap().props.onChanged(settings({ amount: '200', unit: UNIT })); await settle(); h.render(); await settle(); h.render();
+  assert.equal(changes.length, 1);
+  assert.equal(statusReads(), 2, 'the save reads the status again');
+  assert.deepEqual(told, [1], 'and tells the page');
+  assert.equal(cap().props.status.run.cap, '200', 'the card now shows the bound the server will use');
+  // Clearing back to the default is the same.
+  money = status();
+  cap().props.onChanged(settings(null)); await settle(); h.render(); await settle(); h.render();
+  assert.equal(statusReads(), 3); assert.deepEqual(told, [1, 1]);
+  assert.equal(cap().props.status.run.source, 'default');
+  h.unmount();
+});
+
+test('W7: the saved maximum is in its box once the status arrives, Save waits for a change, and "below one call" warns only for a cap below the hold', async () => {
+  const save = (x: any) => x.elements().find((el: any) => el.type === 'button' && el.props.type === 'submit');
+  const warning = (x: any) => x.elements().some((el: any) => el.props.role === 'status' && strings(el.props.children).includes('Cannot be lower than one call’s hold'));
+  // FIXTURE: Agent settings mounts the card while agent.billing.status is still loading (AnswerBilling passes undefined).
+  const h = await capFixture({ amount: '200', unit: UNIT }, undefined);
+  h.render({ status: status({ run: run({ maximum: '200', cap: '200', source: 'personal_cap' }) }) });
+  assert.equal(h.radios()[1].props.checked, true);
+  assert.equal(h.amount().props.value, '2.00', 'the saved maximum is shown in its box');
+  assert.equal(save(h).props.disabled, true, 'nothing changed: nothing to save');
+  h.submit(); await settle(); h.render();
+  assert.deepEqual(h.writes, []);
+  assert.ok(!h.elements().some((el) => el.props.role === 'alert'), 'no invalid-amount alert for an untouched box');
+  // The same amount written differently is no change either; another amount is.
+  h.amount().props.onChange({ target: { value: '2' } }); h.render();
+  assert.equal(save(h).props.disabled, true);
+  h.amount().props.onChange({ target: { value: '3' } }); h.render();
+  assert.equal(save(h).props.disabled, false);
+  // A status read again later does not overwrite what the person is typing.
+  h.render({ status: status({ run: run({ maximum: '200', cap: '200', source: 'personal_cap' }) }) });
+  assert.equal(h.amount().props.value, '3');
+  h.unmount();
+  // Choosing "custom" without an amount saves nothing yet.
+  const fresh = await capFixture();
+  fresh.radios()[1].props.onChange(); fresh.render();
+  assert.equal(save(fresh).props.disabled, true);
+  fresh.unmount();
+  // Unusable for another reason than the cap (FIXTURE: the route's validity is nearly over): no "below one call" warning.
+  const other = await capFixture({ amount: '300', unit: UNIT }, status({ run: run({ maximum: '300', cap: '300', source: 'personal_cap', usable: false }) }));
+  assert.equal(warning(other), false);
+  other.unmount();
+  // A cap below the hold warns; once a higher cap is saved the warning goes, also before the status is read again.
+  const low = await capFixture({ amount: '10', unit: UNIT }, status({ run: run({ maximum: '10', cap: '10', source: 'personal_cap', usable: false }) }));
+  assert.equal(warning(low), true);
+  assert.equal(low.amount().props.value, '0.10');
+  low.amount().props.onChange({ target: { value: '1.00' } }); low.render();
+  low.submit(); await settle(); await settle(); low.render();
+  assert.deepEqual(plain(low.writes.at(-1).input), { run_budget_cap: '100' });
+  low.render({ settings: low.changes.at(-1) });     // AccessSettings hands the saved settings back
+  assert.equal(warning(low), false, 'the saved cap is above the hold');
+  assert.equal(low.amount().props.value, '1.00');
+  assert.equal(save(low).props.disabled, true);
+  low.render({ status: status({ run: run({ maximum: '100', cap: '100', source: 'personal_cap' }) }) });
+  assert.equal(warning(low), false);
+  low.unmount();
+});
+
+test('C1: Agent settings shows the current unit prices, the price version and the per-answer maximum', async () => {
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  // FIXTURE agent.billing.offer (design §3 shape).
+  const offer = { environment: 'test', model: 'fixture-model', confirmed_route: 'fixture-route', route_version: 'fixture-v2', price_id: 'price_fixture_2',
+    unit: UNIT, per_tokens: 1, terms_ref: 'fixture:terms', per_call_hold: '39', max_calls_limit: 12, run_seconds_limit: 3600,
+    rates: { input_uncached: { numerator: '2', denominator: '1' }, input_cached: { numerator: '1', denominator: '25' }, output: { numerator: '8', denominator: '1' } } };
+  const reads: string[] = [];
+  let served: unknown = offer;
+  // The run names the price a send repeats (AD-1), so the composer, and this card, show its maximum.
+  const priced = status({ run: run({ price_id: 'price_fixture_2', route_version: 'fixture-v2' }) });
+  const h = await compiled('AnswerBilling', { settings: settings(null), onChanged() {} }, {
+    '../../shared/ops': { newKey: () => 'fixture_key', op: async () => { throw new Error('fixture: no write here'); },
+      read: async (operation: string) => { reads.push(operation); return operation === 'agent.billing.status' ? priced : operation === 'agent.billing.offer' ? served : null; } },
+  });
+  await settle(); h.render(); await settle(); h.render();
+  assert.ok(reads.includes('agent.billing.offer'), reads.join());
+  const card = () => h.elements().find((el) => 'offer' in el.props && 'status' in el.props);
+  assert.ok(card(), 'a price card beside the maximum');
+  assert.equal(card().props.offer.price_id, 'price_fixture_2'); assert.equal(card().props.status.run.maximum, '468');
+  const settingsModule = await server.ssrLoadModule('/src/apps/agent/Settings.tsx');
+  const html = renderToStaticMarkup(React.createElement(router.MemoryRouter, null, React.createElement(settingsModule.CurrentPrice, card().props)));
+  for (const words of ['模型与价格', 'fixture-model', '每百万 token 价格', '价格版本', 'price_fixture_2', '每条回答的最高金额', '¥4.68']) assert.ok(html.includes(words), `${words} in ${html}`);
+  // An offer that cannot be read is said, with no figure.
+  const unreadable = renderToStaticMarkup(React.createElement(router.MemoryRouter, null, React.createElement(settingsModule.CurrentPrice, { offer: null, status: status() })));
+  assert.ok(unreadable.includes(copy.chatCopy.priceUnavailable[0]) && !unreadable.includes('价格版本'), unreadable);
+  for (const locale of ['en', 'zh-Hant']) {
+    const [source, en, hant] = copy.chatCopy.priceUnavailable;
+    assert.equal(core.translate(locale, source), locale === 'en' ? en : hant);
+  }
+  // A malformed offer is no price at all.
+  served = { ...offer, price_id: '' };
+  h.unmount();
+  const bad = await compiled('AnswerBilling', { settings: settings(null), onChanged() {} }, {
+    '../../shared/ops': { newKey: () => 'fixture_key', op: async () => ({}), read: async (operation: string) => operation === 'agent.billing.offer' ? served : status() } });
+  await settle(); bad.render(); await settle(); bad.render();
+  assert.equal(bad.elements().find((el) => 'offer' in el.props && 'status' in el.props).props.offer, null);
+  bad.unmount();
 });

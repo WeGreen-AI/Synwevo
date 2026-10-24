@@ -28,7 +28,9 @@ export interface SetupState {
   required: boolean;
   complete: boolean;
   provider_consent: { provider: string; version: string; accepted: boolean; accepted_version: string | null } | null;
-  terms: { complete: boolean; documents: { id: SetupDocument; version: string; effective: string; accepted: boolean }[] };
+  /** `accepted_version` (addendum-2 S4): the person's last accepted version of that document, or
+   *  null when they never accepted it (absent from a server before S4). */
+  terms: { complete: boolean; documents: { id: SetupDocument; version: string; effective: string; accepted: boolean; accepted_version?: string | null }[] };
   limits: { configured: boolean; enabled: boolean; revision: number; unit: MoneyUnit | null;
     suggested: { daily_budget: string; weekly_budget: string; monthly_budget: string } | null };
 }
@@ -58,7 +60,8 @@ export function validateSetup(value: unknown): SetupState {
   for (const document of terms.documents) {
     if (!document || typeof document !== "object" || !DOCUMENTS.includes(document.id) || typeof document.version !== "string"
       || !document.version.trim() || typeof document.effective !== "string" || !document.effective.trim()
-      || typeof document.accepted !== "boolean") throw bad();
+      || typeof document.accepted !== "boolean"
+      || !(document.accepted_version == null || (typeof document.accepted_version === "string" && !!document.accepted_version.trim()))) throw bad();
   }
   const limits = v.limits;
   if (!limits || typeof limits !== "object" || typeof limits.configured !== "boolean" || typeof limits.enabled !== "boolean"
@@ -85,6 +88,16 @@ export function setupItems(setup: SetupState, organizationPayer: boolean): Setup
     consent: !!setup.provider_consent && !setup.provider_consent.accepted,
     terms: !setup.terms.complete || setup.terms.documents.some((document) => !document.accepted),
     limits: !organizationPayer && !setup.limits.configured && !!setup.limits.unit,
+  };
+}
+
+/** Whether what is missing was accepted before in an earlier version (addendum-2 W5): the server
+ *  reports the person's last accepted version. Only then is it worded as an update; otherwise it is
+ *  a first use, whatever the reason the step was opened. */
+export function reacceptance(setup: SetupState): { terms: boolean; consent: boolean } {
+  return {
+    terms: setup.terms.documents.some((document) => !document.accepted && !!document.accepted_version),
+    consent: !!setup.provider_consent && !setup.provider_consent.accepted && !!setup.provider_consent.accepted_version,
   };
 }
 
@@ -160,6 +173,9 @@ export default function AgentSetup({ setup, organizationPayer, hasDraft, maximum
   const needConsent = items.consent && !recorded.current.has("consent");
   const needTerms = items.terms && !recorded.current.has("terms");
   const needLimits = items.limits && !recorded.current.has("limits");
+  const again = setup ? reacceptance(setup) : { terms: false, consent: false };
+  // "You only do this once" is a first use's sentence, not a re-acceptance's.
+  const firstUse = !(needTerms && again.terms) && !(needConsent && again.consent);
   useEffect(() => { if (focus) heading.current?.focus(); }, [focus, focusTick]);
   useEffect(() => {
     if (!needConsent) return;
@@ -231,6 +247,9 @@ export default function AgentSetup({ setup, organizationPayer, hasDraft, maximum
   }
 
   const title = <h2 id={`${id}-title`} className="ag-setup-title" ref={heading} tabIndex={-1}>{c("setupTitle")}</h2>;
+  // Nothing is missing and this step recorded nothing (addendum-2 W4): there is nothing to agree to,
+  // so no "Agree and send" that would write nothing; the step only reads the state again.
+  const nothing = !!setup && !needConsent && !needTerms && !needLimits && recorded.current.size === 0;
   if (setup === undefined) {
     return <section className="notice info ag-setup" role="region" aria-labelledby={`${id}-title`}>{title}<Loading /></section>;
   }
@@ -243,13 +262,22 @@ export default function AgentSetup({ setup, organizationPayer, hasDraft, maximum
       </div>
     </section>;
   }
+  if (nothing) {
+    return <section className="notice info ag-setup" role="region" aria-labelledby={`${id}-title`}>{title}
+      <p role="status">{c("setupNothing")}{hasDraft ? <> {c("setupNothingDraft")}</> : null}</p>
+      <div className="ag-setup-actions">
+        {onRetryRead && <button type="button" className="btn primary" onClick={onRetryRead}>{c("setupRecheck")}</button>}
+        {onDismiss && <button type="button" className="btn ghost" onClick={onDismiss}>{c("close")}</button>}
+      </div>
+    </section>;
+  }
   return <section className="notice info ag-setup" role="region" aria-labelledby={`${id}-title`}>
     {title}
-    <p className="ag-setup-intro">{c("setupIntro")}</p>
+    {firstUse && <p className="ag-setup-intro">{c("setupIntro")}</p>}
     <form className="ag-setup-form" noValidate onSubmit={(event) => void submit(event)}>
       {needConsent && <fieldset className="ag-setup-item" disabled={busy}>
         <legend>{pc("title")}</legend>
-        {facts ? <ProviderConsentFacts facts={facts} siteUrl={siteUrl} newTab={c("docNewTab")} />
+        {facts ? <ProviderConsentFacts facts={facts} siteUrl={siteUrl} newTab={c("docNewTab")} withdrawIn="settings" />
           : factsError ? <p className="notice err"><span>{c("setupUnavailable")}</span>{" "}
           <button type="button" className="btn sm" onClick={() => setFactsTick((n) => n + 1)}>{c("setupRetry")}</button></p>
           : <Loading />}
@@ -261,7 +289,7 @@ export default function AgentSetup({ setup, organizationPayer, hasDraft, maximum
       </fieldset>}
       {needTerms && <fieldset className="ag-setup-item" disabled={busy}>
         <legend className="sr-only">{c("docsTitle")}</legend>
-        {termsUpdated && <p className="notice warn" role="status">{c("setupTermsUpdated")}</p>}
+        {(termsUpdated || again.terms) && <p className="notice warn" role="status">{c("setupTermsUpdated")}</p>}
         <label className="ag-check" htmlFor={`${id}-terms`}>
           <input type="checkbox" id={`${id}-terms`} checked={termsChecked} disabled={busy}
             onChange={(event) => setTermsChecked(event.target.checked)} />

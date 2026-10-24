@@ -68,6 +68,13 @@ export const chatCopy = {
   turnMaximum: ['本次回答最多 {amount}', 'This answer costs at most {amount}', '本次回答最多 {amount}'],
   // Shown only while the server has no per-answer maximum to report (older server): a true fact.
   turnMaximumCall: ['每次调用最多冻结 {amount}', 'Up to {amount} held per call', '每次呼叫最多凍結 {amount}'],
+  // While the run bound is read, or when it cannot be shown: a paid send waits for it (addendum-2 W3).
+  turnMaximumLoading: ['正在读取本次回答的最高金额…', 'Reading the most this answer can cost…', '正在讀取本次回答的最高金額…'],
+  turnMaximumUnavailable: ['暂时无法显示本次回答的最高金额', 'The most this answer can cost cannot be shown right now', '暫時無法顯示本次回答的最高金額'],
+  // The run bound is not usable (addendum-2 W8): the person's cap, or the service right now.
+  turnMaximumCapLow: ['你设定的每条回答上限低于一次调用的预留金额 {amount}，现在发送会被拒绝。', 'The maximum per answer you set is below one call’s hold, {amount}, so a send would be refused now.', '你設定的每則回答上限低於一次呼叫的預留金額 {amount}，現在傳送會被拒絕。'],
+  turnMaximumCapUnusable: ['你设定的每条回答上限现在无法使用（计价单位已变化或无法读取），发送会被拒绝。', 'The maximum per answer you set cannot be used now (the pricing unit changed, or it cannot be read), so a send would be refused.', '你設定的每則回答上限現在無法使用（計價單位已變化或無法讀取），傳送會被拒絕。'],
+  turnMaximumPaused: ['模型服务暂时不可用，现在发送会被拒绝。', 'The model service is unavailable right now, so a send would be refused.', '模型服務暫時無法使用，現在傳送會被拒絕。'],
   turnMaximumHint: ['发送后立即开始，按实际用量扣费，费用显示在回答下方。', 'Sending starts the answer right away. You pay for actual usage, shown under the answer.', '傳送後立即開始，按實際用量扣費，費用顯示在回答下方。'],
   // Price notice (design D-7): information only, never a gate.
   priceNotice: ['价格已更新，之后的回答按新价格计费。', 'Prices have changed. Answers from now on are charged at the new price.', '價格已更新，之後的回答按新價格計費。'],
@@ -85,6 +92,10 @@ export const chatCopy = {
   setupUnavailable: ['暂时无法读取开始设置的状态，请重试。', 'The setup state cannot be read right now. Please try again.', '暫時無法讀取開始設定的狀態，請重試。'],
   setupRetry: ['重新读取', 'Read again', '重新讀取'],
   setupLater: ['稍后再说', 'Not now', '稍後再說'],
+  // Opened when nothing is missing any more (addendum-2 W4): no agreement to give, only a re-check.
+  setupNothing: ['开始设置已经完成，没有需要同意的内容。', 'Setup is already complete; there is nothing to agree to.', '開始設定已經完成，沒有需要同意的內容。'],
+  setupNothingDraft: ['消息仍在输入框中，可以直接发送。', 'Your message is still in the box; you can send it.', '訊息仍在輸入框中，可以直接傳送。'],
+  setupRecheck: ['重新检查', 'Check again', '重新檢查'],
   setupAmountUnknown: ['当前价格', 'the current price', '目前價格'],
   // The published documents (links open on the public site).
   docTerms: ['服务条款', 'Terms of service', '服務條款'],
@@ -132,6 +143,8 @@ export const chatCopy = {
   modelCurrent: ['当前使用', 'In use', '目前使用'],
   modelPrices: ['每百万 token 价格', 'Price per million tokens', '每百萬 token 價格'],
   modelHold: ['每次调用最多冻结', 'Maximum hold per call', '每次呼叫最多凍結'],
+  // Agent settings' price card when agent.billing.offer cannot be read (addendum-2 C1).
+  priceUnavailable: ['暂时无法读取当前价格。', 'The current prices cannot be read right now.', '暫時無法讀取目前價格。'],
   capabilities: ['能力', 'Capabilities', '能力'],
   capText: ['文本对话', 'Text chat', '文字對話'],
   capTools: ['调用工具', 'Tool use', '呼叫工具'],
@@ -152,7 +165,8 @@ export const chatCopy = {
   refusedOrgPayer: ['这个组织目前不能再为你付款（授权、成员身份或组织状态已变化），没有发起新的模型调用，也没有为此扣费。可以改用个人钱包。', 'This organization can no longer pay for you (its permission, your membership or the organization changed), so no new model call was made and nothing was charged for it. Pay with your personal wallet instead.', '這個組織目前不能再為你付款（授權、成員身分或組織狀態已變化），沒有發起新的模型呼叫，也沒有為此扣費。可以改用個人錢包。'],
   refusedLimit: ['你设置的个人支出上限不允许这次调用（已达上限或已暂停），没有发起新的模型调用，也没有为此扣费。可以在 Agent 设置中查看或调整。', 'Your personal spending limits do not allow this call (a limit is reached or spending is paused), so no new model call was made and nothing was charged for it. Review or adjust them in Agent settings.', '你設定的個人支出上限不允許這次呼叫（已達上限或已暫停），沒有發起新的模型呼叫，也沒有為此扣費。可以在 Agent 設定中查看或調整。'],
   refusedNoLimit: ['发送付费消息前，需要设置个人每日、每周、每月支出上限。没有发起模型调用，也没有扣费。', 'Before sending paid messages, set your daily, weekly and monthly spending limits. No model call was made and nothing was charged.', '傳送付費訊息前，需要設定個人每日、每週、每月支出上限。沒有發起模型呼叫，也沒有扣費。'],
-  refusedTerms: ['《服务条款》或《定价》已更新，需要你接受新版本后才能继续。消息没有发送，也没有扣费。', 'The Terms of service or the Pricing has been updated, and you need to accept the new version to continue. The message was not sent and nothing was charged.', '《服務條款》或《定價》已更新，需要你接受新版本後才能繼續。訊息沒有傳送，也沒有扣費。'],
+  // Neutral (addendum-2 W5): the same code answers a first use and a new version.
+  refusedTerms: ['需要先接受当前版本的《服务条款》《AI 使用规范》与《定价》。消息没有发送，也没有扣费。', 'You need to accept the current version of the Terms of service, the AI use rules and the Pricing first. The message was not sent and nothing was charged.', '需要先接受目前版本的《服務條款》《AI 使用規範》與《定價》。訊息沒有傳送，也沒有扣費。'],
   refusedRunCap: ['你设置的每条回答上限低于一次模型调用所需的预留金额，消息没有发送，也没有扣费。可以在 Agent 设置中调高上限。', 'The maximum per answer you set is below what one model call needs to hold, so the message was not sent and nothing was charged. Raise it in Agent settings.', '你設定的每則回答上限低於一次模型呼叫所需的預留金額，訊息沒有傳送，也沒有扣費。可以在 Agent 設定中調高上限。'],
   refusedRunTime: ['本次回答已用完单次运行时限，没有发起新的模型调用，也没有为此扣费。已完成的操作和费用保留；可以重新发送继续。', 'This answer has used up its run time, so no new model call was made and nothing was charged for it. Completed actions and charges remain; send again to continue.', '本次回答已用完單次執行時限，沒有發起新的模型呼叫，也沒有為此扣費。已完成的操作和費用保留；可以重新傳送繼續。'],
   refusedBrake: ['为防止异常消费，付费调用已被自动暂停，没有发起新的模型调用，也没有为此扣费。管理员核查后会恢复。', 'Paid calls were paused automatically to protect against unusual spending. No new model call was made and nothing was charged for it. An administrator will review and resume them.', '為防止異常消費，付費呼叫已被自動暫停，沒有發起新的模型呼叫，也沒有為此扣費。管理員核查後會恢復。'],
@@ -170,6 +184,8 @@ export const chatCopy = {
   refusedPriceChanged: ['模型或价格已更新，没有按旧价格发起新的模型调用，也没有为此扣费；已完成的调用按原价格结算。可以按新价格重新发送。', 'The model or price has changed, so no new model call was made at the old price and nothing was charged for it; calls already made are settled at the earlier price. You can send again at the new price.', '模型或價格已更新，沒有按舊價格發起新的模型呼叫，也沒有為此扣費；已完成的呼叫按原價格結算。可以按新價格重新傳送。'],
   // Addendum AD-1: the page showed an older price; refused at the send (the server's own sentence).
   refusedPriceUpdated: ['价格或模型已更新，本次没有发送，也没有扣费。请查看新价格后重新发送。', 'The price or model has changed, so this message was not sent and nothing was charged. Check the new price, then send again.', '價格或模型已更新，本次沒有傳送，也沒有扣費。請查看新價格後重新傳送。'],
+  // Held in the page (W3): the maximum is shown before every paid send, and it was not shown yet.
+  refusedPriceUnshown: ['发送前需要先显示本次回答的最高金额，现在还无法显示。消息没有发送，也没有扣费；正在重新读取价格，显示后可以重新发送。', 'The most this answer can cost has to be shown before sending, and it cannot be shown yet. The message was not sent and nothing was charged; the price is being read again, and once it is shown you can send again.', '傳送前需要先顯示本次回答的最高金額，現在還無法顯示。訊息沒有傳送，也沒有扣費；正在重新讀取價格，顯示後可以重新傳送。'],
   refusedAccessSuspended: ['管理员已暂停你的 Agent 使用权限，没有发起新的模型调用，也没有为此扣费。如有疑问，请联系平台管理员。', 'An administrator has suspended your Agent access, so no new model call was made and nothing was charged for it. If you have questions, contact the platform administrator.', '管理員已暫停你的 Agent 使用權限，沒有發起新的模型呼叫，也沒有為此扣費。如有疑問，請聯絡平台管理員。'],
   refusedEffort: ['当前模型路线不支持你选择的推理投入，这次调用没有发送，也没有为此扣费。请在 Agent 设置中更换。', 'The current model route does not offer the reasoning effort you chose, so this call was not sent and nothing was charged for it. Choose another in Agent settings.', '目前模型路線不支援你選擇的推理投入，這次呼叫沒有傳送，也沒有為此扣費。請在 Agent 設定中更換。'],
   refusedTooLong: ['这次要发送给模型的内容超过了单次调用的上限，这次调用没有发送，也没有为此扣费。请新建会话继续，或把任务拆小一些。', 'What this call would send to the model is above the per-call size limit, so it was not sent and nothing was charged for it. Start a new conversation, or split the task into smaller parts.', '這次要傳送給模型的內容超過了單次呼叫的上限，這次呼叫沒有傳送，也沒有為此扣費。請新建會話繼續，或把任務拆小一些。'],

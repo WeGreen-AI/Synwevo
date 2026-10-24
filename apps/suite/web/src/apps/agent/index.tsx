@@ -14,7 +14,7 @@ import { useApp } from "../../shared/catalog";
 import { Empty, Loading } from "../../shared/states";
 import { AgentFailure as Failure } from "./errors";
 import { newKey, op, read } from "../../shared/ops";
-import Chat, { type Draft } from "./Chat";
+import Chat, { type ComposerDraft, type Draft } from "./Chat";
 import { activeTurn, branchMessages, type Workspace } from "./types";
 import { createFileClient, fileErrorKey } from './files';
 import { contextErrorKey } from "./context";
@@ -24,7 +24,7 @@ import { validateOffer, type Pricing } from "./budget";
 import { chatCopy } from "./chat.messages";
 import { RefusalNotice, TurnMaximum } from "./ChatParts";
 import { ComposerStatus, type ModelOffer } from "./ComposerStatus";
-import { accountHref, seenPrice, turnMaximum, walletHref, type BillingStatus, type PriceNoticeFacts } from "./composer";
+import { accountHref, composerMaximum, seenPrice, walletHref, type BillingStatus, type PriceNoticeFacts } from "./composer";
 import { conversationMarkdown, downloadText, exportFileName } from "./exportChat";
 import { choosePayer, parsePayers, payerInput, payerKey, personal, recallPayer, rememberPayer, type Payer } from "./payers";
 import { errorCode, refusalOf } from "./refusals";
@@ -61,7 +61,6 @@ function AgentApp() {
   const currentConversation = useRef(id);
   currentConversation.current = id;
   const [spaces, setSpaces] = useState<Workspace[]>([]);
-  const intents = useRef(new Map<string, string>());
   const retryCreate = useRef<string | undefined>(undefined);
   function contextRefused(error: unknown, input: Record<string, unknown>) {
     if (!contextErrorKey(error) && !fileErrorKey(error)) return;
@@ -101,6 +100,14 @@ function AgentApp() {
   const [focusTick, setFocusTick] = useState(0);
   // The message waiting in the composer while the setup step is open (sent by its button).
   const [draft, setDraft] = useState<Draft | null>(null);
+  // The composer kept while the person is in Agent settings (a refusal's next step, the maximum's
+  // or a limit's link), for the conversation it was written in, until that composer takes it back
+  // (addendum-2 W10). Chat hands it over as it goes away; only a move to Agent settings keeps it.
+  const [kept, setKept] = useState<{ key: string; draft: ComposerDraft } | null>(null);
+  const inSettings = useRef(settings);
+  inSettings.current = settings;
+  // Focus for the refusal of the setup step's send: the step is gone, so focus moves to the notice (W10).
+  const [refusalFocus, setRefusalFocus] = useState(0);
   const answering = !!conversation?.messages?.some(activeTurn);
   // Addendum AD-1: the price the composer shows is the price a send runs at. The status is read
   // again on demand (a refused stale price), when the window regains focus or becomes visible,
@@ -126,6 +133,13 @@ function AgentApp() {
     });
     return () => abort.abort();
   }, [billingRequired, tick, answering, statusTick]);
+  // Back from Agent settings, where the maximum (W2) and the setup facts (consent, limits: W4) may
+  // have changed: both are read again.
+  const wasSettings = useRef(settings);
+  useEffect(() => {
+    if (wasSettings.current && !settings) { setStatusTick((n) => n + 1); setSetupTick((n) => n + 1); }
+    wasSettings.current = settings;
+  }, [settings]);
   useEffect(() => {
     if (!billingRequired || typeof window === "undefined") return;
     const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
@@ -165,15 +179,24 @@ function AgentApp() {
     if (userId) rememberPayer(userId, next);
   }
 
+  /** One explicit action of the person (Send, Regenerate, "send again", the setup step's button)
+   *  is one attempt with one fresh idempotency key (addendum-2 W1). The key is sent again only by
+   *  the automatic retry of that same attempt when it got no answer from the server (the
+   *  connection failed, or a gateway in front of Synwevo could not reach it), so a lost response
+   *  is answered from the server's record of the attempt instead of running it twice. Any answer
+   *  from the server ends the attempt: the next click is a new one, so a cause fixed in between
+   *  (terms accepted, the maximum raised, the price read again, a top-up) is never met with the
+   *  replay of the earlier refusal. */
   const write = useCallback(async (operation: string, input: Record<string, unknown>) => {
-    const signature = JSON.stringify([operation, input]);
-    const key = intents.current.get(signature) ?? newKey();
-    intents.current.set(signature, key);
-    let result;
-    try { result = await op(operation, input, { key }); }
-    catch (error) { contextRefused(error, input); throw error; }
-    intents.current.delete(signature);
-    return result.output;
+    const key = newKey();
+    for (let attempt = 0; ; attempt += 1) {
+      try { return (await op(operation, input, { key })).output; }
+      catch (error) {
+        if (attempt < NO_ANSWER_RETRIES.length && unanswered(error)) { await pause(NO_ANSWER_RETRIES[attempt]); continue; }
+        contextRefused(error, input);
+        throw error;
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -190,18 +213,28 @@ function AgentApp() {
    *  server issues the run's authorization itself (design D-1) and refuses with a code the chat
    *  words when something is missing. */
   async function start(next: Draft) {
+    if (billingRequired) shownPrice(shown.current.status);   // held before a conversation is made for it
     let cid = id ?? retryCreate.current;
     if (!cid) { cid = (await write("agent.conversation.create", {})).id; retryCreate.current = cid; }
     checkTurn(await startTurn({ conversation_id: cid, ...next }));
     retryCreate.current = undefined;
     navigate(`/agent/c/${cid}`); setTick((n) => n + 1); await refresh();
   }
-  /** `agent.turn.start` with what billing needs beside the message: the payer, and the price and
-   *  route version the composer showed (AD-1). A refusal for a newer price keeps the message, reads
-   *  the status again and keeps what the page showed for the price notice. */
+  /** The price the composer shows, as a paid send repeats it (AD-1). Without one (the status is
+   *  loading, unreadable or has no run) nothing is sent (addendum-2 W3): the status is read again
+   *  and the held send is shown like a refusal, with the message kept and "send again". */
+  function shownPrice(status: BillingStatus | null | undefined) {
+    const seen = seenPrice(status);
+    if ("seen_price_id" in seen) return seen;
+    setStatusTick((n) => n + 1);
+    throw Object.assign(new Error("price_not_shown"), { code: "price_not_shown" });
+  }
+  /** `agent.turn.start` with what billing needs beside the message: the payer, and the price the
+   *  composer showed (AD-1, W3). A refusal for a newer price keeps the message, reads the status
+   *  again and keeps what the page showed for the price notice. */
   async function startTurn(input: Record<string, unknown>) {
     const showing = shown.current;
-    const body = billingRequired ? { ...input, ...payerInput(showing.payer, userId), ...seenPrice(showing.status) } : input;
+    const body = billingRequired ? { ...input, ...payerInput(showing.payer, userId), ...shownPrice(showing.status) } : input;
     try {
       const out = await write("agent.turn.start", body);
       setShownBefore(null);
@@ -215,27 +248,40 @@ function AgentApp() {
       throw error;
     }
   }
-  /** Open the one-time setup step with the draft kept; focus moves to its heading. */
+  /** Open the one-time setup step with the draft kept; focus moves to its heading. The state is
+   *  read again and the step shows it loading until it arrives (addendum-2 W4), so a step opened
+   *  from a refusal never asks from the state read when the page loaded. */
   function openSetup(next?: Draft) {
     if (next !== undefined) setDraft(next);
+    setSetup(undefined); setSetupTick((n) => n + 1);
     setSetupOpen(true); setFocusTick((n) => n + 1);
   }
   const readSetupFact = useCallback((operation: string) => read<unknown>(operation, {}, null), []);
+  const rereadStatus = useCallback(() => setStatusTick((n) => n + 1), []);
   const updateDraft = useCallback((next: Draft | null) => setDraft(next), []);
+  const chatKey = id ?? "new";
+  function leaveComposer(composer: ComposerDraft) {
+    if (!inSettings.current || !(composer.text.trim() || composer.contexts.length || composer.files.length)) return;
+    setKept({ key: chatKey, draft: composer });
+  }
   /** Send the kept message in one request; on success the composer is cleared. A refusal leaves
    *  it in the composer and is shown above it with its next step. */
-  async function sendDraft(next: Draft) {
+  async function sendDraft(next: Draft): Promise<unknown> {
     setActionError(undefined);
-    try { await start(next); setDraft(null); setSentDraft((n) => n + 1); }
-    catch (e) { setActionError(e); }
+    try { await start(next); setDraft(null); setSentDraft((n) => n + 1); return undefined; }
+    catch (e) { setActionError(e); return e ?? new Error("refused"); }
   }
-  /** Everything the step needed is recorded: send the kept message, then read the state again. */
+  /** Everything the step needed is recorded: send the kept message, then read the state again. A
+   *  refused send moves focus to its notice (the step's button is gone), or to the composer. */
   async function completeSetup() {
     const next = draft;
     setSetup((current) => (current ? completedSetup(current, organizationPayer) : current));
     setSetupTick((n) => n + 1);
     setSetupOpen(false);
-    if (next?.text.trim()) await sendDraft(next);
+    if (!next?.text.trim()) { focusComposer(); return; }
+    const refused = await sendDraft(next);
+    if (refused === undefined) return;
+    if (refusalOf(refused, { organization: organizationPayer })) setRefusalFocus((n) => n + 1);
     else focusComposer();
   }
   /** Back to the message box (the step was closed without sending). */
@@ -288,8 +334,9 @@ function AgentApp() {
   const title = conversation?.title === "新会话" ? t("新会话") : conversation?.title;
   const money = billingRequired ? { status, offer, payers, payersError, payer, setPayer: choose, walletUrl, accountUrl,
     environment: payerFacts.environment, welcome: payerFacts.welcome } : null;
-  // The most the next answer can cost: the run bound the server reports (status.run.maximum).
-  const maximum = turnMaximum(status);
+  // The most the next answer can cost: the run bound the server reports (status.run.maximum), or
+  // that it is being read or cannot be shown (W3).
+  const maximum = billingRequired ? composerMaximum(status) : null;
   // What changed since the person's last answer (server), or since the price this page showed
   // when a send was refused for a newer one (AD-1). Information only.
   const priceNotice: PriceNoticeFacts | null = status?.price_notice
@@ -329,7 +376,7 @@ function AgentApp() {
         <Link className="btn ghost" to="/workspace">{t("返回工作空间")}</Link>
       </aside>
       <main className="ag-main">
-        {automations ? <Suspense fallback={<Loading />}><Automations /></Suspense> : settings ? <Suspense fallback={<Loading />}><Settings /></Suspense> : <>
+        {automations ? <Suspense fallback={<Loading />}><Automations /></Suspense> : settings ? <Suspense fallback={<Loading />}><Settings onBillingChanged={rereadStatus} /></Suspense> : <>
           <div className="ag-toolbar"><h1>{title ?? t("新会话")}</h1>
             {conversation && <div className="ag-toolbar-actions">
               <button className="btn ghost sm" disabled={busy} onClick={() => void manage("rename")}>{t("重命名会话")}</button>
@@ -340,23 +387,24 @@ function AgentApp() {
             </div>}
           </div>
           {actionError != null && (actionRefusal
-            ? <RefusalNotice refusal={actionRefusal} walletUrl={walletUrl} live busy={busy || !!running}
+            ? <RefusalNotice refusal={actionRefusal} walletUrl={walletUrl} live busy={busy || !!running} focusTick={refusalFocus}
               onPersonal={organizationPayer && payers[0] ? () => choose(payers[0]) : undefined}
               onRetry={draft?.text.trim() ? () => void sendDraft(draft) : undefined} onSetup={() => openSetup()} />
             : <Failure error={actionError} />)}
-          <Chat key={id ?? "new"} conversation={conversation} loading={!!id && !conversation && !error} error={error} connection={connection}
+          <Chat key={chatKey} conversation={conversation} loading={!!id && !conversation && !error} error={error} connection={connection}
             spaces={spaces} fileClient={fileClient} configured={configured} act={act} send={send} refresh={refresh} sentDraft={sentDraft}
             walletUrl={walletUrl} organizationPayer={organizationPayer} payerName={organizationName}
             onPersonal={organizationPayer && payers[0] ? () => choose(payers[0]) : undefined}
             onSetup={billingRequired ? openSetup : undefined}
             onDraft={setupOpen || (actionRefusal != null && draft != null) ? updateDraft : undefined}
+            restore={kept?.key === chatKey ? kept.draft : undefined} onRestored={() => setKept(null)} onLeave={leaveComposer}
             status={money && <ComposerStatus money={money} disabled={running} />}
             maximum={money && <TurnMaximum maximum={maximum} />}
             hint={money ? t(chatCopy.turnMaximumHint[0]) : undefined}
             aside={money && <>
-              {priceNotice != null && <PriceNotice notice={priceNotice} offer={offer} userId={userId} />}
+              {priceNotice != null && <PriceNotice notice={priceNotice} offer={offer} currentKey={status?.run?.price_key} userId={userId} />}
               {setupOpen && <AgentSetup setup={setup} organizationPayer={organizationPayer} hasDraft={!!draft?.text}
-                maximum={maximum?.key === "turnMaximum" ? { amount: maximum.amount, unit: maximum.unit } : null}
+                maximum={maximum && "amount" in maximum && maximum.key === "turnMaximum" ? { amount: maximum.amount, unit: maximum.unit } : null}
                 siteUrl={auth?.site_url} read={readSetupFact} write={write}
                 onComplete={completeSetup} onChanged={() => setSetupTick((n) => n + 1)} focus focusTick={focusTick}
                 onDismiss={() => { setSetupOpen(false); focusComposer(); }} onRetryRead={() => setSetupTick((n) => n + 1)} />}
@@ -366,6 +414,16 @@ function AgentApp() {
     </div>
   </div>;
 }
+
+/** The waits before the automatic retries of an attempt that got no answer (W1): two, then the
+ *  attempt ends with the connection error and the message stays in the composer. */
+const NO_ANSWER_RETRIES = [1000, 3000];
+/** No answer from Synwevo: the request may or may not have arrived, so only the same key may ask again. */
+function unanswered(error: unknown): boolean {
+  return error instanceof ApiError && ((error.status === 0 && error.code === "network")
+    || (error.upstream && [502, 503, 504].includes(error.status)));
+}
+const pause = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
 
 function checkTurn(value: { turn_id?: unknown }) {
   if (!value || typeof value.turn_id !== "string" || !value.turn_id) throw new Error("invalid_turn_response");

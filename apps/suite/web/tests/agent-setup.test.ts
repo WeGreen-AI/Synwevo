@@ -255,3 +255,88 @@ test('the step keeps its layout as an information or a warning notice, and touch
   const reduced = css.indexOf('@media (prefers-reduced-motion: reduce) {');
   assert.ok(reduced >= 0 && css.indexOf('  .notice.ag-setup, .ag-price-notice { animation: none; }', reduced) > reduced);
 });
+
+test('W4: a step with nothing left to record never offers an "Agree and send" that writes nothing: it is a plain re-check', async () => {
+  let rechecks = 0;
+  const done = fixtureSetup({ complete: true, provider_consent: { provider: 'deepseek', version: '2026-10-05', accepted: true, accepted_version: '2026-10-05' },
+    terms: { complete: true, documents: documents(true) }, limits: { ...fixtureSetup().limits, configured: true, enabled: true } });
+  const h = await cardFixture(done, { onRetryRead: () => { rechecks += 1; }, onDismiss: () => {} });
+  assert.equal(h.checkboxes().length, 0);
+  const buttons = h.elements().filter((el) => el.type === 'button');
+  const labels = buttons.map((el) => strings(el.props.children));
+  assert.ok(!labels.includes('Agree and send') && !labels.includes('Agree and start'), labels.join());
+  assert.ok(!buttons.some((el) => el.props.type === 'submit'), 'nothing to submit');
+  assert.ok(h.text().includes(core.translate('en', copy.chatCopy.setupNothing[0])), h.text());
+  assert.ok(h.text().includes(core.translate('en', copy.chatCopy.setupNothingDraft[0])), 'the message waits in the composer');
+  const recheck = buttons.find((el) => strings(el.props.children) === core.translate('en', copy.chatCopy.setupRecheck[0]));
+  assert.ok(recheck, labels.join());
+  recheck.props.onClick(); await settle(); h.render();
+  assert.equal(rechecks, 1); assert.deepEqual(h.writes, []); assert.equal(h.completed(), 0, 'nothing is sent from here');
+  for (const key of ['setupNothing', 'setupNothingDraft', 'setupRecheck']) {
+    const [source, en, hant] = copy.chatCopy[key];
+    assert.equal(core.translate('en', source), en, key); assert.equal(core.translate('zh-Hant', source), hant, key);
+  }
+  h.unmount();
+});
+
+test('W5: the "updated" wording appears only when the server reports an earlier accepted version; otherwise it is the first-use wording', async () => {
+  const updated = core.translate('en', copy.chatCopy.setupTermsUpdated[0]), intro = core.translate('en', copy.chatCopy.setupIntro[0]);
+  // First use: no document was ever accepted (S4: accepted_version null), or a server without the field.
+  const fresh = documents(false).map((d) => ({ ...d, accepted_version: null }));
+  for (const state of [fixtureSetup({ terms: { complete: false, documents: fresh } }), fixtureSetup()]) {
+    const h = await cardFixture(state);
+    assert.ok(h.text().includes(intro), 'the "only once" intro');
+    assert.ok(!h.text().includes(updated), h.text());
+    h.unmount();
+  }
+  // A new version of a document the person accepted before (FIXTURE: terms 2026-10-05 accepted, 2026-10-24 in force).
+  const bumped = documents(true).map((d) => d.id === 'terms' ? { ...d, accepted: false, accepted_version: '2026-10-05' } : { ...d, accepted_version: d.version });
+  const again = await cardFixture(fixtureSetup({ provider_consent: { provider: 'deepseek', version: '2026-10-05', accepted: true, accepted_version: '2026-10-05' },
+    terms: { complete: false, documents: bumped }, limits: { ...fixtureSetup().limits, configured: true, enabled: true } }));
+  assert.ok(again.text().includes(updated), again.text());
+  assert.ok(again.elements().some((el) => el.props.role === 'status' && strings(el.props.children).includes(updated)));
+  assert.ok(!again.text().includes(intro), 'no "you only do this once" for a re-acceptance');
+  assert.equal(again.checkboxes().length, 1, 'only the documents are asked for');
+  again.unmount();
+  // A new version of the data-sharing notice someone agreed to before is a re-acceptance too: no "only once".
+  const consentAgain = await cardFixture(fixtureSetup({ provider_consent: { provider: 'deepseek', version: '2026-11-01', accepted: false, accepted_version: '2026-10-05' },
+    terms: { complete: true, documents: documents(true) }, limits: { ...fixtureSetup().limits, configured: true, enabled: true } }));
+  assert.ok(!consentAgain.text().includes(intro), consentAgain.text());
+  assert.ok(!consentAgain.text().includes(updated), 'the documents did not change');
+  consentAgain.unmount();
+  // The field is checked like every other one.
+  assert.throws(() => setup.validateSetup(fixtureSetup({ terms: { complete: false, documents: documents(false).map((d) => ({ ...d, accepted_version: 5 })) } })));
+  assert.doesNotThrow(() => setup.validateSetup(fixtureSetup({ terms: { complete: false, documents: bumped } })));
+});
+
+test('W5: the terms refusal reads neutrally (first use or a new version), in three languages', () => {
+  const [zh, en, hant] = copy.chatCopy.refusedTerms;
+  assert.equal(zh, '需要先接受当前版本的《服务条款》《AI 使用规范》与《定价》。消息没有发送，也没有扣费。');
+  assert.equal(hant, '需要先接受目前版本的《服務條款》《AI 使用規範》與《定價》。訊息沒有傳送，也沒有扣費。');
+  assert.equal(en, 'You need to accept the current version of the Terms of service, the AI use rules and the Pricing first. The message was not sent and nothing was charged.');
+  assert.equal(core.translate('en', zh), en); assert.equal(core.translate('zh-Hant', zh), hant);
+  assert.doesNotMatch(zh + en + hant, /已更新|updated/);
+});
+
+test('W6: the step names Agent settings as the place to withdraw the consent, and never "here" (it has no withdraw control)', async () => {
+  const h = await cardFixture();
+  const facts = h.find((el) => el.type === providerConsent.ProviderConsentFacts);
+  const here = consentCopy.providerConsentCopy.withdrawNote;
+  const render = (locale: string, element: any) => { ui.setLocale(locale); return renderToStaticMarkup(React.createElement(router.MemoryRouter, null, element)); };
+  for (const [i, locale] of LOCALES.entries()) {
+    const notice = render(locale, facts);
+    assert.ok(!notice.includes(here[i]), `${locale}: no "withdraw here" in the step: ${notice}`);
+    assert.doesNotMatch(notice, /在这里撤回|withdraw here|在這裡撤回/, locale);
+  }
+  const later = consentCopy.providerConsentCopy.withdrawNoteSettings;
+  assert.deepEqual([...later], ['之后可以在 Agent 设置中撤回。', 'You can withdraw it later in Agent settings.', '之後可以在 Agent 設定中撤回。']);
+  for (const [i, locale] of LOCALES.entries()) assert.ok(render(locale, facts).includes(later[i]), locale);
+  ui.setLocale('zh-Hans');
+  // The withdraw control lives only in Agent settings, which keeps its own sentence.
+  const buttons = h.elements().filter((el) => el.type === 'button').map((el) => strings(el.props.children));
+  assert.ok(!buttons.some((label) => /withdraw|撤回/i.test(label)), buttons.join());
+  const settings = render('zh-Hans', React.createElement(providerConsent.ProviderConsentFacts, { facts: consentFacts, siteUrl: 'https://site.fixture.test' }));
+  assert.ok(settings.includes(here[0]) && !settings.includes(later[0]), settings);
+  assert.equal(core.translate('en', later[0]), later[1]); assert.equal(core.translate('zh-Hant', later[0]), later[2]);
+  h.unmount();
+});

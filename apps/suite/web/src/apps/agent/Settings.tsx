@@ -4,9 +4,10 @@ import { useDialog, useI18n, type Params } from "@synwevo/ui";
 import { newKey, op, read, type RunStatus } from "../../shared/ops";
 import { Empty, Failure, Loading, RunBadge } from "../../shared/states";
 import { validateSetup, type SetupDocument, type SetupState } from "./AgentSetup";
-import { formatAmount, majorUnits, parseBudget } from "./budget";
+import { formatAmount, majorUnits, parseBudget, validateOffer } from "./budget";
 import { chatCopy, type ChatText } from "./chat.messages";
-import { publicHref, type BillingStatus, type MoneyUnit } from "./composer";
+import { composerMaximum, publicHref, type BillingStatus, type MoneyUnit } from "./composer";
+import { PriceFacts, type ModelOffer } from "./ComposerStatus";
 import { formatMoney } from "./cost";
 import PayerBudget from "./PayerBudget";
 import ProviderConsent from "./ProviderConsent";
@@ -199,7 +200,7 @@ function WriteFeedback({ write }: { write: ReturnType<typeof useWrite> }) {
   </div>;
 }
 
-function AccessSettings() {
+function AccessSettings({ onBillingChanged }: { onBillingChanged?: () => void }) {
   const { t } = useI18n();
   const resource = useRead<AgentSettings>("agent.settings.get");
   return <><section className="card" aria-labelledby="ag-access-title">
@@ -210,21 +211,51 @@ function AccessSettings() {
     </div>
   </section>
     {resource.data?.billing.required && <PayerBudget />}
-    {resource.data?.billing.required && <AnswerBilling settings={resource.data} onChanged={resource.setData} />}
+    {resource.data?.billing.required && <AnswerBilling settings={resource.data} onChanged={resource.setData} onBillingChanged={onBillingChanged} />}
   </>;
 }
 
-/** The per-answer maximum and the accepted document versions, read beside each other. */
-function AnswerBilling({ settings, onChanged }: { settings: AgentSettings; onChanged: (value: AgentSettings) => void }) {
+/** The per-answer maximum and the accepted document versions, read beside each other. A saved or
+ *  cleared maximum reads the run bound again here and tells the page (`onBillingChanged`), which
+ *  reads it for the composer (addendum-2 W2), so no maximum on screen is older than the save. */
+export function AnswerBilling({ settings, onChanged, onBillingChanged }: {
+  settings: AgentSettings; onChanged: (value: AgentSettings) => void; onBillingChanged?: () => void;
+}) {
   const status = useRead<BillingStatus>("agent.billing.status");
+  const saved = (value: AgentSettings) => { onChanged(value); status.reload(); onBillingChanged?.(); };
   const setup = useRead<unknown>("agent.setup.get");
+  const offerRead = useRead<ModelOffer>("agent.billing.offer");
   let documents: SetupState | null | undefined;
   if (setup.loading && setup.data === null) documents = undefined;
   else { try { documents = validateSetup(setup.data); } catch { documents = null; } }
+  let offer: ModelOffer | null | undefined;
+  if (offerRead.loading && offerRead.data === null) offer = undefined;
+  else { try { validateOffer(offerRead.data as ModelOffer); offer = offerRead.data; } catch { offer = null; } }
+  const shown = status.loading && !status.data ? undefined : status.data;
   return <>
-    <RunCapSettings settings={settings} status={status.loading && !status.data ? undefined : status.data} onChanged={onChanged} />
+    <CurrentPrice offer={offer} status={shown} />
+    <RunCapSettings settings={settings} status={shown} onChanged={saved} />
     <AcceptedDocuments setup={documents} />
   </>;
+}
+
+/** The prices a send now runs at (addendum-2 C1): the unit prices, the price version and the
+ *  maximum per answer, as the model panel beside the composer shows them (`PriceFacts`).
+ *  `offer`: undefined while loading, null when it cannot be read. */
+export function CurrentPrice({ offer, status }: { offer: ModelOffer | null | undefined; status: BillingStatus | null | undefined }) {
+  const { t } = useI18n();
+  const c = (key: ChatText, params?: Params) => t(chatCopy[key][0], params);
+  const id = useId();
+  return <section className="card" aria-labelledby={`${id}-title`}>
+    <div className="card-h"><h2 id={`${id}-title`}>{c("modelTitle")}</h2></div>
+    <div className="card-b col gap12">
+      {offer === undefined ? <Loading /> : offer === null ? <p className="notice warn" role="status">{c("priceUnavailable")}</p> : <>
+        <p>{c("modelButton", { model: offer.model })}</p>
+        <h3>{c("modelPrices")}</h3>
+        <PriceFacts offer={offer} maximum={composerMaximum(status)} />
+      </>}
+    </div>
+  </section>;
 }
 
 const sameUnit = (a: MoneyUnit | null | undefined, b: MoneyUnit | null | undefined) => !!a && !!b && a.code === b.code && a.scale === b.scale;
@@ -250,13 +281,26 @@ export function RunCapSettings({ settings, status, onChanged }: {
   const current = cap && unit && sameUnit(cap.unit, unit) ? majorUnits(cap.amount, unit) : "";
   const [mode, setMode] = useState<"default" | "custom">(cap ? "custom" : "default");
   const [amount, setAmount] = useState(current);
+  // Until the person types, the box shows the saved maximum (addendum-2 W7): its unit comes with
+  // agent.billing.status, which may arrive after the card mounted.
+  const typing = useRef(false);
+  useEffect(() => { if (!typing.current) setAmount(current); }, [current]);
   const [issue, setIssue] = useState<ChatText | null>(null);
   const money = (minor: string, u: MoneyUnit) => { try { return formatMoney(minor, u, locale); } catch { return formatAmount(minor, u); } };
-  const changed = mode === "default" ? !!cap : amount.trim() !== current || !cap;
+  let typed: string | null = null;
+  if (unit && amount.trim()) { try { typed = parseBudget(amount.trim(), unit.scale); } catch { typed = null; } }
+  // Nothing to save: the default kept, an empty box, or the saved maximum written either way.
+  const changed = mode === "default" ? !!cap
+    : !!amount.trim() && !(cap && unit && sameUnit(cap.unit, unit) && typed === cap.amount);
   const unitChanged = !!cap && !!unit && !sameUnit(cap.unit, unit);
+  // "Cannot be lower than one call's hold" is said only of a saved maximum below the current hold,
+  // not of every bound the server cannot use right now.
+  const below = !!cap && !!unit && sameUnit(cap.unit, unit) && !!run && /^[0-9]+$/.test(cap.amount)
+    && /^[0-9]+$/.test(run.per_call_hold) && BigInt(cap.amount) < BigInt(run.per_call_hold);
   function saved(value: AgentSettings) {
     onChanged(value);
     const next = value.billing?.run_budget_cap ?? null;
+    typing.current = false;
     setMode(next ? "custom" : "default");
     setAmount(next && unit && sameUnit(next.unit, unit) ? majorUnits(next.amount, unit) : "");
   }
@@ -282,7 +326,7 @@ export function RunCapSettings({ settings, status, onChanged }: {
       {status === undefined && <Loading />}
       {cap && <p>{c("runCapCurrent", { amount: money(cap.amount, cap.unit) })}</p>}
       {unitChanged ? <p className="notice warn" role="status">{c("runCapUnitChanged")}</p>
-        : run && !run.usable && hold ? <p className="notice warn" role="status">{c("runCapMinimum", { amount: hold })}</p> : null}
+        : below && hold ? <p className="notice warn" role="status">{c("runCapMinimum", { amount: hold })}</p> : null}
       <form className="col gap12" noValidate onSubmit={save}>
         <fieldset className="col gap8 ag-plain-fieldset" disabled={write.locked}>
           <legend className="sr-only">{c("runCapTitle")}</legend>
@@ -296,7 +340,7 @@ export function RunCapSettings({ settings, status, onChanged }: {
             <span>{c("runCapAmount", { unit: unit.code })}</span>
             <input className="input" id={`${id}-amount`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false} maxLength={128}
               value={amount} aria-invalid={issue != null} aria-describedby={[hold ? `${id}-minimum` : "", issue ? `${id}-issue` : ""].filter(Boolean).join(" ") || undefined}
-              onChange={(event) => { setAmount(event.target.value); setIssue(null); write.dismiss(); }} />
+              onChange={(event) => { typing.current = true; setAmount(event.target.value); setIssue(null); write.dismiss(); }} />
           </label>}
           {mode === "custom" && hold && <p className="muted small" id={`${id}-minimum`}>{c("runCapMinimum", { amount: hold })}</p>}
         </fieldset>
@@ -657,13 +701,15 @@ function WorkspacePolicies() {
   </section>;
 }
 
-export default function Settings() {
+/** `onBillingChanged`: something that changes what a send is bound to was saved here (the page
+ *  then reads `agent.billing.status` again for the composer). */
+export default function Settings({ onBillingChanged }: { onBillingChanged?: () => void } = {}) {
   const { t } = useI18n();
   return <div className="ag-settings col gap16">
     <header className="suite-head"><div><h1>{t("Agent 设置")}</h1>
       <p className="lede">{t("管理你的模型访问、个人记忆，以及获授权管理的工作空间处理政策。")}</p></div></header>
     <ProviderConsent />
-    <AccessSettings />
+    <AccessSettings onBillingChanged={onBillingChanged} />
     <Memories />
     <WorkspacePolicies />
     <TransferPolicies />

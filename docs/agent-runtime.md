@@ -88,12 +88,21 @@ the cost line under each answer).
   the Agent itself get no automatic path (`billing_authorization_required` without a quote).
 * **The composer** shows the payer, the balance, the tightest remaining limit and "this answer
   costs at most …" from `agent.billing.status.run.maximum` (`run: {maximum, default, cap, source,
-  per_call_hold, max_calls, run_seconds, usable, price_id, route_version}`; a server without `run`
-  shows the per-call hold, said as such). Send is never disabled for a money reason; the server's
-  refusal says why.
-* **The price shown is the price sent** (contract addendum AD-1). Every send and regenerate repeats
-  the `run.price_id` / `run.route_version` the composer showed as `seen_price_id` /
-  `seen_route_version` (both omitted when there is no `run`; the server then does not check). When
+  per_call_hold, max_calls, run_seconds, usable, price_id, route_version, price_key?}`), "reading
+  the most this answer can cost…" while the status loads, and "the most this answer can cost cannot
+  be shown right now" when it cannot be read or has no run. When `run.usable` is false it shows no
+  maximum: a cap below one call's hold says so with that hold, a cap that cannot be used (another
+  unit, unreadable) says so — both with a link to Agent settings — and otherwise "the model service
+  is unavailable right now". Send is never disabled for a money reason; the server's refusal says
+  why.
+* **The price shown is the price sent** (contract addendum AD-1, addendum-2 W3/S2). Every paid send
+  and regenerate repeats the price the composer showed: `seen_price_id` = `run.price_id`, and
+  `seen_route_version` = `run.price_key` when the server reports one (a digest of what the person
+  pays, so a route renewal with the same prices refuses nothing), else `run.route_version` — the
+  value exactly as the server gave it. The page never sends a paid turn without them: while the
+  status is loading, unreadable or has no `run`, Send is held in the page (`price_not_shown`, worded
+  "the maximum has to be shown before sending … nothing was sent or charged"), nothing is requested
+  (not even a new conversation), the status is read again, and "send again" sends once it is shown. When
   an administrator adopted another price meanwhile, the server refuses with 409
   `billing_price_changed` (`detail.current`: the new price id, route version, maximum, per-call hold
   and unit) and stores nothing: the message stays in the composer, the status is read again so the
@@ -101,12 +110,26 @@ the cost line under each answer).
   shown, and "send again at the new price" sends it in one click (no dialog; for a refused
   regenerate it repeats that regenerate), with the message as it then stands and the price and payer
   the page shows at that click. The page also reads the status again when the window
-  regains focus or becomes visible, and at most every 5 minutes while it is visible.
+  regains focus or becomes visible, at most every 5 minutes while it is visible, after the maximum
+  per answer is saved or cleared in Agent settings, and on leaving Agent settings.
+* **Where the price is shown** (addendum-2 C1, the pricing page's "where to see prices"). The model
+  panel beside the composer (`ModelPicker`) and Agent settings' "Models and prices" card
+  (`CurrentPrice`, from `agent.billing.offer` and `agent.billing.status`) show the same
+  `PriceFacts`: the unit prices per million tokens, one call's hold, the price version (the sale
+  `price_id`, the value a paid send repeats as `seen_price_id`) and the maximum per answer as the
+  composer shows it (or why none can be shown); an unreadable offer is said, with no figure.
+* **Agent settings, "maximum per answer"** (`RunCapSettings`). The box shows the saved maximum
+  (also when `agent.billing.status`, which gives its unit, arrives after the card) until the person
+  types; Save stays disabled while nothing changed (the default kept, an empty box, or the saved
+  amount written either way); "cannot be lower than one call's hold" is shown as a warning only for
+  a saved maximum below the current hold, not for every bound the server cannot use right now.
 * **One-time "Start using Synwevo Agent" step** (`AgentSetup.tsx`, an inline region, not a modal).
   When a send needs something the person has not done (`agent.setup.get`), the message stays in the
   composer, focus moves to the step's heading, and the step shows only what is missing: (a) the
   separate DeepSeek data-sharing consent — the same notice as Agent settings (`ProviderConsentFacts`)
-  with its own unticked box, recorded by `agent.provider_consent.accept` for the version shown;
+  with its own unticked box, recorded by `agent.provider_consent.accept` for the version shown; the
+  step has no withdraw control, so its note says "you can withdraw it later in Agent settings"
+  instead of the settings card's "you can withdraw here at any time";
   (b) the terms of service, AI use rules and pricing — a second unticked box with the three pages
   linked in a new tab, recorded by `agent.terms.accept` with every document at its current version;
   (c) for the personal payer, the daily / weekly / monthly spending limits prefilled with the
@@ -114,14 +137,24 @@ the cost line under each answer).
   `expected_revision`. The button reads "Agree and send" with a message waiting, otherwise "Agree
   and start". The writes run in the order (a), (b), (c) and only then is the message sent; any
   failure stops there, keeps the message and says one step is unfinished (a newer document or notice
-  version is shown for acceptance). The step returns only when a document or consent version
-  changes; a price change never brings it back. An organization payer skips the limits.
+  version is shown for acceptance). The step words an update ("… has been updated. Review and
+  accept the new version.", without "you only do this once") only when `agent.setup.get` reports
+  an earlier accepted version (`terms.documents[].accepted_version`, `provider_consent.accepted_version`);
+  otherwise it is the first-use wording. The `terms_acceptance_required` refusal is neutral ("you
+  need to accept the current version of …"). Opening the step (by Send or from a refusal) reads
+  `agent.setup.get` again and shows it loading until the fresh state arrives; leaving Agent settings
+  reads it again too. A step with nothing left to record offers no "Agree and send": it says setup
+  is complete and only offers "check again". The step returns only when a document or consent
+  version changes; a price change never brings it back. An organization payer skips the limits.
 * **Price notice** (`PriceNotice.tsx`). When `agent.billing.status.price_notice.previous` (the
   pricing of the person's last answer) differs from the current offer, the chat shows "Prices have
   changed. Answers from now on are charged at the new price." with what changed (model, route,
   price version, unit, each rate per million tokens, per-call hold) and "Got it". It never blocks a
-  send. Its dismissal is remembered per viewer in `localStorage` for the (previous, current) price
-  pair, every access inside `try/catch`, so blocked storage only means it shows again. An answer in
+  send. Its dismissal is remembered per viewer in `localStorage` for what the person pays on each
+  side — the sale price id and one call's hold, plus the price key when the server reports it
+  (`price_notice.previous.price_key`, `run.price_key`), never the route version — so a raised hold
+  at the same sale price id is shown again (addendum-2 W9); every access is inside `try/catch`, so
+  blocked storage only means it shows again. An answer in
   progress when a price changes stops before its next model call (`price_changed`), calls already
   made are settled at the earlier price, and its next step is "send again at the new price".
 * **Legacy quotes and continuing consents** (`agent.turn.quote`, `agent.quote.*`, `agent.consent.*`)
@@ -276,6 +309,14 @@ balance and is shown as the service being unavailable, never as the person's bal
 refusal that can also stop a running answer is worded so it is true mid-run ("no new model call
 was made and nothing was charged for it"; rr-glue-2); only the one-time setup refusals are
 admission-only. No refusal asks anyone to re-confirm a price, a run time or a quote.
+
+A refused message is never lost on the way to its next step (addendum-2 W10). When the person
+leaves for Agent settings (a refusal's "open Agent settings", the per-answer maximum's or a limit's
+link), the composer hands its text, sources and files to the page as it goes away, and the page
+gives them back to the composer of that conversation when the person returns; leaving for
+anything else keeps nothing. When the one-time setup step's send is refused, the step's button is
+gone, so focus moves to the refusal notice's next step (or the notice itself), or to the composer
+for an error that is not a refusal.
 
 An administrator's suspension of the person's Agent access (`agent_access_suspended`, 403 on a
 send and the check before every model call of a running answer) has its own sentence: Agent

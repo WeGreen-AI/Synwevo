@@ -107,13 +107,21 @@ async function compiled(file: string, initialProps: any, overrides: Record<strin
 
 /** The actual AgentApp (index.tsx) over FIXTURE reads and writes. */
 /** `route: null` opens the page without a conversation (a new one is created by the send). */
-async function appFixture({ billing = true, setup = fixtureSetup(), status: initialStatus = fixtureStatus() as any,
+async function appFixture({ billing = true, setup: initialSetup = fixtureSetup() as any, status: initialStatus = fixtureStatus() as any,
   route: initial = 'conv_fixture' as string | null, offer: initialOffer = fixtureOffer() as any, globals = {} as Record<string, unknown> } = {}) {
   const writes: any[] = [], reads: string[] = [], navigations: string[] = [];
-  let failure: unknown, route: string | undefined = initial ?? undefined, status = initialStatus, offer = initialOffer;
+  let failure: unknown, route: string | undefined = initial ?? undefined, status = initialStatus, offer = initialOffer, setup = initialSetup;
+  /** Agent settings is a route inside the same AgentApp (no conversation is open there). */
+  let onSettings = false;
+  /** Errors the next requests meet, one each, before `failure` (e.g. a lost connection). */
+  const next: unknown[] = [];
+  /** FIXTURE of the server's idempotency record (capabilities `_prior` / `_replay`): a key the
+   *  server answered with a refusal is answered again with 409 idempotent_failure carrying that
+   *  code; a request that never reached it (a network failure) leaves no record. */
+  const answered = new Map<string, unknown>();
   const h = await compiled('index.tsx', {}, {
-    'react-router-dom': { ...router, useMatch: (path: string) => path === '/agent/c/:cid' && route ? { params: { cid: route } } : null,
-      useLocation: () => ({ pathname: route ? `/agent/c/${route}` : '/agent' }), useNavigate: () => (path: string) => navigations.push(path) },
+    'react-router-dom': { ...router, useMatch: (path: string) => path === '/agent/c/:cid' && route && !onSettings ? { params: { cid: route } } : null,
+      useLocation: () => ({ pathname: onSettings ? '/agent/settings' : route ? `/agent/c/${route}` : '/agent' }), useNavigate: () => (path: string) => navigations.push(path) },
     '@synwevo/ui': { ...ui, useI18n: () => ({ t: (key: string) => key, locale: 'en' }), useDialog: () => ({}) },
     '@synwevo/auth-client': { ...client, useSession: () => ({ me: { id: 'usr_fixture', display_name: 'Fixture user' }, state: { site_url: 'https://site.fixture.test' } }),
       get: async () => fixturePayers() },
@@ -129,15 +137,26 @@ async function appFixture({ billing = true, setup = fixtureSetup(), status: init
       if (operation === 'agent.setup.get') return setup;
       return null;
     }, op: async (operation: string, input: any, options: any) => {
-      writes.push({ operation, input, options }); if (failure) throw failure;
+      writes.push({ operation, input, options });
+      const replayed = options?.key && answered.get(`${operation}:${options.key}`);
+      if (replayed) throw new client.ApiError(409, 'idempotent_failure', 'fixture', { run_id: 'run_fixture', code: (replayed as any).code });
+      const error = next.length ? next.shift() : failure;
+      if (error) {
+        if (options?.key && !((error as any).status === 0 || (error as any).upstream)) answered.set(`${operation}:${options.key}`, error);
+        throw error;
+      }
       return { status: 'succeeded', output: operation === 'agent.conversation.create' ? { id: 'conv_new_fixture' } : { turn_id: 'turn_fixture', user_message_id: 'msg_u', assistant_message_id: 'msg_a' } };
     } },
   }, 'app', globals);
   await settle(); h.render(); await settle(); h.render(); await settle(); h.render();
   const fixture = { ...h, writes, reads, navigations, fail: (value: any) => { failure = value; },
+    failNext: (...errors: unknown[]) => { next.push(...errors); },
     /** The server's state moves on (an administrator adopted a new price): later reads return these. */
-    serve: (next: { status?: any; offer?: any }) => { status = next.status ?? status; offer = next.offer ?? offer; },
+    serve: (later: { status?: any; offer?: any; setup?: any }) => {
+      status = later.status !== undefined ? later.status : status; offer = later.offer ?? offer; setup = later.setup ?? setup; },
     route: (id?: string) => { route = id; h.render(); },
+    /** Open Agent settings (true) or go back to the conversation (false), then let the reads settle. */
+    settings: async (open: boolean) => { onSettings = open; h.render(); for (let i = 0; i < 3; i++) { await settle(); h.render(); } },
     chat: () => h.find((el) => el.type === chat.default).props,
     money: () => fixture.chat().status.props.money,
     card: () => all(fixture.chat().aside).filter((el) => el.type === setupModule.default),
@@ -303,16 +322,71 @@ test('an admission refusal keeps the draft in the composer and renders the refus
 
 // ---------------------------------------------------------------- addendum AD-1: the price shown is the price sent
 
-test('without a run bound to show (older server, or none read yet) the send names no price, and the server does not check one', async () => {
-  const h = await appFixture({ status: fixtureStatus({ run: null }) });
-  await h.chat().send('Fixture legacy');
-  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture legacy' });
+test('W3: without a displayed price a paid send does not go out: the draft stays, the price is read again, and the next send carries it', async () => {
+  const refusals = await server.ssrLoadModule('/src/apps/agent/refusals.ts');
+  // FIXTURE: the run bound could not be read (null), the route has no run (run: null), or a server before AD-1 (no price fields).
+  for (const unshown of [null, fixtureStatus({ run: null }), fixtureStatus({ run: { ...fixtureStatus().run, price_id: undefined, route_version: undefined } })]) {
+    const h = await appFixture({ status: unshown, route: null });
+    const statusReads = () => h.reads.filter((r) => r === 'agent.billing.status').length;
+    const before = statusReads();
+    // The composer says honestly that it cannot show the maximum, rather than nothing.
+    assert.deepEqual(h.chat().maximum.props.maximum, { key: 'turnMaximumUnavailable' });
+    let refused: any;
+    await assert.rejects(h.chat().send('Fixture question'), (e: any) => { refused = e; return true; });
+    assert.deepEqual(h.writes, [], 'nothing is sent: not the turn, and no conversation for it either');
+    const refusal = refusals.refusalOf(refused);
+    assert.deepEqual([refusal.kind, refusal.next, refusal.text], ['price_unshown', 'retry', 'refusedPriceUnshown']);
+    await assert.rejects(h.chat().act('agent.turn.start', { conversation_id: 'conv_fixture', regenerate_of: 'msg_a' }));
+    assert.deepEqual(h.writes, [], 'a regenerate is held the same way');
+    await settle(); h.render(); await settle(); h.render();
+    assert.ok(statusReads() > before, 'the status is read again');
+    assert.equal(h.chat().sentDraft, 0, 'the message stays in the composer');
+    // The price arrives; the composer shows the maximum and the next send carries it.
+    h.serve({ status: fixtureStatus() });
+    await assert.rejects(h.chat().send('Fixture question'));
+    await settle(); h.render(); await settle(); h.render();
+    assert.deepEqual(h.chat().maximum.props.maximum, { key: 'turnMaximum', amount: '468', unit: UNIT });
+    assert.equal(await h.chat().send('Fixture question'), true);
+    assert.deepEqual(h.writes.map((w) => w.operation), ['agent.conversation.create', 'agent.turn.start']);
+    assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_new_fixture', text: 'Fixture question', ...SEEN });
+    h.unmount();
+  }
+  // While the status is still loading the composer says so, and a send is held the same way.
+  const pending = await appFixture({ status: new Promise(() => {}) });
+  assert.deepEqual(pending.chat().maximum.props.maximum, { key: 'turnMaximumLoading' });
+  await assert.rejects(pending.chat().send('Fixture early'), (e: any) => refusals.refusalOf(e)?.kind === 'price_unshown');
+  assert.deepEqual(pending.writes, []);
+  pending.unmount();
+  // Without billing nothing about prices is asked or sent.
+  const free = await appFixture({ billing: false, status: null });
+  await free.chat().send('Fixture free');
+  assert.deepEqual(plain(free.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture free' });
+  free.unmount();
+});
+
+test('W3: the held send is worded in three languages: nothing was sent or charged, the price is being read, send again', async () => {
+  const copy = await server.ssrLoadModule('/src/apps/agent/chat.messages.ts');
+  const [zh, en, hant] = copy.chatCopy.refusedPriceUnshown;
+  assert.match(zh, /没有发送，也没有扣费/); assert.match(en, /not sent and nothing was charged/); assert.match(hant, /沒有傳送，也沒有扣費/);
+  assert.equal(core.translate('en', zh), en); assert.equal(core.translate('zh-Hant', zh), hant);
+  for (const key of ['turnMaximumUnavailable', 'turnMaximumLoading']) {
+    const [source, english, traditional] = copy.chatCopy[key];
+    assert.equal(core.translate('en', source), english, key); assert.equal(core.translate('zh-Hant', source), traditional, key);
+  }
+});
+
+test('S2: the second seen field carries the server\'s price key when the run reports one, else its route version', async () => {
+  const composer = await server.ssrLoadModule('/src/apps/agent/composer.ts');
+  const run = fixtureStatus().run;
+  assert.deepEqual(plain(composer.seenPrice({ run })), SEEN);
+  assert.deepEqual(plain(composer.seenPrice({ run: { ...run, price_key: 'pk_fixture_2' } })), { seen_price_id: 'price_fixture_2', seen_route_version: 'pk_fixture_2' });
+  // A malformed key is no price at all (the send is held), never the route version in its place.
+  assert.deepEqual(plain(composer.seenPrice({ run: { ...run, price_key: 'bad key' } })), {});
+  assert.deepEqual(plain(composer.seenPrice({ run: { ...run, price_key: null } })), SEEN);
+  const h = await appFixture({ status: fixtureStatus({ run: { ...run, price_key: 'pk_fixture_2' } }) });
+  await h.chat().send('Fixture keyed');
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture keyed', seen_price_id: 'price_fixture_2', seen_route_version: 'pk_fixture_2' });
   h.unmount();
-  // A run without the price fields (a server before AD-1) is the same: both are omitted, never one.
-  const old = await appFixture({ status: fixtureStatus({ run: { ...fixtureStatus().run, price_id: undefined, route_version: undefined } }) });
-  await old.chat().act('agent.turn.start', { conversation_id: 'conv_fixture', regenerate_of: 'msg_fixture' });
-  assert.deepEqual(plain(old.writes.at(-1).input), { conversation_id: 'conv_fixture', regenerate_of: 'msg_fixture' });
-  old.unmount();
 });
 
 test('a price adopted while the page was open: the send is refused, the draft stays, the new price is read and shown, and one click sends at it', async () => {
@@ -451,4 +525,257 @@ test('when the setup step\'s send is refused, "send again" sends the message as 
   assert.equal(h.chat().sentDraft, 1);
   assert.equal(h.chat().onDraft, undefined, 'sent: the page stops following the composer');
   h.unmount();
+});
+
+// ---------------------------------------------------------------- addendum-2 (integrated review of f834ae50)
+
+test('W1: every explicit send is a new attempt with a new key, so a cause fixed in between is never answered with the replayed refusal', async () => {
+  const h = await appFixture();
+  const starts = () => h.writes.filter((w) => w.operation === 'agent.turn.start');
+  // FIXTURE: the terms are not accepted yet; the server refuses the send (and records the refusal under its key).
+  h.fail(new client.ApiError(409, 'terms_acceptance_required', 'fixture'));
+  await assert.rejects(h.chat().send('Fixture question'), (e: any) => e.code === 'terms_acceptance_required');
+  await settle(); h.render();
+  // The person finishes the setup step (the terms are now accepted) and its button sends the kept message.
+  h.fail(undefined);
+  h.chat().onSetup({ text: 'Fixture question' }); h.render(); await settle(); h.render(); await settle(); h.render();
+  await h.card()[0].props.onComplete(); await settle(); h.render();
+  assert.equal(starts().length, 2);
+  assert.deepEqual(plain(starts()[1].input), plain(starts()[0].input), 'the same message, unchanged');
+  assert.notEqual(starts()[1].options.key, starts()[0].options.key, 'a new attempt, not the refused one');
+  assert.equal(h.chat().sentDraft, 1, 'it starts');
+  // A refused regenerate, repeated after the cause is fixed (the maximum raised in Agent settings).
+  const regenerate = { conversation_id: 'conv_fixture', regenerate_of: 'msg_a' };
+  h.fail(new client.ApiError(409, 'billing_run_cap_below_call_hold', 'fixture', { per_call_hold: '39', cap: '30', unit: UNIT }));
+  await assert.rejects(h.chat().act('agent.turn.start', regenerate), (e: any) => e.code === 'billing_run_cap_below_call_hold');
+  h.fail(undefined);
+  await h.chat().act('agent.turn.start', regenerate);
+  assert.equal(starts().length, 4);
+  assert.notEqual(starts()[3].options.key, starts()[2].options.key);
+  // And the plain composer: the same text sent again after a refusal is a new attempt too.
+  h.fail(new client.ApiError(429, 'agent_busy', 'fixture'));
+  await assert.rejects(h.chat().send('Fixture again'));
+  h.fail(undefined);
+  assert.equal(await h.chat().send('Fixture again'), true);
+  assert.equal(new Set(starts().map((w) => w.options.key)).size, starts().length, 'no key is ever sent twice by a click');
+  h.unmount();
+});
+
+test('W1: an attempt that got no answer is retried automatically with its own key; any answer from the server ends it', async () => {
+  const waits: number[] = [];
+  const instant = (fn: () => void, ms: number) => { waits.push(ms); return setTimeout(fn, 0); };
+  const h = await appFixture({ globals: { setTimeout: instant } });
+  const starts = () => h.writes.filter((w) => w.operation === 'agent.turn.start');
+  // FIXTURE: the connection drops, then a gateway in front of Synwevo cannot reach it; the third try is answered.
+  h.failNext(new client.ApiError(0, 'network', 'fixture'), new client.ApiError(504, 'upstream_unavailable', 'fixture', { status: 504 }, true));
+  assert.equal(await h.chat().send('Fixture over a bad connection'), true);
+  assert.equal(starts().length, 3);
+  assert.equal(new Set(starts().map((w) => w.options.key)).size, 1, 'the same attempt, so a lost response is never run twice');
+  assert.equal(waits.length, 2);
+  // Retries are bounded: a connection that stays down ends the attempt with the network error.
+  const down = new client.ApiError(0, 'network', 'fixture');
+  h.failNext(down, down, down);
+  await assert.rejects(h.chat().send('Fixture offline'), (e: any) => e.code === 'network');
+  assert.equal(starts().length, 6);
+  assert.equal(new Set(starts().slice(3).map((w) => w.options.key)).size, 1);
+  // An answer from Synwevo (a refusal, or its own server error) is final: never retried automatically.
+  h.failNext(new client.ApiError(409, 'billing_price_changed', 'fixture', { current: {} }));
+  await assert.rejects(h.chat().send('Fixture refused'));
+  h.failNext(new client.ApiError(500, 'internal_error', 'fixture'));
+  await assert.rejects(h.chat().send('Fixture failed'));
+  assert.equal(starts().length, 8);
+  h.unmount();
+});
+
+test('W8: the composer honours run.usable: an unusable cap says so with the way to Agent settings, never "at most <default>"', async () => {
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const run = fixtureStatus().run;
+  const unusable = (over: Record<string, unknown>) => fixtureStatus({ run: { ...run, usable: false, ...over } });
+  const pending = fixtureSetup({ complete: false, terms: { complete: false, documents: fixtureSetup().terms.documents.map((d: any) => ({ ...d, accepted: false })) } });
+  // FIXTURE (quotes.run_bound): a cap below one call's hold reports the default as maximum with usable=false.
+  const low = await appFixture({ status: unusable({ cap: '30', source: 'personal_cap' }), setup: pending });
+  assert.deepEqual(low.chat().maximum.props.maximum, { key: 'turnMaximumCapLow', amount: '39', unit: UNIT });
+  // The setup step's terms sentence then names no amount it could not honour.
+  assert.equal(await low.chat().send('Fixture'), false); low.render(); await settle(); low.render(); await settle(); low.render();
+  assert.equal(low.card()[0].props.maximum, null);
+  low.unmount();
+  // A cap that cannot be read (cap null) or is in another unit: unusable, said without a figure.
+  for (const status of [unusable({ cap: null, source: 'personal_cap' }), unusable({ cap: '100', source: 'personal_cap' })]) {
+    const h = await appFixture({ status });
+    assert.deepEqual(h.chat().maximum.props.maximum, { key: 'turnMaximumCapUnusable' }, JSON.stringify(status.run));
+    h.unmount();
+  }
+  // Not the person's cap (the route's validity is nearly over): the service, not a settings matter.
+  for (const status of [unusable({}), unusable({ maximum: '300', cap: '300', source: 'personal_cap' })]) {
+    const h = await appFixture({ status });
+    assert.deepEqual(h.chat().maximum.props.maximum, { key: 'turnMaximumPaused' }, JSON.stringify(status.run));
+    h.unmount();
+  }
+  // Rendered: the cap problems link to Agent settings; nothing says "at most".
+  const html = (maximum: unknown) => renderToStaticMarkup(React.createElement(router.MemoryRouter, null, React.createElement(parts.TurnMaximum, { maximum })));
+  const capLow = html({ key: 'turnMaximumCapLow', amount: '39', unit: UNIT });
+  assert.match(capLow, /低于一次调用的预留金额 ¥0\.39/); assert.match(capLow, /href="\/agent\/settings"/);
+  assert.doesNotMatch(capLow, /最多/);
+  assert.match(html({ key: 'turnMaximumCapUnusable' }), /href="\/agent\/settings"/);
+  assert.doesNotMatch(html({ key: 'turnMaximumPaused' }), /href=/);
+  const copy = await server.ssrLoadModule('/src/apps/agent/chat.messages.ts');
+  for (const key of ['turnMaximumCapLow', 'turnMaximumCapUnusable', 'turnMaximumPaused']) {
+    const [source, en, hant] = copy.chatCopy[key];
+    assert.equal(core.translate('en', source), en, key); assert.equal(core.translate('zh-Hant', source), hant, key);
+  }
+});
+
+test('W2: leaving Agent settings, and saving the maximum there, reads agent.billing.status again, so the composer never shows a stale maximum', async () => {
+  const capped = (amount: string) => fixtureStatus({ run: { ...fixtureStatus().run, maximum: amount, cap: amount, source: 'personal_cap' } });
+  const h = await appFixture({ status: capped('100') });
+  const statusReads = () => h.reads.filter((r) => r === 'agent.billing.status').length;
+  assert.equal(h.chat().maximum.props.maximum.amount, '100');
+  await h.settings(true);
+  // The settings page hands every saved or cleared maximum back to the page.
+  const page = h.find((el) => typeof el.props.onBillingChanged === 'function');
+  const before = statusReads();
+  h.serve({ status: capped('300') });   // FIXTURE: the person raised their maximum to 3.00
+  page.props.onBillingChanged(); await settle(); h.render(); await settle(); h.render();
+  assert.equal(statusReads(), before + 1, 'a save reads the status again');
+  h.serve({ status: capped('250') });   // FIXTURE: and lowered it again before going back
+  await h.settings(false);
+  assert.equal(statusReads(), before + 2, 'leaving the settings reads it again');
+  assert.equal(h.chat().maximum.props.maximum.amount, '250');
+  await h.chat().send('Fixture question');
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture question', ...SEEN });
+  h.unmount();
+});
+
+test('W4: opening the setup step reads agent.setup.get again and shows it loading until the fresh state arrives; leaving Agent settings reads it too', async () => {
+  const h = await appFixture();                 // setup complete when the page loaded
+  const setupReads = () => h.reads.filter((r) => r === 'agent.setup.get').length;
+  const withdrawn = fixtureSetup({ complete: false, provider_consent: { ...fixtureSetup().provider_consent, accepted: false, accepted_version: null } });
+  // FIXTURE: the consent was withdrawn in Agent settings meanwhile; the server refuses the send.
+  h.fail(new client.ApiError(409, 'provider_consent_required', 'fixture', { provider: 'deepseek', version: '2026-10-05' }));
+  await assert.rejects(h.chat().send('Fixture question'));
+  h.fail(undefined); h.serve({ setup: withdrawn });
+  const before = setupReads();
+  h.chat().onSetup({ text: 'Fixture question' }); h.render();
+  assert.equal(h.card().length, 1);
+  assert.equal(h.card()[0].props.setup, undefined, 'loading, not the state read at page load');
+  await settle(); h.render(); await settle(); h.render();
+  assert.equal(setupReads(), before + 1, 'read again when the step opens');
+  assert.equal(h.card()[0].props.setup.provider_consent.accepted, false, 'the step asks for what is missing now');
+  h.card()[0].props.onDismiss(); h.render();
+  // Opened by Send (the page knows something is missing): read again as well.
+  const bySend = setupReads();
+  assert.equal(await h.chat().send('Fixture question'), false); h.render();
+  assert.equal(h.card()[0].props.setup, undefined);
+  await settle(); h.render(); await settle(); h.render();
+  assert.equal(setupReads(), bySend + 1);
+  h.card()[0].props.onDismiss(); h.render();
+  // The facts may change in Agent settings: leaving it reads the state again.
+  await h.settings(true);
+  const away = setupReads();
+  h.serve({ setup: fixtureSetup() });
+  await h.settings(false);
+  assert.equal(setupReads(), away + 1, 'read again on leaving Agent settings');
+  assert.equal(await h.chat().send('Fixture question'), true, 'consent given there: the send goes straight out');
+  h.unmount();
+});
+
+test('W9: the page keys the price notice on the price key of the run it shows', async () => {
+  const prices = await server.ssrLoadModule('/src/apps/agent/PriceNotice.tsx');
+  const previous = { ...fixtureOffer(), route_version: 'fixture-v1', price_id: 'price_fixture_1', per_call_hold: '30', price_key: 'pk1:previous' };
+  const h = await appFixture({ status: fixtureStatus({ run: { ...fixtureStatus().run, price_key: 'pk1:current' },
+    price_notice: { previous, previous_run_at: 1_700_000_000 } }) });
+  const notices = all(h.chat().aside).filter((el) => el.type === prices.default);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].props.currentKey, 'pk1:current');
+  h.unmount();
+});
+
+test('W10: a refused message is kept when the person goes to Agent settings and is back in the composer when they return', async () => {
+  const h = await appFixture();
+  // FIXTURE: the send is refused for the per-answer maximum; its next step is Agent settings.
+  h.fail(new client.ApiError(409, 'billing_run_cap_below_call_hold', 'fixture', { per_call_hold: '39', cap: '30', unit: UNIT }));
+  await assert.rejects(h.chat().send('Fixture question'));
+  h.fail(undefined);
+  const leave = h.chat().onLeave;
+  assert.equal(typeof leave, 'function', 'the composer hands its message to the page when it goes away');
+  // The composer's state as Chat holds it (text, source chips, file chips), handed over as it unmounts.
+  const context = { reference: { workspace_id: 'ws_a', kind: 'form', id: 'frm_fixture' }, title: 'Fixture form', workspace: 'Fixture a', kind: 'form' };
+  const kept = { text: 'Fixture question', contexts: [context], files: [] };
+  await h.settings(true);
+  leave(kept);
+  await h.settings(false);
+  assert.deepEqual(plain(h.chat().restore), plain(kept), 'the message is back in the composer');
+  // Once the composer took it, it is not handed out again.
+  h.chat().onRestored(); h.render();
+  assert.equal(h.chat().restore, undefined);
+  // Leaving for anything but Agent settings (another conversation) keeps nothing; an empty composer neither.
+  h.chat().onLeave({ text: 'Fixture elsewhere', contexts: [], files: [] }); h.render();
+  assert.equal(h.chat().restore, undefined);
+  const again = h.chat().onLeave;
+  await h.settings(true); again({ text: '  ', contexts: [], files: [] }); await h.settings(false);
+  assert.equal(h.chat().restore, undefined);
+  // Kept for the conversation it was written in: another one does not receive it.
+  const third = h.chat().onLeave;
+  await h.settings(true); third(kept); h.route('conv_other'); await h.settings(false);
+  assert.equal(h.chat().restore, undefined);
+  h.route('conv_fixture');
+  assert.deepEqual(plain(h.chat().restore), plain(kept));
+  h.unmount();
+});
+
+test('W10: the composer starts from a kept message and hands its message over when it goes away', async () => {
+  const context = { reference: { workspace_id: 'ws_a', kind: 'form', id: 'frm_fixture' }, title: 'Fixture form', workspace: 'Fixture a', kind: 'form' };
+  const left: any[] = []; let restored = 0;
+  const h = await chatFixture(async () => true, { restore: { text: 'Fixture kept', contexts: [context], files: [] },
+    onRestored: () => { restored += 1; }, onLeave: (draft: unknown) => left.push(draft) });
+  assert.equal(h.find((el) => el.type === 'textarea').props.value, 'Fixture kept');
+  assert.equal(restored, 1, 'the page is told the kept message was taken');
+  h.find((el) => el.type === 'textarea').props.onChange({ target: { value: 'Fixture kept, edited' } }); h.render();
+  h.unmount();
+  assert.deepEqual(plain(left), [{ text: 'Fixture kept, edited', contexts: [context], files: [] }]);
+});
+
+test('W10: when the setup step\'s send is refused, focus moves to the refusal notice', async () => {
+  const h = await appFixture({ setup: fixtureSetup({ complete: false, terms: { complete: false, documents: fixtureSetup().terms.documents.map((d: any) => ({ ...d, accepted: false })) } }) });
+  assert.equal(await h.chat().send('Fixture draft'), false); h.render(); await settle(); h.render(); await settle(); h.render();
+  h.fail(new client.ApiError(409, 'billing_run_cap_below_call_hold', 'fixture', { per_call_hold: '39', cap: '30', unit: UNIT }));
+  await h.card()[0].props.onComplete(); await settle(); h.render();
+  const notice = h.find((el) => el.type === parts.RefusalNotice);
+  assert.ok(notice.props.focusTick > 0, 'the notice is asked to take focus');
+  // The notice itself (ChatParts, compiled): focus goes to its next step, or to the notice when it has none.
+  const focused: string[] = [];
+  const r = await compiled('ChatParts.tsx', { refusal: { kind: 'run_cap', next: 'settings', text: 'refusedRunCap' }, live: true }, {}, 'RefusalNotice');
+  const box = r.tree();
+  assert.equal(box.props.tabIndex, undefined, 'not focusable while nothing asks for it');
+  box.props.ref.current = { querySelector: () => ({ focus: () => focused.push('next step') }), focus: () => focused.push('notice') };
+  r.render({ focusTick: 1 });
+  assert.deepEqual(focused, ['next step']);
+  assert.equal(r.tree().props.tabIndex, -1);
+  r.tree().props.ref.current = { querySelector: () => null, focus: () => focused.push('notice') };
+  r.render({ focusTick: 2 });
+  assert.deepEqual(focused, ['next step', 'notice']);
+  r.render({ focusTick: 2 });
+  assert.equal(focused.length, 2, 'only when asked again');
+  h.unmount();
+});
+
+test('C1: the model panel beside the composer shows the unit prices, the price version and the per-answer maximum', async () => {
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const copy = await server.ssrLoadModule('/src/apps/agent/chat.messages.ts');
+  const payerModule = await server.ssrLoadModule('/src/apps/agent/payers.ts');
+  // The chat's words in English (fixture translator), so the rendered panel can be read.
+  const text = { './ChatParts': { ...parts, useChatText: () => ({ c: (key: string, params?: any) => core.translate('en', copy.chatCopy[key][0], params), locale: 'en' }) } };
+  const me = payerModule.personal('usr_fixture', 'Fixture user');
+  const money = { status: fixtureStatus(), offer: fixtureOffer(), payers: [me], payersError: false, payer: me, setPayer() {}, walletUrl: '/account/wallet' };
+  const bar = await compiled('ComposerStatus.tsx', { money }, text, 'ComposerStatus');
+  const picker = bar.find((el) => Array.isArray(el.props.offers));
+  assert.deepEqual(plain(picker.props.maximum), { key: 'turnMaximum', amount: '468', unit: UNIT }, 'the maximum the composer shows');
+  const panel = await compiled('ComposerStatus.tsx', picker.props, text, 'ModelPicker');
+  panel.find((el) => el.type === 'button' && el.props['aria-haspopup'] === 'dialog').props.onClick(); panel.render();
+  const modal = panel.find((el) => typeof el.props.onClose === 'function' && el.props.title !== undefined);
+  const html = renderToStaticMarkup(React.createElement(router.MemoryRouter, null, modal));
+  for (const words of ['Price per million tokens', 'Price version', 'price_fixture_2', 'Maximum per answer', 'CN¥4.68']) assert.ok(html.includes(words), `${words} in ${html}`);
+  // While the run bound is read, the panel says so rather than show a figure.
+  const loading = await compiled('ComposerStatus.tsx', { money: { ...money, status: undefined } }, text, 'ComposerStatus');
+  assert.deepEqual(plain(loading.find((el) => Array.isArray(el.props.offers)).props.maximum), { key: 'turnMaximumLoading' });
 });

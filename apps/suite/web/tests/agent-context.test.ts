@@ -266,6 +266,13 @@ function setupFixture(complete: boolean) {
     limits: { configured: true, enabled: true, revision: 1, unit: { code: 'CNY', scale: 2 }, suggested: null } };
 }
 
+/** FIXTURE `agent.billing.status`: the run bound with the price every paid send repeats (AD-1); a paid
+ *  send without a shown price is held in the page (addendum-2 W3). */
+const SEEN = { seen_price_id: 'price_fixture', seen_route_version: 'fixture-v1' };
+const statusFixture = () => ({ available: true, environment: 'test', unit: { code: 'CNY', scale: 2 }, per_call_hold: '39',
+  run: { maximum: '468', default: '468', cap: null, source: 'default', per_call_hold: '39', max_calls: 12, run_seconds: 3600, usable: true,
+    price_id: SEEN.seen_price_id, route_version: SEEN.seen_route_version }, price_notice: null });
+
 async function appFixture(billing = true, setupComplete = true) {
   const chat = await server.ssrLoadModule('/src/apps/agent/Chat.tsx');
   const setupCard = await server.ssrLoadModule('/src/apps/agent/AgentSetup.tsx');
@@ -285,6 +292,7 @@ async function appFixture(billing = true, setupComplete = true) {
       if (operation === 'agent.settings.get') return { active: true, billing: { required: billing } };
       if (operation === 'agent.workspace_policy.list') return { workspaces: spaces };
       if (operation === 'agent.setup.get') return setupFixture(setupComplete);
+      if (operation === 'agent.billing.status') return statusFixture();
       return null;
     }, op: async (operation: string, input: any, options: any) => {
       writes.push({ operation, input, options }); if (failure) throw failure;
@@ -309,14 +317,14 @@ test('billed or not, a send starts at once and carries the exact context refs th
   const billed = await appFixture();
   assert.equal(await billed.chat().send('Fixture question', refs), true);
   assert.deepEqual(billed.writes.map((w) => w.operation), ['agent.turn.start']);
-  assert.deepEqual(plain(billed.writes[0].input), { conversation_id: 'conv_fixture', text: 'Fixture question', context_refs: refs });
+  assert.deepEqual(plain(billed.writes[0].input), { conversation_id: 'conv_fixture', text: 'Fixture question', context_refs: refs, ...SEEN });
   billed.unmount();
   // The one-time setup step keeps the refs with the message and sends them when it is done.
   const first = await appFixture(true, false);
   assert.equal(await first.chat().send('Fixture first use', refs), false); first.render();
   assert.deepEqual(first.writes, []);
   await first.card()[0].props.onComplete(); first.render();
-  assert.deepEqual(plain(first.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture first use', context_refs: refs });
+  assert.deepEqual(plain(first.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture first use', context_refs: refs, ...SEEN });
   assert.equal(first.chat().sentDraft, 1); first.unmount();
 });
 
@@ -333,12 +341,12 @@ test('new-conversation refs survive creation; regeneration never auto-attaches t
   const h = await appFixture(); const refs = [resolved().reference]; h.route(undefined);
   await h.chat().send('Fixture first question', refs); h.render();
   assert.equal(h.writes[0].operation, 'agent.conversation.create');
-  assert.deepEqual(plain(h.writes[1].input), { conversation_id: 'conv_new_fixture', text: 'Fixture first question', context_refs: refs });
+  assert.deepEqual(plain(h.writes[1].input), { conversation_id: 'conv_new_fixture', text: 'Fixture first question', context_refs: refs, ...SEEN });
   h.route('conv_fixture');
   await h.chat().act('agent.turn.start', { conversation_id: 'conv_fixture', regenerate_of: 'message_fixture' }); h.render();
-  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', regenerate_of: 'message_fixture' });
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', regenerate_of: 'message_fixture', ...SEEN });
   await h.chat().act('agent.turn.start', { conversation_id: 'conv_fixture', text: 'Fixture explicit', parent_message_id: 'parent_fixture', context_refs: refs }); h.render();
-  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture explicit', parent_message_id: 'parent_fixture', context_refs: refs });
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture explicit', parent_message_id: 'parent_fixture', context_refs: refs, ...SEEN });
   h.unmount();
 });
 

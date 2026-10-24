@@ -116,7 +116,7 @@ test('error codes map to the refusal kinds and next steps of the send-and-go con
 
 test('the new and changed refusals carry the agreed wording in three languages', () => {
   const expected: Record<string, [RegExp, RegExp, RegExp]> = {
-    refusedTerms: [/《服务条款》或《定价》已更新/, /Terms of service or the Pricing has been updated/, /《服務條款》或《定價》已更新/],
+    refusedTerms: [/需要先接受当前版本的《服务条款》《AI 使用规范》与《定价》/, /accept the current version of the Terms of service, the AI use rules and the Pricing/, /需要先接受目前版本的《服務條款》《AI 使用規範》與《定價》/],
     refusedRunCap: [/低于一次模型调用所需的预留金额/, /below what one model call needs to hold/, /低於一次模型呼叫所需的預留金額/],
     refusedRunTime: [/已用完单次运行时限/, /used up its run time/, /已用完單次執行時限/],
     refusedNoLimit: [/需要设置个人每日、每周、每月支出上限/, /set your daily, weekly and monthly spending limits/, /需要設定個人每日、每週、每月支出上限/],

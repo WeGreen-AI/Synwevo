@@ -13,6 +13,9 @@ export interface RunBound {
   per_call_hold: string; max_calls: number; run_seconds: number; usable: boolean;
   /** The sale price id and route version in force (addendum AD-1): what a send now would be bound to. */
   price_id?: string | null; route_version?: string | null;
+  /** A stable digest of what the person pays (addendum-2 S2: price, rates, hold, model and route);
+   *  when present it is what the page repeats as `seen_route_version`. */
+  price_key?: string | null;
 }
 /** The pricing the person's last answer ran under, when it differs from the offer now
  *  (`agent.billing.status.price_notice`, design D-7): information, never a gate. */
@@ -119,15 +122,41 @@ export interface PriceChange { field: ChatText; before: string; after: string }
 type RateKey = 'input_uncached' | 'input_cached' | 'output';
 export interface PriceDisplay { rate?: (pricing: Pricing, key: RateKey) => string; amount?: (minor: string, unit: Pricing['unit']) => string }
 const SEEN = /^[\x21-\x7e]{1,200}$/;
-/** The price the composer showed, repeated on a send (addendum AD-1: `seen_price_id`,
+/** The price the composer showed, repeated on every paid send (addendum AD-1: `seen_price_id`,
  *  `seen_route_version`), so the server refuses rather than runs at a price the page did not show
- *  (409 `billing_price_changed`). Both or neither: without a run bound to show, nothing is sent and
- *  the server does not check. */
+ *  (409 `billing_price_changed`). The second field carries the run's `price_key` when the server
+ *  reports one (addendum-2 S2: what the person pays, so a plain route renewal refuses nothing),
+ *  else its route version — exactly the value the server gave. Both or neither: `{}` means no price
+ *  is shown, and the page then holds the send (W3) rather than send it unchecked. */
 export function seenPrice(status: Pick<BillingStatus, 'run'> | null | undefined): { seen_price_id: string; seen_route_version: string } | Record<string, never> {
   const run = status?.run;
-  const price = run?.price_id, route = run?.route_version;
+  const price = run?.price_id, route = run?.price_key != null ? run.price_key : run?.route_version;
   return typeof price === 'string' && SEEN.test(price) && typeof route === 'string' && SEEN.test(route)
     ? { seen_price_id: price, seen_route_version: route } : {};
+}
+
+/** What the composer says beside Send when billing applies: the most this answer can cost, as the
+ *  server reports it with the price a send repeats; "reading" while the status loads, or, honestly,
+ *  that it cannot be shown (addendum-2 W3: a paid send is held in both). When the run bound is not
+ *  usable (W8) it says why instead of a maximum no send can run at: the person's cap is below one
+ *  call's hold (with that hold) or cannot be used — both a matter for Agent settings — or else the
+ *  service cannot take a send right now (the route's validity is nearly over). */
+export type MaximumShown = { key: 'turnMaximum' | 'turnMaximumCall' | 'turnMaximumCapLow'; amount: string; unit: MoneyUnit }
+  | { key: 'turnMaximumLoading' | 'turnMaximumUnavailable' | 'turnMaximumCapUnusable' | 'turnMaximumPaused' };
+export function composerMaximum(status: BillingStatus | null | undefined): MaximumShown {
+  if (status === undefined) return { key: 'turnMaximumLoading' };
+  const shown = turnMaximum(status);
+  if (!shown || shown.key !== 'turnMaximum' || !('seen_price_id' in seenPrice(status))) return { key: 'turnMaximumUnavailable' };
+  const run = status!.run!;   // turnMaximum gave the run's maximum, so both are there
+  if (run.usable) return shown;
+  if (run.source === 'personal_cap') {
+    const cap = big(run.cap), hold = big(run.per_call_hold), max = big(run.maximum), all = big(run.default);
+    // quotes.run_bound: an honoured cap binds min(cap, default) and is at least one call's hold.
+    const honoured = cap !== null && hold !== null && max !== null && all !== null && cap >= hold && max === (cap < all ? cap : all);
+    if (!honoured) return cap !== null && hold !== null && cap < hold
+      ? { key: 'turnMaximumCapLow', amount: run.per_call_hold, unit: shown.unit } : { key: 'turnMaximumCapUnusable' };
+  }
+  return { key: 'turnMaximumPaused' };
 }
 
 /** What changed between the pricing of the person's last answer and the pricing on offer now.

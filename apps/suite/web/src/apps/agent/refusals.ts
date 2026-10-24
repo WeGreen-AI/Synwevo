@@ -18,7 +18,7 @@ import type { ChatText } from './chat.messages';
 export type RefusalKind = 'funds' | 'org_funds' | 'frozen' | 'org_frozen' | 'org_limit' | 'org_payer' | 'limit' | 'no_limit' | 'brake'
   | 'suspended' | 'breaker' | 'allowlist' | 'call_cap' | 'not_configured' | 'consent' | 'consent_changed' | 'terms' | 'price_changed'
   | 'content_input' | 'content_output' | 'access_suspended' | 'effort' | 'too_long' | 'quote' | 'run_calls' | 'run_budget' | 'run_cap'
-  | 'run_time';
+  | 'run_time' | 'price_unshown';
 /** "personal": pay with the personal wallet instead (an organization payer refused); "wallet":
  *  open the wallet page on the account service (a frozen wallet says why there); "settings":
  *  open Agent settings (limits, the per-answer maximum); "setup": finish the one-time "Start
@@ -63,6 +63,8 @@ const TEXT: Record<RefusalKind, [ChatText, NextStep]> = {
   run_budget: ['refusedRunBudget', 'settings'],
   run_cap: ['refusedRunCap', 'settings'],
   run_time: ['refusedRunTime', 'retry'],
+  // Held in the page, never sent: no price was shown beside the composer (W3); it is read again.
+  price_unshown: ['refusedPriceUnshown', 'retry'],
 };
 /** The sentence for each kind (for tests and documentation). */
 export const REFUSAL_TEXT: Record<RefusalKind, ChatText> = Object.fromEntries(
@@ -126,6 +128,8 @@ const EXACT: Record<string, RefusalKind> = {
   billing_org_payer_inconsistent: 'org_payer',
   // The governed model configuration cannot be read right now: the service, not the person.
   billing_model_configuration_unavailable: 'breaker',
+  // The page's own code, never the server's: a paid send held because no price was shown (W3).
+  price_not_shown: 'price_unshown',
 };
 
 /** The code an error carries, unwrapping an idempotent replay of a refused request. A failure the
