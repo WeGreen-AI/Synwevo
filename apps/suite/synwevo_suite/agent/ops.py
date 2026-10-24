@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field as F, SecretStr, field_seriali
 from synwevo_core import data_flow, sealed
 from synwevo_core.agent_safety import AgentReports, ProviderConsents
 from synwevo_core.billing import BillingError
+from synwevo_core.billing.models import MAX_INTEGER
 from synwevo_core.capabilities import Operation, canonical, fingerprint
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id, now
@@ -18,6 +19,7 @@ from .context import ContextList, ContextResolve, ContextRef, Contexts, ContextP
 from .files import FileInput, FileList, FileReference, FilePage, FileDetail, FileView, FileDeleted
 from .provider import EFFORTS, KEY_PURPOSE, configured_model, resolve_credential
 from .safety import check_memory
+from .setup import accept_terms, setup_status
 from .tools import workspace_policy
 from .turn_cost import turn_costs
 
@@ -89,6 +91,15 @@ class StartTurn(_In):
     regenerate_of: str | None = F(default=None, pattern=MSG)
     quote_id: str | None = F(default=None, pattern=r"^quote_[a-f0-9]{12}$")
     consent_id: str | None = F(default=None, pattern=r"^consent_[a-f0-9]{12}$")
+    #: Who pays an automatic (send-and-go) run: the person (default) or an organization that
+    #: granted them. Only without ``quote_id``/``consent_id`` (those name their payer already).
+    payer_kind: Literal["user", "organization"] | None = None
+    payer_id: str | None = F(default=None, max_length=200)
+    #: The sale price id and route version the page displayed (agent.billing.status ``run``). An
+    #: automatic send whose price is no longer the one in force is refused (409
+    #: ``billing_price_changed``, nothing stored); absent (an older page) is not checked.
+    seen_price_id: str | None = F(default=None, max_length=200)
+    seen_route_version: str | None = F(default=None, max_length=200)
 
 
 class QuoteTurn(_In):
@@ -184,6 +195,37 @@ class SpendingLimit(_In):
     period: Literal["daily", "weekly", "monthly"] | None
 
 
+class TermsDocumentRef(_In):
+    id: Literal["terms", "ai-use", "pricing"]
+    version: str = F(min_length=1, max_length=40)
+
+
+class RunBound(_In):
+    """What one automatic answer is bound to now (send-and-go): the governed default, or the
+    person's lower cap; ``usable`` is False when a send would be refused for the cap or the route."""
+    maximum: str = F(pattern=r"^[0-9]+$")
+    default: str = F(pattern=r"^[0-9]+$")
+    cap: str | None = F(default=None, pattern=r"^[0-9]+$")
+    source: Literal["default", "personal_cap"]
+    per_call_hold: str = F(pattern=r"^[0-9]+$")
+    max_calls: int
+    run_seconds: int
+    usable: bool
+    #: The sale price id and route version this send would bind (AD-1): the page sends them back
+    #: as ``seen_price_id``/``seen_route_version`` with agent.turn.start.
+    price_id: str
+    route_version: str
+
+
+class PreviousPricing(ModelTerms):
+    pass
+
+
+class PriceNotice(_In):
+    previous: PreviousPricing
+    previous_run_at: int
+
+
 class BillingStatus(_In):
     available: bool
     reason: Literal["not_configured", "unavailable"] | None = None
@@ -194,6 +236,53 @@ class BillingStatus(_In):
     per_call_hold: str | None = None
     balance: WalletAmounts | None = None
     limit: SpendingLimit | None = None
+    run: RunBound | None = None
+    price_notice: PriceNotice | None = None
+
+
+class TermsDocument(_In):
+    id: Literal["terms", "ai-use", "pricing"]
+    version: str
+    effective: str
+    accepted: bool
+
+
+class TermsStatus(_In):
+    complete: bool
+    documents: list[TermsDocument]
+
+
+class TermsAccept(_In):
+    documents: list[TermsDocumentRef] = F(min_length=1, max_length=3)
+
+
+class SetupProviderConsent(_In):
+    provider: Literal["deepseek"]
+    version: str
+    accepted: bool
+    accepted_version: str | None
+
+
+class SuggestedLimits(_In):
+    daily_budget: str = F(pattern=r"^[0-9]+$")
+    weekly_budget: str = F(pattern=r"^[0-9]+$")
+    monthly_budget: str = F(pattern=r"^[0-9]+$")
+
+
+class SetupLimits(_In):
+    configured: bool
+    enabled: bool
+    revision: int
+    unit: MoneyUnit | None
+    suggested: SuggestedLimits | None
+
+
+class SetupStatus(_In):
+    required: bool
+    complete: bool
+    provider_consent: SetupProviderConsent | None
+    terms: TermsStatus
+    limits: SetupLimits
 
 
 class ConsentCreate(QuoteRef):
@@ -281,6 +370,9 @@ class PayerBudgetList(_In):
 
 class QuoteResult(ModelTerms):
     id: str
+    #: How the run was authorized: at once for the person's own send from the page, by an
+    #: explicit legacy quote, or under a continuing consent.
+    authorization: Literal["automatic", "confirmed", "consent"]
     payer_user_id: str
     payer: Payer
     conversation_id: str
@@ -307,6 +399,21 @@ class Settings(_In):
     memory_enabled: bool | None = None
     personal_key: SecretStr | None = F(default=None, min_length=20, max_length=300)
     clear_personal_key: bool = False
+    #: The person's own maximum for one answer, in integer units of the current sale unit
+    #: (send-and-go); only a positive integer within the ledger's range (``MAX_INTEGER``) is
+    #: checked here, the send checks it against one call's hold. ``clear_run_budget_cap``
+    #: returns to the governed default.
+    run_budget_cap: str | None = F(default=None, pattern=r"^[1-9][0-9]{0,18}$")
+    clear_run_budget_cap: bool = False
+
+    @field_validator("run_budget_cap")
+    @classmethod
+    def cap_in_range(cls, value):
+        # Ledger amounts are 64-bit: a larger cap could never be read at send and would refuse
+        # every later send, so it is refused here, when it is saved (422 invalid_input).
+        if value is not None and int(value) > MAX_INTEGER:
+            raise ValueError("每条回答的最高金额超出可保存的范围")
+        return value
 
     @field_validator("personal_key")
     @classmethod
@@ -409,11 +516,19 @@ def billing_status(agent, user_id: str) -> dict:
                      "usage_state": view["usage_state"],
                      "remaining": tightest[1]["remaining"] if tightest else None,
                      "period": tightest[0] if tightest else None}
+    try:
+        run = quotes.run_bound(user_id)
+    except BillingError:
+        run = None
+    try:
+        price_notice = quotes.price_notice(user_id, offer)
+    except BillingError:
+        price_notice = None
     return {"available": True, "environment": quotes.ledger.environment,
             "payer": {"kind": "user", "id": user_id}, "model": offer["model"], "unit": offer["unit"],
             "per_call_hold": offer["per_call_hold"],
             "balance": {"booked": str(balance.booked), "held": str(balance.held), "available": str(balance.available)},
-            "limit": limit}
+            "limit": limit, "run": run, "price_notice": price_notice}
 
 
 def settings_json(store, user_id: str, agent=None) -> dict:
@@ -421,6 +536,11 @@ def settings_json(store, user_id: str, agent=None) -> dict:
     cred = agent._credential(user_id) if agent is not None else resolve_credential(store, user_id)
     from synwevo_core import env
     paid = bool(agent and getattr(agent.provider, "quotes", None))
+    cap = None
+    if row and row["run_budget_cap"] is not None:
+        unit = store.one("SELECT code, scale FROM billing_units WHERE code=?", (row["run_budget_cap_unit"],))
+        cap = {"amount": row["run_budget_cap"],
+               "unit": {"code": unit["code"], "scale": unit["scale"]} if unit else {"code": row["run_budget_cap_unit"], "scale": 0}}
     return {"effort": row["effort"] if row else "medium",
             "prefer_personal_key": bool(row and row["prefer_personal_key"]),
             "memory_enabled": bool(row["memory_enabled"]) if row else True,
@@ -431,7 +551,7 @@ def settings_json(store, user_id: str, agent=None) -> dict:
                                         and configured_model()),
             "active": {"credential": cred.kind, "model": cred.model, "provider": cred.provider} if cred else None,
             "personal_key_supported": not paid,
-            "billing": {"required": paid},
+            "billing": {"required": paid, "run_budget_cap": cap},
             "efforts": list(EFFORTS)}
 
 
@@ -452,6 +572,20 @@ def update_settings(store, user_id: str, i: Settings, agent=None) -> dict:
     if i.memory_enabled is not None:
         sets.append("memory_enabled=?")
         args.append(int(i.memory_enabled))
+    if i.clear_run_budget_cap:
+        sets += ["run_budget_cap=NULL", "run_budget_cap_unit=NULL"]
+    elif i.run_budget_cap is not None:
+        # Stored in the current sale unit, so a later unit change refuses the send (fail closed)
+        # rather than reading an old number as a new currency. The hold check happens at send.
+        quotes = getattr(agent.provider, "quotes", None) if agent else None
+        if quotes is None:
+            raise ServiceError(409, "billing_not_configured", "付费模型服务尚未配置")
+        try:
+            unit_code = quotes.offer()["unit"]["code"]
+        except BillingError as exc:
+            raise ServiceError(409, "billing_" + exc.code, "模型价格暂不可用，暂时不能设置每条回答的最高金额") from None
+        sets += ["run_budget_cap=?", "run_budget_cap_unit=?"]
+        args += [str(int(i.run_budget_cap)), unit_code]
     if i.clear_personal_key:
         sets += ["personal_key_sealed=NULL", "personal_key_hint=NULL"]
     elif i.personal_key is not None:
@@ -492,7 +626,7 @@ def register(registry, agent: Agent, store, identity) -> None:
         if c.op.id in ("agent.conversation.delete", "agent.memory.delete", "agent.settings.update",
                        "agent.workspace_policy.set", "agent.transfer_policy.set", "agent.billing.budget.set",
                        "agent.consent.create", "agent.consent.revoke", "agent.provider_consent.accept",
-                       "agent.provider_consent.withdraw", "agent.message.report"):
+                       "agent.provider_consent.withdraw", "agent.message.report", "agent.terms.accept"):
             # Only a deletion receipt, masked key state or policy enum; no business body.
             return
         if c.op.id.startswith("agent.memory."):
@@ -703,9 +837,46 @@ def register(registry, agent: Agent, store, identity) -> None:
     def start_turn(c, i):
         if i.consent_id:
             person_only(c)
+        payer = None
+        if i.payer_kind is not None or i.payer_id is not None:
+            # Choosing who pays is part of the person's own send from the page (send-and-go).
+            person_only(c)
+            if i.quote_id or i.consent_id:
+                raise ServiceError(409, "billing_authorization_conflict", "请只选择一种付款授权")
+            if getattr(agent.provider, "quotes", None) is None:
+                raise ServiceError(409, "billing_not_configured", "付费模型服务尚未配置")
+            payer = {"kind": i.payer_kind or "user", "id": i.payer_id}
+        seen = {key: value for key, value in (("price_id", i.seen_price_id), ("route_version", i.seen_route_version))
+                if value is not None}
+        if seen and (i.quote_id or i.consent_id):
+            # The shown price belongs to the automatic path; an explicit authorization fixes its own.
+            raise ServiceError(409, "billing_authorization_conflict", "请只选择一种付款授权")
+        # Only the person in the page starts a paid turn without an explicit authorization: the
+        # engine then issues and binds one in the admission transaction (I5: every other caller
+        # keeps the explicit requirement).
+        automatic = c.via == "ui" and not i.quote_id and not i.consent_id
+        issued = {"actor_user_id": c.user_id, "via": c.via, "source": c.op.id, "op_run_id": c.run_id} if automatic else None
         return agent.start_turn(c.user, i.conversation_id, i.text, parent_id=i.parent_message_id,
             regenerate_of=i.regenerate_of, quote_id=i.quote_id, consent_id=i.consent_id,
-            context_refs=[r.model_dump() for r in i.context_refs], file_refs=[r.model_dump() for r in i.file_refs])
+            context_refs=[r.model_dump() for r in i.context_refs], file_refs=[r.model_dump() for r in i.file_refs],
+            payer=payer, automatic=automatic, issued=issued, seen=(seen or None) if automatic else None,
+            in_page=c.via == "ui")
+
+    op(id="agent.setup.get", title=T("开始使用 Agent 的准备", "開始使用 Agent 的準備", "Start-using-Agent checklist"),
+       summary="What the person still has to do once before their first paid run: the provider data consent, "
+               "the terms acceptance and personal spending limits; reads only, grants nothing.",
+       input=Empty, output=SetupStatus, agent="never", transactional=False,
+       handler=lambda c, i: setup_status(agent, store, c.user_id))
+
+    def terms_accept(c, i):
+        person_only(c)
+        return accept_terms(store, c.user_id, [d.model_dump() for d in i.documents], context=f"agent_setup:{c.run_id}")
+
+    op(id="agent.terms.accept", title=T("接受服务条款、AI 使用规范与定价", "接受服務條款、AI 使用規範與定價",
+                                        "Accept the terms, AI use rules and pricing"),
+       summary="Record the person's one-time acceptance of the published documents at their current versions; "
+               "nothing is sent and no money moves.",
+       input=TermsAccept, output=TermsStatus, side_effect="write", agent="never", unattended=False, handler=terms_accept)
 
     consents = ProviderConsents(store)
 

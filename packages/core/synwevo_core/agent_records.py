@@ -8,8 +8,11 @@ Export — what the person can see of their own Agent, as data:
 conversations with the visible text of each message (never the provider's private replay,
 reasoning, tool inputs or results; never an answer the Agent hides after an access change, see
 ``_hidden``), the operations it ran (name, workspace, state), memories,
-settings (whether a personal key is set, never the key or its hint), the model-provider consent
-and its history, payment quotes and continuing payment consents (fixed terms, no prices of cost),
+settings (whether a personal key is set, never the key or its hint; the person's own maximum for
+one answer), the model-provider consent and its history, the terms versions accepted, run
+authorizations (quotes: fixed terms and how each was authorized — automatically for the person's
+own send from the page, by an explicit quote, or under a continuing consent; no prices of cost)
+and continuing payment consents,
 the reports the person filed, and the personal wallet statement.
 
 Deletion — at the end of the grace period, and again whenever the security journal replays the
@@ -56,6 +59,21 @@ def _terms(raw: str | None) -> dict:
     return {"model": route.get("requested_model"), "price_id": sale.get("price_id"), "unit": sale.get("unit"),
             "budget": None if terms.get("budget") is None else str(terms["budget"]),
             "max_calls": terms.get("max_calls")}
+
+
+def _authorization(store: Store, quote: dict) -> str:
+    """How a run was authorized: ``automatic`` (the person's own send from the page, send-and-go,
+    recorded in the immutable terms), ``consent`` (minted under a continuing payment consent) or
+    ``confirmed`` (an explicit quote the person confirmed)."""
+    try:
+        issued = (json.loads(quote["terms_json"] or "{}").get("issued") or {})
+    except ValueError:
+        issued = {}
+    if issued.get("mode") == "automatic":
+        return "automatic"
+    if _table(store, "agent_quote_consents") and store.one("SELECT 1 FROM agent_quote_consents WHERE quote_id=?", (quote["id"],)):
+        return "consent"
+    return "confirmed"
 
 
 #: Said once in the export, next to the conversations.
@@ -114,7 +132,12 @@ def export(store: Store, user_id: str) -> dict:
                                "WHERE conversation_id=? AND user_id=? ORDER BY created_at, rowid", (conv["id"], user_id))
         conversations.append({**conv, "messages": messages, "operations": operations})
     settings = store.one("SELECT effort,memory_enabled,prefer_personal_key,personal_key_sealed IS NOT NULL AS personal_key_set,"
-                         "updated_at FROM agent_settings WHERE user_id=?", (user_id,))
+                         "run_budget_cap,run_budget_cap_unit,updated_at FROM agent_settings WHERE user_id=?", (user_id,))
+    if settings:
+        # The person's own maximum for one answer (send-and-go), in the sale unit it was set in.
+        cap = settings.pop("run_budget_cap")
+        unit = settings.pop("run_budget_cap_unit")
+        settings["run_budget_cap"] = None if cap is None else {"amount": cap, "unit": unit}
     out = {
         "notice": "AI-generated answers may be inaccurate; they are provided for reference only.",
         "hidden_notice": HIDDEN_NOTICE,
@@ -140,7 +163,8 @@ def export(store: Store, user_id: str) -> dict:
                                           "WHERE user_id=? ORDER BY accepted_at, rowid", (user_id,))
     if _table(store, "agent_model_quotes"):
         out["quotes"] = [{**{k: q[k] for k in ("id", "environment", "conversation_id", "created_at", "expires_at",
-                                                 "accepted_turn_id", "revoked_at")}, **_terms(q["terms_json"])}
+                                                 "accepted_turn_id", "revoked_at")}, **_terms(q["terms_json"]),
+                          "authorization": _authorization(store, q)}
                          for q in store.all("SELECT * FROM agent_model_quotes WHERE user_id=? ORDER BY created_at", (user_id,))]
     if _table(store, "agent_model_consents"):
         out["payment_consents"] = [{**{k: c[k] for k in ("id", "environment", "conversation_id", "max_runs", "created_at",

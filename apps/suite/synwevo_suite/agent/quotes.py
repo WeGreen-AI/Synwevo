@@ -1,6 +1,13 @@
-"""Single-run price consent. Payment authority is separate from tool permission.
+"""Single-run authorization of a paid Agent turn. Payment authority is separate from tool permission.
 
-The person pays by default; an organization pays when the person chose it for this quote and
+A send from the page (``via=ui``, send-and-go) is authorized automatically: ``issue_automatic``
+mints the quote inside the turn's admission transaction and the engine binds it at once, so
+the deadline is fixed at admission and there is no issue-to-bind gap. The bound is the governed
+default — one call's hold times ``MAX_CALLS`` — or the person's own lower cap from their Agent
+settings. The legacy explicit path (``agent.turn.quote`` → ``issue`` → ``bind``, and continuing
+consents) stays for compatibility and audit; the page no longer uses it.
+
+The person pays by default; an organization pays when the person chose it for this run and
 the organization's current grant lets them charge it (billing.org_payers; org-payments).
 
 Composition supplies an approved route, a current policy checker and the ledger; no route,
@@ -22,6 +29,14 @@ from .gateway import Route, _json
 
 
 class RunQuotes:
+    #: The most model calls one answer may make; the automatic bound holds this many calls.
+    MAX_CALLS = 12
+    #: The longest run (seconds) an authorization may name; the automatic run uses the lesser of
+    #: this and the route's remaining validity.
+    MAX_RUN_SECONDS = 3600
+    #: How long an explicit (legacy) quote stays acceptable, at most.
+    QUOTE_TTL = 300
+
     def __init__(self, gateway, *, current_route, current_authority):
         if not callable(current_route) or not callable(current_authority):
             raise BillingError("model_authority_required")
@@ -60,7 +75,8 @@ class RunQuotes:
                 "rates": {key: {"numerator": str(raw[key]["numerator"]), "denominator": str(raw[key]["denominator"])}
                           for key in ("input_uncached", "input_cached", "output")},
                 "off_peak_rates": off_peak_rates(raw), "per_tokens": sale.per_tokens, "per_call_hold": str(self.gateway.upper_bound(route, sale)),
-                "max_calls_limit": 12, "run_seconds_limit": min(3600, route.valid_until - self.ledger._now()),
+                "max_calls_limit": self.MAX_CALLS,
+                "run_seconds_limit": min(self.MAX_RUN_SECONDS, route.valid_until - self.ledger._now()),
                 # A shorter run could not finish even one call inside its hold (gateway.send_window).
                 "run_seconds_min": self.gateway.send_window}
 
@@ -93,8 +109,8 @@ class RunQuotes:
     def issue(self, user_id, conversation, *, text, parent_id, regenerate_of,
               budget: int, max_calls: int, run_seconds: int, payer=None, context_refs=None, file_refs=None) -> dict:
         integer(budget, positive=True)
-        integer(max_calls, positive=True, maximum=12)
-        integer(run_seconds, positive=True, maximum=3600)
+        integer(max_calls, positive=True, maximum=self.MAX_CALLS)
+        integer(run_seconds, positive=True, maximum=self.MAX_RUN_SECONDS)
         if run_seconds < self.gateway.send_window:
             # Every call's hold ends at the run deadline and usage after it is never charged:
             # a run too short for one whole send would only be refused at its first call.
@@ -126,11 +142,211 @@ class RunQuotes:
             # Flat prices keep the pre-band term shape, so existing consents stay comparable.
             terms = {"route": asdict(route), "sale": sale.to_dict(), "budget": budget,
                      "max_calls": max_calls, "deadline": deadline, "per_call_hold": hold, "payer": payer}
+            # rr-money-1: the quote is acceptable only while the run it fixes still has time
+            # for one whole send after binding (bind refuses later anyway); never already past.
+            expires_at = max(now + 1, min(now + self.QUOTE_TTL, deadline - self.gateway.send_window))
             self.store.execute("INSERT INTO agent_model_quotes(id,environment,namespace,user_id,conversation_id,"
                 "binding_digest,scope_json,terms_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (quote_id, self.ledger.environment, self.ledger.namespace, user_id, current["id"], digest,
-                 current["scope_json"], _json(terms), now, min(now + 300, deadline)))
+                 current["scope_json"], _json(terms), now, expires_at))
             return self.get(user_id, quote_id)
+
+    # ------------------------------------------------------------------ send-and-go
+    def _turn_transaction(self) -> None:
+        with self.store.conn() as connection:
+            if not connection.in_transaction or not getattr(self.store._local, "depth", 0):
+                raise BillingError("quote_requires_turn_transaction")
+
+    def personal_cap(self, user_id) -> dict | None:
+        """The person's own maximum for one answer from their Agent settings, or None: ``{"amount":
+        int, "unit": <sale unit code>}``. Stored by agent.settings.update; checked here at send."""
+        row = self.store.one("SELECT run_budget_cap, run_budget_cap_unit FROM agent_settings WHERE user_id=?", (user_id,))
+        if not row or row["run_budget_cap"] is None:
+            return None
+        try:
+            amount = integer(int(row["run_budget_cap"]), positive=True)
+        except (ValueError, TypeError, BillingError):
+            raise BillingError("run_cap_invalid") from None
+        return {"amount": amount, "unit": row["run_budget_cap_unit"]}
+
+    def _bound(self, user_id, route, sale) -> dict:
+        """The automatic run's bound for this person on this route: the governed default (one
+        call's hold x MAX_CALLS) or the person's lower cap. Fails closed on a cap that cannot be
+        honoured (another unit, or below one call's hold); a cap is never silently ignored."""
+        return self._bound_for(self.personal_cap(user_id), route, sale)
+
+    def _bound_for(self, cap: dict | None, route, sale) -> dict:
+        hold = self.gateway.upper_bound(route, sale)
+        default = hold * self.MAX_CALLS
+        if cap is None:
+            return {"hold": hold, "default": default, "budget": default, "cap": None, "source": "default"}
+        if cap["unit"] != sale.unit.code:
+            raise BillingError("run_cap_unit_changed")
+        budget = min(cap["amount"], default)
+        if budget < hold:
+            error = BillingError("run_cap_below_call_hold")
+            error.detail = {"per_call_hold": str(hold), "cap": str(cap["amount"]), "unit": asdict(sale.unit)}
+            raise error
+        return {"hold": hold, "default": default, "budget": budget, "cap": cap["amount"], "source": "personal_cap"}
+
+    def _run_seconds(self, route) -> int:
+        """The automatic run's length: the lesser of MAX_RUN_SECONDS and what is left of the route's
+        validity; a route with less than one send's window left refuses the run (fail closed)."""
+        seconds = min(self.MAX_RUN_SECONDS, route.valid_until - self.ledger._now())
+        if seconds < self.gateway.send_window:
+            raise BillingError("route_confirmation_expired")
+        return seconds
+
+    def _personal_limits_configured(self, user_id, unit_code) -> None:
+        """Admission-time read of the personal spending-limit policy (D-4): a person without an
+        enabled policy would only be refused at the first call; refuse the send instead, so nothing
+        is stored. Enforcement at reserve and dispatch is unchanged (billing.payer_budgets)."""
+        service = getattr(self.ledger, "payer_budgets", None)
+        if service is None:
+            return
+        with self.store.conn() as t:
+            policy = service._policy(t, user_id, unit_code)
+        if policy is None:
+            raise BillingError("payer_budget_not_configured")
+        if not policy["enabled"]:
+            raise BillingError("payer_budget_disabled")
+
+    def issue_automatic(self, user_id, conversation, *, text, parent_id, regenerate_of, payer=None,
+                        context_refs=None, file_refs=None, issued: dict, seen: dict | None = None) -> str:
+        """Mint the run authorization of a person's own send from the page, inside the turn's
+        admission transaction; the engine binds it at once with :meth:`bind`.
+
+        ``issued`` is the audit record of who asked (``actor_user_id``, ``via``, ``source``,
+        ``op_run_id``); it is kept in the immutable quote terms with ``mode`` and ``bound``.
+        ``seen`` is the price the page displayed (:meth:`shown_price`). No outstanding-quote
+        count (the quote never stays unbound) and no welcome grant (the ledger owns its
+        transaction; the payers read grants it before the first send)."""
+        self._turn_transaction()
+        if not isinstance(issued, dict) or issued.get("via") != "ui" or not issued.get("actor_user_id"):
+            # An internal invariant (only ops.start_turn issues, for the person in the page), not a
+            # refusal anyone can meet: never a BillingError the chat would have to word.
+            raise RuntimeError("automatic_issue_requires_person")
+        route = self.current_route()
+        if not isinstance(route, Route):
+            raise BillingError("model_route_unavailable")
+        now = self.ledger._now()
+        run_seconds = self._run_seconds(route)
+        sale, _ = self.gateway._prices(route)
+        bound = self._bound(user_id, route, sale)
+        self.shown_price(seen, route, sale, bound)
+        payer = self._payer(user_id, payer)
+        if payer["kind"] == "user":
+            self._personal_limits_configured(user_id, sale.unit.code)
+        current = self._conversation(user_id, conversation["id"])
+        digest = self.binding(conversation, text=text, parent_id=parent_id, regenerate_of=regenerate_of,
+                              context_refs=context_refs, file_refs=file_refs)
+        if digest != self.binding(current, text=text, parent_id=parent_id, regenerate_of=regenerate_of,
+                                  context_refs=context_refs, file_refs=file_refs):
+            raise BillingError("quote_context_changed")
+        quote_id = new_id("quote")
+        deadline = now + run_seconds
+        terms = {"route": asdict(route), "sale": sale.to_dict(), "budget": bound["budget"],
+                 "max_calls": self.MAX_CALLS, "deadline": deadline, "per_call_hold": bound["hold"], "payer": payer,
+                 "issued": {"mode": "automatic", "actor_user_id": issued["actor_user_id"], "via": "ui",
+                            "source": issued.get("source") or "agent.turn.start",
+                            "op_run_id": issued.get("op_run_id"), "bound": bound["source"]}}
+        # The legacy expiry formula (D-10): the clock is whole seconds, so ``now + 1`` could lapse
+        # between this read and bind's. The row is bound in this same transaction and rolled back
+        # on any refusal, so a longer expiry opens no reuse window.
+        expires_at = max(now + 1, min(now + self.QUOTE_TTL, deadline - self.gateway.send_window))
+        self.store.execute("INSERT INTO agent_model_quotes(id,environment,namespace,user_id,conversation_id,"
+            "binding_digest,scope_json,terms_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (quote_id, self.ledger.environment, self.ledger.namespace, user_id, current["id"], digest,
+             current["scope_json"], _json(terms), now, expires_at))
+        return quote_id
+
+    @staticmethod
+    def shown_price(seen: dict | None, route, sale, bound: dict) -> None:
+        """The price the page showed is the price the send runs at (AD-1). ``seen`` holds the sale
+        price id and route version the person's page displayed (agent.billing.status ``run``).
+        When either is given and differs from what this run would bind, refuse with the current
+        figures (``price_changed``; the admission rolls back, nothing is stored) so the page shows
+        them before the person sends again. A page that sends neither (an older cached bundle)
+        is not checked."""
+        if not seen:
+            return
+        price_id, version = seen.get("price_id"), seen.get("route_version")
+        if (price_id is None or price_id == sale.price_id) and (version is None or version == route.version):
+            return
+        error = BillingError("price_changed")
+        error.detail = {"current": {"price_id": sale.price_id, "route_version": route.version,
+                                    "maximum": str(bound["budget"]), "per_call_hold": str(bound["hold"]),
+                                    "unit": asdict(sale.unit)}}
+        raise error
+
+    def run_bound(self, user_id) -> dict | None:
+        """What an automatic send would be bound to now (agent.billing.status ``run``); None when
+        the route is unusable. ``usable`` is False when the person's cap could not be honoured
+        or the route has less than one send's window left — the send would be refused.
+        ``price_id`` and ``route_version`` are what the send would bind; the page sends them back
+        as ``seen_price_id``/``seen_route_version`` (:meth:`shown_price`)."""
+        route = self.current_route()
+        if not isinstance(route, Route):
+            return None
+        sale, _ = self.gateway._prices(route)
+        hold = self.gateway.upper_bound(route, sale)
+        default = hold * self.MAX_CALLS
+        run_seconds = max(0, min(self.MAX_RUN_SECONDS, route.valid_until - self.ledger._now()))
+        usable = run_seconds >= self.gateway.send_window
+        shown = {"price_id": sale.price_id, "route_version": route.version}
+        unusable = {"maximum": str(default), "default": str(default), "source": "personal_cap", "per_call_hold": str(hold),
+                    "max_calls": self.MAX_CALLS, "run_seconds": run_seconds, "usable": False, **shown}
+        try:
+            cap = self.personal_cap(user_id)
+        except BillingError:
+            # A stored cap that cannot be read (above the ledger's integer range, saved before the
+            # save-time check) refuses every send: say so, with no number to show.
+            return {**unusable, "cap": None}
+        try:
+            bound = self._bound_for(cap, route, sale)
+        except BillingError:
+            # Another unit, or below one call's hold: the send would be refused (only a cap fails here).
+            return {**unusable, "cap": str(cap["amount"])}
+        return {"maximum": str(bound["budget"]), "default": str(default),
+                "cap": None if bound["cap"] is None else str(bound["cap"]), "source": bound["source"],
+                "per_call_hold": str(hold), "max_calls": self.MAX_CALLS, "run_seconds": run_seconds, "usable": usable,
+                **shown}
+
+    def price_notice(self, user_id, offer: dict) -> dict | None:
+        """The person's last bound run compared with the current offer (D-7): the previous pricing
+        when the route version, sale price or per-call hold differs, else None. Information only;
+        it never blocks a send."""
+        row = self.store.one("SELECT terms_json, created_at FROM agent_model_quotes WHERE user_id=? AND environment=? "
+                             "AND namespace=? AND accepted_turn_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                             (user_id, self.ledger.environment, self.ledger.namespace))
+        if not row:
+            return None
+        terms = json.loads(row["terms_json"])
+        sale, route = terms["sale"], terms["route"]
+        previous = {"model": route["requested_model"], "confirmed_route": route["confirmed_route"],
+                    "route_version": route["version"], "price_id": sale["price_id"], "unit": sale["unit"],
+                    "rates": self._rates(sale), "off_peak_rates": off_peak_rates(sale), "per_tokens": sale["per_tokens"],
+                    "per_call_hold": str(terms["per_call_hold"]), "terms_ref": sale["terms_ref"],
+                    "environment": self.ledger.environment}
+        same = (previous["route_version"] == offer["route_version"] and previous["price_id"] == offer["price_id"]
+                and previous["per_call_hold"] == offer["per_call_hold"])
+        return None if same else {"previous": previous, "previous_run_at": int(row["created_at"])}
+
+    @staticmethod
+    def _rates(sale: dict) -> dict:
+        # Amounts/rationals are decimal strings for browsers (no IEEE-754 precision loss).
+        return {key: {"numerator": str(sale[key]["numerator"]), "denominator": str(sale[key]["denominator"])}
+                for key in ("input_uncached", "input_cached", "output")}
+
+    def authorization_of(self, row) -> str:
+        """How a quote was authorized: ``automatic`` (send-and-go), ``consent`` (minted under a
+        continuing consent) or ``confirmed`` (an explicit legacy quote)."""
+        terms = json.loads(row["terms_json"])
+        if (terms.get("issued") or {}).get("mode") == "automatic":
+            return "automatic"
+        if self.store.one("SELECT 1 FROM agent_quote_consents WHERE quote_id=?", (row["id"],)):
+            return "consent"
+        return "confirmed"
 
     def _row(self, user_id, quote_id):
         row = self.store.one("SELECT * FROM agent_model_quotes WHERE id=? AND user_id=? AND environment=? AND namespace=?",
@@ -144,10 +360,9 @@ class RunQuotes:
         self._conversation(user_id, row["conversation_id"])
         terms = json.loads(row["terms_json"])
         sale, route = terms["sale"], terms["route"]
-        # Amounts/rationals are decimal strings for browsers (no IEEE-754 precision loss).
-        rates = {key: {"numerator": str(sale[key]["numerator"]), "denominator": str(sale[key]["denominator"])}
-                 for key in ("input_uncached", "input_cached", "output")}
+        rates = self._rates(sale)
         return {"id": row["id"], "environment": row["environment"], "payer_user_id": user_id,
+                "authorization": self.authorization_of(row),
                 "conversation_id": row["conversation_id"], "model": route["requested_model"],
                 "confirmed_route": route["confirmed_route"], "route_version": route["version"],
                 "price_id": sale["price_id"], "unit": sale["unit"], "rates": rates, "off_peak_rates": off_peak_rates(sale),
@@ -161,17 +376,20 @@ class RunQuotes:
 
     def bind(self, user_id, quote_id, conversation, *, turn_id, text, parent_id, regenerate_of, context_refs=None, file_refs=None):
         """Atomically bind with the Agent's turn insert. No network or ledger call here."""
-        with self.store.conn() as connection:
-            if not connection.in_transaction or not getattr(self.store._local, "depth", 0):
-                raise BillingError("quote_requires_turn_transaction")
+        self._turn_transaction()
         row = self._row(user_id, quote_id)
         if row["accepted_turn_id"]:
             raise BillingError("quote_already_used")
-        if row["revoked_at"] is not None or row["expires_at"] <= self.ledger._now():
+        terms = json.loads(row["terms_json"])
+        now = self.ledger._now()
+        if terms["deadline"] - now < self.gateway.send_window:
+            # rr-money-1: a run bound with less than one send's window left could never make a
+            # call; refuse here, unstored, rather than admit a turn that fails at its first step.
+            raise BillingError("run_time_too_short")
+        if row["revoked_at"] is not None or row["expires_at"] <= now:
             raise BillingError("quote_expired_or_revoked")
         if row["binding_digest"] != self.binding(conversation, text=text, parent_id=parent_id, regenerate_of=regenerate_of, context_refs=context_refs, file_refs=file_refs):
             raise BillingError("quote_context_changed")
-        terms = json.loads(row["terms_json"])
         if self.current_route() != Route(**terms["route"]):
             raise BillingError("model_configuration_changed")
         self._conversation(user_id, conversation["id"])

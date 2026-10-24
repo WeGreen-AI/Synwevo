@@ -54,12 +54,23 @@ def world(tmp_path, monkeypatch):
                   (uid, json.dumps({"rows": [TOOL_DATA]}), t, t))
     store.execute("INSERT INTO agent_memories (id,user_id,body,created_at,updated_at) VALUES ('mem_00000000000a',?,"
                   "'Prefers short answers',?,?)", (uid, t, t))
-    store.execute("INSERT INTO agent_settings (user_id,effort,personal_key_sealed,personal_key_hint,updated_at) "
-                  "VALUES (?,'high',?,'sk-…fixt',?)", (uid, KEY_CIPHER, t))
-    store.execute("INSERT INTO agent_model_quotes (id,environment,namespace,user_id,conversation_id,binding_digest,terms_json,"
-                  "created_at,expires_at) VALUES ('quote_fixture','test','agent',?,'conv_00000000000a','d',?,?,?)",
-                  (uid, json.dumps({"budget": 100, "max_calls": 2, "route": {"requested_model": "deepseek-flash"},
-                                    "sale": {"price_id": "price_fixture", "unit": "CNY"}}), int(t), int(t) + 60))
+    store.execute("INSERT INTO agent_settings (user_id,effort,personal_key_sealed,personal_key_hint,run_budget_cap,"
+                  "run_budget_cap_unit,updated_at) VALUES (?,'high',?,'sk-…fixt','250','CNY',?)", (uid, KEY_CIPHER, t))
+    terms = {"budget": 100, "max_calls": 2, "route": {"requested_model": "deepseek-flash"},
+             "sale": {"price_id": "price_fixture", "unit": "CNY"}}
+    # Three run authorizations: an explicit (legacy) quote, one the Agent issued itself for the
+    # person's send from the page (send-and-go; the audit record lives in the immutable terms),
+    # and one minted under a continuing payment consent.
+    automatic = {**terms, "issued": {"mode": "automatic", "actor_user_id": uid, "via": "ui",
+                                     "source": "agent.turn.start", "op_run_id": "run_fixture", "bound": "default"}}
+    for n, (qid, body) in enumerate((("quote_fixture", terms), ("quote_fixture_auto", automatic), ("quote_fixture_cons", terms))):
+        store.execute("INSERT INTO agent_model_quotes (id,environment,namespace,user_id,conversation_id,binding_digest,terms_json,"
+                      "created_at,expires_at) VALUES (?,'test','agent',?,'conv_00000000000a','d',?,?,?)",
+                      (qid, uid, json.dumps(body), int(t) + n, int(t) + n + 60))
+    store.execute("INSERT INTO agent_model_consents (id,environment,namespace,user_id,conversation_id,basis_quote_id,scope_json,"
+                  "terms_json,max_runs,created_at) VALUES ('consent_fixture','test','agent',?,'conv_00000000000a','quote_fixture',"
+                  "'[]',?,3,?)", (uid, json.dumps({**terms, "run_seconds": 300}), int(t)))
+    store.execute("INSERT INTO agent_quote_consents (quote_id,consent_id,ordinal) VALUES ('quote_fixture_cons','consent_fixture',1)")
     ProviderConsents(store).accept(uid, "deepseek", PROVIDER_TERMS["deepseek"].version)
     AgentReports(store).create(uid, conversation_id="conv_00000000000a", message_id="msg_00000000000b",
                                category="wrong", note="fixture note", excerpt="Two invoices.")
@@ -81,6 +92,9 @@ def test_the_export_has_the_visible_agent_text_and_records_but_no_replay_tool_da
     assert agent["settings"]["personal_key_set"] is True and agent["settings"]["effort"] == "high"
     assert [h["action"] for h in agent["provider_consent_history"]] == ["accepted"]
     assert agent["quotes"][0]["model"] == "deepseek-flash" and agent["quotes"][0]["budget"] == "100"
+    assert [q["authorization"] for q in agent["quotes"]] == ["confirmed", "automatic", "consent"]
+    assert agent["settings"]["run_budget_cap"] == {"amount": "250", "unit": "CNY"}
+    assert "run_fixture" not in json.dumps(agent["quotes"]), "导出的授权只有固定条款与方式，不含操作内部标识"
     assert agent["reports"][0]["note"] == "fixture note"
     assert "wallet_statement" in agent and "AI-generated" in agent["notice"]
     raw = r.text
@@ -104,7 +118,8 @@ def test_deletion_erases_agent_content_and_keeps_pseudonymous_financial_and_cons
     c = world
     _finalize(c)
     assert set(_content(c).values()) == {0}
-    assert c.store.one("SELECT COUNT(*) AS n FROM agent_model_quotes WHERE user_id=?", (c.uid,))["n"] == 1
+    assert c.store.one("SELECT COUNT(*) AS n FROM agent_model_quotes WHERE user_id=?", (c.uid,))["n"] == 3
+    assert c.store.one("SELECT COUNT(*) AS n FROM agent_model_consents WHERE user_id=?", (c.uid,))["n"] == 1
     assert c.store.one("SELECT COUNT(*) AS n FROM agent_provider_consent_log WHERE user_id=?", (c.uid,))["n"] == 1
     report = c.store.one("SELECT category, note, excerpt FROM agent_message_reports WHERE user_id=?", (c.uid,))
     assert report == {"category": "wrong", "note": None, "excerpt": None}

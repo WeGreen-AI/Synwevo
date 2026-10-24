@@ -5,30 +5,138 @@ enable a paid provider at startup, publish a price, fund a wallet or select a pa
 Deployment composition still needs governed provider configuration, current data-processing
 policy, platform cost admission and commercial configuration before production enablement.
 
-## User contract
+## User contract (send-and-go, owner decision 2026-10-23, DECISIONS D17)
 
-The authenticated person reads `agent.billing.offer`, then asks `agent.turn.quote` to fix a
+A person types a request, presses send, and the Agent starts. There is no per-message budget,
+quote or price dialog and no re-confirmation when prices change. Billing itself is unchanged:
+prepaid CNY wallet, DeepSeek cost × the administrator's markup, per-call holds and settlement,
+and the cost line under every answer.
+
+**Automatic run authorization.** `agent.turn.start` from the person in the page (`via=ui`) with
+neither `quote_id` nor `consent_id` calls `RunQuotes.issue_automatic` **inside the admission
+transaction** and binds the result at once with the existing `bind`. One immutable
+`agent_model_quotes` row is written per paid turn; its `terms_json.issued` is the audit record
+(`{"mode": "automatic", "actor_user_id", "via": "ui", "source": "agent.turn.start", "op_run_id",
+"bound": "default" | "personal_cap"}`). `agent.quote.get` and the account export say how each
+run was authorized: `authorization: "automatic" | "confirmed" (legacy quote) | "consent"`.
+A refused send stores nothing: no message, turn, authorization or hold. A replay of the
+operation's idempotency key returns the same turn and the same single authorization.
+
+**The bound of one answer.** `hold = upper_bound(route, sale)` (the full context-ceiling hold of
+one call); `default = hold × MAX_CALLS` with `MAX_CALLS = 12`; `budget = default`, or
+`min(personal cap, default)` when the person set a cap in Agent settings (`agent.settings.update
+{run_budget_cap}` / `{clear_run_budget_cap: true}`, read back as `billing.run_budget_cap`). The cap
+is stored with the sale unit it was set in (`agent_settings.run_budget_cap`, `run_budget_cap_unit`).
+Saving checks that it is a positive integer no larger than the ledger's integer range
+(2^63−1, `billing.models.MAX_INTEGER`); a larger value is 422 `invalid_input` and nothing is
+stored, so the send-time `billing_run_cap_invalid` cannot be reached from the page (a value stored
+before that check shows as `run.usable: false` with `run.cap: null`, and the send is refused).
+At send, a cap in another unit refuses `billing_run_cap_unit_changed` and a cap below one call's
+hold refuses `billing_run_cap_below_call_hold` (detail `{per_call_hold, cap, unit}`): a cap is
+never silently ignored. `issue_automatic` called for anyone but the person in the page is an
+internal invariant violation (`RuntimeError`), not a refusal anyone can meet. `max_calls = 12`; `run_seconds = min(3600, route.valid_until − now)`, and a
+route with less than one send window left refuses `billing_route_confirmation_expired`. The
+deadline is fixed at admission, so the legacy issue-to-bind gap (rr-money-1) does not exist on
+this path. The automatic authorization's `expires_at` uses the legacy formula
+`max(now+1, min(now+300, deadline − send_window))` (AD-3): the ledger clock is whole seconds, so
+`now+1` could lapse between the issue's and the bind's clock reads and refuse a send at random.
+It is bound in the same transaction and rolled back on any refusal, so this opens no reuse window. `agent.billing.status.run` shows the bound a send would get now (`maximum`, `default`,
+`cap`, `source`, `per_call_hold`, `max_calls`, `run_seconds`, `usable`) and the price it would be
+bound at (`price_id`, the sale price in force, and `route_version`, the route version in force:
+the same values the automatic issue would bind now; `run` is null when no route is usable).
+
+**Who pays.** `agent.turn.start` takes `payer_kind: "user" | "organization"` and `payer_id`. The
+person pays by default; an organization only with its current grant (`quotes._payer`, rechecked
+at every reservation and send). Payer fields together with `quote_id`/`consent_id` are
+`billing_authorization_conflict`; without a configured paid model `billing_not_configured`; from
+any caller but the person in the page 403 `person_required`.
+
+**Admission order.** Owner check → Agent access and the provider data consent → the one-time
+terms acceptance (`TermsAcceptances.missing` non-empty → 409 `terms_acceptance_required`,
+detail `{documents}`) → input rules → the admission transaction (the existing checks, then
+`issue_automatic`: for a personal payer the personal-limit policy is read here too — none →
+`billing_payer_budget_not_configured`, disabled → `billing_payer_budget_disabled` — so a person
+without limits is refused before anything is stored, not at the first call) → bind. Every
+`BillingError` on this path is 409 `billing_<code>` with the message
+本次回答未能开始，消息没有发送，也没有扣费. The automatic path never infers terms acceptance.
+Neither does a legacy `quote_id`/`consent_id` send from the page (an older cached bundle, AD-4):
+the same gate applies before anything is stored (409 `terms_acceptance_required`, detail
+`{documents}`), so the person is asked to accept a new version in the start step instead of having
+it recorded at their next paid run. `record_paid_use` stays only for a flow or automation starting
+a paid run on the legacy quote path (a continuing consent is the page's alone), whose behaviour is
+unchanged.
+
+**The one-time start step.** `agent.setup.get` (`need=personal`, `agent=never`) says what is
+still missing before the first automatic paid run — the provider data consent (recorded by
+`agent.provider_consent.accept`, unchanged), the terms, AI use rules and pricing at their current
+versions (recorded by `agent.terms.accept`, context `agent_setup:<op run>`, 409
+`terms_version_changed` with the current list when a stale, incomplete or duplicated list is
+sent) and, for the personal payer, the spending limits (prefilled from
+`synwevo_suite.agent.setup.SUGGESTED_LIMITS_FEN`: CNY 10 a day, 30 a week, 100 a month, converted
+exactly with `fen_to_units`; `suggested` is null for a non-CNY sale unit) saved through
+`agent.billing.budget.set`. A changed document or consent version reopens the step once; a price
+change never does. Both operations are a person's own: unreachable by machine credentials, and
+`agent.terms.accept` refuses every `via` but `ui`.
+
+**The price the page showed is the price the send runs at (AD-1).** The page sends back the
+`run.price_id` and `run.route_version` it displayed as `agent.turn.start`
+`seen_price_id`/`seen_route_version` (strings, at most 200 characters; both omitted when `run` is
+null). On the automatic path, when either field is present and differs from the price id or route
+version the automatic issue would bind at admission (`RunQuotes.shown_price`, inside the admission
+transaction, after the bound is computed), the send is refused with 409 `billing_price_changed`
+and the message 价格或模型已更新，本次没有发送，也没有扣费。请查看新价格后重新发送。, with detail
+`{"current": {"price_id", "route_version", "maximum", "per_call_hold", "unit": {code, scale}}}`
+(`maximum` is the bound this person would get, their cap included). Nothing is stored: no message,
+turn or authorization. The page then shows the new price and maximum and offers to send again at
+it. A send without either field (an older cached page) is not checked, as before. The fields
+belong to the automatic path: together with `quote_id` or `consent_id` they are
+`billing_authorization_conflict`; on any other caller's path they change nothing.
+
+**Price change.** `agent.billing.status.price_notice` compares the person's last bound run with
+the current offer (route version, sale `price_id`, `per_call_hold`) and carries the previous
+pricing when they differ. It is information only and never blocks a send: a send from a page that
+shows the current price runs at it, and a page still showing an earlier one is refused once as
+above, so nobody is bound at a price their page did not show. A run in progress stops before its
+next model call (the turn's credential-binding fence, or `quotes.authorize` →
+`billing_model_configuration_changed`); calls already made settle at the earlier price. Prices are
+never changed retroactively.
+
+**What the automatic path keeps exactly as it was.** Reserved plus spent never exceeds the run's
+budget and calls never exceed `max_calls` (`ledger.reserve_call`); a charge never exceeds its hold
+and nothing is charged after a hold's deadline; payer authorization is rechecked at open, reserve,
+prepare, claim and dispatch (`quotes.authorize`); the risk brake and breaker, wallet freeze, staged
+allowlist, per-call cost cap, platform cost windows, personal daily/weekly/monthly limits, provider
+consent, access suspension and source/workspace policy are rechecked at reserve and dispatch. Funds
+and limits are still checked at the call, with the same refusal codes and words: an empty or
+frozen wallet refuses the first call with no send. For `flow`, `automation`, `system`, `api` and
+`agent` callers nothing changes: no `quote_id`/`consent_id` → `billing_authorization_required`.
+The recovery worker never sends. Known limitation (D-11): time spent waiting for a tool
+confirmation counts against the run's `run_seconds`; an expired run ends `billing_run_time_too_short`
+("send again to continue"), and there is no automatic re-authorization on resume.
+
+### Legacy explicit quote and continuing consent (kept for compatibility and audit)
+
+The operations `agent.turn.quote`, `agent.quote.*` and `agent.consent.*` and the
+`quote_id`/`consent_id` paths of `agent.turn.start` stay as they were; the page no longer uses
+them. The authenticated person reads `agent.billing.offer`, then asks `agent.turn.quote` to fix a
 message (or a regeneration), conversation branch and scope, route, published sales price,
-personal payer, maximum amount, maximum calls and deadline. A quote expires after at most
-five minutes. No model request, funds reservation or charge happens while quoting.
+payer, maximum amount, maximum calls and deadline. No model request, funds reservation or charge
+happens while quoting. A quote stays acceptable for `max(now+1, min(now+300, deadline −
+send_window))` and `bind` refuses `run_time_too_short` when `deadline − now < send_window`
+(rr-money-1): a quote cannot be accepted for a run that could no longer make one call.
 
-`agent.turn.start` with `quote_id` is the user's acceptance. The quote can authorize one turn
-only. Binding it and inserting the turn use the **same Store instance and transaction**;
-failed admission rolls both back. A replay of the operation's idempotency key returns the
-same turn. A new key cannot spend the same quote again. Changed text, branch, conversation
-revision/scope or route requires a new quote. Regeneration needs new consent and does not
-replay successful business writes.
-
-`agent.quote.get` and `agent.quote.revoke` require the owner and matching conversation.
-Revocation prevents future dispatch, while already incurred usage remains eligible for the
-original settlement rules. Account, app, source access, source processing policy, cancellation
-and payment authority remain separate checks. A quote does not confer any business permission.
-
-The maximum is 12 model calls and a one-hour run deadline; the user can choose lower bounds.
-At most 100 unaccepted, unrevoked, unexpired quotes may coexist for a person. A run may stop
-earlier because of available balance, provider/context limits or other policy. Waiting past
-a deadline cannot silently extend payment authority. This slice does not yet offer a budget
-extension or resume-with-new-quote workflow.
+`agent.turn.start` with `quote_id` is the user's acceptance of that run's price and bound. From
+the page it also needs the current terms, AI use rules and pricing accepted beforehand (above); it
+never records them. The quote can authorize one turn only. Binding it and inserting the turn use
+the **same Store instance and transaction**; failed admission rolls both back. A new key cannot
+spend the same quote again. Changed text, branch, conversation revision/scope or route requires a
+new quote. `agent.quote.get` and
+`agent.quote.revoke` require the owner and matching conversation. Revocation prevents future
+dispatch, while already incurred usage remains eligible for the original settlement rules.
+Account, app, source access, source processing policy, cancellation and payment authority remain
+separate checks. A quote does not confer any business permission. The maximum is 12 model calls
+and a one-hour run deadline. At most 100 unaccepted, unrevoked, unexpired explicit quotes may
+coexist for a person (the automatic authorization is bound at once and is not counted).
 
 ## Amounts and operations
 
@@ -210,8 +318,9 @@ browser-supplied provider URLs or credentials. It never borrows an Anthropic per
 key, guesses retail prices, creates a payment grant or assumes a balance. The ledger's payment
 authorizer is the current quote binding; its dispatch transaction also rechecks cancellation,
 current Agent/account access, sealed source access, processing policy, configuration revision
-and cost admission. Every quoted turn still needs the existing explicit user budget consent.
-This is single-run consent, not the unfinished recurring payment authorization feature.
+and cost admission. Every paid turn runs under a bound run authorization: issued automatically
+by `agent.turn.start` for the person's own send from the page (send-and-go, above), or by the
+legacy explicit quote or continuing consent.
 
 The active provider key is sealed with the platform-model-key purpose and participates in the
 existing root rekey mechanism. Rotation/revocation replaces the active ciphertext; immutable
@@ -228,8 +337,9 @@ from public conversation and billing responses.
 
 The current evidence log distinguishes isolated protocol/ledger tests from actual inference,
 retail payments, browser acceptance and production deployment. No real model or payment service
-is enabled by these tests. Rate/fairness limits, continuing payment consent, actual checkout/refund
-integration and full production acceptance remain in the unified backlog.
+is enabled by these tests. Continuing payment consent (`consents.py`) shipped and is now a legacy
+path the page no longer uses. Rate/fairness limits, actual checkout/refund integration and full
+production acceptance remain in the unified backlog.
 
 Workspace processing consent additionally names allowed providers (`anthropic`/`deepseek`).
 The credential-source choice (`none`/`platform`/`any`) remains a separate restriction.
@@ -247,12 +357,15 @@ The settings response identifies the actual active provider and whether personal
 
 ## Personal spending limits
 
-The governed DeepSeek factory now installs `PayerBudgets` on its Ledger. Missing or disabled
-personal limits refuse new paid calls. This is an additional restriction, not payment consent:
-each run still needs its bound quote, current business permissions, wallet funds, provider policy
-and platform cost admission. Only the authenticated person can read or set these limits through
-`agent.billing.budget.get` and `agent.billing.budget.set`; they are unavailable to model tools,
-workflow steps and personal unattended automation. Ordinary business API access is unchanged.
+The governed DeepSeek factory installs `PayerBudgets` on its Ledger. Missing or disabled
+personal limits refuse new paid calls, and — for a personal payer on the automatic path — the
+send itself at admission. This is an additional restriction, separate from the run
+authorization: each run still needs its bound authorization, current business permissions, wallet
+funds, provider policy and platform cost admission. The limits are set once in the Agent's start
+step (prefilled with the suggested values, confirmed by the person) and changed in Agent settings.
+Only the authenticated person can read or set them through `agent.billing.budget.get` and
+`agent.billing.budget.set`; they are unavailable to model tools, workflow steps and personal
+unattended automation. Ordinary business API access is unchanged.
 
 The limits belong to the stable user, billing environment and published retail unit. They apply
 across gateway namespaces and price revisions. Day, week and month begin at UTC midnight,
