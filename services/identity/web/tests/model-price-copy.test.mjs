@@ -26,6 +26,28 @@ test('model price and provider copy never promises a re-confirmation, and states
   for (const phrase of STATED) assert.ok(everything.includes(phrase), phrase);
 });
 
+// A new calendar re-prices answers and stops answers in progress only on routes with time-banded
+// prices: their route version names the calendar revision. Flat-priced routes do not change
+// (addendum 1, AD-6), so the success notice after publishing must not say otherwise.
+const CALENDAR_ONLY_BANDED = ['且只影响使用分时价格的路线', '且只影響使用分時價格的路線', 'and only on routes with time-banded prices'];
+const CALENDAR_OTHERS_UNCHANGED = ['其他路线不受影响', '其他路線不受影響', 'Nothing changes for other routes'];
+const CALENDAR_UNCONDITIONAL = ['仅影响之后派发的调用：之后开始的回答自动按新日历计价', '僅影響之後派發的呼叫：之後開始的回答自動按新日曆計價',
+  'It affects only calls dispatched from now on: answers started from now on are priced by the new calendar'];
+
+test('the calendar publish notice re-prices and stops answers only on routes with time-banded prices', async () => {
+  const page = await readFile(new URL('ModelPriceCalendar.tsx', governance), 'utf8');
+  const catalogue = await readFile(new URL('model-price-bands.messages.ts', governance), 'utf8');
+  const notice = page.match(/t\('(日历版本 \{revision\} 已发布，操作编号 \{id\}。[^']*)'/);
+  assert.ok(notice, 'the calendar success notice is in ModelPriceCalendar.tsx');
+  assert.ok(notice[1].includes(CALENDAR_ONLY_BANDED[0]) && notice[1].includes(CALENDAR_OTHERS_UNCHANGED[0]), notice[1]);
+  const entry = catalogue.split('\n').find(line => line.includes(`'${notice[1]}'`));
+  assert.ok(entry, 'the notice has its catalogue entry');
+  for (const phrase of [...CALENDAR_ONLY_BANDED, ...CALENDAR_OTHERS_UNCHANGED]) assert.ok(entry.includes(phrase), phrase);
+  for (const phrase of CALENDAR_UNCONDITIONAL) {
+    assert.ok(!page.includes(phrase) && !catalogue.includes(phrase), `unconditional: ${phrase}`);
+  }
+});
+
 test('the account export copy names accepted terms and run authorizations instead of quotes', async () => {
   const text = await readFile(new URL('../src/pages/account.messages.ts', import.meta.url), 'utf8');
   assert.ok(!text.includes('数据同意、报价与钱包流水'), 'zh-Hans still says 报价');

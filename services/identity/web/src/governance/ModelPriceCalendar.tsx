@@ -241,7 +241,7 @@ export function ModelPriceCalendar({ manage, onDenied }: { manage: boolean; onDe
     {state?.environment === null && <p className="notice warn">{t('计费环境尚未配置，日历编辑与发布已禁用。')}</p>}
     {!manage && <p className="notice">{t('你可以查看日历和历史，不能修改或发布。')}</p>}
     {error != null && <div className="notice err" role="alert"><p>{t('日历请求未完成。你的输入已保留，请核对下方状态。')}</p><p>{errText(error)}</p></div>}
-    {result && <p className="notice ok" role="status">{t('日历版本 {revision} 已发布，操作编号 {id}。仅影响之后派发的调用：之后开始的回答自动按新日历计价，正在进行的回答在下一次模型调用前停止；用户无需重新确认。', { revision: result.state.revision, id: result.operation_id })}</p>}
+    {result && <p className="notice ok" role="status">{t('日历版本 {revision} 已发布，操作编号 {id}。仅影响之后派发的调用，且只影响使用分时价格的路线：这些路线之后开始的回答自动按新日历计价，正在进行的回答在下一次模型调用前停止；其他路线不受影响。用户无需重新确认。', { revision: result.state.revision, id: result.operation_id })}</p>}
     {uncertain && attempt && <div className="notice warn col gap8" role="alert">
       <p>{t('发布结果尚不确定，输入已锁定。请保留此页面，仅重试原请求；刷新记录不能确认原请求失败。')}</p>
       <p className="small">{t('原请求编号：{id}', { id: attempt.body.idempotency_key })}</p>
