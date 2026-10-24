@@ -12,7 +12,12 @@
  *  A direct message this reader blocked shows 「你已屏蔽对方，解除后才能发送」 with 解除屏蔽 in place of
  *  the composer (§7.18). A reader who was blocked is not told in advance: their first send is
  *  refused with the neutral 「暂时无法向对方发送消息」, shown on the failed message and in place of the
- *  composer, with a way to try again. */
+ *  composer, with a way to try again.
+ *
+ *  B3: a refusal that closes the whole conversation (Synwevo Message switched off for its
+ *  organization or platform-wide, the organization or the project's workspace paused) is shown as
+ *  the server's sentence, the list is read again (it leaves the conversation out, and the page
+ *  says why in place of the thread), and a message that could not be sent goes back into the box. */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, get, post, put } from "@synwevo/auth-client";
 import { scrollBehavior, useDialog, useI18n } from "@synwevo/ui";
@@ -22,6 +27,7 @@ import type { Attachment, Capabilities, Conversation, Live, Message, Presence, R
 import { draftKey, fmtSize, layout, maxSeq, mergeMessages, newClientId, receiptMark } from "../lib/thread";
 import { dayLabel, formatDayLabel } from "../lib/time";
 import { FlowError, Loading } from "../flow";
+import { closedRefusal } from "../lib/availability";
 import { Composer, type ComposerHandle } from "./Composer";
 import { Avatar, MessageItem } from "./MessageItem";
 import { Lightbox } from "./Lightbox";
@@ -130,12 +136,12 @@ export function Thread({ conv, uid, live, narrow, coarse, caps, settings, presen
         merge(page.items);
         if (!atBottom.current) setFresh(n => n + page.items.filter(m => m.sender_id !== uid).length);
       }
-    } catch { /* next tick */ }
-  }, [conv.id, merge, uid]);
+    } catch (e) { if (closedRefusal(e)) onChanged(); /* otherwise: next tick */ }
+  }, [conv.id, merge, uid, onChanged]);
 
   useEffect(() => {
     if (saved) { void resync(); return; }
-    load().catch(e => setError(e));
+    load().catch(e => { setError(e); if (closedRefusal(e)) onChanged(); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
   useEffect(() => () => {
@@ -287,6 +293,12 @@ export function Thread({ conv, uid, live, narrow, coarse, caps, settings, presen
     } catch (e) {
       const why = e instanceof ApiError ? e.message : String(e);
       if (e instanceof ApiError && e.code === "blocked") { if (e.detail?.by_me) onChanged(); else setRefused(true); }
+      if (closedRefusal(e)) {
+        // the conversation closed meanwhile: the words go back into the box (kept as this
+        // conversation's draft), unless something new was typed since
+        if (pending.body && !pending.attachment) setDraftState(cur => cur || pending.body);
+        onChanged();
+      }
       setItems(cur => (cur || []).map(m => (m.id === pending.id ? { ...m, pending: false, failed: why } : m)));
     }
   }, [conv.id, merge, onChanged]);

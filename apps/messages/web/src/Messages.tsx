@@ -13,6 +13,12 @@
  *  starts in it. A conversation opened from outside the scope (a link, a notification) is still
  *  shown, read on its own.
  *
+ *  Availability (B3): the server says which of the reader's organizations have Synwevo Message
+ *  switched off (`disabled_organizations`, `platform_disabled`, `messages_enabled`) or are paused
+ *  (frozen, deleted and recoverable); the list says so above itself, a conversation there opened
+ *  from a link shows the server's refusal in place of the thread, no new conversation is offered
+ *  there, and the stream's `organization` event reloads all of it within a heartbeat.
+ *
  *  Layout: the conversation list and the thread side by side; the info panel is a third column
  *  from 1200px, a drawer on medium screens, and a full page on phones, where the list, the
  *  thread and the info are one pane at a time with a real back control. The page height follows
@@ -25,6 +31,7 @@ import { Topbar } from "./Topbar";
 import { FlowError, Loading } from "./flow";
 import { LIST, M, capabilities, heartbeat, setPrefix, sync as syncSince, threadPath } from "./api";
 import { conversationsPath, localStore, readScope, writeScope } from "./lib/scope";
+import { availabilityNotices, closedRefusal, usable, type ListAvailability } from "./lib/availability";
 import { mutedNow } from "./lib/thread";
 import type { Capabilities, Conversation, Live, Message, Org, Presence, SearchAnswer, Settings, TypingState } from "./types";
 import { ConversationList, SearchResults, type ListFilter, type RowAction, type SearchOptions } from "./components/ConversationList";
@@ -56,7 +63,10 @@ export default function Messages() {
   const wide = useMediaQuery("(min-width: 1200px)");
   const coarse = useMediaQuery("(pointer: coarse)");
   useVisualViewportHeight(coarse);
-  const [orgs, setOrgs] = useState<Org[]>([]);
+  // every organization of the reader (`/organizations`); a conversation is started only in a usable one
+  const [allOrgs, setAllOrgs] = useState<Org[]>([]);
+  const orgs = useMemo(() => allOrgs.filter(usable), [allOrgs]);
+  const [availability, setAvailability] = useState<ListAvailability | null>(null);
   const [convs, setConvs] = useState<Conversation[] | null>(null);
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -87,17 +97,21 @@ export default function Messages() {
   useEffect(() => { if (orgsKnown && scope && !(orgs.length > 1 && orgs.some(o => o.id === scope))) setScope(""); }, [orgsKnown, orgs, scope, setScope]);
   // the open conversation when it is outside the current scope: read on its own, kept fresh with
   // the list; `conv` null = the server does not show it to this reader
-  const [outside, setOutside] = useState<{ id: string; conv: Conversation | null } | null>(null);
+  // `refusal`: the server closed it as a whole (B3: Message switched off, the organization paused) —
+  // said in place of the thread, not as "not found"
+  const [outside, setOutside] = useState<{ id: string; conv: Conversation | null; refusal?: ApiError } | null>(null);
   const cidRef = useRef(cid); cidRef.current = cid;
   const selected = useMemo(() => convs?.find(c => c.id === cid) || (outside && outside.id === cid ? outside.conv : null), [convs, cid, outside]);
   const resolving = !!cid && !!convs && !convs.some(c => c.id === cid) && outside?.id !== cid;
   const [stickyUnread, setStickyUnread] = useState<string | undefined>(undefined);
 
-  const loadConvs = useCallback(() => get<{ items: Conversation[] }>(conversationsPath(M(), scope)).then(async x => {
+  const loadConvs = useCallback(() => get<{ items: Conversation[] } & ListAvailability>(conversationsPath(M(), scope)).then(async x => {
     const open = cidRef.current;
-    const alone = open && !x.items.some(c => c.id === open) ? await get<Conversation>(`${M()}/conversations/${open}`).catch(() => null) : null;
+    let refusal: ApiError | undefined;
+    const alone = open && !x.items.some(c => c.id === open) ? await get<Conversation>(`${M()}/conversations/${open}`).catch(e => { if (closedRefusal(e)) refusal = e; return null; }) : null;
     setConvs(x.items);
-    setOutside(open && !x.items.some(c => c.id === open) ? { id: open, conv: alone } : null);
+    setAvailability({ disabled_organizations: x.disabled_organizations, platform_disabled: x.platform_disabled });
+    setOutside(open && !x.items.some(c => c.id === open) ? { id: open, conv: alone, refusal } : null);
     if (!scope) {
       const now = Date.now() / 1000;
       announceMessagesUnread(x.items.filter(c => !mutedNow(c.me, now)).reduce((a, c) => a + Math.max(c.unread, c.me.marked_unread ? 1 : 0), 0));
@@ -111,26 +125,32 @@ export default function Messages() {
   useEffect(() => {
     if (!resolving || !cid) return;
     let live = true;
-    get<Conversation>(`${M()}/conversations/${cid}`).then(c => { if (live) setOutside({ id: cid, conv: c }); }, () => { if (live) setOutside({ id: cid, conv: null }); });
+    get<Conversation>(`${M()}/conversations/${cid}`).then(c => { if (live) setOutside({ id: cid, conv: c }); },
+      e => { if (live) setOutside({ id: cid, conv: null, refusal: closedRefusal(e) ? e : undefined }); });
     return () => { live = false; };
   }, [resolving, cid]);
   // The application registered itself on its own origin while this tab was open on the account
   // origin's fallback: the legacy routes answer 410, and the conversations are there.
   const failed = useCallback((e: unknown) => {
     if (e instanceof ApiError && e.code === "moved") { window.location.replace(messagesHref(state, { lang: locale, path: cidRef.current ? threadPath(cidRef.current) : "/" })); return; }
+    // the list was scoped to an organization that is closed now (B3): every organization again,
+    // and the notice above the list says why
+    if (scopeRef.current && closedRefusal(e)) { setScope(""); return; }
     setError(e);
-  }, [state, locale]);
+  }, [state, locale, setScope]);
   // the list, again whenever the scope changes
   useEffect(() => {
     let live = true;
     loadConvs().catch(e => { if (live) failed(e); });
     return () => { live = false; };
   }, [loadConvs, failed]);
+  // the reader's organizations: this application's own answer (the account service's
+  // /api/auth/organizations is not served on this origin), again when the stream says a switch changed
+  const loadOrgs = useCallback((signal?: AbortSignal) => get<{ items: Org[] }>(`${M()}/organizations`, signal)
+    .then(o => { setAllOrgs(o.items); setOrgsKnown(true); }), []);
   useEffect(() => {
     const abort = new AbortController();
-    // the organizations a conversation can be started in: this application's own answer (the
-    // account service's /api/auth/organizations is not served on this origin)
-    get<{ items: Org[] }>(`${M()}/organizations`, abort.signal).then(o => { setOrgs(o.items.filter(x => x.status === "active")); setOrgsKnown(true); }).catch(e => {
+    loadOrgs(abort.signal).catch(e => {
       if (abort.signal.aborted) return;
       failed(e);
     });
@@ -205,6 +225,9 @@ export default function Messages() {
       es.addEventListener("read", ((e: MessageEvent) => { forward(e); reloadSoon(); }) as EventListener);
       es.addEventListener("receipt", forward as EventListener);
       es.addEventListener("conversation", (e: MessageEvent) => { forward(e); void reload().catch(() => undefined); });
+      // B3: Synwevo Message switched off or back on for one of the reader's organizations (or the
+      // platform): the organizations, the list and the open thread are read again
+      es.addEventListener("organization", () => { void loadOrgs().catch(() => undefined); threadRef.current?.resync(); void reload().catch(() => undefined); });
       es.addEventListener("typing", ((e: MessageEvent) => {
         try {
           const ev = JSON.parse(e.data);
@@ -222,7 +245,7 @@ export default function Messages() {
     };
     connect();
     return () => { closed = true; es?.close(); stopPolling(); };
-  }, [uid, reload, resyncAll]);
+  }, [uid, reload, resyncAll, loadOrgs]);
 
   const open = (id: string) => { setInfo(false); setStickyUnread(filter === "unread" ? id : undefined); navigate(threadPath(id)); };
   const chooseFilter = (f: ListFilter) => { setStickyUnread(undefined); setFilter(f); };
@@ -247,6 +270,7 @@ export default function Messages() {
       await loadConvs();
     } catch (e) { setError(e); }
   };
+  const notices = useMemo(() => availabilityNotices(allOrgs, availability), [allOrgs, availability]);
   const infoMode = narrow ? "page" : wide ? "column" : "drawer";
   const showInfo = info && !!selected;
   useEffect(() => { if (!cid) setInfo(false); }, [cid]);
@@ -266,6 +290,7 @@ export default function Messages() {
         {search ? <SearchResults q={search.q} answer={search.answer} opts={search.opts} convs={convs || []} cid={cid} onSearch={(q, o) => void doSearch(q, o)} onOpen={openAt} onClose={() => { setSearch(null); setQuery(""); }} />
           : <>
             {error && <div style={{ padding: "0 8px" }}><FlowError error={error} /></div>}
+            <Availability notices={notices} />
             {!convs ? <>{header}<Loading /></>
               : <ConversationList convs={convs} cid={cid} uid={uid} presence={presence} filter={filter} setFilter={chooseFilter} query={query} setQuery={setQuery} onOpen={open}
                 onSearch={(q, o) => void doSearch(q, { ...o, cid: o.cid ?? undefined })} onRowAction={(c, a) => void rowAction(c, a)} header={header}
@@ -274,7 +299,9 @@ export default function Messages() {
       </aside>
       <section className="msg-thread" aria-label={t("会话")}>
         {!cid ? <div className="msg-empty msg-empty-thread"><p className="big">{t("选择一个会话，或开始新的对话。")}</p></div>
-          : !selected ? (convs && !resolving ? <div className="msg-empty"><p>{t("找不到这个会话，或你已不在其中。")}</p><button type="button" className="btn" onClick={() => navigate(LIST)}>{t("返回会话列表")}</button></div> : <Loading />)
+          : !selected ? (convs && !resolving ? <div className="msg-empty" role={outside?.refusal ? "alert" : undefined}>
+              <p>{outside?.refusal ? outside.refusal.message : t("找不到这个会话，或你已不在其中。")}</p>
+              <button type="button" className="btn" onClick={() => navigate(LIST)}>{t("返回会话列表")}</button></div> : <Loading />)
           : <Thread key={selected.id} conv={selected} uid={uid} live={live} narrow={narrow} coarse={coarse} caps={caps} settings={settings} presence={presence} typing={typing[selected.id] || []}
             infoOpen={showInfo} onBack={() => navigate(LIST)} onOpenInfo={() => setInfo(o => !o)} onChanged={() => void loadConvs()} onForward={setForwarding}
             bind={bind} jump={jump && jump.cid === selected.id ? jump : null} onJumped={() => setJump(null)} />}
@@ -289,5 +316,15 @@ export default function Messages() {
       onCreated={c => { setDialog(null); setGroupFrom(null); void loadConvs().then(() => open(c.id)); }} />}
     {dialog === "settings" && settings && <SettingsDialog settings={settings} blocks={!!caps?.blocks} onBlocksChanged={() => { void loadConvs(); }} onClose={() => setDialog(null)} onSaved={s => { setSettings(s); if (!s.show_presence) setPresence({}); void loadConvs(); }} />}
     {forwarding && <ForwardDialog message={forwarding} convs={convs || []} max={caps?.limits?.forward_targets || 5} onClose={() => setForwarding(null)} onDone={() => { setForwarding(null); void loadConvs(); }} />}
+  </div>;
+}
+
+/** B3: why some of the reader's conversations are not listed now — Synwevo Message switched off
+ *  for an organization or platform-wide, or an organization paused. A polite live region present
+ *  from the first render, so a change the stream brings is announced. */
+function Availability({ notices }: { notices: ReturnType<typeof availabilityNotices> }) {
+  const { t } = useI18n();
+  return <div className="msg-availability" role="status" aria-live="polite">
+    {notices.map(n => <p key={n.key} className="notice warn">{t(n.text, n.params)}</p>)}
   </div>;
 }

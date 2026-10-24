@@ -91,7 +91,10 @@ export interface Message {
   failed?: string;
 }
 
-export interface Org { id: string; name: string; status: string }
+/** One of the reader's organizations (`/organizations`): its lifecycle (`status`, `recover_until`)
+ *  and, B3, whether Synwevo Message is on there (`messages_enabled`; false while the platform
+ *  switched it off for that organization or platform-wide). */
+export interface Org { id: string; name: string; status: string; recover_until?: number | null; messages_enabled?: boolean }
 
 export interface Settings { show_presence: boolean; read_receipts: boolean }
 
