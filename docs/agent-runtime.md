@@ -44,22 +44,94 @@ apply to every operation. Platform API administration is not granted by personal
 
 ## Payers (org-payments, 2026-10-05)
 
-A paid run names its payer in the quote (`agent.turn.quote` input `payer_kind` = `user` | `organization`,
-`payer_id`). The person is the default. An organization pays only when its current grant lets this member
-charge it (`billing.org_payers`: enabled, a monthly limit per member, an optional monthly limit per
-workspace, UTC calendar month, spend plus active holds). The quote's terms, a consent built from it, the
-run's `ChargeContext` (`payer_kind='organization'`, `organization_id`) and every billing call record the
-payer; the ledger rechecks the grant and limits under the writer lock at every reservation and before
-every send, so withdrawing a grant stops the next send without any network call. Quotes and consents
-return `payer: {kind, id}`.
+A paid run names its payer on the send itself (`agent.turn.start` input `payer_kind` = `user` |
+`organization`, `payer_id`; send-and-go, see below). The person is the default and needs no field.
+An organization pays only when its current grant lets this member charge it (`billing.org_payers`:
+enabled, a monthly limit per member, UTC calendar month, spend plus active holds; a per-workspace
+limit can be configured but no run carries a workspace, so it does not apply — money-3, an owner
+decision). The run
+authorization the server issues at the send, the run's `ChargeContext` (`payer_kind='organization'`,
+`organization_id`) and every billing call record the payer; the ledger rechecks the grant and limits
+under the writer lock at every reservation and before every send, so withdrawing a grant stops the
+next send without any network call. The legacy `agent.turn.quote` still takes the same two fields,
+and quotes and consents return `payer: {kind, id}`.
 
 `GET /api/suite/agent/payers` lists the payers the signed-in person may charge — the personal wallet first
 (`available`, `frozen`), then each granting organization with its wallet's available units and this
 member's `monthly_limit`, `spent_this_month`, `held` and `remaining_this_month` (decimal strings of wallet
-units, `unit.scale` places, CNY). Opening the Agent is its first use: this read also grants the one-time
+units, `unit.scale` places, CNY; for an organization `available` is the smaller of its wallet and this
+member's remaining allowance, so a member never sees the whole organization balance — authz-4, server
+side). Opening the Agent is its first use: this read also grants the one-time
 welcome allowance when configured (docs/personal-wallet.md) and reports its state. Organizations manage
 grants and limits on the accounts origin (`/api/auth/organizations/{oid}/billing`, permission
 `org.billing.manage`; docs/platform/wallet-payments.md).
+
+## Send and go (owner decision 2026-10-23)
+
+A person types a request, presses Send (or Enter), and the answer starts: the page issues exactly
+one `agent.turn.start` per send or regenerate (after `agent.conversation.create` for a new
+conversation), with the payer inline and never a `quote_id` or `consent_id`. There is no budget,
+quote or price dialog and no re-confirmation when prices change; billing itself is unchanged
+(prepaid CNY wallet, DeepSeek cost × the administrator's markup, per-call holds and settlement,
+the cost line under each answer).
+
+* **Run authorization.** For a send from the page (`via=ui`) the server issues one automatic run
+  authorization inside its admission transaction and binds it to the turn at once
+  (`agent_model_quotes`, `terms_json.issued.mode = "automatic"`; export field `authorization`).
+  Its bound is one call's hold × 12 calls at the current price, or the person's lower
+  "maximum per answer" from Agent settings (`agent.settings.update` `run_budget_cap` /
+  `clear_run_budget_cap`); the run lasts at most 3600 s within the route's validity. Every money
+  invariant stays in the ledger and gateway: reserved plus spent never exceeds the bound, a charge
+  never exceeds its hold, nothing is charged after a hold's deadline, and the payer, funds, freeze,
+  personal and organization limits, risk controls, cost admission, provider consent, access and
+  source policy are checked at reservation and dispatch. Flows, automations, machine credentials and
+  the Agent itself get no automatic path (`billing_authorization_required` without a quote).
+* **The composer** shows the payer, the balance, the tightest remaining limit and "this answer
+  costs at most …" from `agent.billing.status.run.maximum` (`run: {maximum, default, cap, source,
+  per_call_hold, max_calls, run_seconds, usable, price_id, route_version}`; a server without `run`
+  shows the per-call hold, said as such). Send is never disabled for a money reason; the server's
+  refusal says why.
+* **The price shown is the price sent** (contract addendum AD-1). Every send and regenerate repeats
+  the `run.price_id` / `run.route_version` the composer showed as `seen_price_id` /
+  `seen_route_version` (both omitted when there is no `run`; the server then does not check). When
+  an administrator adopted another price meanwhile, the server refuses with 409
+  `billing_price_changed` (`detail.current`: the new price id, route version, maximum, per-call hold
+  and unit) and stores nothing: the message stays in the composer, the status is read again so the
+  composer shows the new maximum, the price notice lists what changed against the price the page had
+  shown, and "send again at the new price" sends it in one click (no dialog; for a refused
+  regenerate it repeats that regenerate), with the message as it then stands and the price and payer
+  the page shows at that click. The page also reads the status again when the window
+  regains focus or becomes visible, and at most every 5 minutes while it is visible.
+* **One-time "Start using Synwevo Agent" step** (`AgentSetup.tsx`, an inline region, not a modal).
+  When a send needs something the person has not done (`agent.setup.get`), the message stays in the
+  composer, focus moves to the step's heading, and the step shows only what is missing: (a) the
+  separate DeepSeek data-sharing consent — the same notice as Agent settings (`ProviderConsentFacts`)
+  with its own unticked box, recorded by `agent.provider_consent.accept` for the version shown;
+  (b) the terms of service, AI use rules and pricing — a second unticked box with the three pages
+  linked in a new tab, recorded by `agent.terms.accept` with every document at its current version;
+  (c) for the personal payer, the daily / weekly / monthly spending limits prefilled with the
+  server's suggested values and editable, saved by `agent.billing.budget.set` with the setup's
+  `expected_revision`. The button reads "Agree and send" with a message waiting, otherwise "Agree
+  and start". The writes run in the order (a), (b), (c) and only then is the message sent; any
+  failure stops there, keeps the message and says one step is unfinished (a newer document or notice
+  version is shown for acceptance). The step returns only when a document or consent version
+  changes; a price change never brings it back. An organization payer skips the limits.
+* **Price notice** (`PriceNotice.tsx`). When `agent.billing.status.price_notice.previous` (the
+  pricing of the person's last answer) differs from the current offer, the chat shows "Prices have
+  changed. Answers from now on are charged at the new price." with what changed (model, route,
+  price version, unit, each rate per million tokens, per-call hold) and "Got it". It never blocks a
+  send. Its dismissal is remembered per viewer in `localStorage` for the (previous, current) price
+  pair, every access inside `try/catch`, so blocked storage only means it shows again. An answer in
+  progress when a price changes stops before its next model call (`price_changed`), calls already
+  made are settled at the earlier price, and its next step is "send again at the new price".
+* **Legacy quotes and continuing consents** (`agent.turn.quote`, `agent.quote.*`, `agent.consent.*`)
+  stay for compatibility and audit; the page no longer creates or uses them, and existing consents
+  are inert from it. The pre-quote source review of CR-079 is gone with the dialog: the server's
+  `Contexts.prepare` in the same admission transaction stays authoritative, the composer's source
+  chips (title · workspace · kind) are the review, and a refused source keeps the message and chips.
+* **Known limitation.** Time spent waiting for a tool confirmation counts against the run's 3600 s;
+  a run that runs out ends with `billing_run_time_too_short`, worded "send again to continue". There
+  is no automatic re-authorization on resume.
 
 ## Conversation history pagination
 
@@ -138,9 +210,10 @@ documented capabilities of the two governed DeepSeek models (`vision` only for
 
 In the page (`apps/suite/web/src/apps/agent/`): each answer shows its settled cost with an
 expandable breakdown (cache hit/miss, output with reasoning, who paid, model, band, state); the
-composer shows the payer, the balance, the tightest remaining limit, the most this turn can cost
-(an active consent's per-run budget, else the per-call hold) and a low-balance prompt linking to
-the account service's `/account/wallet`.
+composer shows the payer, the balance, the tightest remaining limit, the most this answer can cost
+(`agent.billing.status.run.maximum`, see "Send and go") and a low-balance prompt linking to the
+account service's `/account/wallet`. `agent.billing.status` also carries `run` and `price_notice`
+(send-and-go contract).
 
 The payer choice reads `GET /api/suite/agent/payers` (organization payment) exactly as it is
 sent: `{configured, environment, currency, unit: {code, scale} | null, payers: [...], welcome:
@@ -154,10 +227,10 @@ allowance; "low" compares the smaller of the two with the per-call hold, and onl
 match. A member cannot top up an organization, so its low or frozen state offers "pay with my
 personal wallet" instead of a top-up link. A frozen personal wallet links to the wallet page.
 The welcome allowance is mentioned when the list says it was just `granted`, or that verifying
-the email address (`email_unverified`) would grant it. A quote is sent with `payer_kind` /
-`payer_id` for an organization (nothing extra for the personal default) and is confirmed only if
-it names that payer; a continuing consent is used only for the payer it names (terms without a
-`payer` are personal), and continuing consents are offered for the personal wallet only.
+the email address (`email_unverified`) would grant it. A send or regenerate carries `payer_kind` /
+`payer_id` for an organization (nothing extra for the personal default); the server decides on
+every send whether that payer may pay. The remembered choice lives in `localStorage` per viewer,
+read and written inside `try/catch`.
 Amounts are formatted with `Intl` from decimal strings, never through a float. The model picker
 lists the governed model(s) the server offers with their exact price per million tokens and
 capabilities; there is no client-side model switch.
@@ -177,14 +250,22 @@ organization payer, pay personally instead), a frozen wallet (`wallet_frozen`: t
 or for an organization pay personally), an organization's monthly limit for the member or the
 workspace (`org_*_monthly_limit_exceeded`) or a grant, membership or organization that no longer
 lets the person charge it (`org_payer_not_granted`, `org_payer_not_member`,
-`organization_unavailable`, `organization_billing_not_configured`, `payer_forbidden`; both: pay
-with the personal wallet), a personal
-limit reached, paused or missing (Agent settings), an automatic spending brake, a suspension, the
+`organization_unavailable`, `organization_billing_not_configured`, `payer_forbidden`,
+`invalid_payer`; both: pay with the personal wallet — the organization sentence names the member's
+monthly allowance only, since no per-workspace limit applies to a run), a personal
+limit reached or paused (Agent settings) or missing (the one-time setup step), a per-answer maximum
+below one call's hold or in a unit that changed (`run_cap_*`, Agent settings), an automatic
+spending brake, a suspension, the
 paid-dispatch breaker or platform cost admission (`billing_cost_*`), the platform's per-call
 maximum cost (`cost_call_limit_exceeded`, its own sentence: a policy limit, not an outage), the
 staged-rollout allowlist, the paid service not configured, the separate DeepSeek data-sharing
-consent (`provider_consent_*`, Agent settings; `provider_consent_version_changed` asks to agree to
-the new version), a changed model or price (re-confirm), and content safety: a message blocked
+consent (`provider_consent_*`) and the terms not yet accepted (`terms_acceptance_required`), both
+"finish setup" (the one-time step opens with the message kept; `provider_consent_version_changed`
+asks to agree to the new version), a changed model or price, or a send carrying a price the page no longer shows
+(`billing_price_changed`, its own sentence: the message was not sent) ("send again at the new
+price"), a run
+that used up its time (`run_time_too_short`) or a legacy run authorization that no longer opens
+the run (`billing_quote_*`), both "send again", and content safety: a message blocked
 by an input rule (`content_blocked_input`, never sent, nothing charged, the text stays in the
 composer to edit) or an answer stopped by an output rule or the provider's filter
 (`content_*_output`, whose charge is whatever the answer's ledger line shows, because the
@@ -192,28 +273,25 @@ admin's incomplete-call policy decides it). The risk, consent and content famili
 recognised by their stems (`risk_*allowlist*`, `*breaker*`, `*brake*`, `*suspend*`,
 `content_(blocked|filtered)_(input|output)*`). An upstream 402 is the operator's DeepSeek
 balance and is shown as the service being unavailable, never as the person's balance. Every
-refusal before dispatch says that nothing was called or charged for the refused step.
+refusal that can also stop a running answer is worded so it is true mid-run ("no new model call
+was made and nothing was charged for it"; rr-glue-2); only the one-time setup refusals are
+admission-only. No refusal asks anyone to re-confirm a price, a run time or a quote.
 
 An administrator's suspension of the person's Agent access (`agent_access_suspended`, 403 on a
 send and the check before every model call of a running answer) has its own sentence: Agent
 access is suspended, nothing new was called or charged, and the next step is to contact the
-platform administrator (no top-up, settings or re-confirmation is offered). The same mapping
+platform administrator (no top-up, settings, setup or send-again is offered). The same mapping
 also words a reasoning effort the route does not offer (`model_effort_unavailable`, Agent
-settings), a request above the per-call size bound (`billing_model_request_too_large`), and a
-confirmed quote that no longer opens the run (`billing_quote_*`: get a new quote). A send under a
-continuing consent that is refused for one of these reasons shows the same sentence in the
-consent panel. The chat test (`apps/suite/web/tests/agent-chat.test.ts`) reads every error code
+settings) and a request above the per-call size bound (`billing_model_request_too_large`). The
+chat test (`apps/suite/web/tests/agent-chat.test.ts`) reads every error code
 the agent, ledger, admission, risk, traffic, budget, organization-payer and safety modules raise
 and requires each to be a refusal, a specific sentence (`errors.tsx`), or listed with the reason no
 chat shows it; and no platform-side code (an upstream 402 or 429, a breaker) may mention a
 balance or a used-up quota.
 
-When a continuing consent's model or price no longer applies (`model_changed`), the consent
-panel and the quote dialog list what changed (model, route, price version, unit, each rate per
-million tokens, per-call hold). The dialog offers "confirm the new price and send" in one step:
-it quotes the previous per-run budget, call count and time limit at the new terms, and sends only
-when the quote equals the terms shown; otherwise it stops at the review and says the quote
-differs. The same applies after a confirmation is refused because the terms changed.
+A price change is a notice, never a step to confirm (see "Send and go"); the refusal tests
+(`agent-refusal-wording.test.ts`, `agent-send-and-go.test.ts`) pin the kinds, next steps and the
+mid-run wording in three languages.
 
 ## Data-sharing consent and content safety
 
@@ -273,14 +351,18 @@ governs) and `apps/suite/synwevo_suite/agent/safety.py`.
   leaves its own receipt, so a key published later under a reused revision number survives the
   next restore (`apps/suite/tests/test_agent_withdrawal_restore.py`,
   `services/identity/tests/test_model_withdrawal_journal.py`).
-* **Terms.** A paid run records the terms / AI use / pricing versions in force once per version
-  (`synwevo_core/terms.py`). The chat's cost dialog says so before the confirmation (its confirm
-  buttons are described by that sentence) and links the three pages on the public site: the
-  server-controlled `site_url` of the auth state plus the portal's localized path (`/terms`,
-  `/en/ai-use`, `/zh-Hant/pricing` …, `composer.ts` `publicHref`), opened in a new tab; on a
-  single-host install without a separate site the path stays on the same host. The data-sharing
-  consent's privacy and AI-use links use the same origin; the account export lists them, together with the Agent's visible
-  conversation text, memories, settings, consents, quotes and the wallet statement
+* **Terms.** The terms of service, AI use rules and pricing (`synwevo_core/terms.py`, versioned)
+  are accepted once, explicitly, in the one-time setup step (`agent.terms.accept`, every document
+  at its current version; a newer version is 409 `terms_version_changed` and is shown for
+  acceptance); a send without acceptance is refused before anything is stored (409
+  `terms_acceptance_required`), and a new version asks once more. Agent settings list the accepted
+  versions read-only. The step links the three pages on the public site: the server-controlled
+  `site_url` of the auth state plus the portal's localized path (`/terms`, `/en/ai-use`,
+  `/zh-Hant/pricing` …, `composer.ts` `publicHref`), opened in a new tab so the waiting message is
+  kept; on a single-host install without a separate site the path stays on the same host. The
+  data-sharing consent's privacy and AI-use links use the same origin; the account export lists the
+  accepted versions, together with the Agent's visible conversation text, memories, settings,
+  consents, run authorizations (with how each was authorized) and the wallet statement
   (`synwevo_core/agent_records.py`); account deletion erases the Agent's content, including the
   copies in the capability layer's run records (`op_runs` of app `agent` keep only their receipt:
   who, which operation, when, state, error code, object id). The export never

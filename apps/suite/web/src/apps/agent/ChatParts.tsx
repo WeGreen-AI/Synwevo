@@ -1,13 +1,13 @@
 /** The chat's small, self-contained pieces: the AI-content label, each answer's ledger cost,
- *  refusals with their next step, "what changed" for a re-confirmation, and the thinking status.
- *  Everything shown here is a server fact (the ledger, the governed offer, a refusal code) put
- *  into words; nothing is estimated in the page. */
+ *  refusals with their next step, "what changed" between two pricings, the most an answer can
+ *  cost, and the thinking status. Everything shown here is a server fact (the ledger, the
+ *  governed offer, the run bound, a refusal code) put into words; nothing is estimated in the page. */
 import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n, type Params } from "@synwevo/ui";
 import type { Pricing } from "./budget";
 import { chatCopy, type ChatText } from "./chat.messages";
-import { perMillion, priceChanges } from "./composer";
+import { perMillion, priceChanges, type MoneyUnit } from "./composer";
 import { bandText, costSummary, costUnit, formatMoney, formatPerMillion, formatTokens, validTurnCost } from "./cost";
 import type { Refusal } from "./refusals";
 
@@ -72,9 +72,10 @@ export function TurnCostLine({ cost, payerName }: { cost: unknown;
 }
 
 /** A refusal in a sentence, and the one thing to do about it. `live` announces a fresh refusal;
- *  refusals already in the transcript are static text. */
-export function RefusalNotice({ refusal, walletUrl, onRequote, onPersonal, busy = false, live = false }: {
-  refusal: Refusal; walletUrl?: string | null; onRequote?: () => void;
+ *  refusals already in the transcript are static text. `onRetry` sends again (a changed price
+ *  applies to the new send); `onSetup` opens the one-time setup step with the draft kept. */
+export function RefusalNotice({ refusal, walletUrl, onRetry, onSetup, onPersonal, busy = false, live = false }: {
+  refusal: Refusal; walletUrl?: string | null; onRetry?: () => void; onSetup?: () => void;
   /** Switch the payer to the personal wallet (offered when an organization payer was refused). */
   onPersonal?: () => void; busy?: boolean; live?: boolean;
 }) {
@@ -87,13 +88,14 @@ export function RefusalNotice({ refusal, walletUrl, onRequote, onPersonal, busy 
     {next === "wallet" && walletUrl && <a className="btn sm" href={walletUrl}>{c("nextWallet")}</a>}
     {next === "personal" && onPersonal && <button type="button" className="btn sm" disabled={busy} onClick={onPersonal}>{c("nextPersonal")}</button>}
     {next === "settings" && <Link className="btn sm" to="/agent/settings">{c("nextSettings")}</Link>}
-    {next === "consent" && <Link className="btn sm" to="/agent/settings">{c("nextConsent")}</Link>}
-    {next === "requote" && onRequote && <button type="button" className="btn sm primary" disabled={busy} onClick={onRequote}>{c("nextRequote")}</button>}
-    {next === "reconfirm" && onRequote && <button type="button" className="btn sm primary" disabled={busy} onClick={onRequote}>{c("nextReconfirm")}</button>}
+    {next === "setup" && onSetup && <button type="button" className="btn sm primary" disabled={busy} onClick={onSetup}>{c("nextSetup")}</button>}
+    {next === "retry" && onRetry && <button type="button" className="btn sm primary" disabled={busy} onClick={onRetry}>
+      {c(refusal.kind === "price_changed" ? "nextRetryNewPrice" : "nextRetry")}</button>}
   </div>;
 }
 
-/** What differs between the terms someone last confirmed and the terms on offer now. */
+/** What differs between the pricing of the person's last answer and the pricing on offer now;
+ *  nothing when they are the same (the notice's sentence stands alone). */
 export function PriceChangeList({ before, after }: { before: Pricing; after: Pricing }) {
   const { c, locale } = useChatText();
   const id = useId();
@@ -104,7 +106,7 @@ export function PriceChangeList({ before, after }: { before: Pricing; after: Pri
       amount: (minor, unit) => formatMoney(minor, unit, locale),
     });
   } catch { return null; }
-  if (!changes.length) return <p className="ag-price-same">{c("changedNothing")}</p>;
+  if (!changes.length) return null;
   return <section className="ag-price-change" aria-labelledby={`${id}-title`}>
     <h3 id={`${id}-title`}>{c("changedTitle")}</h3>
     <dl>{changes.map((change) => <div key={change.field}>
@@ -113,6 +115,16 @@ export function PriceChangeList({ before, after }: { before: Pricing; after: Pri
         <span aria-hidden="true"> → </span><ins><span className="sr-only">{c("changedAfter")} </span>{change.after}</ins></dd>
     </div>)}</dl>
   </section>;
+}
+
+/** The most the next answer can cost, before sending: the run bound the server will issue
+ *  (`turnMaximum` from the billing status), or an older server's per-call hold, said as such. */
+export function TurnMaximum({ maximum }: { maximum: { key: "turnMaximum" | "turnMaximumCall"; amount: string; unit: MoneyUnit } | null }) {
+  const { c, locale } = useChatText();
+  if (!maximum) return null;
+  let amount: string;
+  try { amount = formatMoney(maximum.amount, maximum.unit, locale); } catch { return null; }
+  return <span className="ag-max">{c(maximum.key, { amount })}</span>;
 }
 
 /** "Thinking" without revealing the reasoning itself. */

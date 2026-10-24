@@ -3,7 +3,7 @@
  *  claim is made here, and the amounts are arithmetic examples, not the governed prices. */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { transformSync } from 'rolldown/utils';
@@ -307,7 +307,8 @@ test('each refusal maps to a translated sentence and its one next step', () => {
     ['billing_payer_forbidden', 'org_payer', 'personal'],
     ['billing_payer_daily_budget_exceeded', 'limit', 'settings'],
     ['billing_payer_budget_disabled', 'limit', 'settings'],
-    ['billing_payer_budget_not_configured', 'no_limit', 'settings'],
+    // Missing limits are part of the one-time setup step (prefilled there), not a settings errand.
+    ['billing_payer_budget_not_configured', 'no_limit', 'setup'],
     ['billing_risk_payer_brake', 'brake', null],
     ['billing_risk_route_brake', 'brake', null],
     ['billing_risk_payer_suspended', 'suspended', null],
@@ -317,11 +318,17 @@ test('each refusal maps to a translated sentence and its one next step', () => {
     ['billing_cost_admission_disabled', 'breaker', null],
     ['billing_not_configured', 'not_configured', null],
     ['billing_model_route_unavailable', 'not_configured', null],
-    ['provider_consent_required', 'consent', 'consent'],
+    ['provider_consent_required', 'consent', 'setup'],
     // A newer version of the data-sharing terms is its own sentence: "agree again", not "agree first".
-    ['provider_consent_version_changed', 'consent_changed', 'consent'],
-    ['billing_model_configuration_changed', 'price_changed', 'requote'],
-    ['billing_consent_model_changed', 'price_changed', 'requote'],
+    ['provider_consent_version_changed', 'consent_changed', 'setup'],
+    ['terms_acceptance_required', 'terms', 'setup'],
+    // Send-and-go: a changed price is simply sent again at the new price, never re-confirmed.
+    ['billing_model_configuration_changed', 'price_changed', 'retry'],
+    ['billing_consent_model_changed', 'price_changed', 'retry'],
+    ['billing_run_time_too_short', 'run_time', 'retry'],
+    ['billing_run_cap_below_call_hold', 'run_cap', 'settings'],
+    // Addendum AD-1: the page showed an older price; one click sends at the new one.
+    ['billing_price_changed', 'price_changed', 'retry'],
     // The platform's per-call maximum cost is a policy limit, not an outage.
     ['billing_cost_call_limit_exceeded', 'call_cap', null],
     // Content safety: a blocked message was never sent; a filtered answer stopped.
@@ -369,19 +376,12 @@ test('a suspended Agent access says so, without a payment next step, and tells t
     en: ['An administrator has suspended your Agent access', 'contact the platform administrator'],
     'zh-Hant': ['管理員已暫停你的 Agent 使用權限', '聯絡平台管理員'] } as const;
   for (const locale of LOCALES) {
-    const html = render(locale, React.createElement(parts.RefusalNotice, { refusal, walletUrl: '/account/wallet', live: true, onRequote() {}, onPersonal() {} }));
+    const html = render(locale, React.createElement(parts.RefusalNotice, { refusal, walletUrl: '/account/wallet', live: true, onRetry() {}, onSetup() {}, onPersonal() {} }));
     for (const text of words[locale]) assert.ok(html.includes(text), `${locale}: ${text} in ${html}`);
-    // Not a wallet, limit or price problem: no top-up, settings or re-confirmation is offered.
+    // Not a wallet, limit or price problem: no top-up, settings, setup or send-again is offered.
     assert.ok(!html.includes('<a') && !html.includes('<button') && html.includes('role="alert"'), html);
     assert.ok(!/余额|餘額|balance/i.test(html), html);
   }
-  // A send under a continuing consent that the server refuses for this reason says it too, not
-  // the consent panel's generic "refused".
-  const controls = await server.ssrLoadModule('/src/apps/agent/ConsentControls.tsx');
-  const failure = render('en', React.createElement(controls.ConsentFailure, { error: { code: 'agent_access_suspended' } }));
-  assert.ok(failure.includes('An administrator has suspended your Agent access'), failure);
-  const own = render('en', React.createElement(controls.ConsentFailure, { error: { code: 'consent_revoked' } }));
-  assert.ok(!own.includes('suspended'), own);
 });
 
 /** Every error code the merged backend can hand the chat (a refused send, a refused quote or
@@ -390,8 +390,11 @@ test('a suspended Agent access says so, without a payment next step, and tells t
  *  the chat (errors.tsx) — never the generic "could not finish" — unless it is listed below with
  *  the reason no chat ever shows it. Billing errors reach the chat as "billing_" + code. */
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+/** The checkout whose server sources are scanned: this one, or another named by AGENT_SCAN_ROOT
+ *  (read only), so a server branch can be checked against this page before the two are merged. */
+const SCAN_ROOT = process.env.AGENT_SCAN_ROOT ? process.env.AGENT_SCAN_ROOT.replace(/\/*$/, '/') : ROOT;
 const AGENT_DIR = 'apps/suite/synwevo_suite/agent/';
-const SOURCES = [...readdirSync(ROOT + AGENT_DIR).filter((f) => f.endsWith('.py')).map((f) => AGENT_DIR + f),
+const SOURCES = [...readdirSync(SCAN_ROOT + AGENT_DIR).filter((f) => f.endsWith('.py')).map((f) => AGENT_DIR + f),
   'packages/core/synwevo_core/agent_safety.py',
   ...['ledger', 'admission', 'risk', 'traffic', 'payer_budgets', 'org_payers', 'models'].map((n) => `packages/core/synwevo_core/billing/${n}.py`)];
 /** Codes built at run time (an HTTP status table, a period name), spelled out. */
@@ -400,7 +403,7 @@ const COMPUTED = ['provider_balance', 'provider_error', 'provider_overloaded', '
 function serverCodes(): Set<string> {
   const codes = new Set<string>(COMPUTED);
   for (const file of SOURCES) {
-    const source = readFileSync(ROOT + file, 'utf8');
+    const source = readFileSync(SCAN_ROOT + file, 'utf8');
     for (const [, kind, code] of source.matchAll(/\b(ServiceError|ProviderError|BillingError|DeepSeekError)\(\s*(?:\d+\s*,\s*)?"([a-z_]+)"/g)) {
       if (code.endsWith('_')) continue;  // a prefix joined at run time ("billing_" + exc.code)
       codes.add(kind === 'BillingError' ? `billing_${code}` : code);
@@ -420,8 +423,11 @@ const NOT_IN_CHAT: [string, string][] = [
     'met on the Agent settings page (personal key, memories, transfer policy), which words them'],
   ['wallet_unavailable', 'the payer list (GET /api/suite/agent/payers); the composer says the organization payers cannot be loaded'],
   ['billing_quote_limit_exceeded billing_quote_requires_turn_transaction',
-    'met only while asking for a quote: the budget dialog words a refused quote'],
+    'met only when a legacy quote is issued (agent.turn.quote, never asked by this page since send-and-go) or inside the server\'s own admission transaction'],
   ['empty_message', 'the composer never sends an empty message'],
+  // Send-and-go (contract addendum AD-2).
+  ['terms_version_changed', 'met only in the one-time setup step, which words it (the newer version is shown for acceptance)'],
+  ['billing_run_cap_invalid', 'unreachable: the per-answer maximum is validated when it is saved in Agent settings'],
   ['unauthorized', 'an expired session: the shared client catalogue asks the person to sign in again on every page'],
   ['billing_grant_reason_required billing_invalid_grant billing_welcome_already_granted billing_freeze_not_found billing_order_already_funded '
     + 'billing_payment_authority_denied billing_payment_delegation_required billing_payment_environment_mismatch billing_payment_event_conflict '
@@ -437,7 +443,7 @@ const NOT_IN_CHAT: [string, string][] = [
     + 'billing_billing_requires_own_transaction billing_call_not_dispatchable billing_call_not_found billing_dispatch_fenced billing_idempotency_conflict '
     + 'billing_inconsistent_usage billing_invalid_attempt_ticket billing_invalid_context billing_invalid_cost_admission billing_invalid_cost_expiry '
     + 'billing_invalid_cost_fact billing_invalid_cost_time billing_invalid_dispatch_admission billing_invalid_environment billing_invalid_evidence_digest '
-    + 'billing_invalid_hold_deadline billing_invalid_identifier billing_invalid_integer billing_invalid_payer billing_invalid_price billing_invalid_rebuild '
+    + 'billing_invalid_hold_deadline billing_invalid_identifier billing_invalid_integer billing_invalid_price billing_invalid_rebuild '
     + 'billing_invalid_unit billing_invalid_usage billing_invalid_usage_evidence billing_journal_hold_invariant_broken billing_missing_cache_classification '
     + 'billing_missing_usage billing_model_call_already_recorded billing_payer_budget_conflict billing_payer_budget_requires_transaction '
     + 'billing_provider_request_conflict billing_retry_requires_known_platform_fault billing_run_context_conflict billing_run_not_found '
@@ -447,6 +453,11 @@ const NOT_IN_CHAT: [string, string][] = [
     'ledger invariants and recovery internals: a broken invariant is an internal fault, worded by the generic billing sentence and logged'],
 ];
 const GENERIC = ['费用或授权状态暂不允许继续，请核对后重试。', '未能完成此操作，请核对结果后重试。'];
+/** Codes the send-and-go server (package A: synwevo_suite.agent.setup and its operations) raises.
+ *  Before that server is merged into this tree they are listed but not yet raised; once its
+ *  setup module exists every one of them must be raised, like every other listed code. */
+const SEND_AND_GO_SERVER = existsSync(SCAN_ROOT + AGENT_DIR + 'setup.py');
+const SEND_AND_GO_CODES = new Set(['terms_version_changed', 'billing_run_cap_invalid']);
 
 test('every refusal the backend can send to the chat has its own honest sentence', () => {
   const codes = serverCodes();
@@ -455,7 +466,9 @@ test('every refusal the backend can send to the chat has its own honest sentence
     'provider_consent_required', 'model_effort_unavailable', 'billing_org_payer_not_granted']) assert.ok(codes.has(code), code);
   const elsewhere = new Map<string, string>();
   for (const [names, why] of NOT_IN_CHAT) for (const code of names.split(' ')) {
-    assert.ok(codes.has(code), `${code} is listed as not shown in the chat but no longer raised (${why})`);
+    if (SEND_AND_GO_SERVER || !SEND_AND_GO_CODES.has(code)) {
+      assert.ok(codes.has(code), `${code} is listed as not shown in the chat but no longer raised (${why})`);
+    }
     elsewhere.set(code, why);
   }
   const t = (source: string) => source;
@@ -503,11 +516,19 @@ test('a refusal notice states what happened and offers the next step', () => {
   // answer's own ledger line says what was charged.
   const filtered = render('en', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'content_filtered_output' }) }));
   assert.ok(filtered.includes('content safety') && !filtered.includes('nothing was charged'), filtered);
-  const requote = render('en', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_consent_model_changed' }), onRequote() {} }));
-  assert.ok(requote.includes('>Confirm at the new price</button>'), requote);
+  // A changed price: send again at the new price, in one click and with no confirmation.
+  const retry = render('en', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_consent_model_changed' }), onRetry() {} }));
+  assert.ok(retry.includes('>Send again at the new price</button>') && !/confirm/i.test(retry), retry);
+  const again = render('zh-Hans', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_run_time_too_short' }), onRetry() {} }));
+  assert.ok(again.includes('>重新发送</button>') && again.includes('没有为此扣费'), again);
+  // The one-time setup step opens inline with the message kept.
+  const setup = render('zh-Hant', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'terms_acceptance_required' }), onSetup() {} }));
+  assert.ok(setup.includes('>完成開始設定</button>') && setup.includes('訊息沒有傳送'), setup);
   // Without a handler the action is not offered (never an empty button).
   const none = render('en', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_consent_model_changed' }) }));
   assert.ok(!none.includes('<button'), none);
+  const noSetup = render('en', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'provider_consent_required' }) }));
+  assert.ok(!noSetup.includes('<button') && !noSetup.includes('<a'), noSetup);
   const orgFunds = render('en', React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_insufficient_funds' }, { organization: true }),
     walletUrl: '/account/wallet', onPersonal() {} }));
   assert.ok(orgFunds.includes('organization’s wallet') && orgFunds.includes('>Pay with my personal wallet</button>') && !orgFunds.includes('Top up'), orgFunds);
@@ -695,7 +716,7 @@ test('the remembered payer is used only while still offered; the personal defaul
   assert.equal(payers.payerKey(payers.choosePayer(list, { kind: 'organization', id: 'org_revoked' })), 'user:usr_fixture');
   assert.equal(payers.payerKey(payers.choosePayer(list, null)), 'user:usr_fixture');
   assert.deepEqual(payers.payerInput(list[0], me.id), {});
-  // agent.turn.quote takes the payer flat (org-payments QuoteTurn: payer_kind, payer_id).
+  // agent.turn.start takes the payer flat (payer_kind, payer_id).
   assert.deepEqual(payers.payerInput(list[1], me.id), { payer_kind: 'organization', payer_id: 'org_fixture' });
   const store = new Map<string, string>();
   const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
@@ -709,19 +730,22 @@ test('the remembered payer is used only while still offered; the personal defaul
   assert.doesNotThrow(() => payers.rememberPayer(me.id, list[1], broken));
 });
 
-test('a quote or consent pays only for the payer it names', () => {
-  const org = { kind: 'organization', id: 'org_fixture' }, mine = { kind: 'user', id: me.id };
-  // Terms issued before organization payment existed carry no payer: they are personal.
-  assert.deepEqual(payers.payerOf({}, me.id), mine);
-  assert.deepEqual(payers.payerOf({ payer: { kind: 'user', id: me.id } }, me.id), mine);
-  assert.deepEqual(payers.payerOf({ payer: { kind: 'user' } }, me.id), mine);
-  assert.deepEqual(payers.payerOf({ payer: org }, me.id), org);
-  assert.equal(payers.payerOf({ payer: { kind: 'user', id: 'usr_someone_else' } }, me.id), null);
-  assert.equal(payers.payerOf({ payer: { kind: 'organization' } }, me.id), null);
-  assert.equal(payers.payerOf({ payer: { kind: 'team', id: 'x' } }, me.id), null);
-  assert.equal(payers.samePayer(payers.payerOf({ payer: org }, me.id), mine), false);
-  assert.equal(payers.samePayer(payers.payerOf({}, me.id), mine), true);
-  assert.equal(payers.samePayer(null, mine), false);
+test('the chosen payer is named inline on agent.turn.start, and a remembered choice never throws', () => {
+  const list = payers.parsePayers(fixturePayers(), me).payers;
+  // Send-and-go contract §3: payer_kind / payer_id on the start itself; no quote or consent names it.
+  assert.deepEqual(payers.payerInput(list[1], me.id), { payer_kind: 'organization', payer_id: 'org_fixture' });
+  assert.deepEqual(payers.payerInput(list[0], me.id), {});
+  assert.deepEqual(payers.payerInput(null, me.id), {});
+  assert.equal(payers.payerOf, undefined); assert.equal(payers.samePayer, undefined);
+  // Reading localStorage itself can throw (blocked site data): the default storage is looked up inside the guard.
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('fixture: storage blocked'); } });
+  try {
+    assert.equal(payers.recallPayer(me.id), null);
+    assert.doesNotThrow(() => payers.rememberPayer(me.id, list[1]));
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor); else delete (globalThis as any).localStorage;
+  }
 });
 
 const fixtureStatus = { available: true, environment: 'test', unit: CNY, per_call_hold: '100',
@@ -824,9 +848,21 @@ test('balance state, the tightest limit and the turn maximum come from server va
   assert.deepEqual(composer.limitLine({ available: true, limit: { configured: true, enabled: false, usage_state: null, remaining: null, period: null } }), { key: 'limitPaused' });
   assert.deepEqual(composer.limitLine({ available: true, limit: { configured: false, enabled: false, usage_state: null, remaining: null, period: null } }), { key: 'limitMissing' });
   assert.equal(composer.limitLine({ available: false }), null);
-  assert.deepEqual(composer.turnMaximum({ budget: '500', unit: CNY }, { per_call_hold: '100', unit: CNY }), { key: 'turnMaximum', amount: '500', unit: CNY });
-  assert.deepEqual(composer.turnMaximum(null, { per_call_hold: '100', unit: CNY }), { key: 'turnMaximumCall', amount: '100', unit: CNY });
-  assert.equal(composer.turnMaximum(null, null), null);
+  // The most an answer can cost is the run bound the server reports (FIXTURE agent.billing.status.run).
+  const run = { maximum: '1200', default: '1200', cap: null, source: 'default', per_call_hold: '100', max_calls: 12, run_seconds: 3600, usable: true };
+  assert.deepEqual(composer.turnMaximum({ unit: CNY, per_call_hold: '100', run }), { key: 'turnMaximum', amount: '1200', unit: CNY });
+  assert.deepEqual(composer.turnMaximum({ unit: CNY, per_call_hold: '100', run: { ...run, maximum: '500', cap: '500', source: 'personal_cap' } }),
+    { key: 'turnMaximum', amount: '500', unit: CNY });
+  // An older server without the run bound: only the per-call hold is a fact, and it is said as such.
+  assert.deepEqual(composer.turnMaximum({ unit: CNY, per_call_hold: '100', run: null }), { key: 'turnMaximumCall', amount: '100', unit: CNY });
+  assert.deepEqual(composer.turnMaximum({ unit: CNY, per_call_hold: '100', run: { ...run, maximum: '1.5' } }), { key: 'turnMaximumCall', amount: '100', unit: CNY });
+  assert.equal(composer.turnMaximum({ unit: null, per_call_hold: '100', run }), null);
+  assert.equal(composer.turnMaximum(null), null);
+  assert.equal(composer.turnMaximum({ unit: CNY, per_call_hold: null, run: null }), null);
+  for (const locale of LOCALES) {
+    const html = render(locale, React.createElement(parts.TurnMaximum, { maximum: composer.turnMaximum({ unit: CNY, per_call_hold: '100', run }) }));
+    assert.ok(html.includes({ 'zh-Hans': '本次回答最多 ¥12.00', en: 'This answer costs at most CN¥12.00', 'zh-Hant': '本次回答最多 CN¥12.00' }[locale]), html);
+  }
 });
 
 test('the top-up link points at the account service\'s wallet page and nowhere else', () => {
@@ -859,27 +895,34 @@ test('the terms, AI use rules and pricing are the portal\'s pages on the configu
   assert.match(served, /PAGES = \("home", "privacy", "service", "terms", "ai-use", "pricing"\)/);
 });
 
-test('the cost dialog links the terms in force and says the first paid run accepts them', async () => {
-  const dialog = await server.ssrLoadModule('/src/apps/agent/BudgetDialog.tsx');
-  const words = { 'zh-Hans': ['即表示你接受当前生效版本的服务条款、AI 使用规范与定价', '首次付费运行会记录这些版本', '>服务条款<', '>AI 使用规范<', '>定价<', '在新标签页打开'],
-    en: ['By confirming a paid run you accept the versions in force', 'Your first paid run records those versions', '>Terms of Service<', '>AI use rules<', '>Pricing<', 'opens in a new tab'],
-    'zh-Hant': ['即表示你接受目前生效版本的服務條款、AI 使用規範與定價', '首次付費執行會記錄這些版本', '>服務條款<', '>AI 使用規範<', '>定價<', '在新分頁開啟'] } as const;
+test('the setup step links the terms in force in a new tab, so accepting them never loses the message', async () => {
+  const setupCard = await server.ssrLoadModule('/src/apps/agent/AgentSetup.tsx');
+  // FIXTURE agent.setup.get: the documents still to accept.
+  const state = { required: true, complete: false, provider_consent: null,
+    terms: { complete: false, documents: [{ id: 'terms', version: 'fixture-2', effective: '2026-10-24', accepted: false },
+      { id: 'ai-use', version: 'fixture-1', effective: '2026-10-05', accepted: false }, { id: 'pricing', version: 'fixture-2', effective: '2026-10-24', accepted: false }] },
+    limits: { configured: true, enabled: true, revision: 1, unit: CNY, suggested: null } };
+  const words = { 'zh-Hans': ['我已阅读并接受《服务条款》《AI 使用规范》与《定价》', '每条回答最多', '>服务条款', '>AI 使用规范', '>定价', '在新标签页打开'],
+    en: ['I have read and accept the Terms of service, the AI use rules and the Pricing', 'each answer costs at most', '>Terms of service', '>AI use rules', '>Pricing', 'opens in a new tab'],
+    'zh-Hant': ['我已閱讀並接受《服務條款》《AI 使用規範》與《定價》', '每則回答最多', '>服務條款', '>AI 使用規範', '>定價', '在新分頁開啟'] } as const;
   const prefix = { 'zh-Hans': '', en: '/en', 'zh-Hant': '/zh-Hant' } as const;
   for (const locale of LOCALES) {
-    const html = render(locale, React.createElement(dialog.default, { intent: { conversation_id: 'conv_fixture', text: 'Fixture question' },
-      onQuote: async () => { throw new Error('fixture'); }, onConfirm: async () => {}, onClose() {}, siteUrl: 'https://site.fixture.test' }));
+    const html = render(locale, React.createElement(setupCard.default, { setup: state, organizationPayer: false, hasDraft: true,
+      maximum: { amount: '1200', unit: CNY }, siteUrl: 'https://site.fixture.test', read: async () => null, write: async () => ({}), onComplete() {}, onChanged() {} }));
     for (const text of words[locale]) assert.ok(html.includes(text), `${locale}: ${text}`);
     for (const page of ['terms', 'ai-use', 'pricing']) {
       assert.ok(html.includes(`href="https://site.fixture.test${prefix[locale]}/${page}" target="_blank" rel="noopener noreferrer"`), `${locale} ${page}`);
     }
     assert.ok(!html.includes('localhost'), html);
-    assert.match(html, /<section class="notice"[^>]*aria-labelledby="([^"]+-terms)"[\s\S]*<p id="\1"/);
+    // Accepting is a separate, unticked box, never implied by sending.
+    assert.ok(/type="checkbox"/.test(html) && !/type="checkbox"[^>]*checked/.test(html), html);
   }
   // The data-sharing consent's privacy and AI-use links go to the public site too, never this host.
   const consent = readFileSync(new URL('../src/apps/agent/ProviderConsent.tsx', import.meta.url), 'utf8');
-  assert.ok(!/href="\/(privacy|ai-use)"/.test(consent) && consent.includes('publicHref(auth?.site_url, "privacy", locale)'), 'ProviderConsent links');
+  assert.ok(!/href="\/(privacy|ai-use)"/.test(consent) && consent.includes('publicHref(siteUrl, "privacy", locale)')
+    && consent.includes('siteUrl={auth?.site_url}'), 'ProviderConsent links');
   const index = readFileSync(new URL('../src/apps/agent/index.tsx', import.meta.url), 'utf8');
-  assert.ok(index.includes('siteUrl={auth?.site_url}'), 'the dialog gets the server-controlled site origin');
+  assert.ok(index.includes('siteUrl={auth?.site_url}'), 'the setup step gets the server-controlled site origin');
 });
 
 test('Enter sends, Shift+Enter breaks a line, and an input method composition is never cut short', () => {
@@ -893,7 +936,7 @@ test('Enter sends, Shift+Enter breaks a line, and an input method composition is
   assert.equal(composer.shouldSubmit({ key: 'a', shiftKey: false }, false), false);
 });
 
-// ---------------------------------------------------------------- price change and re-confirmation
+// ---------------------------------------------------------------- price change (a notice, never a re-confirmation)
 
 const rate = (numerator: string, denominator = '1') => ({ numerator, denominator });
 const previousTerms = { environment: 'test', model: 'fixture-model', confirmed_route: 'fixture-route', route_version: 'fixture-v1',
@@ -913,30 +956,15 @@ test('what changed is listed per field, compared per million tokens, and nothing
     { field: 'changedOutput', before: '8 CNY', after: '16 CNY' },
     { field: 'changedHold', before: '0.050000 CNY', after: '0.060000 CNY' },
   ]);
-  assert.equal(composer.samePricing(previousTerms, { ...previousTerms }), true);
-  assert.equal(composer.samePricing(previousTerms, { ...previousTerms, terms_ref: 'fixture:terms-2' }), false);
-  assert.equal(composer.samePricing(previousTerms, { ...previousTerms, environment: 'live' }), false);
+  // Send-and-go: no one-step renewal or "same pricing" check is left in the page.
+  assert.equal(composer.samePricing, undefined); assert.equal(composer.renewalParams, undefined);
   const html = render('en', React.createElement(parts.PriceChangeList, { before: previousTerms, after }));
-  assert.ok(html.includes('What changed since you last confirmed') && html.includes('<del>') && html.includes('<ins>'), html);
+  assert.ok(html.includes('What changed since your last answer') && html.includes('<del>') && html.includes('<ins>'), html);
   assert.ok(html.includes('Before </span>fixture-model<') && html.includes('Now </span>fixture-model-2<'), html);
   // Shown in the reader's locale; decided on exact values.
   assert.ok(html.includes('CN¥8.00') && html.includes('CN¥16.00') && html.includes('CN¥0.05') && html.includes('CN¥0.06'), html);
-  const same = render('zh-Hant', React.createElement(parts.PriceChangeList, { before: previousTerms, after: { ...previousTerms } }));
-  assert.ok(same.includes('價格條款未變'), same);
-});
-
-test('a one-step re-confirmation reuses the previous limits only when they fit the new offer', () => {
-  const offer = { per_call_hold: '60000', max_calls_limit: 12, run_seconds_limit: 600, unit: { code: 'CNY', scale: 6 } };
-  const previous = { budget: '500000', max_calls: 3, run_seconds: 300 };
-  assert.deepEqual(composer.renewalParams(previous, offer, previousTerms.unit), previous);
-  assert.equal(composer.renewalParams({ ...previous, budget: '59999' }, offer, previousTerms.unit), null);
-  assert.equal(composer.renewalParams({ ...previous, max_calls: 13 }, offer, previousTerms.unit), null);
-  assert.equal(composer.renewalParams({ ...previous, run_seconds: 601 }, offer, previousTerms.unit), null);
-  assert.equal(composer.renewalParams(previous, offer, { code: 'USD', scale: 6 }), null);
-  assert.equal(composer.renewalParams(previous, { ...offer, unit: { code: 'CNY', scale: 2 } }, previousTerms.unit), null);
-  // A previous run time below the server's current minimum (one whole call) is not reused.
-  assert.equal(composer.renewalParams(previous, { ...offer, run_seconds_min: 301 }, previousTerms.unit), null);
-  assert.deepEqual(composer.renewalParams(previous, { ...offer, run_seconds_min: 300 }, previousTerms.unit), previous);
+  // Nothing changed: no list at all (the notice's own sentence stands alone).
+  assert.equal(render('zh-Hant', React.createElement(parts.PriceChangeList, { before: previousTerms, after: { ...previousTerms } })), '');
 });
 
 // ---------------------------------------------------------------- the AI-content label
@@ -989,7 +1017,8 @@ test('the chat catalogue is complete in three languages and does not collide wit
     if (seen.has(source)) assert.equal(seen.get(source), `${english}|${hant}`, `duplicate source ${key}`);
     seen.set(source, `${english}|${hant}`);
     // The first registered wording wins; ours must be the one the reader sees.
-    assert.equal(core.translate('zh-Hant', source, { count: 2, amount: '1', period: 'p', name: 'n', model: 'm', n: 1, total: 2, lang: 'l', budget: 'b', limit: 'x' }),
-      hant.replace(/\{(\w+)\}/g, (_: string, p: string) => ({ count: '2', amount: '1', period: 'p', name: 'n', model: 'm', n: '1', total: '2', lang: 'l', budget: 'b', limit: 'x' } as any)[p]), key);
+    const params = { count: '2', amount: '1', period: 'p', name: 'n', model: 'm', n: '1', total: '2', lang: 'l', budget: 'b', limit: 'x',
+      daily: 'd', weekly: 'w', monthly: 'mo', calls: '12', unit: 'u', version: 'v', effective: 'e' } as Record<string, string>;
+    assert.equal(core.translate('zh-Hant', source, params), hant.replace(/\{(\w+)\}/g, (_: string, p: string) => params[p]), key);
   }
 });

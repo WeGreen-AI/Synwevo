@@ -17,6 +17,8 @@ import ReportDialog, { useReportText } from "./ReportDialog";
 import { activeTurn, branchMessages, type ContextReference, type SelectedContext, type FileReference, type SelectedFile, type Conversation, type Message, type ToolCall, type Workspace } from "./types";
 
 export type Act = (operation: string, input: Record<string, unknown>) => Promise<unknown>;
+/** The message in the composer, as one send would carry it to `agent.turn.start`. */
+export interface Draft { text: string; context_refs?: ContextReference[]; file_refs?: FileReference[] }
 
 function Status({ status }: { status: string }) {
   const { t } = useI18n();
@@ -96,7 +98,7 @@ function Scope({ scope, spaces, change, close }: { scope: string[] | null; space
 type CopyState = { id: string; ok: boolean } | null;
 
 export default function Chat({ conversation, loading, error, connection, configured, spaces, act, send, refresh, sentDraft = 0, aside,
-  status, maximum, hint, walletUrl, organizationPayer = false, onPersonal, payerName, fileClient }: {
+  status, maximum, hint, walletUrl, organizationPayer = false, onPersonal, payerName, fileClient, onSetup, onDraft }: {
   conversation?: Conversation; loading: boolean; error: unknown; connection: string; configured: boolean | undefined;
   spaces: Workspace[]; act: Act; send: (text: string, context_refs?: ContextReference[], file_refs?: FileReference[]) => Promise<unknown>; refresh: () => Promise<void>; sentDraft?: number;
   fileClient?: FileClient;
@@ -116,6 +118,11 @@ export default function Chat({ conversation, loading, error, connection, configu
   onPersonal?: () => void;
   /** An organization's name for an organization-paid answer. */
   payerName?: (payer: { kind: "organization"; id: string }) => string | null | undefined;
+  /** Open the one-time "Start using Synwevo Agent" step, keeping the message (a refusal's next step). */
+  onSetup?: (draft?: Draft) => void;
+  /** While that step is open: the message as it now stands (null when it cannot be sent as is),
+   *  so the step's button sends what the composer shows. */
+  onDraft?: (draft: Draft | null) => void;
 }) {
   const { t } = useI18n();
   const { c } = useChatText();
@@ -127,6 +134,10 @@ export default function Chat({ conversation, loading, error, connection, configu
   const [localFileClient] = useState(createFileClient);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<unknown>();
+  // What a refusal stopped, to repeat on "send again": the message in the composer as it stands at
+  // the click, or that regenerate. Kept as what to repeat, not as a function of the render that failed, so the click
+  // goes through this render's send/act and carries the payer and price the page shows now (AD-1).
+  const retryFailed = useRef<"message" | { operation: string; body: Record<string, unknown> } | undefined>(undefined);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [newContent, setNewContent] = useState(false);
   const [copied, setCopied] = useState<CopyState>(null);
@@ -146,7 +157,18 @@ export default function Chat({ conversation, loading, error, connection, configu
   const pickerSpaces = contextSpaces(spaces, conversation?.scope ?? null);
   const pickerScope = JSON.stringify([conversation?.id, conversation?.scope, pickerSpaces.map((ws) => ws.workspace_id)]);
   const outsideScope = conversation?.scope != null && selectedContexts.some((item) => !conversation.scope!.includes(item.reference.workspace_id));
-  useEffect(() => { if (sentDraft) { setText(""); setSelectedContexts([]); setSelectedFiles([]); stick.current = true; input.current?.focus(); } }, [sentDraft]);
+  useEffect(() => { if (sentDraft) { setText(""); setSelectedContexts([]); setSelectedFiles([]); setFailure(undefined); stick.current = true; input.current?.focus(); } }, [sentDraft]);
+  /** The composer's message as one send carries it; throws when an attached file is not ready. */
+  function draftOf(): Draft {
+    const contexts = contextReferences(selectedContexts), files = fileReferences(selectedFiles, selectedContexts.length);
+    return { text, ...(contexts ? { context_refs: contexts } : {}), ...(files ? { file_refs: files } : {}) };
+  }
+  useEffect(() => {
+    if (!onDraft) return;
+    let next: Draft | null;
+    try { next = text.trim() ? draftOf() : null; } catch { next = null; }
+    onDraft(next);
+  }, [onDraft, text, selectedContexts, selectedFiles]);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setFailure(undefined); stick.current = true; setNewContent(false); setReporting(null); }, [conversation?.id]);
   useEffect(() => () => clearTimeout(copyTimer.current), []);
   useEffect(() => {
@@ -158,7 +180,9 @@ export default function Chat({ conversation, loading, error, connection, configu
   }, [conversation?.event_seq, conversation?.head_id]);
   async function action(operation: string, body: Record<string, unknown>) {
     setBusy(true); setFailure(undefined);
-    try { return await act(operation, body); } catch (e) { setFailure(e); } finally { setBusy(false); }
+    try { return await act(operation, body); }
+    catch (e) { retryFailed.current = operation === "agent.turn.start" ? { operation, body } : undefined; setFailure(e); }
+    finally { setBusy(false); }
   }
   async function submit(e?: FormEvent) {
     e?.preventDefault();
@@ -168,7 +192,12 @@ export default function Chat({ conversation, loading, error, connection, configu
       const refs = fileReferences(selectedFiles, selectedContexts.length);
       const result = refs ? await send(text, contextReferences(selectedContexts), refs) : await send(text, contextReferences(selectedContexts));
       if (result !== false) { setText(""); setSelectedContexts([]); setSelectedFiles([]); stick.current = true; input.current?.focus(); } }
-    catch (e) { setFailure(e); } finally { setBusy(false); }
+    catch (e) { retryFailed.current = "message"; setFailure(e); } finally { setBusy(false); }
+  }
+  function retry() {
+    const again = retryFailed.current;
+    if (again === "message") void submit();
+    else if (again) void action(again.operation, again.body);
   }
   function flash(state: CopyState) {
     setCopied(state);
@@ -207,8 +236,11 @@ export default function Chat({ conversation, loading, error, connection, configu
       {assistant && active && !!m.body && m.turn!.status === "running" && <span className="sr-only" role="status">{c("writing")}</span>}
       {m.tool_calls.map((call) => <ActionCard key={call.id} call={call} act={action} busy={busy} />)}
       {m.turn && active && m.turn.status !== "running" && <p role="status"><Status status={m.turn.status} /></p>}
+      {/* "Send again" regenerates this answer in one request (a changed price applies to it); the
+          one-time setup step opens inline. Neither is a confirmation. */}
       {m.error && (refusal ? <RefusalNotice refusal={refusal} walletUrl={walletUrl} busy={blocked} onPersonal={organizationPayer ? onPersonal : undefined}
-        onRequote={refusal.next === "requote" || refusal.next === "reconfirm" ? () => void action("agent.turn.start", { conversation_id: conversation!.id, regenerate_of: m.id }) : undefined} />
+        onRetry={refusal.next === "retry" ? () => void action("agent.turn.start", { conversation_id: conversation!.id, regenerate_of: m.id }) : undefined}
+        onSetup={refusal.next === "setup" && onSetup ? () => onSetup() : undefined} />
         : <p className="err">{agentErrorText(m.error, t)}</p>)}
       {m.turn?.status === "cancelled" && <p className="muted">{t("已取消，不再启动后续操作。已完成的结果保留。")}</p>}
       {assistant && !m.hidden && <footer className="ag-answer-foot">
@@ -264,8 +296,16 @@ export default function Chat({ conversation, loading, error, connection, configu
       {conversation?.status === "archived" && <p className="notice">{t("这个会话已归档。恢复后可继续。")}</p>}
       {configured === false && <p className="notice"><Link to="/agent/settings">{t("模型服务未配置。请先打开 Agent 设置。")}</Link></p>}
       {conversation && connection !== "connected" && <p className="muted small" role="status">{t(connection === "offline" ? "连接中断，正在恢复；已完成的操作不会重复执行。" : "正在连接实时更新…")}</p>}
+      {/* A refused send keeps the message: "send again" sends it as it now stands, "finish setup"
+          opens the one-time step with it. */}
       {failure != null && (failureRefusal ? <RefusalNotice refusal={failureRefusal} walletUrl={walletUrl} live busy={blocked} onPersonal={onPersonal}
-        onRequote={failureRefusal.next === "requote" || failureRefusal.next === "reconfirm" ? () => void submit() : undefined} /> : <Failure error={failure} />)}
+        onRetry={failureRefusal.next === "retry" && retryFailed.current ? retry : undefined}
+        onSetup={failureRefusal.next === "setup" && onSetup ? () => {
+          let draft: Draft | undefined;
+          try { draft = text.trim() ? draftOf() : undefined; } catch { draft = undefined; }
+          setFailure(undefined); onSetup(draft);   // the step now says what is needed
+        } : undefined} />
+        : <Failure error={failure} />)}
       {status}
       <ContextPicker key={pickerScope} spaces={pickerSpaces} selected={selectedContexts} otherCount={selectedFiles.length} disabled={blocked}
         onChoose={(item) => setSelectedContexts((old) => addContext(old, item, selectedFiles.length))}

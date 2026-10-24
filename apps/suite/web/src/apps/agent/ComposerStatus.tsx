@@ -152,12 +152,3 @@ export function ComposerStatus({ money: state, disabled = false }: { money: Mone
     {state.payersError && <p className="muted small">{c("payerUnavailable")}</p>}
   </section>;
 }
-
-/** The most this turn can cost, before sending (the active consent's per-run budget, else the
- *  offer's per-call hold until the quote fixes the run's total). */
-export function TurnMaximum({ maximum }: { maximum: { key: "turnMaximum" | "turnMaximumCall"; amount: string; unit: { code: string; scale: number } } | null }) {
-  const { c, locale } = useChatText();
-  if (!maximum) return null;
-  const amount = money(maximum.amount, maximum.unit, locale);
-  return amount ? <span className="ag-max">{c(maximum.key, { amount })}</span> : null;
-}
