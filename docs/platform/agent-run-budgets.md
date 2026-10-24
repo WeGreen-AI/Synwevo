@@ -27,9 +27,14 @@ one call); `default = hold × MAX_CALLS` with `MAX_CALLS = 12`; `budget = defaul
 `min(personal cap, default)` when the person set a cap in Agent settings (`agent.settings.update
 {run_budget_cap}` / `{clear_run_budget_cap: true}`, read back as `billing.run_budget_cap`). The cap
 is stored with the sale unit it was set in (`agent_settings.run_budget_cap`, `run_budget_cap_unit`).
+Saving checks that it is a positive integer no larger than the ledger's integer range
+(2^63−1, `billing.models.MAX_INTEGER`); a larger value is 422 `invalid_input` and nothing is
+stored, so the send-time `billing_run_cap_invalid` cannot be reached from the page (a value stored
+before that check shows as `run.usable: false` with `run.cap: null`, and the send is refused).
 At send, a cap in another unit refuses `billing_run_cap_unit_changed` and a cap below one call's
 hold refuses `billing_run_cap_below_call_hold` (detail `{per_call_hold, cap, unit}`): a cap is
-never silently ignored. `max_calls = 12`; `run_seconds = min(3600, route.valid_until − now)`, and a
+never silently ignored. `issue_automatic` called for anyone but the person in the page is an
+internal invariant violation (`RuntimeError`), not a refusal anyone can meet. `max_calls = 12`; `run_seconds = min(3600, route.valid_until − now)`, and a
 route with less than one send window left refuses `billing_route_confirmation_expired`. The
 deadline is fixed at admission, so the legacy issue-to-bind gap (rr-money-1) does not exist on
 this path. `agent.billing.status.run` shows the bound a send would get now (`maximum`, `default`,

@@ -539,3 +539,46 @@ def test_the_price_refusal_names_the_maximum_this_person_would_get(paid):
     assert err.code == "billing_price_changed"
     assert err.detail["current"]["maximum"] == str(2 * hold) == shown_run(g)["maximum"], "本人上限之下的最高金额"
     nothing_stored(g)
+
+
+# ------------------------------------------------------------------ 16. codes a person can never meet (AD-2)
+@pytest.mark.parametrize("too_large", [str(2**63), "9999999999999999999"])
+def test_a_cap_above_the_ledgers_integer_range_is_refused_when_saved(paid, too_large):
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    err = refused(g.agent.caps.invoke, "agent.settings.update", {"run_budget_cap": too_large}, user_id=g.user["id"],
+                  idempotency_key="cap-too-large")
+    assert (err.status, err.code) == (422, "invalid_input")
+    assert [f["loc"] for f in err.detail["fields"]] == [["run_budget_cap"]]
+    assert g.agent.caps.invoke("agent.settings.get", {}, user_id=g.user["id"])["output"]["billing"]["run_budget_cap"] is None
+    assert shown_run(g)["usable"] is True, "保存被拒，之后的发送不受影响"
+    g.agent.caps.invoke("agent.settings.update", {"run_budget_cap": str(2**63 - 1)}, user_id=g.user["id"],
+                        idempotency_key="cap-largest")
+    assert send(g)["output"]["turn_id"], "最大可保存的上限即治理默认值"
+
+
+def test_a_stored_cap_that_cannot_be_read_shows_an_unusable_bound_instead_of_no_bound(paid):
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    hold = int(g.quotes.offer()["per_call_hold"])
+    # FIXTURE: a cap saved before the save-time range check existed.
+    g.store.execute("INSERT INTO agent_settings (user_id, updated_at, run_budget_cap, run_budget_cap_unit) "
+                    "VALUES (?, 1, '9999999999999999999', 'FIXTURE-GATEWAY')", (g.user["id"],))
+    run = shown_run(g)
+    assert run is not None, "状态仍给出本次回答的上限信息"
+    assert (run["usable"], run["cap"], run["source"], run["maximum"]) == (False, None, "personal_cap", str(hold * 12))
+    assert (run["price_id"], run["route_version"]) == ("fixture-sale", "fixture-route-v1")
+    err = refused(send, g)
+    assert (err.status, err.code) == (409, "billing_run_cap_invalid")
+    nothing_stored(g)
+
+
+def test_an_automatic_issue_for_anyone_but_the_person_is_an_internal_error_not_a_refusal(paid):
+    from synwevo_core.billing import BillingError
+    g = paid
+    for issued in ({"actor_user_id": g.user["id"], "via": "flow"}, {"via": "ui"}, None):
+        with pytest.raises(RuntimeError) as err, g.store.tx():
+            g.quotes.issue_automatic(g.user["id"], g.conversation, text="fixture question", parent_id=None,
+                                     regenerate_of=None, issued=issued)
+        assert not isinstance(err.value, (BillingError, ServiceError)), "内部不变量，不是可以展示给本人的拒绝"
+    assert quotes_of(g) == []

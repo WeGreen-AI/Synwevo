@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field as F, SecretStr, field_seriali
 from synwevo_core import data_flow, sealed
 from synwevo_core.agent_safety import AgentReports, ProviderConsents
 from synwevo_core.billing import BillingError
+from synwevo_core.billing.models import MAX_INTEGER
 from synwevo_core.capabilities import Operation, canonical, fingerprint
 from synwevo_core.errors import ServiceError
 from synwevo_core.store import new_id, now
@@ -399,10 +400,20 @@ class Settings(_In):
     personal_key: SecretStr | None = F(default=None, min_length=20, max_length=300)
     clear_personal_key: bool = False
     #: The person's own maximum for one answer, in integer units of the current sale unit
-    #: (send-and-go); only a positive integer is checked here, the send checks it against one
-    #: call's hold. ``clear_run_budget_cap`` returns to the governed default.
+    #: (send-and-go); only a positive integer within the ledger's range (``MAX_INTEGER``) is
+    #: checked here, the send checks it against one call's hold. ``clear_run_budget_cap``
+    #: returns to the governed default.
     run_budget_cap: str | None = F(default=None, pattern=r"^[1-9][0-9]{0,18}$")
     clear_run_budget_cap: bool = False
+
+    @field_validator("run_budget_cap")
+    @classmethod
+    def cap_in_range(cls, value):
+        # Ledger amounts are 64-bit: a larger cap could never be read at send and would refuse
+        # every later send, so it is refused here, when it is saved (422 invalid_input).
+        if value is not None and int(value) > MAX_INTEGER:
+            raise ValueError("每条回答的最高金额超出可保存的范围")
+        return value
 
     @field_validator("personal_key")
     @classmethod

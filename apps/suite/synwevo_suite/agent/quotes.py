@@ -173,9 +173,11 @@ class RunQuotes:
         """The automatic run's bound for this person on this route: the governed default (one
         call's hold x MAX_CALLS) or the person's lower cap. Fails closed on a cap that cannot be
         honoured (another unit, or below one call's hold); a cap is never silently ignored."""
+        return self._bound_for(self.personal_cap(user_id), route, sale)
+
+    def _bound_for(self, cap: dict | None, route, sale) -> dict:
         hold = self.gateway.upper_bound(route, sale)
         default = hold * self.MAX_CALLS
-        cap = self.personal_cap(user_id)
         if cap is None:
             return {"hold": hold, "default": default, "budget": default, "cap": None, "source": "default"}
         if cap["unit"] != sale.unit.code:
@@ -221,7 +223,9 @@ class RunQuotes:
         transaction; the payers read grants it before the first send)."""
         self._turn_transaction()
         if not isinstance(issued, dict) or issued.get("via") != "ui" or not issued.get("actor_user_id"):
-            raise BillingError("automatic_issue_requires_person")
+            # An internal invariant (only ops.start_turn issues, for the person in the page), not a
+            # refusal anyone can meet: never a BillingError the chat would have to word.
+            raise RuntimeError("automatic_issue_requires_person")
         route = self.current_route()
         if not isinstance(route, Route):
             raise BillingError("model_route_unavailable")
@@ -286,13 +290,19 @@ class RunQuotes:
         run_seconds = max(0, min(self.MAX_RUN_SECONDS, route.valid_until - self.ledger._now()))
         usable = run_seconds >= self.gateway.send_window
         shown = {"price_id": sale.price_id, "route_version": route.version}
-        try:
-            bound = self._bound(user_id, route, sale)
-        except BillingError:
-            cap = self.personal_cap(user_id)
-            return {"maximum": str(default), "default": str(default), "cap": str(cap["amount"]) if cap else None,
-                    "source": "personal_cap" if cap else "default", "per_call_hold": str(hold),
+        unusable = {"maximum": str(default), "default": str(default), "source": "personal_cap", "per_call_hold": str(hold),
                     "max_calls": self.MAX_CALLS, "run_seconds": run_seconds, "usable": False, **shown}
+        try:
+            cap = self.personal_cap(user_id)
+        except BillingError:
+            # A stored cap that cannot be read (above the ledger's integer range, saved before the
+            # save-time check) refuses every send: say so, with no number to show.
+            return {**unusable, "cap": None}
+        try:
+            bound = self._bound_for(cap, route, sale)
+        except BillingError:
+            # Another unit, or below one call's hold: the send would be refused (only a cap fails here).
+            return {**unusable, "cap": str(cap["amount"])}
         return {"maximum": str(bound["budget"]), "default": str(default),
                 "cap": None if bound["cap"] is None else str(bound["cap"]), "source": bound["source"],
                 "per_call_hold": str(hold), "max_calls": self.MAX_CALLS, "run_seconds": run_seconds, "usable": usable,
