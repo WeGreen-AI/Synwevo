@@ -68,6 +68,9 @@ export const chatCopy = {
   turnMaximum: ['本次回答最多 {amount}', 'This answer costs at most {amount}', '本次回答最多 {amount}'],
   // Shown only while the server has no per-answer maximum to report (older server): a true fact.
   turnMaximumCall: ['每次调用最多冻结 {amount}', 'Up to {amount} held per call', '每次呼叫最多凍結 {amount}'],
+  // While the run bound is read, or when it cannot be shown: a paid send waits for it (addendum-2 W3).
+  turnMaximumLoading: ['正在读取本次回答的最高金额…', 'Reading the most this answer can cost…', '正在讀取本次回答的最高金額…'],
+  turnMaximumUnavailable: ['暂时无法显示本次回答的最高金额', 'The most this answer can cost cannot be shown right now', '暫時無法顯示本次回答的最高金額'],
   turnMaximumHint: ['发送后立即开始，按实际用量扣费，费用显示在回答下方。', 'Sending starts the answer right away. You pay for actual usage, shown under the answer.', '傳送後立即開始，按實際用量扣費，費用顯示在回答下方。'],
   // Price notice (design D-7): information only, never a gate.
   priceNotice: ['价格已更新，之后的回答按新价格计费。', 'Prices have changed. Answers from now on are charged at the new price.', '價格已更新，之後的回答按新價格計費。'],
@@ -170,6 +173,8 @@ export const chatCopy = {
   refusedPriceChanged: ['模型或价格已更新，没有按旧价格发起新的模型调用，也没有为此扣费；已完成的调用按原价格结算。可以按新价格重新发送。', 'The model or price has changed, so no new model call was made at the old price and nothing was charged for it; calls already made are settled at the earlier price. You can send again at the new price.', '模型或價格已更新，沒有按舊價格發起新的模型呼叫，也沒有為此扣費；已完成的呼叫按原價格結算。可以按新價格重新傳送。'],
   // Addendum AD-1: the page showed an older price; refused at the send (the server's own sentence).
   refusedPriceUpdated: ['价格或模型已更新，本次没有发送，也没有扣费。请查看新价格后重新发送。', 'The price or model has changed, so this message was not sent and nothing was charged. Check the new price, then send again.', '價格或模型已更新，本次沒有傳送，也沒有扣費。請查看新價格後重新傳送。'],
+  // Held in the page (W3): the maximum is shown before every paid send, and it was not shown yet.
+  refusedPriceUnshown: ['发送前需要先显示本次回答的最高金额，现在还无法显示。消息没有发送，也没有扣费；正在重新读取价格，显示后可以重新发送。', 'The most this answer can cost has to be shown before sending, and it cannot be shown yet. The message was not sent and nothing was charged; the price is being read again, and once it is shown you can send again.', '傳送前需要先顯示本次回答的最高金額，現在還無法顯示。訊息沒有傳送，也沒有扣費；正在重新讀取價格，顯示後可以重新傳送。'],
   refusedAccessSuspended: ['管理员已暂停你的 Agent 使用权限，没有发起新的模型调用，也没有为此扣费。如有疑问，请联系平台管理员。', 'An administrator has suspended your Agent access, so no new model call was made and nothing was charged for it. If you have questions, contact the platform administrator.', '管理員已暫停你的 Agent 使用權限，沒有發起新的模型呼叫，也沒有為此扣費。如有疑問，請聯絡平台管理員。'],
   refusedEffort: ['当前模型路线不支持你选择的推理投入，这次调用没有发送，也没有为此扣费。请在 Agent 设置中更换。', 'The current model route does not offer the reasoning effort you chose, so this call was not sent and nothing was charged for it. Choose another in Agent settings.', '目前模型路線不支援你選擇的推理投入，這次呼叫沒有傳送，也沒有為此扣費。請在 Agent 設定中更換。'],
   refusedTooLong: ['这次要发送给模型的内容超过了单次调用的上限，这次调用没有发送，也没有为此扣费。请新建会话继续，或把任务拆小一些。', 'What this call would send to the model is above the per-call size limit, so it was not sent and nothing was charged for it. Start a new conversation, or split the task into smaller parts.', '這次要傳送給模型的內容超過了單次呼叫的上限，這次呼叫沒有傳送，也沒有為此扣費。請新建會話繼續，或把任務拆小一些。'],

@@ -24,7 +24,7 @@ import { validateOffer, type Pricing } from "./budget";
 import { chatCopy } from "./chat.messages";
 import { RefusalNotice, TurnMaximum } from "./ChatParts";
 import { ComposerStatus, type ModelOffer } from "./ComposerStatus";
-import { accountHref, seenPrice, turnMaximum, walletHref, type BillingStatus, type PriceNoticeFacts } from "./composer";
+import { accountHref, composerMaximum, seenPrice, walletHref, type BillingStatus, type PriceNoticeFacts } from "./composer";
 import { conversationMarkdown, downloadText, exportFileName } from "./exportChat";
 import { choosePayer, parsePayers, payerInput, payerKey, personal, recallPayer, rememberPayer, type Payer } from "./payers";
 import { errorCode, refusalOf } from "./refusals";
@@ -198,18 +198,28 @@ function AgentApp() {
    *  server issues the run's authorization itself (design D-1) and refuses with a code the chat
    *  words when something is missing. */
   async function start(next: Draft) {
+    if (billingRequired) shownPrice(shown.current.status);   // held before a conversation is made for it
     let cid = id ?? retryCreate.current;
     if (!cid) { cid = (await write("agent.conversation.create", {})).id; retryCreate.current = cid; }
     checkTurn(await startTurn({ conversation_id: cid, ...next }));
     retryCreate.current = undefined;
     navigate(`/agent/c/${cid}`); setTick((n) => n + 1); await refresh();
   }
-  /** `agent.turn.start` with what billing needs beside the message: the payer, and the price and
-   *  route version the composer showed (AD-1). A refusal for a newer price keeps the message, reads
-   *  the status again and keeps what the page showed for the price notice. */
+  /** The price the composer shows, as a paid send repeats it (AD-1). Without one (the status is
+   *  loading, unreadable or has no run) nothing is sent (addendum-2 W3): the status is read again
+   *  and the held send is shown like a refusal, with the message kept and "send again". */
+  function shownPrice(status: BillingStatus | null | undefined) {
+    const seen = seenPrice(status);
+    if ("seen_price_id" in seen) return seen;
+    setStatusTick((n) => n + 1);
+    throw Object.assign(new Error("price_not_shown"), { code: "price_not_shown" });
+  }
+  /** `agent.turn.start` with what billing needs beside the message: the payer, and the price the
+   *  composer showed (AD-1, W3). A refusal for a newer price keeps the message, reads the status
+   *  again and keeps what the page showed for the price notice. */
   async function startTurn(input: Record<string, unknown>) {
     const showing = shown.current;
-    const body = billingRequired ? { ...input, ...payerInput(showing.payer, userId), ...seenPrice(showing.status) } : input;
+    const body = billingRequired ? { ...input, ...payerInput(showing.payer, userId), ...shownPrice(showing.status) } : input;
     try {
       const out = await write("agent.turn.start", body);
       setShownBefore(null);
@@ -296,8 +306,9 @@ function AgentApp() {
   const title = conversation?.title === "新会话" ? t("新会话") : conversation?.title;
   const money = billingRequired ? { status, offer, payers, payersError, payer, setPayer: choose, walletUrl, accountUrl,
     environment: payerFacts.environment, welcome: payerFacts.welcome } : null;
-  // The most the next answer can cost: the run bound the server reports (status.run.maximum).
-  const maximum = turnMaximum(status);
+  // The most the next answer can cost: the run bound the server reports (status.run.maximum), or
+  // that it is being read or cannot be shown (W3).
+  const maximum = billingRequired ? composerMaximum(status) : null;
   // What changed since the person's last answer (server), or since the price this page showed
   // when a send was refused for a newer one (AD-1). Information only.
   const priceNotice: PriceNoticeFacts | null = status?.price_notice
@@ -364,7 +375,7 @@ function AgentApp() {
             aside={money && <>
               {priceNotice != null && <PriceNotice notice={priceNotice} offer={offer} userId={userId} />}
               {setupOpen && <AgentSetup setup={setup} organizationPayer={organizationPayer} hasDraft={!!draft?.text}
-                maximum={maximum?.key === "turnMaximum" ? { amount: maximum.amount, unit: maximum.unit } : null}
+                maximum={maximum && "amount" in maximum && maximum.key === "turnMaximum" ? { amount: maximum.amount, unit: maximum.unit } : null}
                 siteUrl={auth?.site_url} read={readSetupFact} write={write}
                 onComplete={completeSetup} onChanged={() => setSetupTick((n) => n + 1)} focus focusTick={focusTick}
                 onDismiss={() => { setSetupOpen(false); focusComposer(); }} onRetryRead={() => setSetupTick((n) => n + 1)} />}

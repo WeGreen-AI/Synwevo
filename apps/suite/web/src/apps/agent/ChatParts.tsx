@@ -7,7 +7,7 @@ import { Link } from "react-router-dom";
 import { useI18n, type Params } from "@synwevo/ui";
 import type { Pricing } from "./budget";
 import { chatCopy, type ChatText } from "./chat.messages";
-import { perMillion, priceChanges, type MoneyUnit } from "./composer";
+import { perMillion, priceChanges, type MaximumShown } from "./composer";
 import { bandText, costSummary, costUnit, formatMoney, formatPerMillion, formatTokens, validTurnCost } from "./cost";
 import type { Refusal } from "./refusals";
 
@@ -118,10 +118,12 @@ export function PriceChangeList({ before, after }: { before: Pricing; after: Pri
 }
 
 /** The most the next answer can cost, before sending: the run bound the server will issue
- *  (`turnMaximum` from the billing status), or an older server's per-call hold, said as such. */
-export function TurnMaximum({ maximum }: { maximum: { key: "turnMaximum" | "turnMaximumCall"; amount: string; unit: MoneyUnit } | null }) {
+ *  (`turnMaximum` from the billing status), or an older server's per-call hold, said as such; or
+ *  that it is being read, or cannot be shown (a paid send then waits for it, W3). */
+export function TurnMaximum({ maximum }: { maximum: MaximumShown | null }) {
   const { c, locale } = useChatText();
   if (!maximum) return null;
+  if (!("amount" in maximum)) return <span className="ag-max">{c(maximum.key)}</span>;
   let amount: string;
   try { amount = formatMoney(maximum.amount, maximum.unit, locale); } catch { return null; }
   return <span className="ag-max">{c(maximum.key, { amount })}</span>;

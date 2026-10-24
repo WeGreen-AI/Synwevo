@@ -322,16 +322,71 @@ test('an admission refusal keeps the draft in the composer and renders the refus
 
 // ---------------------------------------------------------------- addendum AD-1: the price shown is the price sent
 
-test('without a run bound to show (older server, or none read yet) the send names no price, and the server does not check one', async () => {
-  const h = await appFixture({ status: fixtureStatus({ run: null }) });
-  await h.chat().send('Fixture legacy');
-  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture legacy' });
+test('W3: without a displayed price a paid send does not go out: the draft stays, the price is read again, and the next send carries it', async () => {
+  const refusals = await server.ssrLoadModule('/src/apps/agent/refusals.ts');
+  // FIXTURE: the run bound could not be read (null), the route has no run (run: null), or a server before AD-1 (no price fields).
+  for (const unshown of [null, fixtureStatus({ run: null }), fixtureStatus({ run: { ...fixtureStatus().run, price_id: undefined, route_version: undefined } })]) {
+    const h = await appFixture({ status: unshown, route: null });
+    const statusReads = () => h.reads.filter((r) => r === 'agent.billing.status').length;
+    const before = statusReads();
+    // The composer says honestly that it cannot show the maximum, rather than nothing.
+    assert.deepEqual(h.chat().maximum.props.maximum, { key: 'turnMaximumUnavailable' });
+    let refused: any;
+    await assert.rejects(h.chat().send('Fixture question'), (e: any) => { refused = e; return true; });
+    assert.deepEqual(h.writes, [], 'nothing is sent: not the turn, and no conversation for it either');
+    const refusal = refusals.refusalOf(refused);
+    assert.deepEqual([refusal.kind, refusal.next, refusal.text], ['price_unshown', 'retry', 'refusedPriceUnshown']);
+    await assert.rejects(h.chat().act('agent.turn.start', { conversation_id: 'conv_fixture', regenerate_of: 'msg_a' }));
+    assert.deepEqual(h.writes, [], 'a regenerate is held the same way');
+    await settle(); h.render(); await settle(); h.render();
+    assert.ok(statusReads() > before, 'the status is read again');
+    assert.equal(h.chat().sentDraft, 0, 'the message stays in the composer');
+    // The price arrives; the composer shows the maximum and the next send carries it.
+    h.serve({ status: fixtureStatus() });
+    await assert.rejects(h.chat().send('Fixture question'));
+    await settle(); h.render(); await settle(); h.render();
+    assert.deepEqual(h.chat().maximum.props.maximum, { key: 'turnMaximum', amount: '468', unit: UNIT });
+    assert.equal(await h.chat().send('Fixture question'), true);
+    assert.deepEqual(h.writes.map((w) => w.operation), ['agent.conversation.create', 'agent.turn.start']);
+    assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_new_fixture', text: 'Fixture question', ...SEEN });
+    h.unmount();
+  }
+  // While the status is still loading the composer says so, and a send is held the same way.
+  const pending = await appFixture({ status: new Promise(() => {}) });
+  assert.deepEqual(pending.chat().maximum.props.maximum, { key: 'turnMaximumLoading' });
+  await assert.rejects(pending.chat().send('Fixture early'), (e: any) => refusals.refusalOf(e)?.kind === 'price_unshown');
+  assert.deepEqual(pending.writes, []);
+  pending.unmount();
+  // Without billing nothing about prices is asked or sent.
+  const free = await appFixture({ billing: false, status: null });
+  await free.chat().send('Fixture free');
+  assert.deepEqual(plain(free.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture free' });
+  free.unmount();
+});
+
+test('W3: the held send is worded in three languages: nothing was sent or charged, the price is being read, send again', async () => {
+  const copy = await server.ssrLoadModule('/src/apps/agent/chat.messages.ts');
+  const [zh, en, hant] = copy.chatCopy.refusedPriceUnshown;
+  assert.match(zh, /没有发送，也没有扣费/); assert.match(en, /not sent and nothing was charged/); assert.match(hant, /沒有傳送，也沒有扣費/);
+  assert.equal(core.translate('en', zh), en); assert.equal(core.translate('zh-Hant', zh), hant);
+  for (const key of ['turnMaximumUnavailable', 'turnMaximumLoading']) {
+    const [source, english, traditional] = copy.chatCopy[key];
+    assert.equal(core.translate('en', source), english, key); assert.equal(core.translate('zh-Hant', source), traditional, key);
+  }
+});
+
+test('S2: the second seen field carries the server\'s price key when the run reports one, else its route version', async () => {
+  const composer = await server.ssrLoadModule('/src/apps/agent/composer.ts');
+  const run = fixtureStatus().run;
+  assert.deepEqual(plain(composer.seenPrice({ run })), SEEN);
+  assert.deepEqual(plain(composer.seenPrice({ run: { ...run, price_key: 'pk_fixture_2' } })), { seen_price_id: 'price_fixture_2', seen_route_version: 'pk_fixture_2' });
+  // A malformed key is no price at all (the send is held), never the route version in its place.
+  assert.deepEqual(plain(composer.seenPrice({ run: { ...run, price_key: 'bad key' } })), {});
+  assert.deepEqual(plain(composer.seenPrice({ run: { ...run, price_key: null } })), SEEN);
+  const h = await appFixture({ status: fixtureStatus({ run: { ...run, price_key: 'pk_fixture_2' } }) });
+  await h.chat().send('Fixture keyed');
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture keyed', seen_price_id: 'price_fixture_2', seen_route_version: 'pk_fixture_2' });
   h.unmount();
-  // A run without the price fields (a server before AD-1) is the same: both are omitted, never one.
-  const old = await appFixture({ status: fixtureStatus({ run: { ...fixtureStatus().run, price_id: undefined, route_version: undefined } }) });
-  await old.chat().act('agent.turn.start', { conversation_id: 'conv_fixture', regenerate_of: 'msg_fixture' });
-  assert.deepEqual(plain(old.writes.at(-1).input), { conversation_id: 'conv_fixture', regenerate_of: 'msg_fixture' });
-  old.unmount();
 });
 
 test('a price adopted while the page was open: the send is refused, the draft stays, the new price is read and shown, and one click sends at it', async () => {

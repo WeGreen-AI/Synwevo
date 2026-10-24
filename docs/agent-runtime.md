@@ -88,12 +88,18 @@ the cost line under each answer).
   the Agent itself get no automatic path (`billing_authorization_required` without a quote).
 * **The composer** shows the payer, the balance, the tightest remaining limit and "this answer
   costs at most …" from `agent.billing.status.run.maximum` (`run: {maximum, default, cap, source,
-  per_call_hold, max_calls, run_seconds, usable, price_id, route_version}`; a server without `run`
-  shows the per-call hold, said as such). Send is never disabled for a money reason; the server's
-  refusal says why.
-* **The price shown is the price sent** (contract addendum AD-1). Every send and regenerate repeats
-  the `run.price_id` / `run.route_version` the composer showed as `seen_price_id` /
-  `seen_route_version` (both omitted when there is no `run`; the server then does not check). When
+  per_call_hold, max_calls, run_seconds, usable, price_id, route_version, price_key?}`), "reading
+  the most this answer can cost…" while the status loads, and "the most this answer can cost cannot
+  be shown right now" when it cannot be read or has no run. Send is never disabled for a money
+  reason; the server's refusal says why.
+* **The price shown is the price sent** (contract addendum AD-1, addendum-2 W3/S2). Every paid send
+  and regenerate repeats the price the composer showed: `seen_price_id` = `run.price_id`, and
+  `seen_route_version` = `run.price_key` when the server reports one (a digest of what the person
+  pays, so a route renewal with the same prices refuses nothing), else `run.route_version` — the
+  value exactly as the server gave it. The page never sends a paid turn without them: while the
+  status is loading, unreadable or has no `run`, Send is held in the page (`price_not_shown`, worded
+  "the maximum has to be shown before sending … nothing was sent or charged"), nothing is requested
+  (not even a new conversation), the status is read again, and "send again" sends once it is shown. When
   an administrator adopted another price meanwhile, the server refuses with 409
   `billing_price_changed` (`detail.current`: the new price id, route version, maximum, per-call hold
   and unit) and stores nothing: the message stays in the composer, the status is read again so the
