@@ -143,6 +143,8 @@ export const chatCopy = {
   modelCurrent: ['当前使用', 'In use', '目前使用'],
   modelPrices: ['每百万 token 价格', 'Price per million tokens', '每百萬 token 價格'],
   modelHold: ['每次调用最多冻结', 'Maximum hold per call', '每次呼叫最多凍結'],
+  // Agent settings' price card when agent.billing.offer cannot be read (addendum-2 C1).
+  priceUnavailable: ['暂时无法读取当前价格。', 'The current prices cannot be read right now.', '暫時無法讀取目前價格。'],
   capabilities: ['能力', 'Capabilities', '能力'],
   capText: ['文本对话', 'Text chat', '文字對話'],
   capTools: ['调用工具', 'Tool use', '呼叫工具'],

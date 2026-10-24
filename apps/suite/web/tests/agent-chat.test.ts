@@ -1022,3 +1022,29 @@ test('the chat catalogue is complete in three languages and does not collide wit
     assert.equal(core.translate('zh-Hant', source, params), hant.replace(/\{(\w+)\}/g, (_: string, p: string) => params[p]), key);
   }
 });
+
+test('C1: the price facts show the unit prices, the price version and the per-answer maximum, in three languages', () => {
+  // FIXTURE agent.billing.offer (design §3 shape); the amounts are arithmetic examples.
+  const offer = { environment: 'test', model: 'fixture-model', confirmed_route: 'fixture-route', route_version: 'fixture-v2', price_id: 'price_fixture_2',
+    unit: CNY, per_tokens: 1, terms_ref: 'fixture:terms', per_call_hold: '39', max_calls_limit: 12, run_seconds_limit: 3600,
+    rates: { input_uncached: { numerator: '2', denominator: '1' }, input_cached: { numerator: '1', denominator: '25' }, output: { numerator: '8', denominator: '1' } } };
+  const maximum = { key: 'turnMaximum', amount: '468', unit: CNY };
+  const words = { 'zh-Hans': ['价格版本', '每条回答的最高金额', '¥4.68', '每次调用最多冻结', '¥0.39'],
+    en: ['Price version', 'Maximum per answer', 'CN¥4.68', 'Maximum hold per call', 'CN¥0.39'],
+    'zh-Hant': ['價格版本', '每則回答的最高金額', 'CN¥4.68', '每次呼叫最多凍結', 'CN¥0.39'] } as const;
+  for (const locale of LOCALES) {
+    const html = render(locale, React.createElement(status.PriceFacts, { offer, maximum }));
+    for (const text of [...words[locale], 'price_fixture_2']) assert.ok(html.includes(text), `${locale}: ${text} in ${html}`);
+    for (const key of ['input_uncached', 'input_cached', 'output'] as const) {
+      const rate = cost.formatPerMillion(offer, key, locale, composer.perMillion(offer, key));
+      assert.ok(html.includes(rate), `${locale}: ${key} ${rate} in ${html}`);
+    }
+  }
+  // When no maximum can be shown, the panel says so; it never invents a figure.
+  const unshown = render('en', React.createElement(status.PriceFacts, { offer, maximum: { key: 'turnMaximumUnavailable' } }));
+  assert.ok(unshown.includes('The most this answer can cost cannot be shown right now'), unshown);
+  assert.ok(!unshown.includes('CN¥4.68'));
+  // Another listed model shows its own prices and version, without the maximum of the one in use.
+  const other = render('en', React.createElement(status.PriceFacts, { offer: { ...offer, price_id: 'price_fixture_9' } }));
+  assert.ok(other.includes('price_fixture_9') && !other.includes('Maximum per answer'), other);
+});

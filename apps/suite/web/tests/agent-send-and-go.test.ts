@@ -758,3 +758,24 @@ test('W10: when the setup step\'s send is refused, focus moves to the refusal no
   assert.equal(focused.length, 2, 'only when asked again');
   h.unmount();
 });
+
+test('C1: the model panel beside the composer shows the unit prices, the price version and the per-answer maximum', async () => {
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const copy = await server.ssrLoadModule('/src/apps/agent/chat.messages.ts');
+  const payerModule = await server.ssrLoadModule('/src/apps/agent/payers.ts');
+  // The chat's words in English (fixture translator), so the rendered panel can be read.
+  const text = { './ChatParts': { ...parts, useChatText: () => ({ c: (key: string, params?: any) => core.translate('en', copy.chatCopy[key][0], params), locale: 'en' }) } };
+  const me = payerModule.personal('usr_fixture', 'Fixture user');
+  const money = { status: fixtureStatus(), offer: fixtureOffer(), payers: [me], payersError: false, payer: me, setPayer() {}, walletUrl: '/account/wallet' };
+  const bar = await compiled('ComposerStatus.tsx', { money }, text, 'ComposerStatus');
+  const picker = bar.find((el) => Array.isArray(el.props.offers));
+  assert.deepEqual(plain(picker.props.maximum), { key: 'turnMaximum', amount: '468', unit: UNIT }, 'the maximum the composer shows');
+  const panel = await compiled('ComposerStatus.tsx', picker.props, text, 'ModelPicker');
+  panel.find((el) => el.type === 'button' && el.props['aria-haspopup'] === 'dialog').props.onClick(); panel.render();
+  const modal = panel.find((el) => typeof el.props.onClose === 'function' && el.props.title !== undefined);
+  const html = renderToStaticMarkup(React.createElement(router.MemoryRouter, null, modal));
+  for (const words of ['Price per million tokens', 'Price version', 'price_fixture_2', 'Maximum per answer', 'CN¥4.68']) assert.ok(html.includes(words), `${words} in ${html}`);
+  // While the run bound is read, the panel says so rather than show a figure.
+  const loading = await compiled('ComposerStatus.tsx', { money: { ...money, status: undefined } }, text, 'ComposerStatus');
+  assert.deepEqual(plain(loading.find((el) => Array.isArray(el.props.offers)).props.maximum), { key: 'turnMaximumLoading' });
+});

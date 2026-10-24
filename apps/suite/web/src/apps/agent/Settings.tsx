@@ -4,9 +4,10 @@ import { useDialog, useI18n, type Params } from "@synwevo/ui";
 import { newKey, op, read, type RunStatus } from "../../shared/ops";
 import { Empty, Failure, Loading, RunBadge } from "../../shared/states";
 import { validateSetup, type SetupDocument, type SetupState } from "./AgentSetup";
-import { formatAmount, majorUnits, parseBudget } from "./budget";
+import { formatAmount, majorUnits, parseBudget, validateOffer } from "./budget";
 import { chatCopy, type ChatText } from "./chat.messages";
-import { publicHref, type BillingStatus, type MoneyUnit } from "./composer";
+import { composerMaximum, publicHref, type BillingStatus, type MoneyUnit } from "./composer";
+import { PriceFacts, type ModelOffer } from "./ComposerStatus";
 import { formatMoney } from "./cost";
 import PayerBudget from "./PayerBudget";
 import ProviderConsent from "./ProviderConsent";
@@ -223,13 +224,38 @@ export function AnswerBilling({ settings, onChanged, onBillingChanged }: {
   const status = useRead<BillingStatus>("agent.billing.status");
   const saved = (value: AgentSettings) => { onChanged(value); status.reload(); onBillingChanged?.(); };
   const setup = useRead<unknown>("agent.setup.get");
+  const offerRead = useRead<ModelOffer>("agent.billing.offer");
   let documents: SetupState | null | undefined;
   if (setup.loading && setup.data === null) documents = undefined;
   else { try { documents = validateSetup(setup.data); } catch { documents = null; } }
+  let offer: ModelOffer | null | undefined;
+  if (offerRead.loading && offerRead.data === null) offer = undefined;
+  else { try { validateOffer(offerRead.data as ModelOffer); offer = offerRead.data; } catch { offer = null; } }
+  const shown = status.loading && !status.data ? undefined : status.data;
   return <>
-    <RunCapSettings settings={settings} status={status.loading && !status.data ? undefined : status.data} onChanged={saved} />
+    <CurrentPrice offer={offer} status={shown} />
+    <RunCapSettings settings={settings} status={shown} onChanged={saved} />
     <AcceptedDocuments setup={documents} />
   </>;
+}
+
+/** The prices a send now runs at (addendum-2 C1): the unit prices, the price version and the
+ *  maximum per answer, as the model panel beside the composer shows them (`PriceFacts`).
+ *  `offer`: undefined while loading, null when it cannot be read. */
+export function CurrentPrice({ offer, status }: { offer: ModelOffer | null | undefined; status: BillingStatus | null | undefined }) {
+  const { t } = useI18n();
+  const c = (key: ChatText, params?: Params) => t(chatCopy[key][0], params);
+  const id = useId();
+  return <section className="card" aria-labelledby={`${id}-title`}>
+    <div className="card-h"><h2 id={`${id}-title`}>{c("modelTitle")}</h2></div>
+    <div className="card-b col gap12">
+      {offer === undefined ? <Loading /> : offer === null ? <p className="notice warn" role="status">{c("priceUnavailable")}</p> : <>
+        <p>{c("modelButton", { model: offer.model })}</p>
+        <h3>{c("modelPrices")}</h3>
+        <PriceFacts offer={offer} maximum={composerMaximum(status)} />
+      </>}
+    </div>
+  </section>;
 }
 
 const sameUnit = (a: MoneyUnit | null | undefined, b: MoneyUnit | null | undefined) => !!a && !!b && a.code === b.code && a.scale === b.scale;

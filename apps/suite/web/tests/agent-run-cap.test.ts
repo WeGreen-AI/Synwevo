@@ -270,3 +270,42 @@ test('W7: the saved maximum is in its box once the status arrives, Save waits fo
   assert.equal(warning(low), false);
   low.unmount();
 });
+
+test('C1: Agent settings shows the current unit prices, the price version and the per-answer maximum', async () => {
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  // FIXTURE agent.billing.offer (design §3 shape).
+  const offer = { environment: 'test', model: 'fixture-model', confirmed_route: 'fixture-route', route_version: 'fixture-v2', price_id: 'price_fixture_2',
+    unit: UNIT, per_tokens: 1, terms_ref: 'fixture:terms', per_call_hold: '39', max_calls_limit: 12, run_seconds_limit: 3600,
+    rates: { input_uncached: { numerator: '2', denominator: '1' }, input_cached: { numerator: '1', denominator: '25' }, output: { numerator: '8', denominator: '1' } } };
+  const reads: string[] = [];
+  let served: unknown = offer;
+  // The run names the price a send repeats (AD-1), so the composer, and this card, show its maximum.
+  const priced = status({ run: run({ price_id: 'price_fixture_2', route_version: 'fixture-v2' }) });
+  const h = await compiled('AnswerBilling', { settings: settings(null), onChanged() {} }, {
+    '../../shared/ops': { newKey: () => 'fixture_key', op: async () => { throw new Error('fixture: no write here'); },
+      read: async (operation: string) => { reads.push(operation); return operation === 'agent.billing.status' ? priced : operation === 'agent.billing.offer' ? served : null; } },
+  });
+  await settle(); h.render(); await settle(); h.render();
+  assert.ok(reads.includes('agent.billing.offer'), reads.join());
+  const card = () => h.elements().find((el) => 'offer' in el.props && 'status' in el.props);
+  assert.ok(card(), 'a price card beside the maximum');
+  assert.equal(card().props.offer.price_id, 'price_fixture_2'); assert.equal(card().props.status.run.maximum, '468');
+  const settingsModule = await server.ssrLoadModule('/src/apps/agent/Settings.tsx');
+  const html = renderToStaticMarkup(React.createElement(router.MemoryRouter, null, React.createElement(settingsModule.CurrentPrice, card().props)));
+  for (const words of ['模型与价格', 'fixture-model', '每百万 token 价格', '价格版本', 'price_fixture_2', '每条回答的最高金额', '¥4.68']) assert.ok(html.includes(words), `${words} in ${html}`);
+  // An offer that cannot be read is said, with no figure.
+  const unreadable = renderToStaticMarkup(React.createElement(router.MemoryRouter, null, React.createElement(settingsModule.CurrentPrice, { offer: null, status: status() })));
+  assert.ok(unreadable.includes(copy.chatCopy.priceUnavailable[0]) && !unreadable.includes('价格版本'), unreadable);
+  for (const locale of ['en', 'zh-Hant']) {
+    const [source, en, hant] = copy.chatCopy.priceUnavailable;
+    assert.equal(core.translate(locale, source), locale === 'en' ? en : hant);
+  }
+  // A malformed offer is no price at all.
+  served = { ...offer, price_id: '' };
+  h.unmount();
+  const bad = await compiled('AnswerBilling', { settings: settings(null), onChanged() {} }, {
+    '../../shared/ops': { newKey: () => 'fixture_key', op: async () => ({}), read: async (operation: string) => operation === 'agent.billing.offer' ? served : status() } });
+  await settle(); bad.render(); await settle(); bad.render();
+  assert.equal(bad.elements().find((el) => 'offer' in el.props && 'status' in el.props).props.offer, null);
+  bad.unmount();
+});

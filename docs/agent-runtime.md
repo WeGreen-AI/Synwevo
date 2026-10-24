@@ -112,6 +112,12 @@ the cost line under each answer).
   the page shows at that click. The page also reads the status again when the window
   regains focus or becomes visible, at most every 5 minutes while it is visible, after the maximum
   per answer is saved or cleared in Agent settings, and on leaving Agent settings.
+* **Where the price is shown** (addendum-2 C1, the pricing page's "where to see prices"). The model
+  panel beside the composer (`ModelPicker`) and Agent settings' "Models and prices" card
+  (`CurrentPrice`, from `agent.billing.offer` and `agent.billing.status`) show the same
+  `PriceFacts`: the unit prices per million tokens, one call's hold, the price version (the sale
+  `price_id`, the value a paid send repeats as `seen_price_id`) and the maximum per answer as the
+  composer shows it (or why none can be shown); an unreadable offer is said, with no figure.
 * **Agent settings, "maximum per answer"** (`RunCapSettings`). The box shows the saved maximum
   (also when `agent.billing.status`, which gives its unit, arrives after the card) until the person
   types; Save stays disabled while nothing changed (the default kept, an empty box, or the saved
