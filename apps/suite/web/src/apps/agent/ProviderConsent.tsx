@@ -24,11 +24,14 @@ export interface ConsentState {
 /** The notice itself, exactly as versioned by PROVIDER_TERMS: the same text in Agent settings and
  *  in the one-time "Start using Synwevo Agent" step (AgentSetup), so the consent a person gives
  *  in either place is to the same words. `newTab` opens the links in a new tab (the setup step
- *  keeps an unsent message in the composer) and names that for screen readers. */
-export function ProviderConsentFacts({ facts, siteUrl, newTab }: {
+ *  keeps an unsent message in the composer) and names that for screen readers. `withdrawIn`
+ *  says where the consent can be withdrawn: "here" in Agent settings, which has the control, and
+ *  "settings" in the setup step, which has none (addendum-2 W6). */
+export function ProviderConsentFacts({ facts, siteUrl, newTab, withdrawIn = "here" }: {
   facts: Pick<ConsentState, "processor" | "version" | "effective_at">;
   siteUrl?: string | null;
   newTab?: string;
+  withdrawIn?: "here" | "settings";
 }) {
   const { t, locale } = useI18n();
   const c = (key: ProviderConsentText, params?: Record<string, string>) => t(providerConsentCopy[key][0], params);
@@ -42,7 +45,7 @@ export function ProviderConsentFacts({ facts, siteUrl, newTab }: {
       <div><dt>{c("training")}</dt><dd>{c("trainingPolicy")}</dd></div>
       <div><dt>{c("scope")}</dt><dd>{c("scopeText")}</dd></div>
     </dl>
-    <p className="muted small">{c("withdrawNote")}</p>
+    <p className="muted small">{c(withdrawIn === "settings" ? "withdrawNoteSettings" : "withdrawNote")}</p>
     <p className="muted small">{c("version", { version: facts.version, date: facts.effective_at })}
       {" · "}<a href={publicHref(siteUrl, "privacy", locale)} {...target}>{c("privacy")}{opens}</a>
       {" · "}<a href={publicHref(siteUrl, "ai-use", locale)} {...target}>{c("rules")}{opens}</a></p>

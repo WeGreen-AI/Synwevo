@@ -277,7 +277,7 @@ export default function AgentSetup({ setup, organizationPayer, hasDraft, maximum
     <form className="ag-setup-form" noValidate onSubmit={(event) => void submit(event)}>
       {needConsent && <fieldset className="ag-setup-item" disabled={busy}>
         <legend>{pc("title")}</legend>
-        {facts ? <ProviderConsentFacts facts={facts} siteUrl={siteUrl} newTab={c("docNewTab")} />
+        {facts ? <ProviderConsentFacts facts={facts} siteUrl={siteUrl} newTab={c("docNewTab")} withdrawIn="settings" />
           : factsError ? <p className="notice err"><span>{c("setupUnavailable")}</span>{" "}
           <button type="button" className="btn sm" onClick={() => setFactsTick((n) => n + 1)}>{c("setupRetry")}</button></p>
           : <Loading />}

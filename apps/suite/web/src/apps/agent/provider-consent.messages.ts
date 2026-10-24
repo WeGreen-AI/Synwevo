@@ -14,6 +14,8 @@ export const providerConsentCopy = {
   scope: ['发送范围', 'What is sent', '傳送範圍'],
   scopeText: ['你在对话中写的内容、同一对话较早的消息、你让 Agent 记住的偏好，以及 AI 处理政策允许的工作空间内容；组织工作空间默认不允许。', 'What you write in the conversation, earlier messages of the same conversation, preferences you asked Agent to remember, and content of workspaces whose AI processing policy allows it; organisation workspaces do not by default.', '你在對話中寫的內容、同一對話較早的訊息、你讓 Agent 記住的偏好，以及 AI 處理政策允許的工作空間內容；組織工作空間預設不允許。'],
   withdrawNote: ['你可以随时在这里撤回；撤回后不再发起任何模型调用，正在进行的回答也会在下一次模型调用前停止。', 'You can withdraw here at any time; after that no model call is made, and a running answer stops before its next model call.', '你可以隨時在這裡撤回；撤回後不再發起任何模型呼叫，正在進行的回答也會在下一次模型呼叫前停止。'],
+  // In the one-time setup step, which has no withdraw control (addendum-2 W6): where to withdraw.
+  withdrawNoteSettings: ['之后可以在 Agent 设置中撤回。', 'You can withdraw it later in Agent settings.', '之後可以在 Agent 設定中撤回。'],
   version: ['说明版本 {version}，{date} 起生效', 'Notice version {version}, in effect from {date}', '說明版本 {version}，{date} 起生效'],
   accepted: ['你已同意此版本（{date}）。', 'You agreed to this version ({date}).', '你已同意此版本（{date}）。'],
   changed: ['说明已更新：你同意过的是版本 {version}。请查看后重新同意，在此之前不会发起模型调用。', 'The notice has changed: you agreed to version {version}. Review it and agree again; no model call is made until then.', '說明已更新：你同意過的是版本 {version}。請查看後重新同意，在此之前不會發起模型呼叫。'],

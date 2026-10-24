@@ -116,7 +116,9 @@ the cost line under each answer).
   When a send needs something the person has not done (`agent.setup.get`), the message stays in the
   composer, focus moves to the step's heading, and the step shows only what is missing: (a) the
   separate DeepSeek data-sharing consent — the same notice as Agent settings (`ProviderConsentFacts`)
-  with its own unticked box, recorded by `agent.provider_consent.accept` for the version shown;
+  with its own unticked box, recorded by `agent.provider_consent.accept` for the version shown; the
+  step has no withdraw control, so its note says "you can withdraw it later in Agent settings"
+  instead of the settings card's "you can withdraw here at any time";
   (b) the terms of service, AI use rules and pricing — a second unticked box with the three pages
   linked in a new tab, recorded by `agent.terms.accept` with every document at its current version;
   (c) for the personal payer, the daily / weekly / monthly spending limits prefilled with the

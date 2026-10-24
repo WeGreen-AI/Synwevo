@@ -317,3 +317,26 @@ test('W5: the terms refusal reads neutrally (first use or a new version), in thr
   assert.equal(core.translate('en', zh), en); assert.equal(core.translate('zh-Hant', zh), hant);
   assert.doesNotMatch(zh + en + hant, /已更新|updated/);
 });
+
+test('W6: the step names Agent settings as the place to withdraw the consent, and never "here" (it has no withdraw control)', async () => {
+  const h = await cardFixture();
+  const facts = h.find((el) => el.type === providerConsent.ProviderConsentFacts);
+  const here = consentCopy.providerConsentCopy.withdrawNote;
+  const render = (locale: string, element: any) => { ui.setLocale(locale); return renderToStaticMarkup(React.createElement(router.MemoryRouter, null, element)); };
+  for (const [i, locale] of LOCALES.entries()) {
+    const notice = render(locale, facts);
+    assert.ok(!notice.includes(here[i]), `${locale}: no "withdraw here" in the step: ${notice}`);
+    assert.doesNotMatch(notice, /在这里撤回|withdraw here|在這裡撤回/, locale);
+  }
+  const later = consentCopy.providerConsentCopy.withdrawNoteSettings;
+  assert.deepEqual([...later], ['之后可以在 Agent 设置中撤回。', 'You can withdraw it later in Agent settings.', '之後可以在 Agent 設定中撤回。']);
+  for (const [i, locale] of LOCALES.entries()) assert.ok(render(locale, facts).includes(later[i]), locale);
+  ui.setLocale('zh-Hans');
+  // The withdraw control lives only in Agent settings, which keeps its own sentence.
+  const buttons = h.elements().filter((el) => el.type === 'button').map((el) => strings(el.props.children));
+  assert.ok(!buttons.some((label) => /withdraw|撤回/i.test(label)), buttons.join());
+  const settings = render('zh-Hans', React.createElement(providerConsent.ProviderConsentFacts, { facts: consentFacts, siteUrl: 'https://site.fixture.test' }));
+  assert.ok(settings.includes(here[0]) && !settings.includes(later[0]), settings);
+  assert.equal(core.translate('en', later[0]), later[1]); assert.equal(core.translate('zh-Hant', later[0]), later[2]);
+  h.unmount();
+});
