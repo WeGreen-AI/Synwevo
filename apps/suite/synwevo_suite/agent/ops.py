@@ -250,6 +250,10 @@ class TermsDocument(_In):
     version: str
     effective: str
     accepted: bool
+    #: The version of this document the person accepted last, None when never (addendum-2 S4):
+    #: an earlier version here with ``accepted: false`` is a re-acceptance after an update, not
+    #: a first use. Equal to ``version`` when ``accepted`` is true.
+    accepted_version: str | None
 
 
 class TermsStatus(_In):

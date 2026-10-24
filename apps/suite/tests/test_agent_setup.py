@@ -51,14 +51,16 @@ def test_the_step_lists_only_what_is_missing_and_is_complete_once_each_item_is_d
     assert s["provider_consent"] == {"provider": "deepseek", "version": PROVIDER_TERMS["deepseek"].version,
                                      "accepted": True, "accepted_version": PROVIDER_TERMS["deepseek"].version}
     assert s["terms"]["complete"] is False
-    assert s["terms"]["documents"] == [{"id": d, "version": v, "effective": e, "accepted": False} for d, (v, e) in DOCUMENTS.items()]
+    assert s["terms"]["documents"] == [{"id": d, "version": v, "effective": e, "accepted": False, "accepted_version": None}
+                                       for d, (v, e) in DOCUMENTS.items()]
     # Suggested limits are the owner's fen amounts converted exactly into the sale unit (CNY, 6).
     assert s["limits"] == {"configured": False, "enabled": False, "revision": 0, "unit": {"code": "CNY", "scale": 6},
                            "suggested": {"daily_budget": "10000000", "weekly_budget": "30000000", "monthly_budget": "100000000"}}
     assert SUGGESTED_LIMITS_FEN == {"daily_budget": 1_000, "weekly_budget": 3_000, "monthly_budget": 10_000}
     # (b) the terms, recorded with the step's operation run as context
     accepted = invoke(g, "agent.terms.accept", {"documents": CURRENT})
-    assert accepted["output"] == {"complete": True, "documents": [{"id": d, "version": v, "effective": e, "accepted": True}
+    assert accepted["output"] == {"complete": True, "documents": [{"id": d, "version": v, "effective": e, "accepted": True,
+                                                                    "accepted_version": v}
                                                                    for d, (v, e) in DOCUMENTS.items()]}
     rows = TermsAcceptances(g.store).history(uid)
     assert {r["context"] for r in rows} == {"agent_setup:" + accepted["run_id"]} and len(rows) == 3
@@ -218,3 +220,35 @@ def test_the_step_reads_grant_nothing_and_start_no_call(cny, governed):
     assert g.seen == []
     run = g.store.one("SELECT output FROM op_runs WHERE op='agent.terms.accept'")["output"]
     assert (json.loads(run) if isinstance(run, str) else run)["complete"] is True, "回执只有接受状态，没有业务正文"
+
+
+# ------------------------------------------------------------------ first use or an update (S4, supports W5)
+def recorded(g, document, version, at):
+    """FIXTURE: an acceptance an earlier version of the step recorded (document, version, when)."""
+    g.store.execute("INSERT INTO agent_terms_acceptances (user_id,document,version,accepted_at,context) VALUES (?,?,?,?,?)",
+                    (g.user["id"], document, version, at, "fixture:earlier_step"))
+
+
+def test_each_document_says_which_version_the_person_last_accepted(cny, governed):
+    """The card words a first use and a re-acceptance differently: it needs the person's last
+    accepted version of each document, not only whether the current one is accepted."""
+    g = governed
+    configure(g)
+    first = {d["id"]: d for d in setup(g)["terms"]["documents"]}
+    assert all(d["accepted"] is False and d["accepted_version"] is None for d in first.values()), "从未接受：首次使用"
+    # An earlier version of every document, two of them accepted twice: the latest acceptance counts.
+    for document in DOCUMENTS:
+        recorded(g, document, "2026-09-01", 100)
+    recorded(g, "terms", "2026-10-01", 200)
+    recorded(g, "pricing", "2026-10-02", 150)
+    again = {d["id"]: d for d in setup(g)["terms"]["documents"]}
+    assert {d: (again[d]["accepted"], again[d]["accepted_version"]) for d in DOCUMENTS} == {
+        "terms": (False, "2026-10-01"), "ai-use": (False, "2026-09-01"), "pricing": (False, "2026-10-02")}, "版本已更新：重新接受"
+    accepted = invoke(g, "agent.terms.accept", {"documents": CURRENT})["output"]
+    assert accepted["complete"] is True
+    assert [(d["id"], d["accepted"], d["accepted_version"]) for d in accepted["documents"]] == [
+        (d, True, v) for d, (v, _) in DOCUMENTS.items()], "接受后报告当前版本"
+    assert [d["accepted_version"] for d in setup(g)["terms"]["documents"]] == [v for v, _ in DOCUMENTS.values()]
+    # The version in force, once accepted, is what it reports, whatever was recorded after it.
+    recorded(g, "terms", "2026-08-01", 2**40)
+    assert [d["accepted_version"] for d in setup(g)["terms"]["documents"]] == [v for v, _ in DOCUMENTS.values()]

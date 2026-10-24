@@ -76,7 +76,11 @@ sent) and, for the personal payer, the spending limits (prefilled from
 `synwevo_suite.agent.setup.SUGGESTED_LIMITS_FEN`: CNY 10 a day, 30 a week, 100 a month, converted
 exactly with `fen_to_units`; `suggested` is null for a non-CNY sale unit) saved through
 `agent.billing.budget.set`. A changed document or consent version reopens the step once; a price
-change never does. Both operations are a person's own: unreachable by machine credentials, and
+change never does. Each terms document (`terms.documents[]`: `id`, `version`, `effective`,
+`accepted`) also carries `accepted_version` (addendum-2 S4): the version of that document the
+person accepted last, null when never, and equal to `version` once that is accepted. An earlier
+version there with `accepted: false` is a re-acceptance after an update, so the card words it as
+an update; null is a first use. `agent.terms.accept` answers with the same list. Both operations are a person's own: unreachable by machine credentials, and
 `agent.terms.accept` refuses every `via` but `ui`.
 
 **The price the page showed is the price the send runs at (AD-1, addendum-2 S1/S2).**
