@@ -2,7 +2,7 @@
  *  refusals with their next step, "what changed" between two pricings, the most an answer can
  *  cost, and the thinking status. Everything shown here is a server fact (the ledger, the
  *  governed offer, the run bound, a refusal code) put into words; nothing is estimated in the page. */
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n, type Params } from "@synwevo/ui";
 import type { Pricing } from "./budget";
@@ -73,16 +73,24 @@ export function TurnCostLine({ cost, payerName }: { cost: unknown;
 
 /** A refusal in a sentence, and the one thing to do about it. `live` announces a fresh refusal;
  *  refusals already in the transcript are static text. `onRetry` sends again (a changed price
- *  applies to the new send); `onSetup` opens the one-time setup step with the draft kept. */
-export function RefusalNotice({ refusal, walletUrl, onRetry, onSetup, onPersonal, busy = false, live = false }: {
+ *  applies to the new send); `onSetup` opens the one-time setup step with the draft kept.
+ *  `focusTick`: each new value moves focus to the next step, or to the notice when it offers none
+ *  (the control the person used is gone, e.g. the setup step's button: addendum-2 W10). */
+export function RefusalNotice({ refusal, walletUrl, onRetry, onSetup, onPersonal, busy = false, live = false, focusTick = 0 }: {
   refusal: Refusal; walletUrl?: string | null; onRetry?: () => void; onSetup?: () => void;
   /** Switch the payer to the personal wallet (offered when an organization payer was refused). */
-  onPersonal?: () => void; busy?: boolean; live?: boolean;
+  onPersonal?: () => void; busy?: boolean; live?: boolean; focusTick?: number;
 }) {
   const { c } = useChatText();
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focusTick) return;
+    const notice = box.current;
+    (notice?.querySelector<HTMLElement>("a[href], button:not([disabled])") ?? notice)?.focus();
+  }, [focusTick]);
   const next = refusal.next;
-  return <div className={`notice ${refusal.kind === "price_changed" ? "info" : "warn"} ag-refusal`} role={live ? "alert" : undefined}
-    data-refusal={refusal.kind}>
+  return <div ref={box} tabIndex={focusTick ? -1 : undefined} className={`notice ${refusal.kind === "price_changed" ? "info" : "warn"} ag-refusal`}
+    role={live ? "alert" : undefined} data-refusal={refusal.kind}>
     <p>{c(refusal.text)}</p>
     {next === "topup" && walletUrl && <a className="btn sm primary" href={walletUrl}>{c("nextTopUp")}</a>}
     {next === "wallet" && walletUrl && <a className="btn sm" href={walletUrl}>{c("nextWallet")}</a>}

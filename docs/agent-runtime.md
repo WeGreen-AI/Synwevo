@@ -304,6 +304,14 @@ refusal that can also stop a running answer is worded so it is true mid-run ("no
 was made and nothing was charged for it"; rr-glue-2); only the one-time setup refusals are
 admission-only. No refusal asks anyone to re-confirm a price, a run time or a quote.
 
+A refused message is never lost on the way to its next step (addendum-2 W10). When the person
+leaves for Agent settings (a refusal's "open Agent settings", the per-answer maximum's or a limit's
+link), the composer hands its text, sources and files to the page as it goes away, and the page
+gives them back to the composer of that conversation when the person returns; leaving for
+anything else keeps nothing. When the one-time setup step's send is refused, the step's button is
+gone, so focus moves to the refusal notice's next step (or the notice itself), or to the composer
+for an error that is not a refusal.
+
 An administrator's suspension of the person's Agent access (`agent_access_suspended`, 403 on a
 send and the check before every model call of a running answer) has its own sentence: Agent
 access is suspended, nothing new was called or charged, and the next step is to contact the

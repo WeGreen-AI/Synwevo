@@ -19,6 +19,9 @@ import { activeTurn, branchMessages, type ContextReference, type SelectedContext
 export type Act = (operation: string, input: Record<string, unknown>) => Promise<unknown>;
 /** The message in the composer, as one send would carry it to `agent.turn.start`. */
 export interface Draft { text: string; context_refs?: ContextReference[]; file_refs?: FileReference[] }
+/** The composer as it stands (text and the chosen sources and files), kept by the page while the
+ *  person is in Agent settings and given back when they return (addendum-2 W10). */
+export interface ComposerDraft { text: string; contexts: SelectedContext[]; files: SelectedFile[] }
 
 function Status({ status }: { status: string }) {
   const { t } = useI18n();
@@ -98,7 +101,7 @@ function Scope({ scope, spaces, change, close }: { scope: string[] | null; space
 type CopyState = { id: string; ok: boolean } | null;
 
 export default function Chat({ conversation, loading, error, connection, configured, spaces, act, send, refresh, sentDraft = 0, aside,
-  status, maximum, hint, walletUrl, organizationPayer = false, onPersonal, payerName, fileClient, onSetup, onDraft }: {
+  status, maximum, hint, walletUrl, organizationPayer = false, onPersonal, payerName, fileClient, onSetup, onDraft, restore, onRestored, onLeave }: {
   conversation?: Conversation; loading: boolean; error: unknown; connection: string; configured: boolean | undefined;
   spaces: Workspace[]; act: Act; send: (text: string, context_refs?: ContextReference[], file_refs?: FileReference[]) => Promise<unknown>; refresh: () => Promise<void>; sentDraft?: number;
   fileClient?: FileClient;
@@ -123,14 +126,20 @@ export default function Chat({ conversation, loading, error, connection, configu
   /** While that step is open: the message as it now stands (null when it cannot be sent as is),
    *  so the step's button sends what the composer shows. */
   onDraft?: (draft: Draft | null) => void;
+  /** A message the page kept while the person was away (in Agent settings): the composer starts
+   *  from it and says so with `onRestored`. */
+  restore?: ComposerDraft;
+  onRestored?: () => void;
+  /** The composer as it stands when this chat goes away (the page keeps it only for Agent settings). */
+  onLeave?: (draft: ComposerDraft) => void;
 }) {
   const { t } = useI18n();
   const { c } = useChatText();
   const contextText = useContextText();
   const id = useId();
-  const [text, setText] = useState("");
-  const [selectedContexts, setSelectedContexts] = useState<SelectedContext[]>([]);
-  const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([]);
+  const [text, setText] = useState(() => restore?.text ?? "");
+  const [selectedContexts, setSelectedContexts] = useState<SelectedContext[]>(() => restore?.contexts ?? []);
+  const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>(() => restore?.files ?? []);
   const [localFileClient] = useState(createFileClient);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<unknown>();
@@ -158,6 +167,14 @@ export default function Chat({ conversation, loading, error, connection, configu
   const pickerScope = JSON.stringify([conversation?.id, conversation?.scope, pickerSpaces.map((ws) => ws.workspace_id)]);
   const outsideScope = conversation?.scope != null && selectedContexts.some((item) => !conversation.scope!.includes(item.reference.workspace_id));
   useEffect(() => { if (sentDraft) { setText(""); setSelectedContexts([]); setSelectedFiles([]); setFailure(undefined); stick.current = true; input.current?.focus(); } }, [sentDraft]);
+  // A kept message is taken once; the composer as it stands goes back to the page when this chat
+  // goes away (W10: a refusal whose next step is Agent settings must not lose the message).
+  const composer = useRef<{ draft: ComposerDraft; leave?: (draft: ComposerDraft) => void }>({ draft: { text, contexts: selectedContexts, files: selectedFiles } });
+  composer.current = { draft: { text, contexts: selectedContexts, files: selectedFiles }, leave: onLeave };
+  useEffect(() => {
+    if (restore) onRestored?.();
+    return () => { const { draft, leave } = composer.current; leave?.(draft); };
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
   /** The composer's message as one send carries it; throws when an attached file is not ready. */
   function draftOf(): Draft {
     const contexts = contextReferences(selectedContexts), files = fileReferences(selectedFiles, selectedContexts.length);

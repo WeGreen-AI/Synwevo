@@ -14,7 +14,7 @@ import { useApp } from "../../shared/catalog";
 import { Empty, Loading } from "../../shared/states";
 import { AgentFailure as Failure } from "./errors";
 import { newKey, op, read } from "../../shared/ops";
-import Chat, { type Draft } from "./Chat";
+import Chat, { type ComposerDraft, type Draft } from "./Chat";
 import { activeTurn, branchMessages, type Workspace } from "./types";
 import { createFileClient, fileErrorKey } from './files';
 import { contextErrorKey } from "./context";
@@ -100,6 +100,14 @@ function AgentApp() {
   const [focusTick, setFocusTick] = useState(0);
   // The message waiting in the composer while the setup step is open (sent by its button).
   const [draft, setDraft] = useState<Draft | null>(null);
+  // The composer kept while the person is in Agent settings (a refusal's next step, the maximum's
+  // or a limit's link), for the conversation it was written in, until that composer takes it back
+  // (addendum-2 W10). Chat hands it over as it goes away; only a move to Agent settings keeps it.
+  const [kept, setKept] = useState<{ key: string; draft: ComposerDraft } | null>(null);
+  const inSettings = useRef(settings);
+  inSettings.current = settings;
+  // Focus for the refusal of the setup step's send: the step is gone, so focus moves to the notice (W10).
+  const [refusalFocus, setRefusalFocus] = useState(0);
   const answering = !!conversation?.messages?.some(activeTurn);
   // Addendum AD-1: the price the composer shows is the price a send runs at. The status is read
   // again on demand (a refused stale price), when the window regains focus or becomes visible,
@@ -251,20 +259,29 @@ function AgentApp() {
   const readSetupFact = useCallback((operation: string) => read<unknown>(operation, {}, null), []);
   const rereadStatus = useCallback(() => setStatusTick((n) => n + 1), []);
   const updateDraft = useCallback((next: Draft | null) => setDraft(next), []);
+  const chatKey = id ?? "new";
+  function leaveComposer(composer: ComposerDraft) {
+    if (!inSettings.current || !(composer.text.trim() || composer.contexts.length || composer.files.length)) return;
+    setKept({ key: chatKey, draft: composer });
+  }
   /** Send the kept message in one request; on success the composer is cleared. A refusal leaves
    *  it in the composer and is shown above it with its next step. */
-  async function sendDraft(next: Draft) {
+  async function sendDraft(next: Draft): Promise<unknown> {
     setActionError(undefined);
-    try { await start(next); setDraft(null); setSentDraft((n) => n + 1); }
-    catch (e) { setActionError(e); }
+    try { await start(next); setDraft(null); setSentDraft((n) => n + 1); return undefined; }
+    catch (e) { setActionError(e); return e ?? new Error("refused"); }
   }
-  /** Everything the step needed is recorded: send the kept message, then read the state again. */
+  /** Everything the step needed is recorded: send the kept message, then read the state again. A
+   *  refused send moves focus to its notice (the step's button is gone), or to the composer. */
   async function completeSetup() {
     const next = draft;
     setSetup((current) => (current ? completedSetup(current, organizationPayer) : current));
     setSetupTick((n) => n + 1);
     setSetupOpen(false);
-    if (next?.text.trim()) await sendDraft(next);
+    if (!next?.text.trim()) { focusComposer(); return; }
+    const refused = await sendDraft(next);
+    if (refused === undefined) return;
+    if (refusalOf(refused, { organization: organizationPayer })) setRefusalFocus((n) => n + 1);
     else focusComposer();
   }
   /** Back to the message box (the step was closed without sending). */
@@ -370,16 +387,17 @@ function AgentApp() {
             </div>}
           </div>
           {actionError != null && (actionRefusal
-            ? <RefusalNotice refusal={actionRefusal} walletUrl={walletUrl} live busy={busy || !!running}
+            ? <RefusalNotice refusal={actionRefusal} walletUrl={walletUrl} live busy={busy || !!running} focusTick={refusalFocus}
               onPersonal={organizationPayer && payers[0] ? () => choose(payers[0]) : undefined}
               onRetry={draft?.text.trim() ? () => void sendDraft(draft) : undefined} onSetup={() => openSetup()} />
             : <Failure error={actionError} />)}
-          <Chat key={id ?? "new"} conversation={conversation} loading={!!id && !conversation && !error} error={error} connection={connection}
+          <Chat key={chatKey} conversation={conversation} loading={!!id && !conversation && !error} error={error} connection={connection}
             spaces={spaces} fileClient={fileClient} configured={configured} act={act} send={send} refresh={refresh} sentDraft={sentDraft}
             walletUrl={walletUrl} organizationPayer={organizationPayer} payerName={organizationName}
             onPersonal={organizationPayer && payers[0] ? () => choose(payers[0]) : undefined}
             onSetup={billingRequired ? openSetup : undefined}
             onDraft={setupOpen || (actionRefusal != null && draft != null) ? updateDraft : undefined}
+            restore={kept?.key === chatKey ? kept.draft : undefined} onRestored={() => setKept(null)} onLeave={leaveComposer}
             status={money && <ComposerStatus money={money} disabled={running} />}
             maximum={money && <TurnMaximum maximum={maximum} />}
             hint={money ? t(chatCopy.turnMaximumHint[0]) : undefined}

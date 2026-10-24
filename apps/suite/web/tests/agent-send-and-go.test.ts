@@ -689,3 +689,72 @@ test('W9: the page keys the price notice on the price key of the run it shows', 
   assert.equal(notices[0].props.currentKey, 'pk1:current');
   h.unmount();
 });
+
+test('W10: a refused message is kept when the person goes to Agent settings and is back in the composer when they return', async () => {
+  const h = await appFixture();
+  // FIXTURE: the send is refused for the per-answer maximum; its next step is Agent settings.
+  h.fail(new client.ApiError(409, 'billing_run_cap_below_call_hold', 'fixture', { per_call_hold: '39', cap: '30', unit: UNIT }));
+  await assert.rejects(h.chat().send('Fixture question'));
+  h.fail(undefined);
+  const leave = h.chat().onLeave;
+  assert.equal(typeof leave, 'function', 'the composer hands its message to the page when it goes away');
+  // The composer's state as Chat holds it (text, source chips, file chips), handed over as it unmounts.
+  const context = { reference: { workspace_id: 'ws_a', kind: 'form', id: 'frm_fixture' }, title: 'Fixture form', workspace: 'Fixture a', kind: 'form' };
+  const kept = { text: 'Fixture question', contexts: [context], files: [] };
+  await h.settings(true);
+  leave(kept);
+  await h.settings(false);
+  assert.deepEqual(plain(h.chat().restore), plain(kept), 'the message is back in the composer');
+  // Once the composer took it, it is not handed out again.
+  h.chat().onRestored(); h.render();
+  assert.equal(h.chat().restore, undefined);
+  // Leaving for anything but Agent settings (another conversation) keeps nothing; an empty composer neither.
+  h.chat().onLeave({ text: 'Fixture elsewhere', contexts: [], files: [] }); h.render();
+  assert.equal(h.chat().restore, undefined);
+  const again = h.chat().onLeave;
+  await h.settings(true); again({ text: '  ', contexts: [], files: [] }); await h.settings(false);
+  assert.equal(h.chat().restore, undefined);
+  // Kept for the conversation it was written in: another one does not receive it.
+  const third = h.chat().onLeave;
+  await h.settings(true); third(kept); h.route('conv_other'); await h.settings(false);
+  assert.equal(h.chat().restore, undefined);
+  h.route('conv_fixture');
+  assert.deepEqual(plain(h.chat().restore), plain(kept));
+  h.unmount();
+});
+
+test('W10: the composer starts from a kept message and hands its message over when it goes away', async () => {
+  const context = { reference: { workspace_id: 'ws_a', kind: 'form', id: 'frm_fixture' }, title: 'Fixture form', workspace: 'Fixture a', kind: 'form' };
+  const left: any[] = []; let restored = 0;
+  const h = await chatFixture(async () => true, { restore: { text: 'Fixture kept', contexts: [context], files: [] },
+    onRestored: () => { restored += 1; }, onLeave: (draft: unknown) => left.push(draft) });
+  assert.equal(h.find((el) => el.type === 'textarea').props.value, 'Fixture kept');
+  assert.equal(restored, 1, 'the page is told the kept message was taken');
+  h.find((el) => el.type === 'textarea').props.onChange({ target: { value: 'Fixture kept, edited' } }); h.render();
+  h.unmount();
+  assert.deepEqual(plain(left), [{ text: 'Fixture kept, edited', contexts: [context], files: [] }]);
+});
+
+test('W10: when the setup step\'s send is refused, focus moves to the refusal notice', async () => {
+  const h = await appFixture({ setup: fixtureSetup({ complete: false, terms: { complete: false, documents: fixtureSetup().terms.documents.map((d: any) => ({ ...d, accepted: false })) } }) });
+  assert.equal(await h.chat().send('Fixture draft'), false); h.render(); await settle(); h.render(); await settle(); h.render();
+  h.fail(new client.ApiError(409, 'billing_run_cap_below_call_hold', 'fixture', { per_call_hold: '39', cap: '30', unit: UNIT }));
+  await h.card()[0].props.onComplete(); await settle(); h.render();
+  const notice = h.find((el) => el.type === parts.RefusalNotice);
+  assert.ok(notice.props.focusTick > 0, 'the notice is asked to take focus');
+  // The notice itself (ChatParts, compiled): focus goes to its next step, or to the notice when it has none.
+  const focused: string[] = [];
+  const r = await compiled('ChatParts.tsx', { refusal: { kind: 'run_cap', next: 'settings', text: 'refusedRunCap' }, live: true }, {}, 'RefusalNotice');
+  const box = r.tree();
+  assert.equal(box.props.tabIndex, undefined, 'not focusable while nothing asks for it');
+  box.props.ref.current = { querySelector: () => ({ focus: () => focused.push('next step') }), focus: () => focused.push('notice') };
+  r.render({ focusTick: 1 });
+  assert.deepEqual(focused, ['next step']);
+  assert.equal(r.tree().props.tabIndex, -1);
+  r.tree().props.ref.current = { querySelector: () => null, focus: () => focused.push('notice') };
+  r.render({ focusTick: 2 });
+  assert.deepEqual(focused, ['next step', 'notice']);
+  r.render({ focusTick: 2 });
+  assert.equal(focused.length, 2, 'only when asked again');
+  h.unmount();
+});
