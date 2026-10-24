@@ -76,7 +76,7 @@ class Metrics:
     """Counters of this process, numbers only (no content, no ids), for `/readyz`."""
 
     def __init__(self):
-        self._c: dict[str, int] = {k: 0 for k in ("send_failed", "stream_replays", "stream_resyncs", "stream_refused", "typing_events", "presence_events", "search_queries")}
+        self._c: dict[str, int] = {k: 0 for k in ("send_failed", "stream_replays", "stream_resyncs", "stream_refused", "stream_events", "typing_events", "presence_events", "search_queries")}
         self._lock = threading.Lock()
 
     def inc(self, name: str, n: int = 1) -> None:
@@ -923,6 +923,7 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
                                 continue
                         yield _sse(ev)
                         last_sent = ev["id"]
+                        metrics.inc("stream_events")                    # live events passed on, across every stream
                     except asyncio.TimeoutError:
                         if not await run_in_threadpool(_still_valid, sid, uid):
                             yield b"event: end\ndata: {\"reason\": \"session\"}\n\n"

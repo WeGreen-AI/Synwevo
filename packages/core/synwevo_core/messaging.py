@@ -67,7 +67,6 @@ from typing import Callable, NamedTuple
 
 from . import quarantine
 from .apps import MESSAGES_APP_ID, app_disabled, organization_app_row
-from .config import MESSAGES_NAME
 from .errors import ServiceError
 from .identity import Identity
 from .organizations import Organizations, current_membership
@@ -280,38 +279,21 @@ BLOCKED_NEUTRAL = "暂时无法向对方发送消息"
 #: of a conversation next to the workspace rule's PAUSED and LOST; precedence, worst first:
 #: LOST > DISABLED (platform) > DISABLED (organization) > PAUSED.
 DISABLED = "disabled"
-#: What `403 messages_disabled` says, per scope, in the three languages the shells use (the API
-#: message is the zh-Hans one; every shell words the code from its own catalogue).
-MESSAGES_DISABLED_TEXT = {
-    "organization": {"zh-Hans": f"该组织已停用 {MESSAGES_NAME}：会话暂时无法查看或发送，所有记录都会保留",
-                     "zh-Hant": f"該組織已停用 {MESSAGES_NAME}：會話暫時無法查看或傳送，所有記錄都會保留",
-                     "en": f"{MESSAGES_NAME} is turned off for this organization: its conversations can't be read or "
-                           "written for now. Nothing is deleted."},
-    "platform": {"zh-Hans": f"{MESSAGES_NAME} 已在平台停用：会话暂时无法查看或发送，所有记录都会保留",
-                 "zh-Hant": f"{MESSAGES_NAME} 已在平台停用：會話暫時無法查看或傳送，所有記錄都會保留",
-                 "en": f"{MESSAGES_NAME} is turned off on the platform: conversations can't be read or written for now. "
-                       "Nothing is deleted."},
-}
-#: What `409 organization_unavailable` says for a conversation of a frozen organization, or one
-#: deleted and still recoverable (G2).
-ORGANIZATION_UNAVAILABLE_TEXT = {"zh-Hans": "该组织当前不可用，会话已暂停",
-                                 "zh-Hant": "該組織目前不可用，會話已暫停",
-                                 "en": "This organization is unavailable right now; its conversations are paused."}
-
-
 def messages_disabled_refusal(organization_id: str | None, scope: str) -> ServiceError:
     """`403 messages_disabled`: Synwevo Message is switched off for the conversation's organization
-    (`scope` organization) or platform-wide (`scope` platform). Only a member is ever told."""
-    return ServiceError(403, "messages_disabled", MESSAGES_DISABLED_TEXT[scope]["zh-Hans"],
-                        {"organization_id": organization_id, "app_id": MESSAGES_APP_ID, "scope": scope})
+    (`scope` organization) or platform-wide (`scope` platform). Only a member is ever told. Two
+    literal sentences: every shell's catalogue check (CI-83) holds them to their three languages."""
+    detail = {"organization_id": organization_id, "app_id": MESSAGES_APP_ID, "scope": scope}
+    if scope == "platform":
+        return ServiceError(403, "messages_disabled", "Synwevo Message 已在平台停用", detail)
+    return ServiceError(403, "messages_disabled", "该组织已停用 Synwevo Message，相关会话暂时不可用", detail)
 
 
 def organization_unavailable_refusal(organization_id: str | None) -> ServiceError:
     """`409 organization_unavailable` (the code and status every organization gate already uses):
-    the organization is frozen, or deleted and still recoverable. Its conversations stay as they
-    are and come back with it."""
-    return ServiceError(409, "organization_unavailable", ORGANIZATION_UNAVAILABLE_TEXT["zh-Hans"],
-                        {"organization_id": organization_id})
+    the organization is frozen, or deleted and still recoverable (G2). Its conversations stay as
+    they are and come back with it."""
+    return ServiceError(409, "organization_unavailable", "该组织当前不可用，会话已暂停", {"organization_id": organization_id})
 
 
 class Closure(NamedTuple):
@@ -907,6 +889,7 @@ class Messaging:
             raise ServiceError(409, "archived", "已归档的群不能修改公告")
         text = (str(text).strip()[:MAX_ANNOUNCEMENT] if text is not None else "") or None
         with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
             t.execute("UPDATE conversations SET announcement=?, announcement_by=?, announcement_at=?, updated_at=? WHERE id=?",
                       (text, uid if text else None, now() if text else None, now(), cid))
             self._system(t, cid, uid, {"event": "announcement", "cleared": text is None})
@@ -928,6 +911,7 @@ class Messaging:
             image = canonical_avatar(image_base64)
         ts = now()
         with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
             if image is None:
                 if not t.execute("DELETE FROM conversation_avatars WHERE conversation_id=?", (cid,)).rowcount:
                     raise ServiceError(404, "no_avatar", "这个群还没有头像")
@@ -1059,6 +1043,7 @@ class Messaging:
         added = []
         ts = now()
         with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
             count = t.execute("SELECT COUNT(*) AS n FROM conversation_members WHERE conversation_id=? AND left_at IS NULL", (cid,)).fetchone()["n"]
             for mid in dict.fromkeys(member_ids or []):
                 self._org_member(conv["organization_id"], mid)
@@ -1647,8 +1632,14 @@ class Messaging:
         body = (body or "").replace("\r\n", "\n").strip()
         if not body or len(body) > MAX_BODY:
             raise ServiceError(400, "invalid_field", f"消息需要 1–{MAX_BODY} 个字符", {"field": "body", "limit": MAX_BODY})
-        self.store.execute("UPDATE messages SET body=?, edited_at=? WHERE id=?", (body, now(), mid))
-        stored = dict(self.store.one("SELECT * FROM messages WHERE id=?", (mid,)))
+        with self.store.tx() as t:
+            # under the writer lock (CR-050): the conversation still open — a switch-off or a freeze may
+            # have committed since `_member` — and the message still there: a recall or a removal that
+            # landed meanwhile wins, its words are not put back
+            self._still_open(conv)
+            if not t.execute("UPDATE messages SET body=?, edited_at=? WHERE id=? AND deleted_at IS NULL", (body, now(), mid)).rowcount:
+                raise ServiceError(409, "already_gone", "这条消息已经撤回或删除")
+            stored = dict(t.execute("SELECT * FROM messages WHERE id=?", (mid,)).fetchone())
         self._publish_updated(stored, self._reactions_for([mid]))
         return self._message_out(stored, self._reactions_for([mid]), viewer=uid)
 
@@ -1772,15 +1763,18 @@ class Messaging:
             self._guard_dm(conv, uid)
             convs.append(conv)
         origin = json.dumps({"message_id": src["id"], "conversation_id": src["conversation_id"], "sender_id": src["sender_id"]})
-        results = []
-        for n, conv in enumerate(convs, start=1):
-            cid = conv["id"]
-            per_client = f"{client_id}-{n}" if client_id else None
-            ts = now()
-            with self.store.tx() as t:
-                # the source's words must not leave a conversation closed meanwhile, nor land in one
-                self._still_open(src_conv)
+        results, published = [], []
+        with self.store.tx() as t:
+            # One writer transaction for every target (B3): the source's words must not leave a
+            # conversation closed meanwhile, nor land in one — every target is checked again under the
+            # lock before anything is written, so a refusal leaves nothing half-done.
+            self._still_open(src_conv)
+            for conv in convs:
                 self._still_open(conv)
+            for n, conv in enumerate(convs, start=1):
+                cid = conv["id"]
+                per_client = f"{client_id}-{n}" if client_id else None
+                ts = now()
                 if per_client:
                     dup = t.execute("SELECT * FROM messages WHERE conversation_id=? AND sender_id=? AND client_id=?", (cid, uid, per_client)).fetchone()
                     if dup:
@@ -1801,8 +1795,10 @@ class Messaging:
                 t.execute("UPDATE conversations SET last_seq=?, last_message_at=?, updated_at=? WHERE id=?", (seq, ts, ts, cid))
                 t.execute("UPDATE conversation_members SET last_read_seq=?, last_read_at=?, marked_unread=0, updated_at=? WHERE conversation_id=? AND user_id=?", (seq, ts, ts, cid, uid))
                 stored = dict(t.execute("SELECT * FROM messages WHERE id=?", (new_mid,)).fetchone())
+                published.append((cid, stored))
+                results.append({"conversation_id": cid, "message": self._message_out(stored, viewer=uid), "created": True})
+        for cid, stored in published:
             self._publish_message(cid, stored, "message")
-            results.append({"conversation_id": cid, "message": self._message_out(stored, viewer=uid), "created": True})
         return results
 
     def react(self, mid: str, uid: str, emoji: str, on: bool = True) -> dict:
@@ -1816,9 +1812,19 @@ class Messaging:
             raise ServiceError(404, "no_message", "找不到该消息")
         if on:
             self._guard_dm(conv, uid)        # adding a reaction reaches the other side; taking one back does not
-            self.store.execute("INSERT OR IGNORE INTO message_reactions (message_id,user_id,emoji,created_at) VALUES (?,?,?,?)", (mid, uid, emoji, now()))
-        else:
-            self.store.execute("DELETE FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?", (mid, uid, emoji))
+        with self.store.tx() as t:
+            # under the writer lock (CR-050): the conversation still open, and the message still there —
+            # a reaction cannot carry `deleted_at IS NULL` itself (it is its own row), so the message is
+            # read again here, where nothing can change it meanwhile
+            self._still_open(conv)
+            current = t.execute("SELECT * FROM messages WHERE id=? AND deleted_at IS NULL", (mid,)).fetchone()
+            if not current:
+                raise ServiceError(409, "already_gone", "这条消息已经撤回或删除")
+            m = dict(current)
+            if on:
+                t.execute("INSERT OR IGNORE INTO message_reactions (message_id,user_id,emoji,created_at) VALUES (?,?,?,?)", (mid, uid, emoji, now()))
+            else:
+                t.execute("DELETE FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?", (mid, uid, emoji))
         self._publish_updated(dict(m), self._reactions_for([mid]))
         return self._message_out(dict(m), self._reactions_for([mid]), viewer=uid)
 
@@ -1928,9 +1934,12 @@ class Messaging:
             raise ServiceError(400, "malware_detected", "该文件此前已被判定为恶意内容，已拒绝")
         blob = self.store.put_blob(data)
         aid = new_id("att")
-        self.store.insert("message_attachments", {"id": aid, "conversation_id": cid, "message_id": None, "uploader_id": uid, "filename": filename[:200] or "file",
-                                                  "size": len(data), "blob": blob, "content_type": ctype, "scan": json.dumps(scan or {}, ensure_ascii=False),
-                                                  "status": "accepted", "created_at": now(), "expires_at": now() + ATTACHMENT_UNUSED_S, "duration_ms": duration_ms})
+        with self.store.tx() as t:
+            self._still_open(conv)            # again under the writer lock: a switch-off or a freeze may have committed since
+            t.execute("INSERT INTO message_attachments (id,conversation_id,message_id,uploader_id,filename,size,blob,content_type,scan,status,created_at,expires_at,duration_ms) "
+                      "VALUES (?,?,NULL,?,?,?,?,?,?,'accepted',?,?,?)",
+                      (aid, cid, uid, filename[:200] or "file", len(data), blob, ctype, json.dumps(scan or {}, ensure_ascii=False),
+                       now(), now() + ATTACHMENT_UNUSED_S, duration_ms))
         out = self._attachment_out({"id": aid, "filename": filename[:200] or "file", "size": len(data), "content_type": ctype, "duration_ms": duration_ms})
         out["scan"] = scan
         return out

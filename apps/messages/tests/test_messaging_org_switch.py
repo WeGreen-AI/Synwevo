@@ -226,15 +226,17 @@ def test_the_switch_refuses_what_it_does_not_switch(org):
 
 # ---------------------------------------------------------------- the race
 def test_a_write_that_passed_its_checks_before_the_switch_off_does_not_land_after_it(org):
-    """The in-transaction re-check: send, forward (its source and its target), open_dm and
-    create_group re-read the switch under the writer lock. FIXTURE: the switch-off commits between
-    the call's own checks and its transaction, from a patched step of the call; every patch is put
+    """The in-transaction re-check: send, forward (its source and every target, in one writer
+    transaction), open_dm, create_group, edit, react, add_members, set_announcement, set_avatar and
+    attach re-read the switch under the writer lock. FIXTURE: the switch-off commits between the
+    call's own checks and its transaction, from a patched step of the call; every patch is put
     back with setattr(original)."""
     c = org
     w = _world(c)
     store = c.ident.store
     svc = Messaging(store, c.ident)
-    counts = lambda: tuple(store.one(f"SELECT COUNT(*) AS n FROM {t}")["n"] for t in ("messages", "conversations", "conversation_members"))  # noqa: E731
+    counts = lambda: (_rows(store, [w.g, w.dm, w.gb]), store.all("SELECT * FROM message_reactions ORDER BY message_id, user_id, emoji"),  # noqa: E731
+                      store.all("SELECT conversation_id, updated_at FROM conversation_avatars ORDER BY conversation_id"))
 
     def switching_off(name, when=lambda *args: True):
         original = getattr(Messaging, name)
@@ -256,6 +258,16 @@ def test_a_write_that_passed_its_checks_before_the_switch_off_does_not_land_afte
         ("open_dm", "_guard_dm", lambda *a: True, lambda: svc.open_dm(w.a, w.ann, cid_user)),
         ("create_group", "_org_member", lambda oid, uid: uid == w.ben,
          lambda: svc.create_group(w.a, w.ann, name="raced group", member_ids=[w.ben])),
+        ("edit", "_guard_dm", lambda *a: True, lambda: svc.edit(w.m1, w.ann, "edited after the switch-off")),
+        ("react", "_guard_dm", lambda *a: True, lambda: svc.react(w.m1, w.ann, "👍")),
+        ("add_members", "_manager", lambda *a: True, lambda: svc.add_members(w.g, w.ann, [cid_user])),
+        ("set_announcement", "_manager", lambda *a: True, lambda: svc.set_announcement(w.g, w.ann, "raced announcement")),
+        ("set_avatar", "_manager", lambda *a: True, lambda: svc.set_avatar(w.g, w.ann, None)),
+        ("attach", "_guard_dm", lambda *a: True, lambda: svc.attach(w.g, w.ann, filename="raced.txt", data=b"raced bytes", scan={})),
+        # every target passed its checks (B first, then A); the switch-off lands before the one
+        # writer transaction: nothing reaches B either — a refusal leaves nothing half-done
+        ("forward, two targets", "_guard_dm", lambda *a, _n=[]: (_n.append(1), len(_n) == 2)[1],
+         lambda: svc.forward(w.mb, w.ann, [w.gb, w.g], client_id="b3-race4")),
     ]
     for label, name, when, call in cases:
         before = counts()
@@ -272,7 +284,30 @@ def test_a_write_that_passed_its_checks_before_the_switch_off_does_not_land_afte
         _on(c)
     # the controls: with nothing switched off, each goes through
     assert svc.send(w.g, w.ann, body="not raced", client_id="b3-ctl1")[1] is True
-    assert svc.forward(w.m1, w.ann, [w.gb], client_id="b3-ctl2")[0]["created"] is True
+    assert [x["created"] for x in svc.forward(w.m1, w.ann, [w.gb, w.g], client_id="b3-ctl2")] == [True, True]
+    assert svc.react(w.m1, w.ann, "👍")["reactions"]
+    # CR-050: a recall that lands between the check and the write wins — the edit does not put the
+    # words back, and no reaction lands on a recalled message (409 `already_gone`, nothing written)
+    original = Messaging._guard_dm
+
+    def recalling(self, *args, **kwargs):
+        out = original(self, *args, **kwargs)
+        # FIXTURE: what `recall` leaves on the row, written from the patched step
+        store.execute("UPDATE messages SET deleted_at=?, recalled_at=?, body='' WHERE id=? AND deleted_at IS NULL", (now(), now(), w.m1))
+        return out
+    for call in (lambda: svc.edit(w.m1, w.ann, "put back after the recall"), lambda: svc.react(w.m1, w.ann, "❤️")):
+        store.execute("UPDATE messages SET deleted_at=NULL, recalled_at=NULL, body='alpha invoice in A' WHERE id=?", (w.m1,))  # FIXTURE: the message back
+        before = counts()
+        Messaging._guard_dm = recalling
+        try:
+            with pytest.raises(ServiceError) as e:
+                call()
+        finally:
+            Messaging._guard_dm = original
+        assert (e.value.status, e.value.code) == (409, "already_gone")
+        row = store.one("SELECT body, edited_at, deleted_at FROM messages WHERE id=?", (w.m1,))
+        assert row["body"] == "" and row["edited_at"] is None and row["deleted_at"] is not None
+        assert counts()[1] == before[1]
 
 
 # ---------------------------------------------------------------- project discussions and cards
@@ -423,45 +458,73 @@ def test_moderation_and_the_account_export_go_on_while_disabled(org):
 
 
 # ---------------------------------------------------------------- the stream
-def _stream(c, out: list, *, cursor=None, until=lambda lines: False):
+def _stream(c, out: list, *, cursor=None):
     """One tab's stream through the fixture's client (its event loop serves every tab, as one
-    process does), until `event: end`, `until(lines)` or 200 lines."""
+    process does). The test client hands the body over only once the stream has ended (it does
+    not stream), so what a tab heard is read after `event: end`; what the server did meanwhile is
+    watched on the hub itself (`_wait`)."""
     url = f"{M}/stream" + (f"?last_event_id={cursor}" if cursor is not None else "")
     with c.stream("GET", url) as r:
         assert r.status_code == 200
         for line in r.iter_lines():
             out.append(line)
-            if line.startswith("event: end") or until(out) or len(out) > 200:
+            if line.startswith("event: end") or len(out) > 400:
                 break
 
 
 def _events(lines, kind):
-    return [json.loads(lines[i + 1][len("data: "):]) for i, line in enumerate(lines)
+    return [json.loads(lines[i + 1][len("data: "):]) for i, line in enumerate(list(lines))
             if line == f"event: {kind}" and i + 1 < len(lines) and lines[i + 1].startswith("data: ")]
+
+
+def _wait(pred, deadline_s=10.0) -> bool:
+    """Polls until `pred()` holds, or the deadline passes: no fixed sleeps (the heartbeat is 1 s
+    in these tests, and the CI container is slow and shared)."""
+    end = time.monotonic() + deadline_s
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _announced(hub, uid, since, change) -> bool:
+    """Whether a heartbeat has published the organization event `change` to `uid` since ring id
+    `since` (`publish_once` puts it in the ring, where a reconnecting tab would replay it)."""
+    return any(e.get("type") == "organization" and e.get("change") == change for e in (hub.replay(uid, since) or []))
 
 
 def test_open_tabs_hear_the_switch_once_and_nothing_about_the_disabled_organization(org):
     c = org
     w = _world(c)
-    store, hub = c.ident.store, c.api.state.message_hub
+    store, hub, metrics = c.ident.store, c.api.state.message_hub, c.api.state.messaging_metrics
     import synwevo_messages.routes as mr
     c.sign_in("ann")
     tabs: list[list[str]] = [[], []]
+    heard: list = []
+    start = hub.current_id()
+    passed = lambda: metrics()["stream_events"]  # noqa: E731
+
+    def drained(n_tabs=2):
+        """FIXTURE: a sentinel event about no conversation goes straight through each tab's live
+        loop; once every tab has passed it on, everything published before it has been dealt
+        with by that tab (the loop is sequential) — and the tab is past its hello."""
+        before = passed()
+        hub.publish([w.ann], {"type": "fixture_sentinel"}, ephemeral=True)
+        return _wait(lambda: passed() >= before + n_tabs)
 
     def act():
-        for _ in range(200):                                    # both tabs said hello (their switches are read)
-            if all("event: hello" in tab for tab in tabs):
-                break
-            time.sleep(0.05)
+        heard.append(_wait(lambda: hub.connections_of(w.ann) == 2))     # both tabs subscribed
+        heard.append(drained())                                           # and said hello (their switches are read)
         _off(c)
-        time.sleep(2.5)                                         # at least two heartbeats each
+        heard.append(_wait(lambda: _announced(hub, w.ann, start, "messages_disabled")))   # announced at a heartbeat
         # FIXTURE: events another path would publish into both organizations' conversations
         hub.publish([w.ann], {"type": "message", "conversation_id": w.g, "message": {"seq": 99, "body": "fixture A event"}})
         hub.publish([w.ann], {"type": "message", "conversation_id": w.gb, "message": {"seq": 99, "body": "fixture B event"}})
-        time.sleep(0.5)
+        heard.append(drained())                                           # both tabs decided on them while A was off
         _on(c)
-        time.sleep(2.5)
-        store.execute("UPDATE sessions SET revoked_at=? WHERE user_id=?", (time.time(), w.ann))
+        heard.append(_wait(lambda: _announced(hub, w.ann, start, "messages_enabled")))
+        store.execute("UPDATE sessions SET revoked_at=? WHERE user_id=?", (time.time(), w.ann))   # the next heartbeat ends both
     original = mr.HEARTBEAT_S
     mr.HEARTBEAT_S = 1
     try:
@@ -470,12 +533,14 @@ def test_open_tabs_hear_the_switch_once_and_nothing_about_the_disabled_organizat
             t.start()
         actor = threading.Thread(target=act, daemon=True)
         actor.start()
-        actor.join(30)
+        actor.join(60)
         for t in threads:
             t.join(15)
     finally:
         mr.HEARTBEAT_S = original
+    assert heard == [True, True, True, True, True], heard
     for lines in tabs:
+        assert "event: hello" in lines, lines
         changes = [(e["organization_id"], e["change"], e["scope"]) for e in _events(lines, "organization")]
         assert changes == [(w.a, "messages_disabled", "organization"), (w.a, "messages_enabled", "organization")], lines
         bodies = [e["message"]["body"] for e in _events(lines, "message")]
@@ -497,14 +562,17 @@ def test_a_reconnecting_tab_is_not_replayed_the_disabled_organizations_events(or
     import synwevo_messages.routes as mr
     original = mr.HEARTBEAT_S
     mr.HEARTBEAT_S = 1
-    # a stop for the stream should the replay not come (the next heartbeat after the revocation ends it)
-    stop = threading.Timer(5, lambda: c.ident.store.execute("UPDATE sessions SET revoked_at=? WHERE user_id=?", (time.time(), w.ann)))
-    stop.start()
     try:
-        _stream(c, lines, cursor=cursor, until=lambda out: any("ring B" in x for x in out))
+        tab = threading.Thread(target=_stream, args=(c, lines), kwargs={"cursor": cursor}, daemon=True)
+        tab.start()
+        # the replay is written before the live loop starts; the session revoked once the tab is
+        # subscribed ends the stream at its first heartbeat
+        assert _wait(lambda: hub.connections_of(w.ann) == 1)
+        c.ident.store.execute("UPDATE sessions SET revoked_at=? WHERE user_id=?", (time.time(), w.ann))
+        tab.join(15)
     finally:
-        stop.cancel()
         mr.HEARTBEAT_S = original
+    assert "event: end" in lines, lines
     bodies = [e["message"]["body"] for e in _events(lines, "message")]
     assert "ring B" in bodies and "ring A" not in bodies
 

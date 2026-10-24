@@ -423,6 +423,10 @@ export const messages = {
   "没有可显示的卡片": { en: "There is no card to show", "zh-Hant": "沒有可顯示的卡片" },
   "个人工作空间的项目没有组织会话；复制到组织工作空间后才能讨论": { en: "Projects in a personal workspace have no organization conversation. Copy the project to an organization workspace to discuss it", "zh-Hant": "個人工作空間的專案沒有組織會話；複製到組織工作空間後才能討論" },
   "该组织当前不可用": { en: "This organization is currently unavailable", "zh-Hant": "該組織目前無法使用" },
+  // B3: Synwevo Message switched off for an organization or platform-wide; an organization frozen or deleted-but-recoverable (G2)
+  "该组织已停用 Synwevo Message，相关会话暂时不可用": { en: "Synwevo Message is turned off for this organization, so its conversations are unavailable for now", "zh-Hant": "該組織已停用 Synwevo Message，相關會話暫時無法使用" },
+  "Synwevo Message 已在平台停用": { en: "Synwevo Message is turned off on the platform", "zh-Hant": "Synwevo Message 已在平台停用" },
+  "该组织当前不可用，会话已暂停": { en: "This organization is unavailable right now, so its conversations are paused", "zh-Hant": "該組織目前無法使用，會話已暫停" },
   "这个讨论已归档": { en: "This discussion is archived", "zh-Hant": "這個討論已封存" },
   "项目所在的工作空间当前不可用，讨论已暂停": { en: "The project's workspace is unavailable right now, so its discussion is paused", "zh-Hant": "專案所在的工作空間目前無法使用，討論已暫停" },
   "发出超过 {n} 秒的消息不能再撤回，仍可以「删除（仅自己）」": { en: "Messages older than {n} seconds can no longer be recalled; you can still delete them for yourself", "zh-Hant": "發出超過 {n} 秒的訊息不能再撤回，仍可以「刪除（僅自己）」" },
