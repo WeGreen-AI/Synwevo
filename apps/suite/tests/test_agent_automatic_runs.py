@@ -32,8 +32,20 @@ def accept_terms(store, uid):
     TermsAcceptances(store).record_paid_use(uid, context="fixture:agent_setup")
 
 
-def send(g, text="fixture question", *, via="ui", key=None, user=None, **extra):
+def displayed(g, user=None):
+    """What the open page displays beside the composer and repeats on a send (AD-1, addendum-2
+    S1): ``seen_*`` from the ``run`` of agent.billing.status, read as the page reads it (the same
+    handler, without a run record); nothing when the page has no price to show."""
+    run = g.agent.caps.inspect("agent.billing.status", {}, user_id=(user or g.user)["id"]).get("run")
+    return {} if not run else {"seen_price_id": run["price_id"], "seen_route_version": run["route_version"]}
+
+
+def send(g, text="fixture question", *, via="ui", key=None, user=None, shown=True, **extra):
+    """A send. From the page (``via=ui``) without an explicit authorization it carries the price
+    the page displays, as the page does, unless ``shown=False`` or the test names ``seen_*``."""
     payload = {"conversation_id": g.conversation["id"], "text": text, **extra}
+    if shown and via == "ui" and not {"quote_id", "consent_id", "seen_price_id", "seen_route_version"} & set(extra):
+        payload.update(displayed(g, user))
     return g.agent.caps.invoke("agent.turn.start", payload, user_id=(user or g.user)["id"], via=via,
                                idempotency_key=key or uuid.uuid4().hex, **({"scopes": frozenset()} if via == "api" else {}))
 
@@ -507,17 +519,48 @@ def test_a_send_carrying_the_price_the_page_showed_starts_at_that_price(paid):
     assert quotes_of(g)[0]["accepted_turn_id"] == out["turn_id"]
     assert terms["sale"]["price_id"] == run["price_id"] and terms["route"]["version"] == run["route_version"]
     assert str(terms["budget"]) == run["maximum"] and str(terms["per_call_hold"]) == run["per_call_hold"]
-    # Only one of the two fields: the one present is compared.
-    g.store.execute("UPDATE agent_turns SET status='succeeded'")
-    assert send(g, "fixture question 2", seen_price_id=run["price_id"])["output"]["turn_id"]
 
 
-def test_a_send_without_the_shown_price_is_admitted_as_before(paid):
-    """An old cached page sends neither field: no check (backward compatible)."""
+@pytest.mark.parametrize("partial", [{}, "price_id only", "route_version only"])
+def test_a_send_without_the_shown_price_is_refused_with_the_current_one_and_nothing_stored(paid, partial):
+    """addendum-2 S1: no deployed page reaches the automatic path without them (the earlier
+    bundle always sent quote_id/consent_id), so a send naming no displayed price is one the page
+    sent while it showed none (loading, unreadable, no run): refused, never run at a price unseen."""
     g = paid
     accept_terms(g.store, g.user["id"])
-    out = send(g)["output"]
-    assert out["turn_id"] and len(quotes_of(g)) == 1
+    run = shown_run(g)
+    fields = {} if partial == {} else ({"seen_price_id": run["price_id"]} if partial == "price_id only"
+                                       else {"seen_route_version": run["route_version"]})
+    err = refused(send, g, shown=False, **fields)
+    hold = int(g.quotes.offer()["per_call_hold"])
+    assert (err.status, err.code, err.message) == (409, "billing_price_changed", STALE_PRICE)
+    assert err.detail["current"]["maximum"] == str(hold * 12) == run["maximum"], "带回页面应显示的最高金额"
+    assert (err.detail["current"]["price_id"], err.detail["current"]["per_call_hold"]) == (run["price_id"], run["per_call_hold"])
+    nothing_stored(g)
+    assert g.seen == []
+    # The page reads the price, shows it, and the person sends again: it starts at that price.
+    out = send(g, **seen(shown_run(g)))["output"]
+    assert quotes_of(g)[0]["accepted_turn_id"] == out["turn_id"]
+
+
+def test_a_page_that_opened_while_the_route_was_unusable_cannot_send_at_a_price_it_never_showed(paid):
+    """int-money-2: the route lapsed, so billing.status has no run and the page shows no maximum;
+    the owner renews it (a new version) before the page re-reads; a send then names no price."""
+    from dataclasses import replace
+    g = paid
+    accept_terms(g.store, g.user["id"])
+    g.route_holder[0] = replace(g.route, valid_until=1)
+    status = g.agent.caps.invoke("agent.billing.status", {}, user_id=g.user["id"])["output"]
+    assert status["available"] is False and status.get("run") is None
+    assert displayed(g) == {}, "页面此时没有可显示的价格"
+    g.route_holder[0] = replace(g.route, version="fixture-route-renewed")
+    err = refused(send, g, shown=False)     # the page still shows no price: it names none
+    assert (err.status, err.code) == (409, "billing_price_changed")
+    assert err.detail["current"]["route_version"] == "fixture-route-renewed"
+    nothing_stored(g)
+    out = send(g)["output"]                 # after the re-read the page shows the price and sends it
+    assert json.loads(quotes_of(g)[0]["terms_json"])["route"]["version"] == "fixture-route-renewed"
+    assert quotes_of(g)[0]["accepted_turn_id"] == out["turn_id"]
 
 
 def test_the_shown_price_is_part_of_the_automatic_path_only(paid):
@@ -687,3 +730,4 @@ def test_other_callers_on_the_legacy_path_keep_recording_the_versions_at_the_pai
     out = send(g, via=via, quote_id=q["id"])["output"]
     added = [r for r in TermsAcceptances(g.store).history(uid) if r["context"] == "paid_run:" + out["turn_id"]]
     assert {(r["document"], r["version"]) for r in added} == {(d, v) for d, (v, _) in DOCUMENTS.items()}
+

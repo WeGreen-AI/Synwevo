@@ -264,14 +264,14 @@ class RunQuotes:
     def shown_price(seen: dict | None, route, sale, bound: dict) -> None:
         """The price the page showed is the price the send runs at (AD-1). ``seen`` holds the sale
         price id and route version the person's page displayed (agent.billing.status ``run``).
-        When either is given and differs from what this run would bind, refuse with the current
-        figures (``price_changed``; the admission rolls back, nothing is stored) so the page shows
-        them before the person sends again. A page that sends neither (an older cached bundle)
-        is not checked."""
-        if not seen:
-            return
-        price_id, version = seen.get("price_id"), seen.get("route_version")
-        if (price_id is None or price_id == sale.price_id) and (version is None or version == route.version):
+        Both are required (addendum-2 S1): no page in use reaches this path without them (the
+        earlier bundle always sent ``quote_id``/``consent_id``), so a send naming no displayed
+        price was sent while the page showed none (loading, unreadable, no ``run``). When either
+        is missing or differs from what this run would bind, refuse with the current figures
+        (``price_changed``; the admission rolls back, nothing is stored) so the page shows them
+        before the person sends again."""
+        seen = seen or {}
+        if seen.get("price_id") == sale.price_id and seen.get("route_version") == route.version:
             return
         error = BillingError("price_changed")
         error.detail = {"current": {"price_id": sale.price_id, "route_version": route.version,

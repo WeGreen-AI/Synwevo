@@ -78,17 +78,19 @@ exactly with `fen_to_units`; `suggested` is null for a non-CNY sale unit) saved 
 change never does. Both operations are a person's own: unreachable by machine credentials, and
 `agent.terms.accept` refuses every `via` but `ui`.
 
-**The price the page showed is the price the send runs at (AD-1).** The page sends back the
-`run.price_id` and `run.route_version` it displayed as `agent.turn.start`
-`seen_price_id`/`seen_route_version` (strings, at most 200 characters; both omitted when `run` is
-null). On the automatic path, when either field is present and differs from the price id or route
-version the automatic issue would bind at admission (`RunQuotes.shown_price`, inside the admission
+**The price the page showed is the price the send runs at (AD-1, addendum-2 S1).** The page sends
+back the `run.price_id` and `run.route_version` it displayed as `agent.turn.start`
+`seen_price_id`/`seen_route_version` (strings, at most 200 characters). On the automatic path both
+are **required**: no page in use reaches it without them (the earlier bundle always sent
+`quote_id`/`consent_id`), so a send naming no displayed price was sent while the page showed none
+(status loading, unreadable, or `run` null). When either field is absent or differs from the price
+id or route version the automatic issue would bind at admission (`RunQuotes.shown_price`, inside the admission
 transaction, after the bound is computed), the send is refused with 409 `billing_price_changed`
 and the message 价格或模型已更新，本次没有发送，也没有扣费。请查看新价格后重新发送。, with detail
 `{"current": {"price_id", "route_version", "maximum", "per_call_hold", "unit": {code, scale}}}`
 (`maximum` is the bound this person would get, their cap included). Nothing is stored: no message,
 turn or authorization. The page then shows the new price and maximum and offers to send again at
-it. A send without either field (an older cached page) is not checked, as before. The fields
+it. The fields
 belong to the automatic path: together with `quote_id` or `consent_id` they are
 `billing_authorization_conflict`; on any other caller's path they change nothing.
 

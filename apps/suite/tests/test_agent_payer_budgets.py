@@ -38,8 +38,9 @@ def test_an_automatic_send_reads_the_personal_limit_policy_at_admission_and_stor
     TermsAcceptances(g.store).record_paid_use(g.user['id'],context='fixture:agent_setup')   # FIXTURE: the start step was done
     if state=='disabled':
         update(g,{**body(1),'enabled':False})
-    with pytest.raises(ServiceError) as caught:
-        g.suite.caps.invoke('agent.turn.start',{'conversation_id':g.conversation['id'],'text':'Read my forms'},
+    from .test_agent_automatic_runs import displayed
+    with pytest.raises(ServiceError) as caught:   # the page sends the price it displays (addendum-2 S1)
+        g.suite.caps.invoke('agent.turn.start',{'conversation_id':g.conversation['id'],'text':'Read my forms',**displayed(g)},
                             user_id=g.user['id'],via='ui',idempotency_key='auto-no-limit')
     assert (caught.value.status,caught.value.code)==(409,code)
     assert caught.value.message=='本次回答未能开始，消息没有发送，也没有扣费'
