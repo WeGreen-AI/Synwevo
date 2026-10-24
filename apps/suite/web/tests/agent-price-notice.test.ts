@@ -4,8 +4,12 @@
  *  localStorage behind try/catch, and it renders even when storage throws. Fixtures only. */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import { transformSync } from 'rolldown/utils';
 import { testServer } from './_vite.ts';
 import React from 'react';
+import * as jsxRuntime from 'react/jsx-runtime';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -54,8 +58,9 @@ test('the notice says prices changed, lists each changed figure and offers only 
 
 test('a dismissed notice stays hidden for the same price pair only, and storage failures never hide or break it', () => {
   const storage = memory();
-  const key = prices.priceNoticeKey('usr_fixture', 'price_fixture_1', 'price_fixture_2');
-  assert.equal(key, 'synwevo.agent.price_notice.usr_fixture.price_fixture_1:price_fixture_2');
+  const key = prices.priceNoticeKey('usr_fixture', notice.previous, current);
+  // What the person pays on each side (W9): the sale price id and one call's hold, never the route version.
+  assert.equal(key, 'synwevo.agent.price_notice.usr_fixture.price_fixture_1~50000:price_fixture_2~60000');
   assert.equal(prices.priceNoticeDismissed(key, storage), false);
   prices.dismissPriceNotice(key, storage);
   assert.equal(prices.priceNoticeDismissed(key, storage), true);
@@ -75,4 +80,58 @@ test('a dismissed notice stays hidden for the same price pair only, and storage 
   // Without the current offer the sentence still shows (no list), keyed on the previous price alone.
   const bare = render('zh-Hant', { offer: null });
   assert.ok(bare.includes('價格已更新') && !bare.includes('<del>'), bare);
+});
+
+/** PriceNotice compiled with fixture hooks, so its own "Got it" handler stores the dismissal. */
+async function compiledNotice(initialProps: any) {
+  let index = 0, props = initialProps, tree: any;
+  const values: any[] = [];
+  const hooks = { useState: (initial: any) => { const i = index++; if (!(i in values)) values[i] = initial;
+    return [values[i], (next: any) => { values[i] = typeof next === 'function' ? next(values[i]) : next; }]; } };
+  const code = transformSync('PriceNotice.tsx', readFileSync(new URL('../src/apps/agent/PriceNotice.tsx', import.meta.url), 'utf8'),
+    { target: 'es2022', jsx: { runtime: 'automatic' } });
+  assert.equal(code.errors.length, 0);
+  const context = vm.createContext({ JSON, globalThis: {} });
+  const module = new vm.SourceTextModule(code.code, { context });
+  const parts = await server.ssrLoadModule('/src/apps/agent/ChatParts.tsx');
+  const imports: Record<string, any> = { react: { ...React, ...hooks }, 'react/jsx-runtime': jsxRuntime,
+    './ChatParts': { ...parts, useChatText: () => ({ c: (key: string) => key }) } };
+  await module.link(async (name) => {
+    const members = imports[name] ?? await server.ssrLoadModule(name.startsWith('.') ? `/src/apps/agent/${name}` : name);
+    return new vm.SyntheticModule(Object.keys(members), function () {
+      for (const [key, value] of Object.entries(members)) this.setExport(key, value);
+    }, { context, identifier: name });
+  });
+  await module.evaluate();
+  const fn = (module.namespace as any).default;
+  const render = (next = {}) => { props = { ...props, ...next }; index = 0; tree = fn(props); return tree; };
+  render();
+  const button = () => { const find = (node: any): any => !node || typeof node !== 'object' ? null : Array.isArray(node)
+    ? node.map(find).find(Boolean) ?? null : node.type === 'button' ? node : find(node.props?.children); return find(tree); };
+  return { render, tree: () => tree, button };
+}
+
+test('W9: the dismissal follows what the person pays (sale price id, per-call hold, the server price key), not the route version', async () => {
+  const storage = memory();
+  // FIXTURE: the person dismisses a notice whose only difference is the route version (v1 -> v2, same sale price, hold 60000) ...
+  const renewal = { previous: { ...current, route_version: 'fixture-v1' }, previous_run_at: 1_700_000_000 };
+  const h = await compiledNotice({ notice: renewal, offer: current, userId: 'usr_fixture', storage });
+  h.button().props.onClick();
+  assert.equal(h.render(), null, 'dismissed');
+  assert.equal(render('en', { storage, notice: renewal }), '');
+  // ... then an administrator raises the route ceilings: a new route version and a higher per-call hold (and
+  // maximum) at the same sale price id. That is a new price for the person: the notice is shown again.
+  const raised = { ...current, route_version: 'fixture-v3', per_call_hold: '90000' };
+  const later = { previous: { ...current, route_version: 'fixture-v2' }, previous_run_at: 1_700_000_100 };
+  assert.ok(render('en', { storage, notice: later, offer: raised }).includes('Prices have changed'));
+  // A change of the route version alone, with what the person pays unchanged, is the dismissed notice.
+  assert.equal(render('en', { storage, notice: { ...renewal, previous: { ...current, route_version: 'fixture-v0' } },
+    offer: { ...current, route_version: 'fixture-v9' } }), '');
+  // The server's price key (addendum-2 S2: rates, model and route as well) is part of it when it reports one:
+  // the same sale price id and hold with another model or rates is shown again.
+  const keyed = { ...renewal, previous: { ...renewal.previous, price_key: 'pk1:old' } };
+  const k = await compiledNotice({ notice: keyed, offer: current, currentKey: 'pk1:a', userId: 'usr_fixture', storage: memory() });
+  k.button().props.onClick();
+  assert.equal(k.render(), null);
+  assert.ok(k.render({ currentKey: 'pk1:b' }) !== null);
 });

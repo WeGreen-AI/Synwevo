@@ -678,3 +678,14 @@ test('W4: opening the setup step reads agent.setup.get again and shows it loadin
   assert.equal(await h.chat().send('Fixture question'), true, 'consent given there: the send goes straight out');
   h.unmount();
 });
+
+test('W9: the page keys the price notice on the price key of the run it shows', async () => {
+  const prices = await server.ssrLoadModule('/src/apps/agent/PriceNotice.tsx');
+  const previous = { ...fixtureOffer(), route_version: 'fixture-v1', price_id: 'price_fixture_1', per_call_hold: '30', price_key: 'pk1:previous' };
+  const h = await appFixture({ status: fixtureStatus({ run: { ...fixtureStatus().run, price_key: 'pk1:current' },
+    price_notice: { previous, previous_run_at: 1_700_000_000 } }) });
+  const notices = all(h.chat().aside).filter((el) => el.type === prices.default);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].props.currentKey, 'pk1:current');
+  h.unmount();
+});

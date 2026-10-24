@@ -384,7 +384,7 @@ function AgentApp() {
             maximum={money && <TurnMaximum maximum={maximum} />}
             hint={money ? t(chatCopy.turnMaximumHint[0]) : undefined}
             aside={money && <>
-              {priceNotice != null && <PriceNotice notice={priceNotice} offer={offer} userId={userId} />}
+              {priceNotice != null && <PriceNotice notice={priceNotice} offer={offer} currentKey={status?.run?.price_key} userId={userId} />}
               {setupOpen && <AgentSetup setup={setup} organizationPayer={organizationPayer} hasDraft={!!draft?.text}
                 maximum={maximum && "amount" in maximum && maximum.key === "turnMaximum" ? { amount: maximum.amount, unit: maximum.unit } : null}
                 siteUrl={auth?.site_url} read={readSetupFact} write={write}

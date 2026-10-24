@@ -144,8 +144,11 @@ the cost line under each answer).
   pricing of the person's last answer) differs from the current offer, the chat shows "Prices have
   changed. Answers from now on are charged at the new price." with what changed (model, route,
   price version, unit, each rate per million tokens, per-call hold) and "Got it". It never blocks a
-  send. Its dismissal is remembered per viewer in `localStorage` for the (previous, current) price
-  pair, every access inside `try/catch`, so blocked storage only means it shows again. An answer in
+  send. Its dismissal is remembered per viewer in `localStorage` for what the person pays on each
+  side — the sale price id and one call's hold, plus the price key when the server reports it
+  (`price_notice.previous.price_key`, `run.price_key`), never the route version — so a raised hold
+  at the same sale price id is shown again (addendum-2 W9); every access is inside `try/catch`, so
+  blocked storage only means it shows again. An answer in
   progress when a price changes stops before its next model call (`price_changed`), calls already
   made are settled at the earlier price, and its next step is "send again at the new price".
 * **Legacy quotes and continuing consents** (`agent.turn.quote`, `agent.quote.*`, `agent.consent.*`)
