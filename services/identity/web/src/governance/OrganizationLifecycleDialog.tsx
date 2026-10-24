@@ -41,6 +41,15 @@ export const LIFECYCLE_WARNINGS: Record<LifecycleAction, string> = {
   unfreeze: "解冻不撤销任何东西：组织按原有成员关系恢复可用；之前撤销的会话、令牌和邀请不会恢复。",
   recover: "恢复不撤销任何东西：组织回到删除前的状态；之前撤销的会话、令牌和邀请不会恢复。",
 };
+/** G2 (B3): what each action does to the organization's Synwevo Message conversations — paused
+ *  while it is frozen or deleted and still recoverable (`409 organization_unavailable`), lost once
+ *  the recovery window is over, back as they were on unfreeze or recovery. */
+export const LIFECYCLE_MESSAGES_NOTES: Record<LifecycleAction, string> = {
+  freeze: "冻结期间，组织在 Synwevo Message 中的会话全部暂停：成员看到「该组织当前不可用，会话已暂停」，会话和消息原样保留，解冻后恢复。",
+  delete: "删除后，组织在 Synwevo Message 中的会话在恢复期内暂停，恢复后原样回来；恢复期结束后，成员不再看到这些会话。",
+  unfreeze: "解冻后，组织在 Synwevo Message 中的会话恢复可用，消息和成员原样保留。",
+  recover: "恢复后，组织在 Synwevo Message 中的会话随组织恢复可用；如果组织仍为冻结状态，会话继续暂停到解冻。",
+};
 export const PLATFORM_NOTE = "此操作由平台执行并写入审计记录；不会给任何平台管理员带来成员身份、资格或业务文档访问。";
 /** The transitions the platform path offers from each status. `recover` is offered for a
  *  deleted organization and disabled once its window has closed (the server refuses it too).
@@ -142,7 +151,8 @@ export function OrganizationLifecycleDialog({ org, action, onClose, onDone }: {
   const previewAgain = () => setRevision((n) => n + 1);
   return <ActionDialog<LifecycleResult> title={title} confirmLabel={title} reason="required" reauthScope="admin" danger={revokes(action)}
     ready={!!plan && confirmed && !busy && !invalid}
-    impact={<><b>{org.name}</b><p>{tr(LIFECYCLE_WARNINGS[action])}</p><p className="small muted">{tr(PLATFORM_NOTE)}</p></>}
+    impact={<><b>{org.name}</b><p>{tr(LIFECYCLE_WARNINGS[action])}</p><p>{tr(LIFECYCLE_MESSAGES_NOTES[action])}</p>
+      <p className="small muted">{tr(PLATFORM_NOTE)}</p></>}
     onClose={onClose} onDone={onDone}
     run={async (reason) => {
       if (!plan || invalid) throw new ApiError(400, "admin_confirmation_required", "");

@@ -112,6 +112,8 @@ test("a freeze and a deletion show every count with its meaning, the warning and
       const html = fullDialog(locale, action);
       assert.ok(html.includes('role="alertdialog"'), `${locale} ${action}: a confirmation dialog`);
       assert.ok(html.includes(tx(locale, dialog.LIFECYCLE_WARNINGS[action])), `${locale} ${action}: the warning\n${html}`);
+      // G2 (B3): what the action does to the organization's Synwevo Message conversations
+      assert.ok(html.includes(tx(locale, dialog.LIFECYCLE_MESSAGES_NOTES[action])), `${locale} ${action}: the Message note\n${html}`);
       assert.ok(html.includes(tx(locale, dialog.PLATFORM_NOTE)), `${locale} ${action}: no membership or content access for the administrator`);
       assert.match(html, new RegExp(`<button type="submit"[^>]*class="btn danger"[^>]*disabled=""[^>]*>${esc(label(locale, action))}</button>`),
         `${locale} ${action}: the confirm label, disabled until the preview is loaded and checked\n${html}`);
@@ -202,7 +204,7 @@ test("every sentence of the dialog and of the tab's lifecycle controls is catalo
   assert.deepEqual(ui.validateMessages(messages.organizationLifecycleMessages), []);
   const src = readFileSync(new URL("../src/governance/OrganizationLifecycleDialog.tsx", import.meta.url), "utf8");
   const sentences = new Set([...src.matchAll(/\btr\("([^"]+)"/g)].map((m) => m[1]));
-  for (const map of [dialog.LIFECYCLE_ACTION_LABELS, dialog.ORGANIZATION_STATUS_LABELS, dialog.LIFECYCLE_WARNINGS]) for (const s of Object.values(map)) sentences.add(s);
+  for (const map of [dialog.LIFECYCLE_ACTION_LABELS, dialog.ORGANIZATION_STATUS_LABELS, dialog.LIFECYCLE_WARNINGS, dialog.LIFECYCLE_MESSAGES_NOTES]) for (const s of Object.values(map)) sentences.add(s);
   for (const [, name, stop, restore] of dialog.IMPACT_ROWS) { sentences.add(name); sentences.add(stop); sentences.add(restore); }
   sentences.add(dialog.PLATFORM_NOTE);
   const tabSrc = readFileSync(new URL("../src/governance/GovernanceTabs.tsx", import.meta.url), "utf8");

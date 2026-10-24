@@ -234,6 +234,131 @@ export const appsMessages = {
   "应用、工作空间或可使用的人已变化，请重新预览影响。": {
     en: "The application, the workspace or the people with access changed. Preview the impact again.",
     "zh-Hant": "應用、工作空間或可使用的人已變更，請重新預覽影響。" },
+  // ---- B3: Synwevo Message per organization — the catalogue row, the organization list
+  // (governance/AppOrganizationsDrawer.tsx) and the change dialog's organization target
+  "{count} 个组织已停用": { en: { one: "Off in {count} organization", other: "Off in {count} organizations" }, "zh-Hant": "{count} 個組織已停用" },
+  "这个应用不按工作空间开通或授权：每个有效账户都可以使用；可以在全平台或按组织启用、停用。": {
+    en: "This application is not enabled or granted per workspace: every live account can use it; it can be turned on or off platform-wide or per organization.",
+    "zh-Hant": "這個應用不按工作空間開通或授權：每個有效帳戶都可以使用；可以在全平台或按組織啟用、停用。" },
+  "按组织管理": { en: "Per organization", "zh-Hant": "按組織管理" },
+  "按组织管理：{p0}": { en: "Per organization: {p0}", "zh-Hant": "按組織管理：{p0}" },
+  "「{app}」的组织": { en: "Organizations for “{app}”", "zh-Hant": "「{app}」的組織" },
+  "每个组织是否启用了这个应用，以及其中的有效成员和未归档的会话数。只显示数量，不显示成员或内容。为一个组织停用不影响其他组织，也不删除任何数据。": {
+    en: "Whether each organization has this application on, with its live members and conversations that are not archived. Only counts are shown, never members or content. Turning it off for one organization does not affect the others and deletes no data.",
+    "zh-Hant": "每個組織是否啟用了這個應用，以及其中的有效成員和未封存的會話數。只顯示數量，不顯示成員或內容。為一個組織停用不影響其他組織，也不刪除任何資料。" },
+  "这个应用目前在全平台停用：全平台的停用优先于这里的设置，为组织启用要等全平台重新启用后才生效。": {
+    en: "This application is off platform-wide right now. The platform-wide switch outranks the settings here: turning it on for an organization takes effect only once it is on platform-wide again.",
+    "zh-Hant": "這個應用目前在全平台停用：全平台的停用優先於這裡的設定，為組織啟用要等全平台重新啟用後才生效。" },
+  "搜索组织": { en: "Search organizations", "zh-Hant": "搜尋組織" },
+  "输入组织名称的一部分，或完整的组织编号。": { en: "Type part of an organization's name, or its full ID.", "zh-Hant": "輸入組織名稱的一部分，或完整的組織編號。" },
+  "正在加载组织…": { en: "Loading organizations…", "zh-Hant": "正在載入組織…" },
+  "组织状态": { en: "Organization status", "zh-Hant": "組織狀態" },
+  "有效成员": { en: "Live members", "zh-Hant": "有效成員" },
+  "未归档的会话": { en: "Conversations not archived", "zh-Hant": "未封存的會話" },
+  "已过恢复期": { en: "Recovery window over", "zh-Hant": "已過恢復期" },
+  "可恢复至 {time}": { en: "Recoverable until {time}", "zh-Hant": "可恢復至 {time}" },
+  "更改于 {time}": { en: "Changed {time}", "zh-Hant": "變更於 {time}" },
+  "组织已删除且过了恢复期，不能为它启用应用。": {
+    en: "The organization was deleted and its recovery window is over, so the application cannot be turned on for it.",
+    "zh-Hant": "組織已刪除且過了恢復期，不能為它啟用應用。" },
+  "为这个组织停用": { en: "Turn off for this organization", "zh-Hant": "為這個組織停用" },
+  "为这个组织启用": { en: "Turn on for this organization", "zh-Hant": "為這個組織啟用" },
+  "停用后，这个组织的成员从下一次请求起不能再读写它在 Synwevo Message 中的会话；其他组织不受影响。不会删除任何数据：会话、消息、附件和举报原样保留。重新启用后一切照旧；停用期间跳过的邮件、推送、卡片和 Agent 发送不会补发。": {
+    en: "Once it is off, the organization's members can no longer read or write its Synwevo Message conversations from their next request on; other organizations are not affected. No data is deleted: conversations, messages, attachments and reports stay as they are. Turning it back on restores everything as it was; mail, push notifications, cards and Agent sends skipped meanwhile are not sent later.",
+    "zh-Hant": "停用後，這個組織的成員從下一次請求起不能再讀寫它在 Synwevo Message 中的會話；其他組織不受影響。不會刪除任何資料：會話、訊息、附件和檢舉原樣保留。重新啟用後一切照舊；停用期間略過的郵件、推播、卡片和 Agent 傳送不會補發。" },
+  "启用后，这个组织的成员重新可以读写它在 Synwevo Message 中的会话，历史、成员和已读位置与停用前一致。停用期间跳过的邮件、推送、卡片和 Agent 发送不会补发。": {
+    en: "Once it is on, the organization's members can read and write its Synwevo Message conversations again, with history, members and read positions as before. Mail, push notifications, cards and Agent sends skipped meanwhile are not sent later.",
+    "zh-Hant": "啟用後，這個組織的成員重新可以讀寫它在 Synwevo Message 中的會話，歷史、成員和已讀位置與停用前一致。停用期間略過的郵件、推播、卡片和 Agent 傳送不會補發。" },
+  "已为「{organization}」停用「{app}」。": { en: "Turned “{app}” off for “{organization}”.", "zh-Hant": "已為「{organization}」停用「{app}」。" },
+  "已为「{organization}」启用「{app}」。": { en: "Turned “{app}” on for “{organization}”.", "zh-Hant": "已為「{organization}」啟用「{app}」。" },
+  "在这个组织：{before} → {after}": { en: "In this organization: {before} → {after}", "zh-Hant": "在這個組織：{before} → {after}" },
+  "预览有效至 {time}。应用或组织变化后必须重新预览。": {
+    en: "Preview valid until {time}. Preview again if the application or the organization changes.",
+    "zh-Hant": "預覽有效至 {time}。應用或組織變更後必須重新預覽。" },
+  // the organization impact: each count, and what it means for a switch-off and a switch-on
+  "组织的有效成员": { en: "Live members of the organization", "zh-Hant": "組織的有效成員" },
+  "从下一次请求起，他们读写这个组织的会话都会被拒绝；成员身份、历史和已读位置保留。": {
+    en: "From their next request on, reading or writing the organization's conversations is refused; memberships, history and read positions are kept.",
+    "zh-Hant": "從下一次請求起，他們讀寫這個組織的會話都會被拒絕；成員身份、歷史和已讀位置保留。" },
+  "从下一次请求起，他们重新可以使用这个组织的会话。": {
+    en: "From their next request on, they can use the organization's conversations again.", "zh-Hant": "從下一次請求起，他們重新可以使用這個組織的會話。" },
+  "有会话的成员": { en: "Members with conversations", "zh-Hant": "有會話的成員" },
+  "这些成员至少在这个组织的一个会话中；会话保留，暂时打不开。": {
+    en: "These members are in at least one of the organization's conversations; the conversations are kept but cannot be opened for now.",
+    "zh-Hant": "這些成員至少在這個組織的一個會話中；會話保留，暫時打不開。" },
+  "这些成员的会话原样回来。": { en: "Their conversations come back as they were.", "zh-Hant": "這些成員的會話原樣回來。" },
+  "将没有可用消息的成员": { en: "Members left without Message", "zh-Hant": "將沒有可用訊息的成員" },
+  "这些成员没有其他可以使用 Synwevo Message 的组织，消息页面只会显示停用说明。": {
+    en: "These members have no other organization where Synwevo Message is on; their Message page will only explain that it is turned off.",
+    "zh-Hant": "這些成員沒有其他可以使用 Synwevo Message 的組織，訊息頁面只會顯示停用說明。" },
+  "这些成员重新可以使用 Synwevo Message。": { en: "These members can use Synwevo Message again.", "zh-Hant": "這些成員重新可以使用 Synwevo Message。" },
+  "这些会话全部暂停，不会删除。": { en: "All of these conversations are paused, not deleted.", "zh-Hant": "這些會話全部暫停，不會刪除。" },
+  "这些会话恢复可用，内容不变。": { en: "These conversations are available again, unchanged.", "zh-Hant": "這些會話恢復可用，內容不變。" },
+  "群聊 {groups} · 私聊 {direct} · 项目讨论 {object}": { en: "Groups {groups} · Direct {direct} · Project discussions {object}", "zh-Hant": "群組 {groups} · 私訊 {direct} · 專案討論 {object}" },
+  "待处理的举报": { en: "Open reports", "zh-Hant": "待處理的檢舉" },
+  "组织管理员仍然可以处理这些举报。": { en: "The organization's administrators can still review these reports.", "zh-Hant": "組織管理員仍然可以處理這些檢舉。" },
+  "举报不受影响。": { en: "Reports are not affected.", "zh-Hant": "檢舉不受影響。" },
+  "待发送的邮件和推送": { en: "Mail and push not yet sent", "zh-Hant": "待傳送的郵件和推播" },
+  "关于这些会话和举报的邮件、推送会被跳过，不会补发；站内通知保留。": {
+    en: "Mail and push notifications about these conversations and reports are skipped and not sent later; in-app notifications stay.",
+    "zh-Hant": "關於這些會話和檢舉的郵件、推播會被略過，不會補發；站內通知保留。" },
+  "停用期间跳过的邮件和推送不会补发。": { en: "Mail and push notifications skipped while it was off are not sent now.", "zh-Hant": "停用期間略過的郵件和推播不會補發。" },
+  "邮件 {email} · 推送 {push}": { en: "Mail {email} · Push {push}", "zh-Hant": "郵件 {email} · 推播 {push}" },
+  "待投递的卡片": { en: "Cards not yet delivered", "zh-Hant": "待投遞的卡片" },
+  "发往这个组织讨论的 Synwevo Docs 卡片会被跳过，不会补发。": {
+    en: "Synwevo Docs cards for the organization's discussions are skipped and not delivered later.", "zh-Hant": "發往這個組織討論的 Synwevo Docs 卡片會被略過，不會補發。" },
+  "停用期间跳过的卡片不会补发。": { en: "Cards skipped while it was off are not delivered now.", "zh-Hant": "停用期間略過的卡片不會補發。" },
+  "已登录的会话": { en: "Signed-in sessions", "zh-Hant": "已登入的工作階段" },
+  "这些会话不会被结束，但之后对这个组织会话的请求会被拒绝；这里统计成员在所有入口的登录会话。": {
+    en: "These sessions are not ended, but their requests for the organization's conversations are refused from now on. This counts the members' sessions on every origin.",
+    "zh-Hant": "這些工作階段不會被結束，但之後對這個組織會話的請求會被拒絕；這裡統計成員在所有入口的登入工作階段。" },
+  "打开的实时连接": { en: "Open live connections", "zh-Hant": "開啟的即時連線" },
+  "无法统计，最迟 25 秒内不再收到该组织事件。": {
+    en: "Cannot be counted; within 25 seconds at most, open pages stop receiving the organization's events.", "zh-Hant": "無法統計，最遲 25 秒內不再收到該組織事件。" },
+  "无法统计；已打开的页面最迟 25 秒内得知已重新启用。": {
+    en: "Cannot be counted; open pages learn within 25 seconds at most that it is back on.", "zh-Hant": "無法統計；已開啟的頁面最遲 25 秒內得知已重新啟用。" },
+  // the Message notes (admin_apps MESSAGES_AWAY_NOTES / MESSAGES_BACK_NOTES), for one organization and platform-wide (G1)
+  "停用期间跳过的邮件、推送、卡片和 Agent 发送不会补发。": {
+    en: "Mail, push notifications, cards and Agent sends skipped while it was off are not sent later.",
+    "zh-Hant": "停用期間略過的郵件、推播、卡片和 Agent 傳送不會補發。" },
+  "会话从成员的下一次请求起回答「Synwevo Message 已停用」；成员关系、历史、已读位置和偏好保留。": {
+    en: "From each member's next request on, conversations answer that Synwevo Message is turned off; memberships, history, read positions and preferences are kept.",
+    "zh-Hant": "會話從成員的下一次請求起回答「Synwevo Message 已停用」；成員關係、歷史、已讀位置和偏好保留。" },
+  "会话从成员的下一次请求起恢复可用。": { en: "Conversations are available again from each member's next request on.", "zh-Hant": "會話從成員的下一次請求起恢復可用。" },
+  "已打开的消息页面最迟在下一次心跳（25 秒）时得知停用，之后不再收到相关事件；连接本身不会被切断，也无法在这里统计。": {
+    en: "Open Message pages learn of it at the next heartbeat (25 seconds at most) and then receive nothing about it; the connections themselves are not cut and cannot be counted here.",
+    "zh-Hant": "已開啟的訊息頁面最遲在下一次心跳（25 秒）時得知停用，之後不再收到相關事件；連線本身不會被切斷，也無法在這裡統計。" },
+  "已打开的消息页面最迟在下一次心跳（25 秒）时得知已重新启用。": {
+    en: "Open Message pages learn at the next heartbeat (25 seconds at most) that it is back on.", "zh-Hant": "已開啟的訊息頁面最遲在下一次心跳（25 秒）時得知已重新啟用。" },
+  "关于这些会话和举报的邮件、推送会被跳过而不是推迟；站内通知保留；跳过的不会补发。": {
+    en: "Mail and push notifications about these conversations and reports are skipped, not postponed; in-app notifications stay; nothing skipped is sent later.",
+    "zh-Hant": "關於這些會話和檢舉的郵件、推播會被略過而不是延後；站內通知保留；略過的不會補發。" },
+  "发往这些讨论的 Synwevo Docs 卡片会被跳过，不会积压，因此不影响其他组织的卡片；重新启用后不补发。": {
+    en: "Synwevo Docs cards for these discussions are skipped rather than held, so other organizations' cards are not delayed; they are not delivered once it is back on.",
+    "zh-Hant": "發往這些討論的 Synwevo Docs 卡片會被略過，不會積壓，因此不影響其他組織的卡片；重新啟用後不補發。" },
+  "排队中的 Agent 或工作台发送会失败，原因是 Synwevo Message 已停用。": {
+    en: "Queued Agent or workplace sends fail, because Synwevo Message is turned off.", "zh-Hant": "排隊中的 Agent 或工作台傳送會失敗，原因是 Synwevo Message 已停用。" },
+  "组织管理员仍然可以处理举报。": { en: "The organization's administrators can still review reports.", "zh-Hant": "組織管理員仍然可以處理檢舉。" },
+  "个人账户导出仍包含本人在这里发出的消息。": { en: "A person's account export still includes the messages they sent here.", "zh-Hant": "個人帳戶匯出仍包含本人在這裡傳送的訊息。" },
+  "个人账户导出不受影响。": { en: "Account exports are not affected.", "zh-Hant": "個人帳戶匯出不受影響。" },
+  "Synwevo Message 目前在全平台停用：全平台的停用优先于组织的设置。": {
+    en: "Synwevo Message is off platform-wide right now: the platform-wide switch outranks the organization's.",
+    "zh-Hant": "Synwevo Message 目前在全平台停用：全平台的停用優先於組織的設定。" },
+  "Synwevo Message 目前在全平台停用：在全平台重新启用之前，为这个组织启用不会生效。": {
+    en: "Synwevo Message is off platform-wide right now: turning it on for this organization takes effect only once it is on platform-wide again.",
+    "zh-Hant": "Synwevo Message 目前在全平台停用：在全平台重新啟用之前，為這個組織啟用不會生效。" },
+  "重新启用后，会话、消息、成员和已读位置与停用前一致。": {
+    en: "Once it is back on, conversations, messages, members and read positions are as they were before.", "zh-Hant": "重新啟用後，會話、訊息、成員和已讀位置與停用前一致。" },
+  "会话、消息、成员和已读位置与停用前完全一致。": {
+    en: "Conversations, messages, members and read positions are exactly as they were before.", "zh-Hant": "會話、訊息、成員和已讀位置與停用前完全一致。" },
+  "不会删除任何数据：会话、消息、附件、举报和通知原样保留，只是暂时打不开。": {
+    en: "No data is deleted: conversations, messages, attachments, reports and notifications stay as they are; they just cannot be opened for now.",
+    "zh-Hant": "不會刪除任何資料：會話、訊息、附件、檢舉和通知原樣保留，只是暫時打不開。" },
+  "此操作不改变任何数据。": { en: "This change does not alter any data.", "zh-Hant": "此操作不改變任何資料。" },
+  "找不到这个组织，可能已被删除；请刷新列表。": { en: "This organization could not be found; it may have been deleted. Refresh the list.", "zh-Hant": "找不到這個組織，可能已被刪除；請重新整理清單。" },
+  "这个组织已删除且过了恢复期，不能为它启用应用。": {
+    en: "This organization was deleted and its recovery window is over, so the application cannot be turned on for it.",
+    "zh-Hant": "這個組織已刪除且過了恢復期，不能為它啟用應用。" },
   // ---- refusals: the server's own sentences (synwevo_identity.admin_apps); the two naming the
   // application (f-strings) are worded by their code. `找不到这个工作空间`, the preview refusals and
   // the reason are catalogued already.

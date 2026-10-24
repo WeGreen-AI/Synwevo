@@ -59,6 +59,19 @@ export const organizationLifecycleMessages = {
   "恢复不撤销任何东西：组织回到删除前的状态；之前撤销的会话、令牌和邀请不会恢复。": {
     en: "Recovery revokes nothing: the organization returns to its status before deletion; sessions, tokens and invitations revoked earlier do not come back.",
     "zh-Hant": "恢復不撤銷任何東西：組織回到刪除前的狀態；之前撤銷的工作階段、權杖和邀請不會恢復。" },
+  // ---- G2 (B3): what each action does to the organization's Synwevo Message conversations
+  "冻结期间，组织在 Synwevo Message 中的会话全部暂停：成员看到「该组织当前不可用，会话已暂停」，会话和消息原样保留，解冻后恢复。": {
+    en: "While it is frozen, all of the organization's Synwevo Message conversations are paused: members are told the organization is unavailable and its conversations are paused; conversations and messages stay as they are and come back when it is unfrozen.",
+    "zh-Hant": "凍結期間，組織在 Synwevo Message 中的會話全部暫停：成員看到「該組織目前無法使用，會話已暫停」，會話和訊息原樣保留，解凍後恢復。" },
+  "删除后，组织在 Synwevo Message 中的会话在恢复期内暂停，恢复后原样回来；恢复期结束后，成员不再看到这些会话。": {
+    en: "After deletion, the organization's Synwevo Message conversations are paused during the recovery window and come back as they were on recovery; once the window is over, members no longer see them.",
+    "zh-Hant": "刪除後，組織在 Synwevo Message 中的會話在恢復期內暫停，恢復後原樣回來；恢復期結束後，成員不再看到這些會話。" },
+  "解冻后，组织在 Synwevo Message 中的会话恢复可用，消息和成员原样保留。": {
+    en: "After unfreezing, the organization's Synwevo Message conversations are available again, with messages and members as they were.",
+    "zh-Hant": "解凍後，組織在 Synwevo Message 中的會話恢復可用，訊息和成員原樣保留。" },
+  "恢复后，组织在 Synwevo Message 中的会话随组织恢复可用；如果组织仍为冻结状态，会话继续暂停到解冻。": {
+    en: "After recovery, the organization's Synwevo Message conversations are available again with it; if it comes back frozen, they stay paused until it is unfrozen.",
+    "zh-Hant": "恢復後，組織在 Synwevo Message 中的會話隨組織恢復可用；如果組織仍為凍結狀態，會話繼續暫停到解凍。" },
   // ---- refusals: the dialog's own wording when the server sends only a code (governance/labels.ts)
   "组织的状态、成员或工作空间已变化，请重新预览影响。": { en: "The organization's status, members or workspaces changed. Preview the impact again.", "zh-Hant": "組織的狀態、成員或工作空間已變更，請重新預覽影響。" },
   "不支持的组织操作，请刷新页面后重试。": { en: "Unsupported organization action. Refresh the page and try again.", "zh-Hant": "不支援的組織操作，請重新整理頁面後重試。" },
