@@ -37,6 +37,8 @@ ADMIN_ACTIONS: dict[str, dict] = {
     "admin.agent_safety.suspend": _a("agent_safety", "暂停 Agent 使用权限", "暫停 Agent 使用權限", "Suspend Agent access"),
     "admin.app.disable": _a("apps", "全平台停用应用", "全平台停用應用", "Disable an application platform-wide"),
     "admin.app.enable": _a("apps", "全平台启用应用", "全平台啟用應用", "Enable an application platform-wide"),
+    "admin.app.organization_disable": _a("apps", "为组织停用应用", "為組織停用應用", "Disable an application for an organization"),
+    "admin.app.organization_enable": _a("apps", "为组织启用应用", "為組織啟用應用", "Enable an application for an organization"),
     "admin.app.policy_explicit": _a("apps", "应用改为仅限明确授权", "應用改為僅限明確授權", "Restrict an application to explicit grants"),
     "admin.app.policy_members": _a("apps", "应用改为成员均可使用", "應用改為成員均可使用", "Open an application to every member"),
     "admin.app.workspace_disable": _a("apps", "为工作空间停用应用", "為工作空間停用應用", "Disable an application for a workspace"),
