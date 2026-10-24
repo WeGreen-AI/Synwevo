@@ -184,6 +184,7 @@ ROUTES = [
     # test_platform_scope_application_changes_need_configuration_authority.
     ("GET", "/api/admin/apps", "platform.apps.view", False),
     ("GET", "/api/admin/apps/{app_id}/workspaces", "platform.apps.view", False),
+    ("GET", "/api/admin/apps/{app_id}/organizations", "platform.apps.view", False),
     ("POST", "/api/admin/apps/{app_id}/preview", "platform.apps.manage", False),
     ("POST", "/api/admin/apps/{app_id}/{change}", "platform.apps.manage", True),
     ("GET", "/api/admin/audit", "platform.audit.view", False),
@@ -476,6 +477,10 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
             code = "super_offer_bad_target" if template.endswith("/preview") else "admin_confirmation_required" \
                 if template.endswith("/finish") else "super_offer_not_found"
             assert r.status_code == (400 if code != "super_offer_not_found" else 404) and r.json()["error"] == code, (role, path, r.text)
+        elif template == "/api/admin/apps/{app_id}/organizations":
+            # B3: past the permission check, the matrix's application (Synwevo Docs) is not switched
+            # per organization — the list itself is test_admin_apps_organizations'
+            assert r.status_code == 400 and r.json()["error"] == "bad_change", (role, method, path, r.text)
         elif template in RISK_STATE_REFUSALS:
             status, code = RISK_STATE_REFUSALS[template]
             assert r.status_code == status and r.json()["error"] == code, (role, method, path, r.text)

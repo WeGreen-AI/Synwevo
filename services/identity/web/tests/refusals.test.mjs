@@ -197,7 +197,8 @@ const SERVER = [
   { file: CORE + "machine.py", surfaces: [], why: "credential checks on Synwevo Docs' business API" },
   { file: CORE + "http.py", surfaces: [], why: "the business gate and API routing: refusals of requests this shell never makes" },
   // B1/B2: the console calls `set_access_policy` with only `members` or `explicit` (admin_apps maps its four changes)
-  { file: CORE + "apps.py", surfaces: [], why: "`app` commands of the CLI; the administration console sends the access policy only as one of its two values" },
+  // B3: `disable_for_organization` / `enable_for_organization` refuse what admin_apps `_target` refuses first, in its own words
+  { file: CORE + "apps.py", surfaces: [], why: "`app` commands of the CLI; the administration console sends the access policy only as one of its two values, and its organization switch is checked by admin_apps before the service is called" },
 ];
 
 /** Refusals no person can cause from this shell, with the reason. The shell sends these fields
@@ -305,7 +306,10 @@ const INDIRECT = [
     { status: 400, code: "bad_change", text: "请选择有效的应用操作（disable / enable / policy_explicit / policy_members）", detail: { field: "change" } },
     { status: 400, code: "bad_change", text: "按工作空间只能启用或停用应用；访问策略对全平台生效", detail: { field: "change" } },
     { status: 400, code: "bad_change", text: "「Fixture app」不按工作空间授权：只能在全平台启用或停用", detail: { field: "change", scope: "organization" } },
-    { status: 400, code: "bad_change", text: "「Fixture app」不按工作空间授权：访问策略对它不起作用", detail: { field: "change", scope: "personal" } }] },
+    { status: 400, code: "bad_change", text: "「Fixture app」不按工作空间授权：访问策略对它不起作用", detail: { field: "change", scope: "personal" } },
+    // B3: the organization target (Synwevo Message's per-organization switch)
+    { status: 400, code: "bad_change", text: "按组织只能启用或停用应用；访问策略对全平台生效", detail: { field: "change" } },
+    { status: 400, code: "bad_change", text: "「Fixture app」不按组织开关：没有按组织的启用或停用", detail: { field: "change", scope: "workspace" } }] },
   // A44: the 503 of a deletion whose security journal entry failed — a module constant, since the
   // entry may already be written (admin_workspaces.JOURNAL_UNAVAILABLE), read from the source.
   { files: [ID + "admin_workspaces.py"], match: /"journal_unavailable", JOURNAL_UNAVAILABLE\)/, refusals: [

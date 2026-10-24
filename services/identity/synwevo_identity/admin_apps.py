@@ -80,9 +80,39 @@ promoted without a grant takes every credential they approved down with them und
 project, a frozen workspace, a suspended submitter) is not counted. 0 when nothing is taken away;
 null for other applications.
 
+**Per organization (B3).** An application whose data belongs to an organization rather than to a
+workspace (`apps.ORGANIZATION_APP_IDS`: Synwevo Message) is switched for one organization with an
+`organization_id` in place of the `workspace_id` — `platform.apps.manage` alone, the same as a
+workspace's switch (a per-tenant change under D12). `GET /api/admin/apps/{app_id}/organizations?q=&
+limit=&offset=` lists every organization (name, lifecycle state, whether the application is on
+for it and since when, live members, conversations), `platform.apps.view`; for an application that is
+not organization-scoped it is 400 `bad_change`. The preview's impact for an organization is what the
+switch-off closes: `members_affected` (live members), `members_with_conversations`,
+`members_left_without_messages` (no other organization where it is on), `conversations`
+`{groups, direct, object}` (not archived), `open_reports`, `pending_notifications` `{email, push}`
+(mail and push about its conversations and reports not yet sent), `pending_cards` (undelivered
+outbox rows for it, under the attempt limit), `signed_in_sessions` (live sessions of its members —
+on any origin; the account service cannot tell a Message tab from another) and `open_streams`
+(null: the streams live in the Message process's memory). Enabling is allowed for a frozen
+organization and for one deleted inside its recovery window (the lifecycle gates are separate and
+pause its conversations anyway); one deleted past the window, or with no window, cannot be enabled
+(409 `organization_unavailable`). The change writes the platform's audit row
+(`admin.app.organization_disable` / `_enable`, the organization in its meta), the organization's
+own governance-log row (`organization.app.disable` / `.enable`, object the organization, meta
+`{by: platform, app_id, enabled, reason}`), then `Apps.disable_for_organization` (journalled,
+`organization_app_disabled`) or `enable_for_organization`, then the receipt. What a switch-off
+does is the Message service's rule (`synwevo_core.messaging._closed`): every conversation of the
+organization answers `403 messages_disabled` to its members from the next request on, open
+streams are told within a heartbeat, mail and push about it are skipped, cards and queued Agent
+sends are refused, moderation and the account export go on, nothing is deleted, and re-enabling
+gives everything back as it was (notes below). The platform-wide switch outranks it; since it
+holds for signed-in sessions too (G1), the platform-wide Message preview carries the same notes.
+
 Refusals (preview and confirmation alike): 400 `bad_change` (not one of the four; a policy change
 for a workspace; a policy or workspace change of an application that is not workspace-scoped —
-`detail.scope`; a `workspace_id` that is not a non-empty id); 409 `portal_required` for
+`detail.scope`; a `workspace_id` that is not a non-empty id; an `organization_id` together with a
+`workspace_id`, a blank one, a policy change for an organization, or an organization switch of an
+application that is not organization-scoped); 404 `no_organization`; 409 `portal_required` for
 `platform`, the portal itself: deliberately not a registry row (`apps.PLATFORM_APP_ID`) and
 answered by `_check_platform` before the registry is read, so no switch could stop or narrow it;
 404 `no_app`; 404 `no_workspace`; 409 `legacy_workspace` (the unclaimed historical workspace: the
@@ -123,6 +153,21 @@ Notes (codes; the console words each by the direction of the change):
 * `explicit_grants_kept` — enabling and both policy changes (workspace-scoped applications): no
   entitlement row is written, so every grant stays and still counts under `explicit`.
 * `revocations_kept_on_loosen` — both policy changes: an explicit revocation outranks `members`.
+* Synwevo Message, for an organization and platform-wide (G1) — on a switch-off:
+  `conversations_paused` (every conversation of the organization — or of every organization —
+  answers `messages_disabled` to its members from their next request; membership, history, read
+  positions and preferences are kept), `streams_end_within_heartbeat` (open tabs learn of the
+  change at the next heartbeat and then receive nothing about it; the streams themselves are
+  not cut, and cannot be counted here), `notifications_skipped` (mail and push about its
+  conversations and reports are skipped, not deferred; the inbox item stays; nothing skipped is
+  sent later), `cards_skipped` (Docs cards into its discussions are skipped, never held, so other
+  organizations' cards are not starved; not replayed), `agent_sends_refused` (a queued Agent or
+  Suite send into it fails with `messages_disabled`), `moderation_continues` (its moderators can
+  still review reports; A44), `export_unaffected` (a person's account export still holds their
+  own messages there), and `platform_switch_outranks` (for an organization while the platform-wide
+  switch is off: enabling the organization changes nothing until the platform's switch is back).
+  On an enable: `history_unchanged_on_enable` (everything comes back exactly as it was) and
+  `skipped_not_replayed` (mail, push, cards and sends skipped meanwhile are not sent now).
 
 Beyond the notes: a workspace created while a business application of the workplace origin was off
 platform-wide does not get it on when it is enabled again (`Identity._create_workspace` enables
@@ -149,14 +194,15 @@ from fastapi import APIRouter, Body, Query, Request
 
 from synwevo_core import authority
 from synwevo_core.api_platform import Approvals
-from synwevo_core.apps import (DOCS_APP_ID, MESSAGES_APP_ID, PERSONAL_APP_IDS, PLATFORM_APP_ID, Apps,
-                               suite_unreleased)
+from synwevo_core.apps import (DOCS_APP_ID, MESSAGES_APP_ID, ORGANIZATION_APP_IDS, PERSONAL_APP_IDS, PLATFORM_APP_ID,
+                               Apps, app_disabled, organization_app_row, suite_unreleased)
 from synwevo_core.audit_change import change as change_meta
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
 from synwevo_core.oidc import docs_resource
 from synwevo_core.platform_access import require_platform
 from synwevo_core.store import Store, new_id, now
+from synwevo_core.workspace_availability import LOST, lifecycle_state
 
 from .admin_operations import PREVIEW_SECONDS, SignedPreview, canonical
 from .admin_organizations import IDEMPOTENCY_KEY, RUNNING_JOB_STATUSES
@@ -168,6 +214,9 @@ MANAGE = "platform.apps.manage"
 PLATFORM_SCOPE = "platform.config.manage"
 CHANGES = ("disable", "enable", "policy_explicit", "policy_members")
 WORKSPACE_CHANGES = ("disable", "enable")
+ORGANIZATION_CHANGES = ("disable", "enable")
+#: Undelivered outbox rows still to be attempted (messaging_bridge.MAX_ATTEMPTS, read as data).
+CARD_ATTEMPTS = 10
 #: The changes that take access away: confirmed as a danger, journalled, and the only ones that
 #: stop running work.
 TAKES_AWAY = frozenset({"disable", "policy_explicit"})
@@ -182,7 +231,13 @@ ACTIONS = {
     ("platform", "policy_members"): "admin.app.policy_members",
     ("workspace", "disable"): "admin.app.workspace_disable",
     ("workspace", "enable"): "admin.app.workspace_enable",
+    ("organization", "disable"): "admin.app.organization_disable",
+    ("organization", "enable"): "admin.app.organization_enable",
 }
+#: The Message notes (module docstring), by the direction of the change.
+MESSAGES_AWAY_NOTES = ("conversations_paused", "streams_end_within_heartbeat", "notifications_skipped", "cards_skipped",
+                       "agent_sends_refused", "moderation_continues", "export_unaffected")
+MESSAGES_BACK_NOTES = ("history_unchanged_on_enable", "skipped_not_replayed")
 REASON_MIN, REASON_MAX = 8, 500
 
 #: A person who could sign in now: the account check_access leaves to the session gate.
@@ -222,12 +277,13 @@ class AppGovernance(SignedPreview):
     def _actor(self, request, permission: str = MANAGE, *, execute: bool = False) -> dict:
         return require_platform(request, permission, store=self.store, audit=self.audit, dangerous=execute)
 
-    def _admit(self, request, wid, *, execute: bool = False) -> dict:
-        """`platform.apps.manage`, and for a platform-scope change (no `workspace_id`)
-        `platform.config.manage` too (decision D12) — both permissions before the strict
-        re-authentication, as `require_platform` orders a single one."""
+    def _admit(self, request, wid, oid=None, *, execute: bool = False) -> dict:
+        """`platform.apps.manage`, and for a platform-scope change (neither a `workspace_id` nor
+        an `organization_id`) `platform.config.manage` too (decision D12) — both permissions before
+        the strict re-authentication, as `require_platform` orders a single one. A change for one
+        organization (B3) is a per-tenant change like a workspace's: the catalogue's own permission."""
         actor = self._actor(request, MANAGE)
-        if wid is None:
+        if wid is None and oid is None:
             actor = self._actor(request, PLATFORM_SCOPE)
         if execute:
             actor = self._actor(request, MANAGE, execute=True)
@@ -345,6 +401,7 @@ class AppGovernance(SignedPreview):
         return {"id": aid, "name": app["name"], "status": app["status"], "access_policy": app["access_policy"],
                 "launch_url": app["launch_url"], "scope": app_scope(aid),
                 "workspaces_enabled": self._enabled_count(aid) if enabled is None else enabled,
+                "organizations_disabled": self._organizations_disabled(aid) if aid in ORGANIZATION_APP_IDS else None,
                 "members_with_access": self._people_count(app) if people is None else people,
                 "explicit_grants": ent["grants"], "explicit_revocations": ent["revocations"],
                 "running_jobs": self._running_jobs(aid), "changes": self._available(app, unreleased=unreleased)}
@@ -369,12 +426,93 @@ class AppGovernance(SignedPreview):
     def _workspace_row(self, wid: str) -> dict:
         return self.store.one("SELECT id, name, kind, status, organization_id FROM workspaces WHERE id=?", (wid,))
 
+    # ------------------------------------------------------------------ per organization (B3)
+    def _organizations_disabled(self, app_id: str) -> int:
+        """How many organizations the platform switched the application off for (B3)."""
+        if not self._table("organization_apps"):
+            return 0
+        return self.store.one("SELECT COUNT(*) AS n FROM organization_apps a JOIN organizations o ON o.id=a.organization_id "
+                              "WHERE a.app_id=? AND a.status='disabled'", (app_id,))["n"]
+
+    def _organization_row(self, oid: str) -> dict | None:
+        return self.store.one("SELECT id, name, status, deleted_at, recover_until, version FROM organizations WHERE id=?", (oid,))
+
+    def _organization_items(self, app: dict, rows: list[dict]) -> list[dict]:
+        """One item per organization: its lifecycle state, the application's switch there (on by
+        default: no row means on; `updated_at` is the switch's time, either way), its live members
+        and its conversations that are not archived. Counts and metadata, never a person."""
+        oids = [row["id"] for row in rows]
+        if not oids:
+            return []
+        marks = ",".join("?" * len(oids))
+        members = {r["organization_id"]: r["n"] for r in self.store.all(
+            f"SELECT m.organization_id, COUNT(*) AS n FROM organization_memberships m JOIN users u ON u.id=m.user_id "
+            f"WHERE m.organization_id IN ({marks}) AND {LIVE_PERSON} GROUP BY m.organization_id", tuple(oids))}
+        switches = {r["organization_id"]: r for r in self.store.all(
+            f"SELECT organization_id, status, updated_at FROM organization_apps WHERE app_id=? AND organization_id IN ({marks})",
+            (app["id"], *oids))} if self._table("organization_apps") else {}
+        conversations = {r["organization_id"]: r["n"] for r in self.store.all(
+            f"SELECT organization_id, COUNT(*) AS n FROM conversations WHERE organization_id IN ({marks}) AND archived_at IS NULL "
+            "GROUP BY organization_id", tuple(oids))} if self._table("conversations") else {}
+        return [{"id": row["id"], "name": row["name"], "status": row["status"], "deleted_at": row["deleted_at"],
+                 "recover_until": row["recover_until"],
+                 "enabled": (switches.get(row["id"]) or {}).get("status") != "disabled",
+                 "updated_at": (switches.get(row["id"]) or {}).get("updated_at"),
+                 "members": members.get(row["id"], 0), "conversations": conversations.get(row["id"], 0)} for row in rows]
+
+    def _organization_impact(self, oid: str) -> dict:
+        """What switching Synwevo Message off for the organization closes (module docstring)."""
+        t = now()
+        one = lambda sql, args=(): self.store.one(sql, args)["n"]  # noqa: E731
+        live_members = (f"SELECT m.user_id FROM organization_memberships m JOIN users u ON u.id=m.user_id "
+                        f"WHERE m.organization_id=? AND {LIVE_PERSON}")
+        affected = one(f"SELECT COUNT(*) AS n FROM ({live_members})", (oid,))
+        tables = {name: self._table(name) for name in ("conversations", "message_reports", "notifications", "messaging_outbox",
+                                                        "notification_deliveries", "push_queue", "organization_apps")}
+        with_conversations = one(f"SELECT COUNT(*) AS n FROM ({live_members}) p WHERE EXISTS (SELECT 1 FROM conversation_members cm "
+                                 "JOIN conversations c ON c.id=cm.conversation_id WHERE cm.user_id=p.user_id AND cm.left_at IS NULL "
+                                 "AND c.organization_id=?)", (oid, oid)) if tables["conversations"] else 0
+        # another organization of theirs where Message is on: active, not switched off (the platform
+        # switch closes every organization alike, so it is not asked here)
+        elsewhere = ("EXISTS (SELECT 1 FROM organization_memberships o2 JOIN organizations x ON x.id=o2.organization_id "
+                     "WHERE o2.user_id=p.user_id AND o2.organization_id<>? AND x.status='active'"
+                     + (" AND NOT EXISTS (SELECT 1 FROM organization_apps s WHERE s.organization_id=x.id AND s.app_id=? AND s.status='disabled')"
+                        if tables["organization_apps"] else "") + ")")
+        left_without = one(f"SELECT COUNT(*) AS n FROM ({live_members}) p WHERE NOT {elsewhere}",
+                           (oid, oid, MESSAGES_APP_ID) if tables["organization_apps"] else (oid, oid))
+        kinds = {"groups": 0, "direct": 0, "object": 0}
+        if tables["conversations"]:
+            for r in self.store.all("SELECT kind, purpose, COUNT(*) AS n FROM conversations WHERE organization_id=? AND archived_at IS NULL "
+                                    "GROUP BY kind, purpose", (oid,)):
+                kinds["direct" if r["kind"] == "dm" else "object" if r["purpose"] == "object" else "groups"] += r["n"]
+        reports = one("SELECT COUNT(*) AS n FROM message_reports WHERE organization_id=? AND status='open'", (oid,)) if tables["message_reports"] else 0
+        # items about its conversations (the item's object) or about reports of messages in them
+        about = ("SELECT n.id FROM notifications n WHERE n.category='conversation' AND ("
+                 "(n.object_kind='conversation' AND EXISTS (SELECT 1 FROM conversations c WHERE c.id=n.object_id AND c.organization_id=?))"
+                 + (" OR (n.object_kind='message_report' AND EXISTS (SELECT 1 FROM message_reports r WHERE r.id=n.object_id AND r.organization_id=?))"
+                    if tables["message_reports"] else "") + ")")
+        about_args = (oid, oid) if tables["message_reports"] else (oid,)
+        email = one(f"SELECT COUNT(*) AS n FROM notification_deliveries d WHERE d.status='pending' AND d.notification_id IN ({about})",
+                    about_args) if tables["notifications"] and tables["notification_deliveries"] and tables["conversations"] else 0
+        push = one(f"SELECT COUNT(*) AS n FROM push_queue q WHERE q.status IN ('pending','claimed') AND q.notification_id IN ({about})",
+                   about_args) if tables["notifications"] and tables["push_queue"] and tables["conversations"] else 0
+        cards = one("SELECT COUNT(*) AS n FROM messaging_outbox o LEFT JOIN object_conversations oc ON oc.app=o.app AND oc.kind=o.object_kind "
+                    "AND oc.object_id=o.object_id LEFT JOIN conversations c ON c.id=oc.conversation_id "
+                    "WHERE o.delivered_at IS NULL AND o.attempts<? AND COALESCE(o.organization_id, c.organization_id)=?",
+                    (CARD_ATTEMPTS, oid)) if tables["messaging_outbox"] and tables["conversations"] else 0
+        sessions = one(f"SELECT COUNT(*) AS n FROM sessions s WHERE s.revoked_at IS NULL AND s.idle_expires_at>? AND s.absolute_expires_at>? "
+                       f"AND s.user_id IN ({live_members})", (t, t, oid))
+        return {"members_affected": affected, "members_with_conversations": with_conversations,
+                "members_left_without_messages": left_without, "conversations": kinds, "open_reports": reports,
+                "pending_notifications": {"email": email, "push": push}, "pending_cards": cards,
+                "signed_in_sessions": sessions, "open_streams": None}
+
     # ------------------------------------------------------------------ the change
     @staticmethod
     def _bad(message: str, **detail) -> ServiceError:
         return ServiceError(400, "bad_change", message, {"field": "change", **detail})
 
-    def _target(self, app_id: str, change, wid) -> dict:
+    def _target(self, app_id: str, change, wid, oid=None) -> dict:
         """The change admitted against the rows as they are, or its refusal (module docstring)."""
         if change not in CHANGES:
             raise self._bad("请选择有效的应用操作（disable / enable / policy_explicit / policy_members）")
@@ -384,6 +522,26 @@ class AppGovernance(SignedPreview):
         if not app:
             raise ServiceError(404, "no_app", "找不到该应用")
         scope = app_scope(app_id)
+        if oid is not None:
+            if wid is not None:
+                raise ServiceError(400, "bad_change", "不能同时指定工作空间和组织", {"field": "organization_id"})
+            if not isinstance(oid, str) or not oid.strip() or len(oid) > 128:
+                raise ServiceError(400, "bad_change", "组织编号无效", {"field": "organization_id"})
+            if change not in ORGANIZATION_CHANGES:
+                raise self._bad("按组织只能启用或停用应用；访问策略对全平台生效")
+            if app_id not in ORGANIZATION_APP_IDS:
+                raise self._bad(f"「{app['name']}」不按组织开关：没有按组织的启用或停用", scope=scope)
+            org = self._organization_row(oid)
+            if not org:
+                raise ServiceError(404, "no_organization", "找不到该组织")
+            if change == "enable" and lifecycle_state(org) == LOST:
+                raise ServiceError(409, "organization_unavailable", "该组织已删除且不能再恢复，不能为它启用应用",
+                                   {"organization_status": org["status"]})
+            row = organization_app_row(self.store, oid, app_id)
+            if (change == "disable") == bool(row and row["status"] == "disabled"):
+                raise ServiceError(409, "no_change", "该组织的这个应用已经处于这个状态，不需要更改")
+            return {"app": app, "change": change, "scope": "organization", "workspace": None, "organization": org,
+                    "action": ACTIONS[("organization", change)]}
         if wid is not None:
             if not isinstance(wid, str) or not wid.strip() or len(wid) > 128:
                 raise ServiceError(400, "bad_change", "工作空间编号无效", {"field": "workspace_id"})
@@ -403,7 +561,7 @@ class AppGovernance(SignedPreview):
                                    {"workspace_status": ws["status"]})
             if (change == "enable") == bool(switched):
                 raise ServiceError(409, "no_change", "该工作空间的这个应用已经处于这个状态，不需要更改")
-            return {"app": app, "change": change, "scope": "workspace", "workspace": ws,
+            return {"app": app, "change": change, "scope": "workspace", "workspace": ws, "organization": None,
                     "action": ACTIONS[("workspace", change)]}
         if change.startswith("policy_") and scope != "workspace":
             raise self._bad(f"「{app['name']}」不按工作空间授权：访问策略对它不起作用", scope=scope)
@@ -415,7 +573,7 @@ class AppGovernance(SignedPreview):
         if change == "enable" and suite_unreleased(self.store, app_id):
             raise ServiceError(409, "app_not_released", "当前部署没有发布这个应用：它的功能在服务里不存在，"
                                                         "启用后下次启动也会被重新停用")
-        return {"app": app, "change": change, "scope": "platform", "workspace": None,
+        return {"app": app, "change": change, "scope": "platform", "workspace": None, "organization": None,
                 "action": ACTIONS[("platform", change)], "column": column, "value": value}
 
     def _approvals_stopping(self, target: dict, lost: set) -> list[list[str]]:
@@ -497,6 +655,18 @@ class AppGovernance(SignedPreview):
         reaches, and the digest of the version the plan binds."""
         app, change, ws = target["app"], target["change"], target["workspace"]
         version = {"app": {"id": app["id"], "status": app["status"], "access_policy": app["access_policy"]}}
+        org = target.get("organization")
+        if org is not None:
+            # One organization (B3): the plan binds the organization's lifecycle row, its switch,
+            # its live members and the platform switch; a member joining makes the preview stale.
+            row = organization_app_row(self.store, org["id"], app["id"])
+            impact = self._organization_impact(org["id"])
+            version["organization"] = {"id": org["id"], "status": org["status"], "deleted_at": org["deleted_at"],
+                                       "recover_until": org["recover_until"], "version": org["version"],
+                                       "switch": (row or {}).get("status"), "members": impact["members_affected"],
+                                       "platform_off": app_disabled(self.store, app["id"])}
+            return {"after_people": None, "after_in_workspace": None, "approvals_stopping": [], "impact": impact,
+                    "digest": hashlib.sha256(canonical(version).encode()).hexdigest()}
         if app_scope(app["id"]) != "workspace":
             # Messages and the Agent: platform-wide disable / enable only, per live account.
             live = self._live_people()
@@ -577,27 +747,35 @@ class AppGovernance(SignedPreview):
                 notes.append("explicit_grants_kept")
             if change.startswith("policy_"):
                 notes.append("revocations_kept_on_loosen")
+        if aid == MESSAGES_APP_ID:
+            # What the switch does to conversations — for one organization and platform-wide alike,
+            # since the platform-wide switch holds for signed-in sessions too (G1).
+            notes.extend(MESSAGES_AWAY_NOTES if change == "disable" else MESSAGES_BACK_NOTES)
+            if target.get("organization") is not None and app_disabled(self.store, aid):
+                notes.append("platform_switch_outranks")
         return notes
 
     def preview(self, request, app_id: str, body: dict) -> dict:
-        change, wid = body.get("change"), body.get("workspace_id")
-        actor = self._admit(request, wid)
+        change, wid, oid = body.get("change"), body.get("workspace_id"), body.get("organization_id")
+        actor = self._admit(request, wid, oid)
         try:
             # Read-only: one deferred snapshot, no writer lock; the confirmation checks it all
             # again under the lock.
             with self.snapshot():
-                target = self._target(app_id, change, wid)
+                target = self._target(app_id, change, wid, oid)
                 assessed = self._assess(target)
                 view = self._item(target["app"], people=assessed.get("before_people"))
                 if target["workspace"] is not None:
                     view["workspace"] = self._workspace_items(target["app"], [self._workspace_row(wid)])[0]
+                if target["organization"] is not None:
+                    view["organization"] = self._organization_items(target["app"], [target["organization"]])[0]
                 notes = self._notes(target, assessed)
         except Exception as exc:
-            self._failure(request, actor, app_id, change, wid, exc, phase="preview")
+            self._failure(request, actor, app_id, change, wid, exc, phase="preview", oid=oid)
             raise
         expires = time.time() + PREVIEW_SECONDS
         plan = {"v": 1, "actor": actor["id"], "action": target["action"], "app": app_id,
-                "change": target["change"], "workspace": wid, "origin": self._environment(request),
+                "change": target["change"], "workspace": wid, "organization": oid, "origin": self._environment(request),
                 "version": assessed["digest"], "expires_at": expires, "nonce": new_id("plan")}
         return {"action": target["action"], "change": target["change"], "scope": target["scope"],
                 "risk": "high" if target["change"] in TAKES_AWAY else "medium", "target": view,
@@ -605,20 +783,20 @@ class AppGovernance(SignedPreview):
                 "preview_token": self._sign(plan)}
 
     def execute(self, request, app_id: str, change: str, body: dict) -> dict:
-        wid = body.get("workspace_id")
-        actor = self._admit(request, wid, execute=True)
+        wid, oid = body.get("workspace_id"), body.get("organization_id")
+        actor = self._admit(request, wid, oid, execute=True)
         raw_reason = body.get("reason")
         reason = raw_reason.strip() if isinstance(raw_reason, str) else ""
         key, token = body.get("idempotency_key"), body.get("preview_token")
         origin = self._environment(request)
         request_hash = hashlib.sha256(canonical({"action": "admin.app", "app": app_id, "change": change,
-                                                "workspace": wid, "reason": reason, "preview_token": token,
-                                                "origin": origin}).encode()).hexdigest()
+                                                "workspace": wid, "organization": oid, "reason": reason,
+                                                "preview_token": token, "origin": origin}).encode()).hexdigest()
         try:
             if not REASON_MIN <= len(reason) <= REASON_MAX:
                 raise ServiceError(400, "missing_reason", f"请写明理由（{REASON_MIN} 至 {REASON_MAX} 个字）")
             with self.store.tx() as tx:
-                actor = self._admit(request, wid, execute=True)
+                actor = self._admit(request, wid, oid, execute=True)
                 if isinstance(key, str):
                     previous = self.store.one("SELECT action,request_hash,result_json FROM admin_operations "
                                               "WHERE actor_id=? AND idempotency_key=?", (actor["id"], key))
@@ -628,12 +806,12 @@ class AppGovernance(SignedPreview):
                         return json.loads(previous["result_json"])
                 # The state refusals before the confirmation checks, as the organization lifecycle:
                 # a change the rows do not allow is refused as such, token or no token.
-                target = self._target(app_id, change, wid)
+                target = self._target(app_id, change, wid, oid)
                 if not isinstance(key, str) or not IDEMPOTENCY_KEY.fullmatch(key) or not isinstance(token, str):
                     raise ServiceError(400, "admin_confirmation_required", "请先预览操作影响，再确认执行")
                 plan = self._verify(token)
                 expected = {"actor": actor["id"], "action": target["action"], "app": app_id,
-                            "change": target["change"], "workspace": wid, "origin": origin}
+                            "change": target["change"], "workspace": wid, "organization": oid, "origin": origin}
                 if any(plan.get(field) != value for field, value in expected.items()):
                     raise ServiceError(409, "admin_preview_invalid", "操作目标已变化，请重新预览")
                 if plan.get("expires_at", 0) <= time.time():
@@ -644,17 +822,24 @@ class AppGovernance(SignedPreview):
                 return self._apply(tx, request, actor, target, assessed, reason=reason, key=key,
                                    request_hash=request_hash, origin=origin)
         except Exception as exc:
-            self._failure(request, actor, app_id, change, wid, exc, phase="execute", reason=reason)
+            self._failure(request, actor, app_id, change, wid, exc, phase="execute", reason=reason, oid=oid)
             raise
 
     def _apply(self, tx, request, actor, target, assessed, *, reason, key, request_hash, origin) -> dict:
-        app, change, ws = target["app"], target["change"], target["workspace"]
+        app, change, ws, org = target["app"], target["change"], target["workspace"], target["organization"]
         app_id = app["id"]
         operation_id = new_id("ao")
         # The result as the change will leave things, computed before the service method: a
         # withdrawal's journal entry must be followed only by the receipt and the COMMIT (a backup
         # taken inside that window holds neither; see the module docstring).
-        if ws is not None:
+        org_view = None
+        if org is not None:
+            before, after = {"enabled": change == "disable"}, {"enabled": change == "enable"}
+            app_view = self._item(app)
+            app_view["organizations_disabled"] = (app_view["organizations_disabled"] or 0) + (1 if change == "disable" else -1)
+            org_view = {**self._organization_items(app, [org])[0], "enabled": change == "enable", "updated_at": None}
+            ws_view = None
+        elif ws is not None:
             before, after = {"enabled": change == "disable"}, {"enabled": change == "enable"}
             app_view = self._item(app, people=assessed["after_people"],
                                   enabled=self._enabled_count(app_id) + (1 if change == "enable" else -1))
@@ -673,16 +858,36 @@ class AppGovernance(SignedPreview):
                   "app": app_view}
         if ws_view is not None:
             result["workspace"] = ws_view
+        if org_view is not None:
+            result["organization"] = org_view
         meta = {**change_meta(before, after), "change": change, "scope": target["scope"],
                 "impact": assessed["impact"], "reason": reason, "operation_id": operation_id, "environment": origin}
         if ws is not None:
             meta["workspace_id"] = ws["id"]
+        if org is not None:
+            meta["organization_id"] = org["id"]
         # The platform record first. A workspace's switch is filed under that workspace; a
-        # platform-wide one under none — not the administrator's own session workspace.
+        # platform-wide one and an organization's under none — not the administrator's own
+        # session workspace.
         self.audit(request, target["action"], actor_id=actor["id"], object_kind="app", object_id=app_id,
                    workspace_id=ws["id"] if ws is not None else None, workspace_given=True, result="ok", meta=meta)
+        if org is not None:
+            # The organization's own governance-log row (`organization.app.<change>`, by: platform),
+            # before the service method and its journal entry, as the lifecycle writes its own.
+            self.audit(request, f"organization.app.{change}", actor_id=actor["id"], object_kind="organization",
+                       object_id=org["id"], workspace_given=True, result="ok",
+                       meta={"by": "platform", "app_id": app_id, "enabled": change == "enable", "reason": reason,
+                             "operation_id": operation_id})
         try:
-            if ws is not None:
+            if org is not None:
+                if change == "disable":
+                    changed = self.apps.disable_for_organization(org["id"], app_id, actor["id"])
+                else:
+                    changed = self.apps.enable_for_organization(org["id"], app_id, actor["id"])
+                if changed:
+                    # Read back under this lock: the switch's own time, the same row the list reads.
+                    org_view["updated_at"] = organization_app_row(self.store, org["id"], app_id)["updated_at"]
+            elif ws is not None:
                 if change == "disable":
                     changed = self.apps.disable_for_workspace(ws["id"], app_id)
                 else:
@@ -706,12 +911,13 @@ class AppGovernance(SignedPreview):
                    (operation_id, actor["id"], target["action"], app_id, key, request_hash, canonical(result), time.time()))
         return result
 
-    def _failure(self, request, actor, app_id, change, wid, exc, *, phase, reason=""):
+    def _failure(self, request, actor, app_id, change, wid, exc, *, phase, reason="", oid=None):
         """Outside the failed transaction, under the catalogued action the request named. Only a
-        stable code, the phase, the change, an application and a workspace that exist and a valid
-        reason are kept: invalid inputs and exception messages can hold arbitrary data. A change
-        that names no catalogued act (a policy for a workspace, an unknown word) is not recorded."""
-        scope = "platform" if wid is None else "workspace"
+        stable code, the phase, the change, an application, a workspace or an organization that
+        exist and a valid reason are kept: invalid inputs and exception messages can hold
+        arbitrary data. A change that names no catalogued act (a policy for a workspace, an
+        unknown word) is not recorded."""
+        scope = "organization" if oid is not None else "platform" if wid is None else "workspace"
         action = ACTIONS.get((scope, change)) if isinstance(change, str) else None
         if action is None:
             return
@@ -719,6 +925,8 @@ class AppGovernance(SignedPreview):
                 "phase": phase, "change": change, "environment": self._environment(request)}
         if isinstance(wid, str) and len(wid) <= 128 and self.store.one("SELECT 1 FROM workspaces WHERE id=?", (wid,)):
             meta["workspace_id"] = wid
+        if isinstance(oid, str) and len(oid) <= 128 and self.store.one("SELECT 1 FROM organizations WHERE id=?", (oid,)):
+            meta["organization_id"] = oid
         if REASON_MIN <= len(reason) <= REASON_MAX:
             meta["reason"] = reason
         # The path's application only when it names one (a registered application, or the portal
@@ -766,16 +974,42 @@ def build_router(store: Store, ident: Identity, audit) -> APIRouter:
             items = governance._workspace_items(app, rows)
         return {"items": items, "total": total, "limit": limit, "offset": offset}
 
+    @r.get("/apps/{app_id}/organizations")
+    def app_organizations(request: Request, app_id: str, q: str = Query("", max_length=100),
+                          limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0, le=2**63 - 1)):
+        """B3: every organization and this application in each — `{items: [{id, name, status,
+        deleted_at, recover_until, enabled, updated_at, members, conversations}], total, limit,
+        offset}`, by creation. Only for an application switched per organization (400 `bad_change`
+        otherwise); 404 `no_app`. `q` matches a substring of the name or a whole id."""
+        governance._actor(request, VIEW)
+        q = q.strip()
+        with governance.snapshot():
+            app = governance.apps.get(app_id)
+            if not app:
+                raise ServiceError(404, "no_app", "找不到该应用")
+            if app_id not in ORGANIZATION_APP_IDS:
+                raise ServiceError(400, "bad_change", f"「{app['name']}」不按组织开关：没有按组织的列表",
+                                   {"field": "organization_id", "scope": app_scope(app_id)})
+            where, args = "1=1", []
+            if q:
+                where += " AND (o.name LIKE ? ESCAPE '\\' OR o.id=?)"
+                args += [f"%{like_escape(q)}%", q]
+            total = store.one(f"SELECT COUNT(*) AS n FROM organizations o WHERE {where}", tuple(args))["n"]
+            rows = store.all(f"SELECT o.id, o.name, o.status, o.deleted_at, o.recover_until, o.version FROM organizations o "
+                             f"WHERE {where} ORDER BY o.created_at, o.id LIMIT ? OFFSET ?", (*args, limit, offset))
+            items = governance._organization_items(app, rows)
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
     @r.post("/apps/{app_id}/preview")
     def preview_app_change(request: Request, app_id: str, body: dict = Body(...)):
-        """`{"change": "disable"|"enable"|"policy_explicit"|"policy_members", "workspace_id"?}` →
-        the signed impact preview. Changes nothing."""
+        """`{"change": "disable"|"enable"|"policy_explicit"|"policy_members", "workspace_id"?,
+        "organization_id"?}` → the signed impact preview. Changes nothing."""
         return governance.preview(request, app_id, body if isinstance(body, dict) else {})
 
     @r.post("/apps/{app_id}/{change}")
     def change_app(request: Request, app_id: str, change: str, body: dict = Body(...)):
-        """`{"reason", "preview_token", "idempotency_key", "workspace_id"?}` → the confirmed change,
-        once: `{ok, operation_id, app, workspace?}`."""
+        """`{"reason", "preview_token", "idempotency_key", "workspace_id"?, "organization_id"?}` →
+        the confirmed change, once: `{ok, operation_id, app, workspace?, organization?}`."""
         return governance.execute(request, app_id, change, body if isinstance(body, dict) else {})
 
     return r

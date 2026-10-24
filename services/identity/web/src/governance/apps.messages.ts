@@ -264,6 +264,18 @@ export const appsMessages = {
   "应用、工作空间或可使用的人已变化，请重新预览": {
     en: "The application, the workspace or the people with access changed. Preview again.",
     "zh-Hant": "應用、工作空間或可使用的人已變更，請重新預覽" },
+  // B3: the organization target of Synwevo Message's switch (admin_apps `_target`)
+  "不能同时指定工作空间和组织": { en: "Name either a workspace or an organization, not both.", "zh-Hant": "不能同時指定工作空間和組織" },
+  "组织编号无效": { en: "That organization ID is not valid.", "zh-Hant": "組織編號無效" },
+  "按组织只能启用或停用应用；访问策略对全平台生效": {
+    en: "Per organization an application can only be turned on or off; the access policy applies platform-wide.",
+    "zh-Hant": "按組織只能啟用或停用應用；存取策略對全平台生效" },
+  "该组织已删除且不能再恢复，不能为它启用应用": {
+    en: "This organization was deleted and can no longer be recovered, so an application cannot be turned on for it.",
+    "zh-Hant": "該組織已刪除且不能再恢復，不能為它啟用應用" },
+  "该组织的这个应用已经处于这个状态，不需要更改": {
+    en: "This application is already in this state for the organization; nothing needs to change.",
+    "zh-Hant": "該組織的這個應用已經處於這個狀態，不需要變更" },
   "安全记录暂不可用，操作未提交，请稍后重试": {
     en: "The security record is unavailable, so nothing was committed. Try again later.",
     "zh-Hant": "安全記錄暫不可用，操作未提交，請稍後重試" },
