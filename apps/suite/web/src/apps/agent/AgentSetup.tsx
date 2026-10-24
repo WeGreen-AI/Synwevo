@@ -231,6 +231,9 @@ export default function AgentSetup({ setup, organizationPayer, hasDraft, maximum
   }
 
   const title = <h2 id={`${id}-title`} className="ag-setup-title" ref={heading} tabIndex={-1}>{c("setupTitle")}</h2>;
+  // Nothing is missing and this step recorded nothing (addendum-2 W4): there is nothing to agree to,
+  // so no "Agree and send" that would write nothing; the step only reads the state again.
+  const nothing = !!setup && !needConsent && !needTerms && !needLimits && recorded.current.size === 0;
   if (setup === undefined) {
     return <section className="notice info ag-setup" role="region" aria-labelledby={`${id}-title`}>{title}<Loading /></section>;
   }
@@ -240,6 +243,15 @@ export default function AgentSetup({ setup, organizationPayer, hasDraft, maximum
       <div className="ag-setup-actions">
         {onRetryRead && <button type="button" className="btn primary" onClick={onRetryRead}>{c("setupRetry")}</button>}
         {onDismiss && <button type="button" className="btn ghost" onClick={onDismiss}>{c("setupLater")}</button>}
+      </div>
+    </section>;
+  }
+  if (nothing) {
+    return <section className="notice info ag-setup" role="region" aria-labelledby={`${id}-title`}>{title}
+      <p role="status">{c("setupNothing")}{hasDraft ? <> {c("setupNothingDraft")}</> : null}</p>
+      <div className="ag-setup-actions">
+        {onRetryRead && <button type="button" className="btn primary" onClick={onRetryRead}>{c("setupRecheck")}</button>}
+        {onDismiss && <button type="button" className="btn ghost" onClick={onDismiss}>{c("close")}</button>}
       </div>
     </section>;
   }

@@ -92,6 +92,10 @@ export const chatCopy = {
   setupUnavailable: ['暂时无法读取开始设置的状态，请重试。', 'The setup state cannot be read right now. Please try again.', '暫時無法讀取開始設定的狀態，請重試。'],
   setupRetry: ['重新读取', 'Read again', '重新讀取'],
   setupLater: ['稍后再说', 'Not now', '稍後再說'],
+  // Opened when nothing is missing any more (addendum-2 W4): no agreement to give, only a re-check.
+  setupNothing: ['开始设置已经完成，没有需要同意的内容。', 'Setup is already complete; there is nothing to agree to.', '開始設定已經完成，沒有需要同意的內容。'],
+  setupNothingDraft: ['消息仍在输入框中，可以直接发送。', 'Your message is still in the box; you can send it.', '訊息仍在輸入框中，可以直接傳送。'],
+  setupRecheck: ['重新检查', 'Check again', '重新檢查'],
   setupAmountUnknown: ['当前价格', 'the current price', '目前價格'],
   // The published documents (links open on the public site).
   docTerms: ['服务条款', 'Terms of service', '服務條款'],

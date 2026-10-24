@@ -125,10 +125,11 @@ function AgentApp() {
     });
     return () => abort.abort();
   }, [billingRequired, tick, answering, statusTick]);
-  // Back from Agent settings, where the maximum (and the setup facts) may have changed (W2).
+  // Back from Agent settings, where the maximum (W2) and the setup facts (consent, limits: W4) may
+  // have changed: both are read again.
   const wasSettings = useRef(settings);
   useEffect(() => {
-    if (wasSettings.current && !settings) setStatusTick((n) => n + 1);
+    if (wasSettings.current && !settings) { setStatusTick((n) => n + 1); setSetupTick((n) => n + 1); }
     wasSettings.current = settings;
   }, [settings]);
   useEffect(() => {
@@ -239,9 +240,12 @@ function AgentApp() {
       throw error;
     }
   }
-  /** Open the one-time setup step with the draft kept; focus moves to its heading. */
+  /** Open the one-time setup step with the draft kept; focus moves to its heading. The state is
+   *  read again and the step shows it loading until it arrives (addendum-2 W4), so a step opened
+   *  from a refusal never asks from the state read when the page loaded. */
   function openSetup(next?: Draft) {
     if (next !== undefined) setDraft(next);
+    setSetup(undefined); setSetupTick((n) => n + 1);
     setSetupOpen(true); setFocusTick((n) => n + 1);
   }
   const readSetupFact = useCallback((operation: string) => read<unknown>(operation, {}, null), []);

@@ -124,8 +124,11 @@ the cost line under each answer).
   `expected_revision`. The button reads "Agree and send" with a message waiting, otherwise "Agree
   and start". The writes run in the order (a), (b), (c) and only then is the message sent; any
   failure stops there, keeps the message and says one step is unfinished (a newer document or notice
-  version is shown for acceptance). The step returns only when a document or consent version
-  changes; a price change never brings it back. An organization payer skips the limits.
+  version is shown for acceptance). Opening the step (by Send or from a refusal) reads
+  `agent.setup.get` again and shows it loading until the fresh state arrives; leaving Agent settings
+  reads it again too. A step with nothing left to record offers no "Agree and send": it says setup
+  is complete and only offers "check again". The step returns only when a document or consent
+  version changes; a price change never brings it back. An organization payer skips the limits.
 * **Price notice** (`PriceNotice.tsx`). When `agent.billing.status.price_notice.previous` (the
   pricing of the person's last answer) differs from the current offer, the chat shows "Prices have
   changed. Answers from now on are charged at the new price." with what changed (model, route,

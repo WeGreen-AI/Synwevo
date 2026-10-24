@@ -255,3 +255,26 @@ test('the step keeps its layout as an information or a warning notice, and touch
   const reduced = css.indexOf('@media (prefers-reduced-motion: reduce) {');
   assert.ok(reduced >= 0 && css.indexOf('  .notice.ag-setup, .ag-price-notice { animation: none; }', reduced) > reduced);
 });
+
+test('W4: a step with nothing left to record never offers an "Agree and send" that writes nothing: it is a plain re-check', async () => {
+  let rechecks = 0;
+  const done = fixtureSetup({ complete: true, provider_consent: { provider: 'deepseek', version: '2026-10-05', accepted: true, accepted_version: '2026-10-05' },
+    terms: { complete: true, documents: documents(true) }, limits: { ...fixtureSetup().limits, configured: true, enabled: true } });
+  const h = await cardFixture(done, { onRetryRead: () => { rechecks += 1; }, onDismiss: () => {} });
+  assert.equal(h.checkboxes().length, 0);
+  const buttons = h.elements().filter((el) => el.type === 'button');
+  const labels = buttons.map((el) => strings(el.props.children));
+  assert.ok(!labels.includes('Agree and send') && !labels.includes('Agree and start'), labels.join());
+  assert.ok(!buttons.some((el) => el.props.type === 'submit'), 'nothing to submit');
+  assert.ok(h.text().includes(core.translate('en', copy.chatCopy.setupNothing[0])), h.text());
+  assert.ok(h.text().includes(core.translate('en', copy.chatCopy.setupNothingDraft[0])), 'the message waits in the composer');
+  const recheck = buttons.find((el) => strings(el.props.children) === core.translate('en', copy.chatCopy.setupRecheck[0]));
+  assert.ok(recheck, labels.join());
+  recheck.props.onClick(); await settle(); h.render();
+  assert.equal(rechecks, 1); assert.deepEqual(h.writes, []); assert.equal(h.completed(), 0, 'nothing is sent from here');
+  for (const key of ['setupNothing', 'setupNothingDraft', 'setupRecheck']) {
+    const [source, en, hant] = copy.chatCopy[key];
+    assert.equal(core.translate('en', source), en, key); assert.equal(core.translate('zh-Hant', source), hant, key);
+  }
+  h.unmount();
+});

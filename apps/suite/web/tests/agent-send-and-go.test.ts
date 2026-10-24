@@ -645,3 +645,36 @@ test('W2: leaving Agent settings, and saving the maximum there, reads agent.bill
   assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture question', ...SEEN });
   h.unmount();
 });
+
+test('W4: opening the setup step reads agent.setup.get again and shows it loading until the fresh state arrives; leaving Agent settings reads it too', async () => {
+  const h = await appFixture();                 // setup complete when the page loaded
+  const setupReads = () => h.reads.filter((r) => r === 'agent.setup.get').length;
+  const withdrawn = fixtureSetup({ complete: false, provider_consent: { ...fixtureSetup().provider_consent, accepted: false, accepted_version: null } });
+  // FIXTURE: the consent was withdrawn in Agent settings meanwhile; the server refuses the send.
+  h.fail(new client.ApiError(409, 'provider_consent_required', 'fixture', { provider: 'deepseek', version: '2026-10-05' }));
+  await assert.rejects(h.chat().send('Fixture question'));
+  h.fail(undefined); h.serve({ setup: withdrawn });
+  const before = setupReads();
+  h.chat().onSetup({ text: 'Fixture question' }); h.render();
+  assert.equal(h.card().length, 1);
+  assert.equal(h.card()[0].props.setup, undefined, 'loading, not the state read at page load');
+  await settle(); h.render(); await settle(); h.render();
+  assert.equal(setupReads(), before + 1, 'read again when the step opens');
+  assert.equal(h.card()[0].props.setup.provider_consent.accepted, false, 'the step asks for what is missing now');
+  h.card()[0].props.onDismiss(); h.render();
+  // Opened by Send (the page knows something is missing): read again as well.
+  const bySend = setupReads();
+  assert.equal(await h.chat().send('Fixture question'), false); h.render();
+  assert.equal(h.card()[0].props.setup, undefined);
+  await settle(); h.render(); await settle(); h.render();
+  assert.equal(setupReads(), bySend + 1);
+  h.card()[0].props.onDismiss(); h.render();
+  // The facts may change in Agent settings: leaving it reads the state again.
+  await h.settings(true);
+  const away = setupReads();
+  h.serve({ setup: fixtureSetup() });
+  await h.settings(false);
+  assert.equal(setupReads(), away + 1, 'read again on leaving Agent settings');
+  assert.equal(await h.chat().send('Fixture question'), true, 'consent given there: the send goes straight out');
+  h.unmount();
+});
