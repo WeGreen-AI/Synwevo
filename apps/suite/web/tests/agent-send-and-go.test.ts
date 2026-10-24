@@ -145,6 +145,23 @@ async function appFixture({ billing = true, setup = fixtureSetup(), status: init
   return fixture;
 }
 
+/** The actual Chat (Chat.tsx) with FIXTURE send/act functions in the page's place. */
+async function chatFixture(send: any, extra: Record<string, unknown> = {}) {
+  const reports = await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx');
+  const picker = await server.ssrLoadModule('/src/apps/agent/ContextPicker.tsx');
+  return compiled('Chat.tsx', { conversation: conversation(), loading: false, error: undefined, connection: 'connected', configured: true,
+    spaces, send, act: async () => {}, refresh: async () => {}, ...extra }, {
+      './ContextPicker': { ...picker, useContextText: () => (key: string) => key },
+      './ChatParts': { ...parts, useChatText: () => ({ c: (key: string) => key }) },
+      './ReportDialog': { ...reports, useReportText: () => (key: string) => key },
+    });
+}
+/** A transcript with one answer (it can be regenerated). */
+const answered = () => ({ ...conversation(), head_id: 'msg_a', messages: [
+  { id: 'msg_u', parent_id: null, role: 'user', status: 'done', body: 'Fixture question', hidden: false, error: null, turn: null, tool_calls: [], created_at: 1 },
+  { id: 'msg_a', parent_id: 'msg_u', role: 'assistant', status: 'done', body: 'Fixture answer', hidden: false, error: null,
+    turn: { id: 'turn_a', status: 'succeeded', model: 'fixture-model', credential: 'platform' }, tool_calls: [], created_at: 2 }] });
+
 test('a billed send with setup complete issues exactly one agent.turn.start, with no quote, consent or dialog', async () => {
   const h = await appFixture();
   assert.equal(await h.chat().send('Fixture question'), true);
@@ -239,16 +256,6 @@ test('a price notice is shown without blocking the send', async () => {
 test('an admission refusal keeps the draft in the composer and renders the refusal with its next step', async () => {
   const compiledChat = transformSync('Chat.tsx', readFileSync(new URL('../src/apps/agent/Chat.tsx', import.meta.url), 'utf8'), { target: 'es2022', jsx: { runtime: 'automatic' } });
   assert.equal(compiledChat.errors.length, 0);
-  async function chatFixture(send: any, extra: Record<string, unknown> = {}) {
-    const reports = await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx');
-    const picker = await server.ssrLoadModule('/src/apps/agent/ContextPicker.tsx');
-    return compiled('Chat.tsx', { conversation: conversation(), loading: false, error: undefined, connection: 'connected', configured: true,
-      spaces, send, act: async () => {}, refresh: async () => {}, ...extra }, {
-        './ContextPicker': { ...picker, useContextText: () => (key: string) => key },
-        './ChatParts': { ...parts, useChatText: () => ({ c: (key: string) => key }) },
-        './ReportDialog': { ...reports, useReportText: () => (key: string) => key },
-      });
-  }
   const sends: string[] = []; const opened: unknown[] = [];
   let outcome: any = new client.ApiError(409, 'terms_acceptance_required', 'fixture');
   const h = await chatFixture(async (text: string) => { sends.push(text); if (outcome instanceof Error) throw outcome; return outcome; },
@@ -279,11 +286,7 @@ test('an admission refusal keeps the draft in the composer and renders the refus
   // A refused regenerate: "send again at the new price" repeats that regenerate, not the composer text.
   const acts: any[] = [];
   let actOutcome: any = new client.ApiError(409, 'billing_price_changed', 'fixture', { current: {} });
-  const answered = { ...conversation(), head_id: 'msg_a', messages: [
-    { id: 'msg_u', parent_id: null, role: 'user', status: 'done', body: 'Fixture question', hidden: false, error: null, turn: null, tool_calls: [], created_at: 1 },
-    { id: 'msg_a', parent_id: 'msg_u', role: 'assistant', status: 'done', body: 'Fixture answer', hidden: false, error: null,
-      turn: { id: 'turn_a', status: 'succeeded', model: 'fixture-model', credential: 'platform' }, tool_calls: [], created_at: 2 }] };
-  const r = await chatFixture(async () => true, { conversation: answered,
+  const r = await chatFixture(async () => true, { conversation: answered(),
     act: async (operation: string, input: any) => { acts.push([operation, plain(input)]); if (actOutcome) throw actOutcome; } });
   const regenerate = r.elements().filter((el) => el.type === 'button' && typeof el.props.onClick === 'function'
     && strings(el.props.children) === core.translate('en', '重新生成回答'));
@@ -378,4 +381,55 @@ test('the status is read again when the window regains focus or becomes visible,
   assert.equal(count(), first + 3, 'never sooner than 5 minutes');
   h.unmount();
   assert.ok(Object.values(listeners).every((list) => list.length === 0), 'listeners are removed');
+});
+
+test('"send again at the new price" goes through the page as it is now: the message as it now stands, the price the page now shows', async () => {
+  // FIXTURE: the page's send before the status was read again (it would carry the old price) and after.
+  const calls: string[] = [];
+  const refused = new client.ApiError(409, 'billing_price_changed', 'fixture', { current: { price_id: 'price_fixture_3' } });
+  const before = async (text: string) => { calls.push(`before:${text}`); throw refused; };
+  const after = async (text: string) => { calls.push(`after:${text}`); return true; };
+  const h = await chatFixture(before);
+  h.find((el) => el.type === 'textarea').props.onChange({ target: { value: 'Fixture draft' } }); h.render();
+  h.find((el) => el.type === 'form').props.onSubmit({ preventDefault() {} }); await settle(); h.render();
+  assert.deepEqual(calls, ['before:Fixture draft']);
+  // The page read the new price (a new send function), and the person touched up the kept message.
+  h.render({ send: after });
+  h.find((el) => el.type === 'textarea').props.onChange({ target: { value: 'Fixture draft, edited' } }); h.render();
+  const notice = h.find((el) => el.type === parts.RefusalNotice).props;
+  assert.equal(notice.refusal.next, 'retry');
+  notice.onRetry(); await settle(); h.render();
+  assert.deepEqual(calls, ['before:Fixture draft', 'after:Fixture draft, edited']);
+  assert.equal(h.find((el) => el.type === 'textarea').props.value, '');
+  h.unmount();
+  // The same for a refused regenerate: the same regenerate, through the page's current act.
+  const acts: string[] = [];
+  const r = await chatFixture(async () => true, { conversation: answered(),
+    act: async (operation: string, input: any) => { acts.push(`before:${operation}:${input.regenerate_of}`); throw refused; } });
+  r.elements().find((el) => el.type === 'button' && strings(el.props.children) === core.translate('en', '重新生成回答')).props.onClick();
+  await settle(); r.render();
+  r.render({ act: async (operation: string, input: any) => { acts.push(`after:${operation}:${input.regenerate_of}`); } });
+  r.find((el) => el.type === parts.RefusalNotice).props.onRetry(); await settle(); r.render();
+  assert.deepEqual(acts, ['before:agent.turn.start:msg_a', 'after:agent.turn.start:msg_a']);
+  r.unmount();
+});
+
+test('a send started from a function the page handed out earlier still carries the price and payer the composer shows now', async () => {
+  const h = await appFixture();
+  // Held from before (as a click handler or the setup step holds it).
+  const earlierSend = h.chat().send, earlierAct = h.chat().act;
+  h.fail(new client.ApiError(409, 'billing_price_changed', 'fixture', { current: { price_id: 'price_fixture_3' } }));
+  h.serve({ status: fixtureStatus({ run: { ...fixtureStatus().run, maximum: '600', price_id: 'price_fixture_3', route_version: 'fixture-v3' } }),
+    offer: { ...fixtureOffer(), route_version: 'fixture-v3', price_id: 'price_fixture_3' } });
+  await assert.rejects(h.chat().send('Fixture'), (e: any) => e.code === 'billing_price_changed');
+  await settle(); h.render(); await settle(); h.render();
+  assert.deepEqual(h.chat().maximum.props.maximum, { key: 'turnMaximum', amount: '600', unit: UNIT });
+  const money = h.money(); money.setPayer(money.payers[1]); h.render();
+  h.fail(undefined);
+  const NOW = { payer_kind: 'organization', payer_id: 'org_fixture', seen_price_id: 'price_fixture_3', seen_route_version: 'fixture-v3' };
+  assert.equal(await earlierSend('Fixture again'), true);
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture again', ...NOW });
+  await earlierAct('agent.turn.start', { conversation_id: 'conv_fixture', regenerate_of: 'msg_fixture' });
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', regenerate_of: 'msg_fixture', ...NOW });
+  h.unmount();
 });

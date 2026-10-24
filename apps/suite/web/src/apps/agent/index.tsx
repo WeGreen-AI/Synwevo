@@ -85,6 +85,11 @@ function AgentApp() {
   const payers = payerFacts.payers;
   const payer: Payer = userId ? choosePayer(payers, payerRef) : personal(userId, payerName);
   const organizationPayer = payer.kind !== "user";
+  // What the composer shows now, read when a turn is started: a send from a function an earlier
+  // render handed out (a click handler, the setup step's button) still carries the price and payer
+  // on screen, never ones the page has since replaced (addendum AD-1).
+  const shown = useRef({ status, offer, payer });
+  shown.current = { status, offer, payer };
   const walletUrl = walletHref(auth?.account_url, auth?.app_id);
   const accountUrl = accountHref(auth?.account_url, auth?.app_id);
   const organizationName = (ref: { kind: "organization"; id: string }) => payers.find((p) => payerKey(p) === payerKey(ref))?.name;
@@ -195,14 +200,16 @@ function AgentApp() {
    *  route version the composer showed (AD-1). A refusal for a newer price keeps the message, reads
    *  the status again and keeps what the page showed for the price notice. */
   async function startTurn(input: Record<string, unknown>) {
-    const body = billingRequired ? { ...input, ...payerInput(payer, userId), ...seenPrice(status) } : input;
+    const showing = shown.current;
+    const body = billingRequired ? { ...input, ...payerInput(showing.payer, userId), ...seenPrice(showing.status) } : input;
     try {
       const out = await write("agent.turn.start", body);
       setShownBefore(null);
       return out;
     } catch (error) {
       if (errorCode(error) === "billing_price_changed") {
-        if (offer) setShownBefore((before) => before ?? offer);
+        const refused = showing.offer;
+        if (refused) setShownBefore((before) => before ?? refused);
         setStatusTick((n) => n + 1);
       }
       throw error;

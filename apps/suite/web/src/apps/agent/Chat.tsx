@@ -134,9 +134,10 @@ export default function Chat({ conversation, loading, error, connection, configu
   const [localFileClient] = useState(createFileClient);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<unknown>();
-  // How to repeat the request a refusal stopped ("send again"): the message as it now stands, or
-  // the same regenerate. The payer and price it carries are added afresh by the page.
-  const retryFailed = useRef<(() => void) | undefined>(undefined);
+  // What a refusal stopped, to repeat on "send again": the message in the composer as it stands at
+  // the click, or that regenerate. Kept as what to repeat, not as a function of the render that failed, so the click
+  // goes through this render's send/act and carries the payer and price the page shows now (AD-1).
+  const retryFailed = useRef<"message" | { operation: string; body: Record<string, unknown> } | undefined>(undefined);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [newContent, setNewContent] = useState(false);
   const [copied, setCopied] = useState<CopyState>(null);
@@ -180,7 +181,7 @@ export default function Chat({ conversation, loading, error, connection, configu
   async function action(operation: string, body: Record<string, unknown>) {
     setBusy(true); setFailure(undefined);
     try { return await act(operation, body); }
-    catch (e) { retryFailed.current = operation === "agent.turn.start" ? () => void action(operation, body) : undefined; setFailure(e); }
+    catch (e) { retryFailed.current = operation === "agent.turn.start" ? { operation, body } : undefined; setFailure(e); }
     finally { setBusy(false); }
   }
   async function submit(e?: FormEvent) {
@@ -191,7 +192,12 @@ export default function Chat({ conversation, loading, error, connection, configu
       const refs = fileReferences(selectedFiles, selectedContexts.length);
       const result = refs ? await send(text, contextReferences(selectedContexts), refs) : await send(text, contextReferences(selectedContexts));
       if (result !== false) { setText(""); setSelectedContexts([]); setSelectedFiles([]); stick.current = true; input.current?.focus(); } }
-    catch (e) { retryFailed.current = () => void submit(); setFailure(e); } finally { setBusy(false); }
+    catch (e) { retryFailed.current = "message"; setFailure(e); } finally { setBusy(false); }
+  }
+  function retry() {
+    const again = retryFailed.current;
+    if (again === "message") void submit();
+    else if (again) void action(again.operation, again.body);
   }
   function flash(state: CopyState) {
     setCopied(state);
@@ -293,7 +299,7 @@ export default function Chat({ conversation, loading, error, connection, configu
       {/* A refused send keeps the message: "send again" sends it as it now stands, "finish setup"
           opens the one-time step with it. */}
       {failure != null && (failureRefusal ? <RefusalNotice refusal={failureRefusal} walletUrl={walletUrl} live busy={blocked} onPersonal={onPersonal}
-        onRetry={failureRefusal.next === "retry" ? retryFailed.current : undefined}
+        onRetry={failureRefusal.next === "retry" && retryFailed.current ? retry : undefined}
         onSetup={failureRefusal.next === "setup" && onSetup ? () => {
           let draft: Draft | undefined;
           try { draft = text.trim() ? draftOf() : undefined; } catch { draft = undefined; }

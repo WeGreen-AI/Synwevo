@@ -99,7 +99,8 @@ the cost line under each answer).
   and unit) and stores nothing: the message stays in the composer, the status is read again so the
   composer shows the new maximum, the price notice lists what changed against the price the page had
   shown, and "send again at the new price" sends it in one click (no dialog; for a refused
-  regenerate it repeats that regenerate). The page also reads the status again when the window
+  regenerate it repeats that regenerate), with the message as it then stands and the price and payer
+  the page shows at that click. The page also reads the status again when the window
   regains focus or becomes visible, and at most every 5 minutes while it is visible.
 * **One-time "Start using Synwevo Agent" step** (`AgentSetup.tsx`, an inline region, not a modal).
   When a send needs something the person has not done (`agent.setup.get`), the message stays in the
