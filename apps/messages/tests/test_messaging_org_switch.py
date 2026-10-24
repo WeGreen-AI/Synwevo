@@ -795,6 +795,59 @@ def test_a_reconnecting_tab_is_not_replayed_the_disabled_organizations_events(or
     assert "ring B" in bodies and "ring A" not in bodies
 
 
+def test_steady_traffic_does_not_postpone_the_heartbeat(org):
+    """int-b3-5: the heartbeat's duties (the session, lost memberships, the switch, the ping) run on
+    a monotonic schedule, after an event as well as after a quiet wait — events reaching the tab
+    more often than once a heartbeat (presence, typing, another organization's messages) no
+    longer postpone them. HEARTBEAT_S=1; FIXTURE ephemeral traffic every 0.2 s, kept up until the
+    switch-off is announced and, after the session is revoked, until the stream has ended."""
+    c = org
+    w = _world(c)
+    hub, metrics = c.api.state.message_hub, c.api.state.messaging_metrics
+    import synwevo_messages.routes as mr
+    c.sign_in("ann")
+    start = hub.current_id()
+    lines: list[str] = []
+    seen = {}
+
+    def traffic_until(pred, seconds=4.0) -> bool:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            hub.publish([w.ann], {"type": "fixture_traffic"}, ephemeral=True)
+            if pred():
+                return True
+            time.sleep(0.2)
+        return False
+
+    def act():
+        seen["subscribed"] = _wait(lambda: hub.connections_of(w.ann) == 1)
+        before = metrics()["stream_events"]
+        hub.publish([w.ann], {"type": "fixture_sentinel"}, ephemeral=True)
+        seen["hello"] = _wait(lambda: metrics()["stream_events"] >= before + 1)          # past its hello: the switches are read
+        _off(c)
+        seen["announced_under_traffic"] = traffic_until(lambda: _announced(hub, w.ann, start, "messages_disabled"))
+        seen["traffic_reached_the_tab"] = metrics()["stream_events"] - before > 2
+        c.ident.store.execute("UPDATE sessions SET revoked_at=? WHERE user_id=?", (time.time(), w.ann))
+        seen["ended_under_traffic"] = traffic_until(lambda: hub.connections_of(w.ann) == 0)
+    original = mr.HEARTBEAT_S
+    mr.HEARTBEAT_S = 1
+    try:
+        tab = threading.Thread(target=_stream, args=(c, lines), daemon=True)
+        tab.start()
+        actor = threading.Thread(target=act, daemon=True)
+        actor.start()
+        actor.join(30)
+        if tab.is_alive():                                   # the control end, should the beat never come
+            c.ident.store.execute("UPDATE sessions SET revoked_at=? WHERE user_id=?", (time.time(), w.ann))
+        tab.join(15)
+    finally:
+        mr.HEARTBEAT_S = original
+    assert seen == {"subscribed": True, "hello": True, "announced_under_traffic": True, "traffic_reached_the_tab": True,
+                    "ended_under_traffic": True}, seen
+    assert [(e["organization_id"], e["change"]) for e in _events(lines, "organization")] == [(w.a, "messages_disabled")], lines
+    assert ": ping" in lines and "event: end" in lines, lines
+
+
 # ---------------------------------------------------------------- G1: the platform-wide switch
 def test_the_platform_wide_switch_holds_for_sessions_already_signed_in(org):
     c = org

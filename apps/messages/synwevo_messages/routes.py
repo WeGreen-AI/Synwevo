@@ -912,25 +912,36 @@ def build_router(store, ident: Identity, sessions, audit, *, notifier: Notifier,
                         for ev in missed:
                             yield _sse(ev)
                             last_sent = ev["id"]
+                # The heartbeat's duties run on a monotonic schedule, after an event as after a quiet
+                # wait: events arriving more often than once a heartbeat (presence, typing, another
+                # organization's messages) must not postpone the session check, the lost
+                # memberships or the switch, which the console promises within one heartbeat.
+                beat_at = time.monotonic()
                 while True:
                     if await request.is_disconnected():
                         break
-                    try:
-                        ev = await asyncio.wait_for(q.get(), timeout=HEARTBEAT_S)
-                        if last_sent is not None and ev.get("id", 0) <= last_sent:
-                            continue                                    # already replayed from the ring
+                    ev = None
+                    wait = HEARTBEAT_S - (time.monotonic() - beat_at)
+                    if wait > 0:
+                        try:
+                            ev = await asyncio.wait_for(q.get(), timeout=wait)
+                        except asyncio.TimeoutError:
+                            pass
+                    if ev is not None and not (last_sent is not None and ev.get("id", 0) <= last_sent):    # else already replayed from the ring
                         cid = ev.get("conversation_id")
+                        passes = True
                         if cid and not (ev.get("type") == "conversation" and ev.get("change") == "removed"):
                             if time.monotonic() - allowed_at > HEARTBEAT_S:
                                 allowed, allowed_at = {}, time.monotonic()
                             if cid not in allowed:
                                 allowed[cid] = await run_in_threadpool(_open_now, cid)
-                            if not allowed[cid]:
-                                continue
-                        yield _sse(ev)
-                        last_sent = ev["id"]
-                        metrics.inc("stream_events")                    # live events passed on, across every stream
-                    except asyncio.TimeoutError:
+                            passes = allowed[cid]
+                        if passes:
+                            yield _sse(ev)
+                            last_sent = ev["id"]
+                            metrics.inc("stream_events")                # live events passed on, across every stream
+                    if time.monotonic() - beat_at >= HEARTBEAT_S:
+                        beat_at = time.monotonic()
                         if not await run_in_threadpool(_still_valid, sid, uid):
                             yield b"event: end\ndata: {\"reason\": \"session\"}\n\n"
                             break
