@@ -73,6 +73,8 @@ def pytest_configure(config):
                             "(tests of the parameters themselves, rehash upgrades and hash timing)")
     config.addinivalue_line("markers", "fresh_store_schema: build a new database from nothing instead "
                             "of starting from the session's migrated template")
+    config.addinivalue_line("markers", "cost_rollup_unchecked: the test leaves a deliberately broken cost "
+                            "rollup or fact (tamper, fault, rebuild refusal); skip the teardown verification")
 
 
 _CI_TMP_PATH = pytest.StashKey[tuple[Path, Path]]()
@@ -92,9 +94,14 @@ def pytest_fixture_setup(fixturedef, request):
     return path
 
 
+_CALL_FAILED = pytest.StashKey[bool]()
+
+
 @pytest.hookimpl(wrapper=True, tryfirst=True)
 def pytest_runtest_makereport(item, call):
     report = yield
+    if report.when == "call":
+        item.stash[_CALL_FAILED] = report.failed
     if item.config.getoption("ci_clean_passed_tmp") and _CI_TMP_PATH in item.stash:
         phases = item.stash.setdefault(_CI_TMP_PHASES, {})
         phases[report.when] = report.passed and not getattr(report, "wasxfail", False)
@@ -266,3 +273,38 @@ def release_factory_resources():
     # test has no suite-specific cleanup; expose this same cleanup for lifecycle regressions.
     yield _release_factory_resources
     _release_factory_resources()
+
+
+def _stores_of(values):
+    from synwevo_core.store import Store
+
+    found = {}
+    for value in values:
+        candidates = [value, getattr(value, "store", None)]
+        if isinstance(value, (tuple, list)):
+            candidates += list(value)
+        for candidate in candidates:
+            if isinstance(candidate, Store):
+                found[id(candidate)] = candidate
+    return list(found.values())
+
+
+@pytest.fixture(autouse=True)
+def _cost_rollup_verified(request):
+    """After every test whose fixtures hold a Store with platform cost facts: the trigger-maintained
+    cost rollup verifies against those facts (billing/cost_rollup.py, CostRollup.check over all
+    days). Tests that break the rollup or a fact on purpose say so with cost_rollup_unchecked."""
+    yield
+    if request.node.get_closest_marker("cost_rollup_unchecked") or request.node.stash.get(_CALL_FAILED, True):
+        return
+    import sqlite3
+
+    from synwevo_core.billing.cost_rollup import assert_consistent
+
+    for store in _stores_of(request.node.funcargs.values()):
+        try:
+            if not store.one("SELECT 1 AS x FROM model_cost_admissions LIMIT 1"):
+                continue
+        except sqlite3.Error:
+            continue
+        assert_consistent(store)
