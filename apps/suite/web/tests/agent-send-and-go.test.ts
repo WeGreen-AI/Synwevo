@@ -587,6 +587,68 @@ test('W1: an attempt that got no answer is retried automatically with its own ke
   h.unmount();
 });
 
+test('fv-agent-1: an attempt that never got an answer keeps its key for the same request, so Send again replays a lost admission; any server answer drops it', async () => {
+  const instant = (fn: () => void) => setTimeout(fn, 0);
+  const h = await appFixture({ globals: { setTimeout: instant } });
+  const starts = () => h.writes.filter((w) => w.operation === 'agent.turn.start');
+  const keys = () => starts().map((w) => w.options.key);
+  const down = new client.ApiError(0, 'network', 'fixture');
+  const gateway = (status: number) => new client.ApiError(status, 'upstream_unavailable', 'fixture', { status }, true);
+  // FIXTURE: the request may have been admitted (in reality the turn and its quote may be stored), but no
+  // answer came back, and the connection stays down through both automatic retries.
+  h.failNext(down, down, down);
+  await assert.rejects(h.chat().send('Fixture over a lost connection'), (e: any) => e.code === 'network');
+  assert.equal(starts().length, 3);
+  assert.equal(new Set(keys()).size, 1);
+  // The person presses Send again with the very same message: the same request, so the same key, and the
+  // server answers from its record of the first attempt instead of starting a second paid answer.
+  assert.equal(await h.chat().send('Fixture over a lost connection'), true);
+  assert.equal(starts().length, 4);
+  assert.deepEqual(plain(starts()[3].input), plain(starts()[0].input), 'the same body');
+  assert.equal(keys()[3], keys()[0], 'the first attempt\'s key, so a lost admission is replayed, not run twice');
+  // That answer ended the attempt: the next send of the same text is a new one.
+  assert.equal(await h.chat().send('Fixture over a lost connection'), true);
+  assert.notEqual(keys()[4], keys()[0]);
+  // A server refusal is an answer: Send again carries a new key (a fixed cause is never met with the replayed refusal).
+  h.fail(new client.ApiError(409, 'terms_acceptance_required', 'fixture'));
+  await assert.rejects(h.chat().send('Fixture refused'), (e: any) => e.code === 'terms_acceptance_required');
+  h.fail(undefined);
+  assert.equal(await h.chat().send('Fixture refused'), true, 'it starts, not the replayed refusal');
+  assert.notEqual(keys()[6], keys()[5]);
+  // No answer, then the replay of that key is answered with a refusal: the kept key goes with that answer.
+  const at = starts().length;
+  h.failNext(gateway(502), gateway(503), gateway(504), new client.ApiError(409, 'agent_busy', 'fixture'));
+  await assert.rejects(h.chat().send('Fixture behind a gateway'), (e: any) => e.status === 504);
+  await assert.rejects(h.chat().send('Fixture behind a gateway'), (e: any) => e.code === 'agent_busy');
+  assert.equal(keys()[at + 3], keys()[at], 'replayed with the kept key');
+  assert.equal(await h.chat().send('Fixture behind a gateway'), true);
+  assert.notEqual(keys()[at + 4], keys()[at], 'dropped on the server\'s answer');
+  // The key is kept for that request only: a changed message (or price, or payer) is another request.
+  const other = starts().length;
+  h.failNext(down, down, down);
+  await assert.rejects(h.chat().send('Fixture before an edit'));
+  assert.equal(await h.chat().send('Fixture after an edit'), true);
+  assert.notEqual(keys()[other + 3], keys()[other]);
+  // A regenerate the same way.
+  const regenerate = { conversation_id: 'conv_fixture', regenerate_of: 'msg_a' };
+  const again = starts().length;
+  h.failNext(down, down, down);
+  await assert.rejects(h.chat().act('agent.turn.start', regenerate));
+  await h.chat().act('agent.turn.start', regenerate);
+  assert.equal(keys()[again + 3], keys()[again]);
+  h.unmount();
+  // A new conversation: the resend goes into the conversation the first attempt was made for, with its key.
+  const fresh = await appFixture({ route: null, globals: { setTimeout: instant } });
+  fresh.failNext(undefined, down, down, down);
+  await assert.rejects(fresh.chat().send('Fixture first message'));
+  assert.equal(await fresh.chat().send('Fixture first message'), true);
+  assert.deepEqual(fresh.writes.map((w) => w.operation), ['agent.conversation.create', 'agent.turn.start', 'agent.turn.start', 'agent.turn.start', 'agent.turn.start']);
+  assert.equal(fresh.writes[4].options.key, fresh.writes[1].options.key);
+  assert.deepEqual(plain(fresh.writes[4].input), plain(fresh.writes[1].input));
+  assert.deepEqual(fresh.navigations, ['/agent/c/conv_new_fixture']);
+  fresh.unmount();
+});
+
 test('W8: the composer honours run.usable: an unusable cap says so with the way to Agent settings, never "at most <default>"', async () => {
   const { renderToStaticMarkup } = await import('react-dom/server');
   const run = fixtureStatus().run;

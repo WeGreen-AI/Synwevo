@@ -180,19 +180,28 @@ function AgentApp() {
   }
 
   /** One explicit action of the person (Send, Regenerate, "send again", the setup step's button)
-   *  is one attempt with one fresh idempotency key (addendum-2 W1). The key is sent again only by
-   *  the automatic retry of that same attempt when it got no answer from the server (the
-   *  connection failed, or a gateway in front of Synwevo could not reach it), so a lost response
-   *  is answered from the server's record of the attempt instead of running it twice. Any answer
-   *  from the server ends the attempt: the next click is a new one, so a cause fixed in between
-   *  (terms accepted, the maximum raised, the price read again, a top-up) is never met with the
-   *  replay of the earlier refusal. */
+   *  is one attempt with one fresh idempotency key (addendum-2 W1). The key is sent again by the
+   *  automatic retry of that same attempt when it got no answer from the server (the connection
+   *  failed, or a gateway in front of Synwevo could not reach it), so a lost response is answered
+   *  from the server's record of the attempt instead of running it twice. An attempt that never
+   *  got an answer, even after those retries, may still have been admitted: its key is kept for
+   *  that exact request (operation and body), and the next click that sends it unchanged sends it
+   *  with that key, so an admitted answer is replayed rather than started (and paid) a second time
+   *  (fv-agent-1). Any answer from the server ends the attempt and drops a kept key: the next click
+   *  is a new one, so a cause fixed in between (terms accepted, the maximum raised, the price read
+   *  again, a top-up) is never met with the replay of the earlier refusal. */
+  const unansweredKeys = useRef(new Map<string, string>());
   const write = useCallback(async (operation: string, input: Record<string, unknown>) => {
-    const key = newKey();
+    const request = JSON.stringify([operation, input]);
+    const key = unansweredKeys.current.get(request) ?? newKey();
+    unansweredKeys.current.delete(request);
     for (let attempt = 0; ; attempt += 1) {
       try { return (await op(operation, input, { key })).output; }
       catch (error) {
-        if (attempt < NO_ANSWER_RETRIES.length && unanswered(error)) { await pause(NO_ANSWER_RETRIES[attempt]); continue; }
+        if (unanswered(error)) {
+          if (attempt < NO_ANSWER_RETRIES.length) { await pause(NO_ANSWER_RETRIES[attempt]); continue; }
+          unansweredKeys.current.set(request, key);
+        }
         contextRefused(error, input);
         throw error;
       }
@@ -416,7 +425,8 @@ function AgentApp() {
 }
 
 /** The waits before the automatic retries of an attempt that got no answer (W1): two, then the
- *  attempt ends with the connection error and the message stays in the composer. */
+ *  attempt ends with the connection error and the message stays in the composer (its key kept
+ *  for the same request, fv-agent-1). */
 const NO_ANSWER_RETRIES = [1000, 3000];
 /** No answer from Synwevo: the request may or may not have arrived, so only the same key may ask again. */
 function unanswered(error: unknown): boolean {
