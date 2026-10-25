@@ -142,7 +142,7 @@ registerMessages({
     "zh-Hant": "申請註銷帳戶"
   },
   "注销后，Agent 对话、记忆与个人模型密钥会被删除；Agent 钱包中未用完的余额作废，不退还（充值一经完成不可退款）。计费与付款记录不再关联你的姓名与邮箱，按法定期限保留。": { "en": "When the account is deleted, your Agent conversations, memories and personal model key are erased; any unused Agent wallet balance is forfeited and not refunded (top-ups are final). Billing and payment records are kept for the period the law requires, no longer linked to your name or e-mail.", "zh-Hant": "註銷後，Agent 對話、記憶與個人模型金鑰會被刪除；Agent 錢包中未用完的餘額作廢，不退還（儲值一經完成不可退款）。計費與付款紀錄不再關聯你的姓名與電郵，按法定期限保留。" },
-  "也包含 Agent 对话的可见文字、记忆、设置、数据同意、报价与钱包流水；不含模型的思考过程、工具读取的业务数据或密钥。": { "en": "It also includes the visible text of your Agent conversations, memories, settings, data consents, quotes and wallet statement — not the model's reasoning, business data read by its tools, or any key.", "zh-Hant": "也包含 Agent 對話的可見文字、記憶、設定、資料同意、報價與錢包流水；不含模型的思考過程、工具讀取的業務資料或金鑰。" },
+  "也包含 Agent 对话的可见文字、记忆、设置、数据同意、条款接受记录、运行授权与钱包流水；不含模型的思考过程、工具读取的业务数据或密钥。": { "en": "It also includes the visible text of your Agent conversations, memories, settings, data consents, accepted terms, run authorizations and wallet statement — not the model's reasoning, business data read by its tools, or any key.", "zh-Hant": "也包含 Agent 對話的可見文字、記憶、設定、資料同意、條款接受紀錄、執行授權與錢包流水；不含模型的思考過程、工具讀取的業務資料或金鑰。" },
   "账户将立即停用。七天内可通过邮件取消注销；此后删除个人资料，组织中的贡献将保留，你是群主的群交给下一位管理员或成员。": { "en": "The account is disabled at once. You can cancel from the e-mail within seven days; after that your profile is deleted, your contributions to organisations remain, and groups you own pass to the next admin or member.", "zh-Hant": "帳戶將立即停用。七天內可透過電郵取消註銷；此後刪除個人資料，組織中的貢獻將保留，你是群主的群交給下一位管理員或成員。" },
   "确认申请注销": {
     "en": "Request deletion",

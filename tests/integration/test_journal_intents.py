@@ -696,6 +696,19 @@ def _app(w):
     return {"app_id": "docweave"}, lambda s: s.one("SELECT status FROM apps WHERE id='docweave'")["status"] == "disabled"
 
 
+B3_ORGANIZATION = "org_fixture_b3_switch"
+
+
+def _organization_app(w):
+    """B3: FIXTURE organization row (the switch's own check wants one; the replay does not — the
+    table has no foreign key), Synwevo Message on in it until the switch-off."""
+    t = now()
+    w.store.execute("INSERT OR IGNORE INTO organizations (id,name,status,invitation_policy,created_by,created_at,updated_at,version) "
+                    "VALUES (?,'B3 fixture organization','active','admins',?,?,?,1)", (B3_ORGANIZATION, w.a["id"], t, t))
+    return {"organization_id": B3_ORGANIZATION, "app_id": "messages"}, lambda s: bool(s.one(
+        "SELECT 1 FROM organization_apps WHERE organization_id=? AND app_id='messages' AND status='disabled'", (B3_ORGANIZATION,)))
+
+
 def _invitation(w):
     t = now()
     w.store.execute("INSERT INTO invitations (id,email_key,workspace_id,role,token_hash,invited_by,created_at,expires_at) "
@@ -796,7 +809,8 @@ CASES = {
     "member_removed": _member, "role_changed": _role, "entitlement_revoked": _entitlement,
     "workspace_frozen": _frozen, "webhook_disabled": _webhook, "passkey_removed": _passkey,
     "external_identity_unlinked": _external_identity,
-    "workspace_app_disabled": _workspace_app, "app_disabled": _app, "invitation_revoked": _invitation,
+    "workspace_app_disabled": _workspace_app, "organization_app_disabled": _organization_app,
+    "app_disabled": _app, "invitation_revoked": _invitation,
     "consent_withdrawn": _consent, "workspace_unclaimed": _unclaim,
     "model_dispatch_suspended": _dispatch, "model_breaker_opened": _breaker, "payer_frozen": _payer,
     "agent_access_suspended": _agent_suspended, "agent_provider_consent_withdrawn": _agent_consent,
@@ -994,6 +1008,9 @@ WRITERS = {
     "Apps.disable_for_workspace": ("workspace_app_disabled", _workspace_app,
                                    lambda w, _: _apps(w).disable_for_workspace(w.wid, "docweave"),
                                    lambda s, w, case: case[1](s), "strict", lambda: OSError),
+    "Apps.disable_for_organization": ("organization_app_disabled", _organization_app,
+                                      lambda w, _: _apps(w).disable_for_organization(B3_ORGANIZATION, "messages"),
+                                      lambda s, w, case: case[1](s), "strict", lambda: OSError),
     "Apps.set_status": ("app_disabled", lambda w: None, lambda w, _: _apps(w).set_status("docweave", "disabled"),
                         _as_writer(_app), "strict", lambda: OSError),
     "Consents.withdraw": ("consent_withdrawn", _consent, _withdraw_consent,

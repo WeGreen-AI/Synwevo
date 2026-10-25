@@ -772,7 +772,8 @@ def test_readyz_reports_messaging_counters_as_numbers_only(org):
     before = c.get("/readyz").json()
     assert before["status"] == "ready"
     m = before["checks"]["messaging"]
-    assert set(m) == {"send_failed", "stream_replays", "stream_resyncs", "stream_refused", "typing_events", "presence_events", "search_queries",
+    # `stream_events` (B3): live events the streams passed on — closed conversations' are not
+    assert set(m) == {"send_failed", "stream_replays", "stream_resyncs", "stream_refused", "stream_events", "typing_events", "presence_events", "search_queries",
                       "stream_connections", "presence_tracked", "ring_events"}
     assert all(isinstance(v, int) for v in m.values()) and m["stream_connections"] == 0
     dm = dm_between(c, "ann", "ben")

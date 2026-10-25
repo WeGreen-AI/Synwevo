@@ -14,6 +14,8 @@ Three things are checked, in order, and all three must hold:
 """
 from __future__ import annotations
 
+import sqlite3
+
 from . import env
 from .errors import ServiceError
 from .config import DOCS_NAME, MESSAGES_NAME
@@ -50,6 +52,48 @@ SUITE_APP_IDS = SUITE_WORKSPACE_APPS + ("agent",)
 #: account may open them; what they can reach inside is authorized per call, in the workspace
 #: each call names (the capability layer, capabilities.py). Being able to open the Agent grants nothing.
 PERSONAL_APP_IDS = frozenset({"agent"})
+
+#: Applications switched per organization (B3): their data belongs to an organization, not to a
+#: workspace, so the platform turns them on or off for one organization (`organization_apps`,
+#: `Apps.disable_for_organization`). Today only Synwevo Message; the platform-wide switch
+#: (`apps.status`, `Apps.set_status`) outranks it.
+ORGANIZATION_APP_IDS = frozenset({MESSAGES_APP_ID})
+
+
+def app_disabled(store: Store, app_id: str) -> bool:
+    """Whether the application is switched off platform-wide (`apps.status = 'disabled'`). An
+    application that never registered is not "disabled": a deployment without it has nothing to
+    switch off. One primary-key read, uncached — the switch holds from the next request on."""
+    row = store.one("SELECT status FROM apps WHERE id=?", (app_id,))
+    return bool(row) and row["status"] == "disabled"
+
+
+def organization_app_row(store: Store, organization_id: str, app_id: str) -> dict | None:
+    """The organization's switch row for the application (`status`, `updated_at`,
+    `updated_by`), or None when it was never switched (on). Tolerant of a database opened without
+    the table (`Store(..., migrate=False)` on an older copy): None."""
+    try:
+        return store.one("SELECT organization_id, app_id, status, updated_at, updated_by FROM organization_apps "
+                         "WHERE organization_id=? AND app_id=?", (organization_id, app_id))
+    except sqlite3.OperationalError:
+        return None
+
+
+def organization_app_disabled(store: Store, organization_id: str, app_id: str) -> bool:
+    """Whether the platform switched the application off for this organization (its own switch
+    only — `app_disabled` is the platform-wide one, which outranks it)."""
+    row = organization_app_row(store, organization_id, app_id)
+    return bool(row) and row["status"] == "disabled"
+
+
+def disabled_organizations(store: Store, app_id: str) -> set[str]:
+    """The organizations the platform switched the application off for. The table holds only the
+    organizations ever switched, so this is one small read (empty on almost every deployment)."""
+    try:
+        rows = store.all("SELECT organization_id FROM organization_apps WHERE app_id=? AND status='disabled'", (app_id,))
+    except sqlite3.OperationalError:
+        return set()
+    return {r["organization_id"] for r in rows}
 
 
 def entitlement_state(store: Store, workspace_id: str, app_id: str, user_id: str) -> str:
@@ -194,6 +238,52 @@ class Apps:
             if changed:
                 journal._intent(self.store, "workspace_app_disabled", workspace_id=workspace_id, app_id=app_id)
         return changed
+
+    def _organization_switch(self, organization_id: str, app_id: str) -> None:
+        """What both organization switches refuse: an application that is not switched per
+        organization (400 `bad_change`), and an organization that does not exist (404
+        `no_organization`)."""
+        if app_id not in ORGANIZATION_APP_IDS:
+            raise ServiceError(400, "bad_change", "该应用不按组织开关", {"app_id": app_id, "field": "organization_id"})
+        if not isinstance(organization_id, str) or not organization_id.strip():
+            raise ServiceError(400, "bad_change", "请指定组织", {"field": "organization_id"})
+        if not self.store.one("SELECT 1 FROM organizations WHERE id=?", (organization_id,)):
+            raise ServiceError(404, "no_organization", "找不到该组织", {"organization_id": organization_id})
+
+    def disable_for_organization(self, organization_id: str, app_id: str, actor_id: str | None = None) -> bool:
+        """Turn an organization-scoped application (`ORGANIZATION_APP_IDS`) off for one
+        organization (B3). Returns whether anything changed. For Synwevo Message it takes effect on
+        the next call of every open session: every conversation of the organization is refused
+        `403 messages_disabled` (`synwevo_core.messaging`), nothing is deleted.
+
+        A withdrawal, journalled like `disable_for_workspace`: the upsert to `disabled` and the
+        line (`organization_app_disabled`, written ahead with its receipt, `journal._intent`) share
+        one transaction, so a journal failure raises and rolls the switch back (and voids the
+        attempt), and a restore from a backup taken while it was on — or between the line and the
+        COMMIT — turns it off again. Nothing is journalled when it was already off."""
+        from . import journal
+        self._organization_switch(organization_id, app_id)
+        with self.store.tx() as t:
+            changed = t.execute(
+                "INSERT INTO organization_apps (organization_id,app_id,status,updated_at,updated_by) VALUES (?,?,'disabled',?,?) "
+                "ON CONFLICT(organization_id,app_id) DO UPDATE SET status='disabled', updated_at=excluded.updated_at, "
+                "updated_by=excluded.updated_by WHERE organization_apps.status<>'disabled'",
+                (organization_id, app_id, now(), actor_id)).rowcount > 0
+            if changed:
+                journal._intent(self.store, "organization_app_disabled", organization_id=organization_id, app_id=app_id)
+        return changed
+
+    def enable_for_organization(self, organization_id: str, app_id: str, actor_id: str | None = None) -> bool:
+        """Turn it back on for one organization. Returns whether anything changed (an organization
+        never switched off is on already). Not journalled, the same as turning an application on
+        platform-wide. The row is updated to `active`, never deleted: its `updated_at` is what a
+        restore reads to tell a switch-off that never committed from the backup's own race
+        (`journal._touched_since`)."""
+        self._organization_switch(organization_id, app_id)
+        with self.store.tx() as t:
+            return t.execute("UPDATE organization_apps SET status='active', updated_at=?, updated_by=? "
+                             "WHERE organization_id=? AND app_id=? AND status<>'active'",
+                             (now(), actor_id, organization_id, app_id)).rowcount > 0
 
     def set_status(self, app_id: str, status: str) -> bool:
         """Turn an application on or off platform-wide. Returns whether anything changed.

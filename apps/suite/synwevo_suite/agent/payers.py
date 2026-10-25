@@ -7,13 +7,16 @@ each with what is left —
    "payers": [
      {"kind": "user", "id": <user id>, "label": null, "available": "<units>", "frozen": bool},
      {"kind": "organization", "id": <org id>, "label": <organization name>,
-      "available": "<org wallet units available>", "frozen": bool,
+      "available": "<units: min(org wallet available, remaining_this_month)>", "frozen": bool,
       "monthly_limit": "<units>", "spent_this_month": "<units>", "held": "<units>",
       "remaining_this_month": "<units>"} ...],
    "welcome": {"state": ...} | null}
 
 Amounts are decimal strings of integer wallet units (``unit.scale`` decimal places), as on the
-wallet page. The personal payer is always listed first and is the default. Opening the Agent is
+wallet page. An organization's ``available`` is what this member can still charge it this month
+— the lesser of the organization wallet's available balance and the member's remaining monthly
+allowance — never the organization's full balance, which only its billing managers may read
+(authz-4). The personal payer is always listed first and is the default. Opening the Agent is
 its first use, so this is also where the one-time welcome allowance is granted when configured.
 Nothing here grants payment authority: a run's quote names its payer and the ledger rechecks the
 organization's grant and limits at every reservation and send.
@@ -45,7 +48,8 @@ def payers(agent, user_id: str) -> dict:
     if ledger.org_payers is not None:
         for org in ledger.org_payers.payers_for(user_id, unit):
             out.append({"kind": "organization", "id": org["organization_id"], "label": org["name"],
-                        "available": str(org["wallet_available"]), "frozen": org["frozen"],
+                        "available": str(max(0, min(org["wallet_available"], org["remaining_this_month"]))),
+                        "frozen": org["frozen"],
                         "monthly_limit": str(org["monthly_limit"]), "spent_this_month": str(org["spent_this_month"]),
                         "held": str(org["held"]), "remaining_this_month": str(org["remaining_this_month"])})
     return {"configured": True, "environment": ledger.environment, "currency": "CNY",

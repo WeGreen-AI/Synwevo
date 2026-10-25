@@ -38,6 +38,10 @@
 
 /* ---------------------------------------------------------------- the list */
 .msg-side-h { display: flex; align-items: center; gap: 8px; padding: 10px 12px 6px; min-height: 48px; }
+/* B3: why some conversations are not listed now (Message switched off, an organization paused) */
+.msg-availability { display: flex; flex-direction: column; gap: 6px; padding: 0 8px; }
+.msg-availability:empty { display: none; }
+.msg-availability .notice { margin: 0; overflow-wrap: anywhere; }
 .msg-side-title { font-size: var(--fs-6); font-weight: 600; flex: 1; min-width: 0; }
 .msg-new-btn { width: 30px; height: 30px; }
 .msg-side-search { position: relative; padding: 0 12px 8px; }

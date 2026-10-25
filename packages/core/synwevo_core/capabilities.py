@@ -537,6 +537,48 @@ def fingerprint(value: Any) -> str:
     return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
 
 
+def input_fingerprint(parsed: BaseModel) -> str:
+    """The idempotency fingerprint of an operation's validated input (``op_runs.input_hash``).
+
+    Fields equal to their defaults are left out, so an optional field a later release adds
+    (default ``None``, ``False``, ``[]`` …) does not turn an unchanged retry into
+    ``idempotency_conflict``. Naming a default explicitly is the same request as leaving it out,
+    as it always was: the whole validated dump never told them apart either."""
+    return fingerprint(parsed.model_dump(mode="json", exclude_defaults=True))
+
+
+_NO_VIEW = object()     # the shapes cannot be the same request
+_DEFAULTED = object()   # below a member that is at its default: every member is at its default
+
+
+def _recorded_view(full: Any, lean: Any, stored: Any) -> Any:
+    """``full`` (this call's whole validated input) in the shape of ``stored`` (the whole input an
+    earlier release recorded). A member ``stored`` lacks is dropped only when it is at its default:
+    absent from ``lean``, the same dump without defaults. ``_NO_VIEW`` when the shapes differ."""
+    if isinstance(stored, dict):
+        if not isinstance(full, dict) or not set(stored) <= set(full):
+            return _NO_VIEW
+        # Without a dump to tell, every member counts as set (strict).
+        members = None if lean is _DEFAULTED else lean if isinstance(lean, dict) else full
+        if members is not None and any(name in members for name in set(full) - set(stored)):
+            return _NO_VIEW
+        view = {}
+        for name, value in stored.items():
+            inner = _DEFAULTED if members is None or name not in members else members[name]
+            view[name] = _recorded_view(full[name], inner, value)
+            if view[name] is _NO_VIEW:
+                return _NO_VIEW
+        return view
+    if isinstance(stored, list):
+        if not isinstance(full, list) or len(full) != len(stored):
+            return _NO_VIEW
+        items = ([_DEFAULTED] * len(full) if lean is _DEFAULTED
+                 else lean if isinstance(lean, list) and len(lean) == len(full) else full)
+        view = [_recorded_view(f, l, s) for f, l, s in zip(full, items, stored)]
+        return _NO_VIEW if any(v is _NO_VIEW for v in view) else view
+    return full
+
+
 def _readable_json(value: Any) -> Any:
     """A stored JSON column as a value, or None when it holds nothing readable: a row written by
     an older process, or one a test made unreadable on purpose, must not raise in a reader."""
@@ -736,10 +778,10 @@ class Capabilities:
         except ValidationError as err:
             raise ServiceError(422, "invalid_input", "输入不符合该操作的要求", _validation_detail(err)) from None
         clean = parsed.model_dump(mode="json")
-        in_hash = fingerprint(clean)
+        in_hash = input_fingerprint(parsed)
 
         if idempotency_key is not None:
-            prior = self._prior(op, user_id, workspace_id, idempotency_key, via, in_hash)
+            prior = self._prior(op, user_id, workspace_id, idempotency_key, via, in_hash, parsed)
             if prior is not None:
                 return self._replay(prior)
 
@@ -779,7 +821,7 @@ class Capabilities:
                 return {"run_id": run_id, "operation": op.id, "status": output[0], "output": output[1],
                         "replayed": False, "workspace_id": workspace_id}
             except _Replay:
-                prior = self._prior(op, user_id, workspace_id, idempotency_key, via, in_hash)
+                prior = self._prior(op, user_id, workspace_id, idempotency_key, via, in_hash, parsed)
                 if prior is None:
                     raise ServiceError(409, "idempotency_conflict", "同一个幂等键已用于不同的参数。") from None
                 return self._replay(prior)
@@ -798,7 +840,7 @@ class Capabilities:
                 t.execute(insert, row)
         except Exception as exc:  # noqa: BLE001
             if idempotency_key is not None and "UNIQUE" in str(exc):
-                prior = self._prior(op, user_id, workspace_id, idempotency_key, via, in_hash)
+                prior = self._prior(op, user_id, workspace_id, idempotency_key, via, in_hash, parsed)
                 if prior is not None:
                     return self._replay(prior)
                 raise ServiceError(409, "idempotency_conflict", "同一个幂等键已用于不同的参数。") from None
@@ -865,7 +907,7 @@ class Capabilities:
             raise ServiceError(409, "result_access_unverifiable", "请在应用中打开当前业务记录")
 
     def _prior(self, op: Operation, user_id: str, workspace_id: str | None, key: str, via: str,
-               in_hash: str) -> dict | None:
+               in_hash: str, parsed: BaseModel | None = None) -> dict | None:
         """The earlier run this call repeats, or None when the key is new. A key already used for
         other parameters, or by the other kind of caller, is a conflict — never a replay: a run a
         person made in the page is not an answer to a credential's call, and the reverse."""
@@ -874,11 +916,25 @@ class Capabilities:
             return None
         if (prior["via"] == "api") != (via == "api"):
             raise ServiceError(409, "idempotency_conflict", "这个幂等键已被另一种调用方式使用，请换一个幂等键。")
-        if prior["input_hash"] != in_hash:
+        if prior["input_hash"] != in_hash and not self._same_recorded_input(prior, parsed):
             raise ServiceError(409, "idempotency_conflict",
                                "同一个幂等键已用于不同的参数。请换一个幂等键，或使用相同的参数重试。",
                                {"run_id": prior["id"]})
         return prior
+
+    @staticmethod
+    def _same_recorded_input(prior: dict, parsed: BaseModel | None) -> bool:
+        """Whether a run fingerprinted by an earlier release repeats this call. Such a release
+        fingerprinted its whole validated input, defaults included, and stored that input. Its
+        members say which fields the earlier model had: this call's input restricted to them,
+        with every member the earlier model lacked at its default, must have the recorded
+        fingerprint. The recorded fingerprint stays the authority — a stored input that was
+        rewritten or erased, or any other shape, is not a match (``idempotency_conflict``)."""
+        stored = _readable_json(prior.get("input"))
+        if parsed is None or not isinstance(stored, dict):
+            return False
+        view = _recorded_view(parsed.model_dump(mode="json"), parsed.model_dump(mode="json", exclude_defaults=True), stored)
+        return view is not _NO_VIEW and fingerprint(view) == prior["input_hash"]
 
     def _idempotent(self, op: Operation, user_id: str, workspace_id: str | None, key: str) -> dict | None:
         return self.store.one(

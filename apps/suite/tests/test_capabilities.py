@@ -6,13 +6,14 @@ input, idempotency, run records, events in the same transaction as the business 
 """
 from __future__ import annotations
 
+import json
 import threading
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from synwevo_core.apps import Apps
-from synwevo_core.capabilities import AppManifest, Operation
+from synwevo_core.capabilities import AppManifest, Operation, fingerprint
 from synwevo_core.errors import ServiceError
 
 TEXT = {"zh-Hans": "夹具", "zh-Hant": "夾具", "en": "Fixture"}
@@ -298,3 +299,115 @@ def test_catalogue_lists_applications_with_the_workspaces_each_can_be_used_in(su
     assert "fixture" not in {a["id"] for a in suite.get("/api/suite/catalog").json()["apps"]}
     ops = suite.get("/api/suite/operations", params={"app": "fixture"})
     assert ops.status_code == 404
+
+
+# ------------------------------------------------------------------ a release adds an optional field (S3)
+class TagRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: str
+
+
+class TagIn(BaseModel):
+    """FIXTURE input of the release that recorded the first attempt: defaulted fields already."""
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=50)
+    colour: str | None = None
+    refs: list[TagRef] = Field(default_factory=list)
+
+
+class TagRefNext(TagRef):
+    revision: int | None = None
+
+
+class TagInNext(TagIn):
+    """FIXTURE input of the next release: the same request plus optional fields that default to
+    nothing, at the top and inside a listed member."""
+    pinned: bool = False
+    labels: list[str] = Field(default_factory=list)
+    note: str | None = None
+    refs: list[TagRefNext] = Field(default_factory=list)
+
+
+def _tagging(suite, model=TagIn):
+    """Register (or, for the next release's process, re-register) the fixture write with ``model``."""
+    store = suite.people.store
+
+    def create(call, inp):
+        nid = f"t{store.one('SELECT COUNT(*) AS n FROM fixture_notes')['n'] + 1}"
+        store.execute("INSERT INTO fixture_notes VALUES (?,?,?)", (nid, call.workspace_id, inp.text))
+        call.touches("note", nid)
+        return {"id": nid, "text": inp.text}
+
+    def note_result(call, row):
+        if not store.one("SELECT 1 FROM fixture_notes WHERE id=?", (row["object_id"],)):
+            raise ServiceError(404, "note_not_found", "夹具记录不存在")
+
+    op = Operation(id="fixture.note.tag", app="fixture", title=TEXT, summary="Tag a note", input=model,
+                   handler=create, need="write", side_effect="write", agent="never", object_kind="note",
+                   result_guard=note_result)
+    # A deployment replaces the process; here the registry entry is swapped in place.
+    suite.caps.registry._ops[op.id] = op
+
+
+def _tag(suite, payload, key="tag-key-1"):
+    p = suite.people
+    return suite.caps.invoke("fixture.note.tag", payload, user_id=p.uid("bob"), workspace_id=p.a, idempotency_key=key)
+
+
+def test_a_retry_across_a_release_that_added_optional_fields_replays_the_first_run(suite):
+    store = _setup(suite)
+    _tagging(suite)
+    first = _tag(suite, {"text": "once", "refs": [{"kind": "a"}]})
+    run = store.one("SELECT input, input_hash FROM op_runs WHERE id=?", (first["run_id"],))
+    assert run["input_hash"] == fingerprint({"text": "once", "refs": [{"kind": "a"}]}), "指纹不含取默认值的字段"
+    assert json.loads(run["input"]) == {"text": "once", "colour": None, "refs": [{"kind": "a"}]}, "运行记录仍保存完整的输入"
+    _tagging(suite, TagInNext)
+    again = _tag(suite, {"text": "once", "refs": [{"kind": "a"}]})
+    assert again["replayed"] and again["run_id"] == first["run_id"], "同样的参数，只是新版本多了可选字段"
+    # Naming a default explicitly is the same request; a value that is not the default is another one.
+    assert _tag(suite, {"text": "once", "pinned": False, "labels": [], "note": None, "colour": None,
+                        "refs": [{"kind": "a", "revision": None}]})["replayed"]
+    for changed in ({"text": "once", "refs": [{"kind": "a"}], "pinned": True},
+                    {"text": "once", "refs": [{"kind": "a"}], "labels": ["a"]},
+                    {"text": "once", "refs": [{"kind": "a", "revision": 2}]}, {"text": "once"}, {"text": "twice"}):
+        with pytest.raises(ServiceError) as e:
+            _tag(suite, changed)
+        assert e.value.code == "idempotency_conflict", changed
+    assert store.one("SELECT COUNT(*) AS n FROM fixture_notes")["n"] == 1
+
+
+def test_a_run_fingerprinted_with_its_defaults_by_an_earlier_release_still_replays(suite):
+    """Rows written before fingerprints left defaults out hash the whole input, defaults included."""
+    store = _setup(suite)
+    _tagging(suite)
+    same = {"text": "once", "refs": [{"kind": "a"}]}
+    first = _tag(suite, same)
+    row = store.one("SELECT input FROM op_runs WHERE id=?", (first["run_id"],))
+    stored = json.loads(row["input"])
+    assert stored == {"text": "once", "colour": None, "refs": [{"kind": "a"}]}, "the run keeps the whole validated input"
+    # FIXTURE: the fingerprint exactly as the earlier release recorded it (every field, defaults included).
+    store.execute("UPDATE op_runs SET input_hash=? WHERE id=?", (fingerprint(stored), first["run_id"]))
+    _tagging(suite, TagInNext)
+    again = _tag(suite, same)
+    assert again["replayed"] and again["run_id"] == first["run_id"]
+    assert _tag(suite, {**same, "pinned": False, "refs": [{"kind": "a", "revision": None}]})["replayed"]
+    # Another value for a field the earlier release had, or a value for a field it did not have
+    # (at the top or inside a listed member), is another request.
+    for changed in ({**same, "colour": "red"}, {**same, "pinned": True}, {**same, "refs": [{"kind": "a", "revision": 2}]},
+                    {**same, "refs": [{"kind": "b"}]}, {**same, "refs": []},
+                    {**same, "refs": [{"kind": "a"}, {"kind": "b"}]}):
+        with pytest.raises(ServiceError) as e:
+            _tag(suite, changed)
+        assert e.value.code == "idempotency_conflict", changed
+    # The recorded fingerprint is the authority: a stored input rewritten since (or erased) only
+    # says which members there were, so it is never read as this request.
+    store.execute("UPDATE op_runs SET input=? WHERE id=?", ('{"refs":[{"kind":"a"}],"text":"once"}', first["run_id"]))
+    with pytest.raises(ServiceError) as e:
+        _tag(suite, same)
+    assert e.value.code == "idempotency_conflict"
+    store.execute("UPDATE op_runs SET input=?, input_hash=? WHERE id=?",
+                  ('{"erased":"account_deleted"}', fingerprint({"erased": "account_deleted"}), first["run_id"]))
+    with pytest.raises(ServiceError) as e:
+        _tag(suite, same)
+    assert e.value.code == "idempotency_conflict"
+    assert store.one("SELECT COUNT(*) AS n FROM fixture_notes")["n"] == 1

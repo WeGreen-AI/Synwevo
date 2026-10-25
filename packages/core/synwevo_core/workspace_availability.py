@@ -55,5 +55,11 @@ def availability(store: Store, workspace_id, ts: float | None = None) -> str:
     return max(state, _state(org, ts), key=_ORDER.index)
 
 
+def lifecycle_state(row: dict | None, ts: float | None = None) -> str:
+    """`_state` for a lifecycle row the caller already read (`status`, `deleted_at`,
+    `recover_until`; None = no such row, LOST) — for a listing that reads many at once."""
+    return _state(row, now() if ts is None else ts)
+
+
 def paused(store: Store, workspace_id, ts: float | None = None) -> bool:
     return availability(store, workspace_id, ts) == PAUSED

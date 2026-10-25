@@ -47,7 +47,6 @@ const WELCOME: readonly WelcomeState[] = ['granted', 'already', 'email_unverifie
 
 export const payerKey = (p: PayerRef) => `${p.kind}:${p.id}`;
 export const personal = (userId: string, name = ''): Payer => ({ kind: 'user', id: userId, name, facts: null });
-export const samePayer = (a: PayerRef | null | undefined, b: PayerRef | null | undefined) => !!a && !!b && a.kind === b.kind && a.id === b.id;
 
 function unitOf(value: any): MoneyUnit | null {
   return value && typeof value === 'object' && typeof value.code === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(value.code)
@@ -102,21 +101,13 @@ export function spendable(payer: Payer): bigint | null {
   return available < remaining ? available : remaining;
 }
 
-/** The payer a quote or consent was issued for: its `payer` field, or (terms issued before
- *  organization payment existed) the person themself. */
-export function payerOf(terms: object | null | undefined, userId: string): PayerRef | null {
-  const payer = (terms as { payer?: { kind?: unknown; id?: unknown } | null } | null | undefined)?.payer;
-  if (payer == null) return { kind: 'user', id: userId };
-  if (payer.kind === 'user') return payer.id == null || payer.id === userId ? { kind: 'user', id: userId } : null;
-  return payer.kind === 'organization' && typeof payer.id === 'string' && ID.test(payer.id) ? { kind: 'organization', id: payer.id } : null;
-}
-
 /** The remembered choice when it is still offered, else the personal wallet (the default payer). */
 export function choosePayer(payers: Payer[], remembered: PayerRef | null | undefined): Payer {
   return (remembered && payers.find((p) => payerKey(p) === payerKey(remembered))) || payers[0];
 }
 
-/** Extra quote/turn input naming a non-default payer; the personal default sends nothing extra. */
+/** The payer named inline on `agent.turn.start` (send-and-go contract §3: payer_kind, payer_id);
+ *  the personal default sends nothing extra. The server checks on every send that it may pay. */
 export function payerInput(payer: PayerRef | null | undefined, userId: string): Record<string, string> {
   if (!payer || (payer.kind === 'user' && payer.id === userId)) return {};
   return { payer_kind: payer.kind, payer_id: payer.id };
@@ -124,14 +115,16 @@ export function payerInput(payer: PayerRef | null | undefined, userId: string): 
 
 const storageKey = (userId: string) => `synwevo.agent.payer.${userId}`;
 /** A per-viewer convenience only; the server decides on every send whether the payer may pay. */
-export function recallPayer(userId: string, storage: Pick<Storage, 'getItem'> | undefined = globalThis.localStorage): PayerRef | null {
+export function recallPayer(userId: string, storage?: Pick<Storage, 'getItem'> | null): PayerRef | null {
   try {
-    const raw = storage?.getItem(storageKey(userId));
+    // Reading localStorage itself can throw (blocked site data), so it is looked up in here.
+    const raw = (storage === undefined ? globalThis.localStorage : storage)?.getItem(storageKey(userId));
     const value = raw ? JSON.parse(raw) : null;
     return value && (value.kind === 'user' || value.kind === 'organization') && typeof value.id === 'string' && ID.test(value.id)
       ? { kind: value.kind, id: value.id } : null;
   } catch { return null; }
 }
-export function rememberPayer(userId: string, payer: PayerRef, storage: Pick<Storage, 'setItem'> | undefined = globalThis.localStorage): void {
-  try { storage?.setItem(storageKey(userId), JSON.stringify({ kind: payer.kind, id: payer.id })); } catch { /* private mode */ }
+export function rememberPayer(userId: string, payer: PayerRef, storage?: Pick<Storage, 'setItem'> | null): void {
+  try { (storage === undefined ? globalThis.localStorage : storage)?.setItem(storageKey(userId), JSON.stringify({ kind: payer.kind, id: payer.id })); }
+  catch { /* private mode or blocked site data: the choice is simply not remembered */ }
 }

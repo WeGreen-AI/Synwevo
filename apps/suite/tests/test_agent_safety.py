@@ -467,7 +467,9 @@ from .test_agent_metering import gateway  # noqa: E402,F401 — fixture (isolate
 from .test_agent_run_quotes import paid  # noqa: E402,F401 — fixture
 
 
-def test_the_first_paid_run_records_the_published_terms_versions_once(paid):  # noqa: F811
+def test_a_flows_first_paid_run_records_the_published_terms_versions_once(paid):  # noqa: F811
+    """A flow or automation on the legacy quote path records the versions in force at its paid run.
+    The person's own send from the page never does: it needs them accepted beforehand (AD-4)."""
     from synwevo_core.terms import DOCUMENTS, TermsAcceptances
     g = paid
     caps, uid = g.agent.caps, g.user["id"]
@@ -477,8 +479,11 @@ def test_the_first_paid_run_records_the_published_terms_versions_once(paid):  # 
             "run_seconds": 500}
     quote = caps.invoke("agent.turn.quote", args, user_id=uid, idempotency_key="terms-quote-1")["output"]
     assert accepted.history(uid) == []                        # a quote is not yet a paid use
-    turn = caps.invoke("agent.turn.start", {"conversation_id": g.conversation["id"], "text": "fixture question",
-                                            "quote_id": quote["id"]}, user_id=uid, idempotency_key="terms-start-1")
+    body = {"conversation_id": g.conversation["id"], "text": "fixture question", "quote_id": quote["id"]}
+    with pytest.raises(ServiceError) as err:
+        caps.invoke("agent.turn.start", body, user_id=uid, idempotency_key="terms-start-page")
+    assert err.value.code == "terms_acceptance_required" and accepted.history(uid) == []
+    turn = caps.invoke("agent.turn.start", body, user_id=uid, via="flow", idempotency_key="terms-start-1")
     rows = accepted.history(uid)
     assert {(r["document"], r["version"]) for r in rows} == {(d, v) for d, (v, _) in DOCUMENTS.items()}
     assert {r["context"] for r in rows} == {"paid_run:" + turn["output"]["turn_id"]}

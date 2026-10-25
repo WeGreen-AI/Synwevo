@@ -45,9 +45,6 @@ dl.ag-values { padding: 0; }
 .ag-value { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ag-composer-area { width: min(800px, 100%); margin: 0 auto; padding: var(--sp-2) var(--sp-5); }
 .ag-composer-area .suite-state { min-height: 0; padding: var(--sp-2); }
-.ag-payment-settings > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: var(--sp-2); color: var(--text-2); font-size: var(--fs-2); }
-.ag-payment-settings > summary::before { content: "▸"; }
-.ag-payment-settings[open] > summary::before { content: "▾"; }
 .ag-composer { border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
 .ag-composer:focus-within { border-color: var(--accent); }
 .ag-composer textarea { width: 100%; padding: var(--sp-3) var(--sp-4); border: 0; border-radius: inherit; outline: none; resize: vertical; min-height: 76px; max-height: 28vh; font: inherit; font-size: var(--fs-5); color: var(--text); background: transparent; }
@@ -176,14 +173,45 @@ a.ag-chip-link { color: var(--accent); }
 .ag-caps { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin: 0; padding: 0; list-style: none; }
 .ag-caps li { padding: 2px var(--sp-2); border-radius: 999px; background: var(--accent-weak); color: var(--accent-strong); font-size: var(--fs-2); }
 .ag-caps li.off { background: var(--surface-hover); color: var(--text-2); }
-/* ---- Price change and re-confirmation ---- */
+/* ---- Price change: what differs from the person's last answer (a notice, never a gate) ---- */
 .ag-price-change h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-4); }
 .ag-price-change dl { display: grid; gap: var(--sp-2); margin: 0; }
 .ag-price-change dt { color: var(--text-2); font-size: var(--fs-2); }
 .ag-price-change dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .ag-price-change del { color: var(--muted); }
 .ag-price-change ins { color: var(--text); font-weight: 600; text-decoration: none; }
-.ag-price-same { margin: 0; }
+.ag-price-notice { display: grid; gap: var(--sp-2); margin: 0 0 var(--sp-2); min-width: 0; overflow-wrap: anywhere; animation: ag-reveal var(--dur-2) var(--ease); }
+.ag-price-notice-text { margin: 0; font-size: var(--fs-3); font-weight: 600; }
+.ag-price-notice .ag-price-change { color: var(--text); }
+.ag-price-notice .btn { justify-self: start; white-space: normal; max-width: 100%; }
+@media (pointer: coarse) { .ag-price-notice .btn { min-height: 44px; } }
+/* ---- The one-time "Start using Synwevo Agent" step: an inline region above the composer ---- */
+/* It is a .notice (.info, or .warn when the step cannot be read): two classes so its layout holds
+   whatever order the stylesheets load in, and as .info the soft accent surface keeps body text in
+   the text colour (a .warn step keeps the warning colour). */
+.notice.ag-setup { display: grid; gap: var(--sp-3); margin: 0 0 var(--sp-2); padding: var(--sp-3) var(--sp-4); min-width: 0;
+  font-size: var(--fs-3); overflow-wrap: anywhere; animation: ag-reveal var(--dur-2) var(--ease); }
+.notice.info.ag-setup { color: var(--text); }
+.ag-setup-title { margin: 0; font-size: var(--fs-5); color: var(--text); border-radius: var(--radius-sm); }
+.ag-setup-title:focus { outline: none; }
+.ag-setup-title:focus-visible { box-shadow: var(--focus); }
+.ag-setup-intro, .ag-setup-links { margin: 0; }
+.ag-setup-form { display: grid; gap: var(--sp-3); min-width: 0; }
+.ag-setup-item { display: grid; gap: var(--sp-2); min-width: 0; margin: 0; padding: var(--sp-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+/* Floated, the legend is laid out as the item's first row instead of breaking into its border when it wraps. */
+.ag-setup-item > legend:not(.sr-only) { float: left; width: 100%; padding: 0; font-weight: 600; }
+.ag-setup-item p { margin: 0; }
+.ag-setup-item .ag-check { margin: 0; min-height: 44px; font-weight: 600; }
+.ag-setup-item .ag-check input { width: 20px; height: 20px; margin-top: 2px; }
+.ag-setup-limits { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: var(--sp-2); min-width: 0; }
+.ag-setup-limits .field, .ag-setup-limits .input { min-width: 0; width: 100%; }
+.ag-setup-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+/* 44 px under a coarse pointer comes from the shared .btn rule; a mouse sees the usual button. */
+.ag-setup-actions .btn { white-space: normal; max-width: 100%; }
+/* Agent settings: the per-answer maximum's choices (a group without a frame) and the accepted document versions (read-only). */
+.ag-plain-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.ag-docs { display: grid; gap: var(--sp-2); margin: 0; padding-inline-start: var(--sp-5); overflow-wrap: anywhere; }
+.ag-docs .warn { color: var(--warn); }
 @keyframes ag-reveal { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
 @keyframes ag-expand { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @keyframes ag-rise { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
@@ -211,6 +239,7 @@ a.ag-chip-link { color: var(--accent); }
 }
 @media (prefers-reduced-motion: reduce) {
   .ag-app * { scroll-behavior: auto; }
+  .notice.ag-setup, .ag-price-notice { animation: none; }
   .ag-dots i { animation: none; opacity: 1; }
   .ag-markdown.streaming > :last-child::after { animation: none; }
 }

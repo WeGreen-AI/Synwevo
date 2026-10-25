@@ -114,8 +114,11 @@ def test_in_flight_call_is_held_not_pending(governed):
 
 def test_billing_status_reports_wallet_and_tightest_limit_in_the_offer_unit(governed):
     g = governed
+    # Send-and-go adds the additive `run` (the bound a send would get) and `price_notice` blocks;
+    # with no usable route they are null like the rest.
     assert call(g, 'agent.billing.status') == {'available': False, 'reason': 'unavailable', 'environment': None,
-        'payer': None, 'model': None, 'unit': None, 'per_call_hold': None, 'balance': None, 'limit': None}
+        'payer': None, 'model': None, 'unit': None, 'per_call_hold': None, 'balance': None, 'limit': None,
+        'run': None, 'price_notice': None}
     configure(g)
     status = call(g, 'agent.billing.status')
     assert status['balance'] == {'booked': '0', 'held': '0', 'available': '0'}

@@ -1,0 +1,32 @@
+{
+  "setup-done-earlier": {
+    "first_trip": {
+      "url_before": "conv_7392830ea272",
+      "value_after": "probe draft setup-done-earlier",
+      "no_reload": true,
+      "restored": true
+    },
+    "second_trip": {
+      "url_before": "conv_7392830ea272",
+      "value_after": "probe draft setup-done-earlier-2",
+      "no_reload": true,
+      "restored": true
+    },
+    "page_errors": []
+  },
+  "setup-card-send": {
+    "first_trip": {
+      "url_before": "conv_ee090c1fd486",
+      "value_after": "",
+      "no_reload": true,
+      "restored": false
+    },
+    "second_trip": {
+      "url_before": "conv_ee090c1fd486",
+      "value_after": "",
+      "no_reload": true,
+      "restored": false
+    },
+    "page_errors": []
+  }
+}

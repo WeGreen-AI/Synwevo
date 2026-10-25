@@ -83,7 +83,11 @@ const FIXTURE_TEXT = /Fixture organization|Frozen fixture|Expired fixture|Recove
 
 function inLocale(locale, run) { ui.setLocale(locale); try { return run(); } finally { ui.setLocale("zh-Hans"); } }
 const render = (locale, element) => inLocale(locale, () => renderToStaticMarkup(element).replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
-const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+// The text a reader sees: tags break words and runs of HTML white space (space, tab, LF, FF, CR) fold into one
+// space, as a browser lays them out. A thin or no-break space a formatter emits is part of the text and stays:
+// ICU 78 (Node 22) puts U+2009 between the date and the time in zh-Hant, ICU 76 (Node 23) a plain space, and the
+// expected dates come from the same ui.fmtTime, so they match under either.
+const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/[ \t\n\f\r]+/g, " ").trim();
 const tx = (locale, source, params) => ui.translate(locale, source, params);
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const impact = (locale, action, p = plan(action)) => render(locale, React.createElement(dialog.OrganizationLifecycleImpact, { action, plan: p }));
@@ -112,6 +116,8 @@ test("a freeze and a deletion show every count with its meaning, the warning and
       const html = fullDialog(locale, action);
       assert.ok(html.includes('role="alertdialog"'), `${locale} ${action}: a confirmation dialog`);
       assert.ok(html.includes(tx(locale, dialog.LIFECYCLE_WARNINGS[action])), `${locale} ${action}: the warning\n${html}`);
+      // G2 (B3): what the action does to the organization's Synwevo Message conversations
+      assert.ok(html.includes(tx(locale, dialog.LIFECYCLE_MESSAGES_NOTES[action])), `${locale} ${action}: the Message note\n${html}`);
       assert.ok(html.includes(tx(locale, dialog.PLATFORM_NOTE)), `${locale} ${action}: no membership or content access for the administrator`);
       assert.match(html, new RegExp(`<button type="submit"[^>]*class="btn danger"[^>]*disabled=""[^>]*>${esc(label(locale, action))}</button>`),
         `${locale} ${action}: the confirm label, disabled until the preview is loaded and checked\n${html}`);
@@ -202,7 +208,7 @@ test("every sentence of the dialog and of the tab's lifecycle controls is catalo
   assert.deepEqual(ui.validateMessages(messages.organizationLifecycleMessages), []);
   const src = readFileSync(new URL("../src/governance/OrganizationLifecycleDialog.tsx", import.meta.url), "utf8");
   const sentences = new Set([...src.matchAll(/\btr\("([^"]+)"/g)].map((m) => m[1]));
-  for (const map of [dialog.LIFECYCLE_ACTION_LABELS, dialog.ORGANIZATION_STATUS_LABELS, dialog.LIFECYCLE_WARNINGS]) for (const s of Object.values(map)) sentences.add(s);
+  for (const map of [dialog.LIFECYCLE_ACTION_LABELS, dialog.ORGANIZATION_STATUS_LABELS, dialog.LIFECYCLE_WARNINGS, dialog.LIFECYCLE_MESSAGES_NOTES]) for (const s of Object.values(map)) sentences.add(s);
   for (const [, name, stop, restore] of dialog.IMPACT_ROWS) { sentences.add(name); sentences.add(stop); sentences.add(restore); }
   sentences.add(dialog.PLATFORM_NOTE);
   const tabSrc = readFileSync(new URL("../src/governance/GovernanceTabs.tsx", import.meta.url), "utf8");

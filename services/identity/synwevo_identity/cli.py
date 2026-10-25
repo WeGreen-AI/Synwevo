@@ -197,6 +197,44 @@ def _platform(args):
     return store, ident, Apps(store, ident), oidc
 
 
+def _app_for_organization(args, store, apps) -> int:
+    """`app disable|enable messages --organization <id>` (B3): the organization switch of an
+    application whose data belongs to an organization, through the same service methods the
+    console calls (`Apps.disable_for_organization` / `enable_for_organization`, journalled on the
+    way off). The platform record and the organization's own governance-log row
+    (`organization.app.<action>`, `by: platform`) are written as the console writes them."""
+    from synwevo_core.errors import ServiceError
+    if args.workspace:
+        print("--organization 与 --workspace 只能指定一个", file=sys.stderr)
+        return 2
+    if not apps.get(args.app):
+        print(f"没有名为 {args.app} 的应用", file=sys.stderr)
+        return 2
+    oid, verb = args.organization, "启用" if args.action == "enable" else "停用"
+    try:
+        if args.action == "enable":
+            changed = apps.enable_for_organization(oid, args.app)
+        else:
+            changed = apps.disable_for_organization(oid, args.app)
+    except ServiceError as e:
+        print(f"没有{verb}：{e.message}（{e.code}）", file=sys.stderr)
+        return 2
+    except OSError as e:
+        _audit(store, "cli.app.organization_disable", object_kind="app", object_id=args.app, result="error",
+               meta={"journal": "failed", "organization_id": oid})
+        print(f"没有停用：写入安全日志失败（{e}），组织 {oid} 的 {args.app} 仍是启用状态。"
+              "请修复数据目录的写权限后再执行一次本命令。", file=sys.stderr)
+        return 3
+    if not changed:
+        print(f"组织 {oid} 的 {args.app} 本来就是{verb}状态，没有需要修改的。")
+        return 0
+    _audit(store, f"cli.app.organization_{args.action}", object_kind="app", object_id=args.app, meta={"organization_id": oid})
+    _audit(store, f"organization.app.{args.action}", object_kind="organization", object_id=oid,
+           meta={"by": "platform", "app_id": args.app, "enabled": args.action == "enable"})
+    print(f"组织 {oid} 已{verb} {args.app}")
+    return 0
+
+
 def cmd_app(args) -> int:
     """Applications and who may use them.
 
@@ -218,6 +256,8 @@ def cmd_app(args) -> int:
             print(f"{a['id']:<16} {a['name']:<16} {a['status']:<9} 策略={a['access_policy']:<9} "
                   f"已启用空间={n}  {a['launch_url']}")
         return 0
+    if args.action in ("enable", "disable") and getattr(args, "organization", None):
+        return _app_for_organization(args, store, apps)
     if args.action in ("enable", "disable") and not args.workspace:
         # Enabling/disabling the application itself, platform-wide.
         if not apps.get(args.app):
@@ -691,6 +731,7 @@ def main() -> int:
     a.add_argument("action", choices=["list", "enable", "disable", "grant", "revoke"])
     a.add_argument("app", nargs="?", default="docweave", help="应用 ID，默认 docweave")
     a.add_argument("--workspace", help="工作空间 ID；省略时 enable/disable 作用于应用本身")
+    a.add_argument("--organization", help="组织 ID；enable/disable 作用于该组织（按组织开关的应用，目前只有 messages）")
     a.add_argument("--user", help="用户 ID 或邮箱（grant/revoke）")
     a.set_defaults(func=cmd_app)
 

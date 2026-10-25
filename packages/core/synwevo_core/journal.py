@@ -185,6 +185,10 @@ KINDS = {
     "passkey_removed",          # {credential_id}
     "external_identity_unlinked",  # {identity_id} — a sign-in through an external provider detached
     "workspace_app_disabled",   # {workspace_id, app_id}
+    # B3: an organization-scoped application (Synwevo Message) switched off for one organization.
+    # Its own kind, not `workspace_app_disabled` (whose replay deletes a `workspace_apps` row and
+    # which older restore code would apply as a silent no-op): older restore code refuses this one.
+    "organization_app_disabled",  # {organization_id, app_id}
     "app_disabled",             # {app_id} — the application switched off platform-wide
     APP_POLICY_KIND,            # {event_id, app_id} — the application's access policy narrowed to explicit grants
     "invitation_revoked",       # {invitation_id}
@@ -245,6 +249,7 @@ _REQUIRED = {
     WORKSPACE_DELETED_KIND: ("event_id", "workspace_id"),
     "passkey_removed": ("credential_id",), "external_identity_unlinked": ("identity_id",),
     "workspace_app_disabled": ("workspace_id", "app_id"),
+    "organization_app_disabled": ("organization_id", "app_id"),
     "app_disabled": ("app_id",), APP_POLICY_KIND: ("event_id", "app_id"),
     "invitation_revoked": ("invitation_id",), "tokens_revoked": (),
     PLATFORM_GRANT_KIND: ("event_id", "user_id", "grant_id", "role", "granted_by"),
@@ -962,6 +967,8 @@ _OWN_OBJECTS = {
     "external_identity_unlinked": (("external_identities", "id=?", ("identity_id",), ("last_used_at",)),),
     "workspace_app_disabled": (("workspace_apps", "workspace_id=? AND app_id=?", ("workspace_id", "app_id"),
                                 ("enabled_at",)),),
+    "organization_app_disabled": (("organization_apps", "organization_id=? AND app_id=?", ("organization_id", "app_id"),
+                                   ("updated_at",)),),
     "app_disabled": (("apps", "id=?", ("app_id",), ("updated_at",)),),
     "model_provider_disabled": (("model_provider_versions", "environment=?", ("environment",), ("created_at",)),),
 }
@@ -1266,6 +1273,16 @@ def apply(store: Store, entries: list[dict], *, since: float | None = None,
             elif k == "workspace_app_disabled":
                 n = c.execute("DELETE FROM workspace_apps WHERE workspace_id=? AND app_id=?",
                               (e.get("workspace_id"), e.get("app_id"))).rowcount
+            elif k == "organization_app_disabled":
+                # An upsert, not an UPDATE: a backup from before the switch-off has no row (on by
+                # default). No organization row is required (the table has no foreign key), so a
+                # backup that predates the organization still restores. A later switch-on is in a
+                # backup that holds the receipt, and that line is skipped above.
+                n = c.execute("INSERT INTO organization_apps (organization_id,app_id,status,updated_at,updated_by) "
+                              "VALUES (?,?,'disabled',?,'journal') ON CONFLICT(organization_id,app_id) DO UPDATE SET "
+                              "status='disabled', updated_at=excluded.updated_at, updated_by='journal' "
+                              "WHERE organization_apps.status<>'disabled'",
+                              (e["organization_id"], e["app_id"], t)).rowcount
             elif k == "app_disabled":
                 from .apps import SUITE_UNRELEASED_PREFIX
                 _app_row(c, e["app_id"], t)

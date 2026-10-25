@@ -308,7 +308,7 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
         </fieldset>
         <fieldset className="col gap8" style={fieldset} disabled={!canWrite || frozen} aria-describedby={`${id}-charging-help`}>
           <legend>{t('未完成调用的计费')}</legend>
-          <p className="small muted" id={`${id}-charging-help`}>{t('勾选的情形按提供方返回的最终用量向付款人收费，不超过该次调用的预留；未勾选时由平台承担成本。无法核实用量或输出无效的调用一律不收费。变更会形成新版本，已有报价与持续授权需要用户重新确认。')}</p>
+          <p className="small muted" id={`${id}-charging-help`}>{t('勾选的情形按提供方返回的最终用量向付款人收费，不超过该次调用的预留；未勾选时由平台承担成本。无法核实用量或输出无效的调用一律不收费。变更会形成新版本：之后开始的回答按新版本计费，正在进行的回答在下一次模型调用前停止，用户无需重新确认。')}</p>
           {chargingKinds.map(kind => <label key={kind} className="row gap8">
             <input id={`${id}-charge_${kind}`} type="checkbox" checked={form[`charge_${kind}`]} onChange={event => edit(`charge_${kind}`, event.target.checked)} />
             <span>{t(chargingLabels[kind])}</span></label>)}

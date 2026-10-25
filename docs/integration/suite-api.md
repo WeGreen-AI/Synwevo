@@ -67,8 +67,13 @@ python -m synwevo_identity.cli client register crm-sync --app platform --name "C
 
 ### 1.3 不在这个接口里的
 
-* **个人 Agent 的一切**（会话、记忆、个人自动化、报价、预算、付款同意、发起对话）：没有路由，也没有 scope；
-  能力层对任何 `via="api"` 调用一律返回 403 `person_required`。
+* **个人 Agent 的一切**（会话、记忆、个人自动化、发起对话与其自动运行授权、开始使用步骤与条款接受、预算、付款同意、旧报价）：没有路由，也没有 scope；
+  能力层对任何 `via="api"` 调用一律返回 403 `person_required`。页面发送时回传它显示的价格：`seen_price_id`
+  取 `agent.billing.status.run.price_id`；`seen_route_version` 沿用旧名，携带 `run.price_key`（所付价格的稳定摘要：
+  售价编号、费率与低谷费率、每次调用预留、模型与确认路由、未完成调用是否计费；不含路由版本，所以价格不变的续期
+  不会拒绝发送，也不会提示价格已更新）。本人在页面的自动发送必须同时带上两者，缺少或与准入时生效的不同即 409
+  `billing_price_changed`（`details.current` 含 `price_key`），什么也不保存。这同样只属于本人在页面的发送；页面的任何付费发送（包括旧报价与持续授权）都要求本人事先接受当前版本的
+  条款（否则 409 `terms_acceptance_required`），见 `docs/platform/agent-run-budgets.md`。
 * 跨工作空间写入（`forms.form.duplicate`）：凭据只属于一个工作空间。
 * 服务账户的订阅、面向本人或空间管理员的订阅列表：尚未提供（§2.6 末尾）。异步操作的结果通过对应应用的读取操作或
   `GET /runs/{id}` 查询；发生了什么用事件流拉取（§2.5）或签名 Webhook 推送（§2.6）。
@@ -121,6 +126,10 @@ curl -sS https://workplace.synwevo.com/api/suite/v1/ops/tables.record.create \
 * 有副作用的操作支持 `Idempotency-Key`（或请求体 `idempotency_key`，两者同时给出必须一致）：1–128 个可见 ASCII 字符。
   同键同参返回第一次的结果（`replayed: true`）；同键不同参 409 `idempotency_conflict`；先前失败的同键请求 409
   `idempotent_failure`，不会重新执行。
+  “同参”比较的是校验后的输入，**取默认值的字段不计入**（显式写出默认值与省略相同）：之后的版本给操作新增可选字段，
+  不会让一次未改动的重试变成 `idempotency_conflict`。早先版本按完整输入（含默认值）记下指纹的运行：把本次输入
+  限制到那次保存的输入所含的字段（那时还没有的字段必须取默认值，嵌套成员同理）后，与那次记下的指纹比较。记下的指纹
+  是准绳：保存的输入后来被改写或抹除时，不会被当作同参。
 * 会向他人发出请求、通知或链接的操作，以及处理函数以该键识别重试的操作（契约中 `x-synwevo-idempotency: required`，如
   `forms.request.create`、`extract.file.from_forms`）**必须**带键，否则 400 `idempotency_key_required`。
 * 命名空间是“本人 + 操作 + 工作空间 + 客户端”。轮换客户端密钥或换一个访问令牌不改变命名空间；两个不同客户端使用同一个

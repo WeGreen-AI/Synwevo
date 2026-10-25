@@ -523,6 +523,11 @@ export const messages = {
   "重命名了工作空间": { en: "renamed a workspace", "zh-Hant": "重新命名了工作空間" },
   "删除了工作空间": { en: "deleted a workspace", "zh-Hant": "刪除了工作空間" },
   "恢复了工作空间": { en: "recovered a workspace", "zh-Hant": "恢復了工作空間" },
+  // B3: the platform switched an application (Synwevo Message) off or on for the organization
+  "为组织停用了应用": { en: "turned an application off for the organization", "zh-Hant": "為組織停用了應用" },
+  "为组织启用了应用": { en: "turned an application on for the organization", "zh-Hant": "為組織啟用了應用" },
+  "为组织停用了 {app}": { en: "turned {app} off for the organization", "zh-Hant": "為組織停用了 {app}" },
+  "为组织启用了 {app}": { en: "turned {app} on for the organization", "zh-Hant": "為組織啟用了 {app}" },
   "调整了应用使用资格": { en: "changed application access", "zh-Hant": "調整了應用使用資格" },
   "已开启": { en: "turned on", "zh-Hant": "已開啟" },
   "已关闭": { en: "turned off", "zh-Hant": "已關閉" },

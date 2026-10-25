@@ -50,14 +50,14 @@ export function useAdminPage(path) {
   return { data: { items, total: items.length, offset: 0, limit: 50, snapshot: 0 }, err: null, loading: false, reload() {}, offset: 0, setOffset() {} };
 }`;
 
-let server, ui, client, access, nav, tab, dialog, messages, labels;
+let server, ui, client, access, nav, tab, dialog, messages, labels, orgs;
 before(async () => {
   server = await testServer({
     root: WEB, configFile: false, logLevel: "error", appType: "custom",
     server: { middlewareMode: true, hmr: false, ws: false, watch: null },
     plugins: [{
       name: "apps-fixture", enforce: "pre",
-      resolveId(id, importer) { if (id === "./data" && importer?.endsWith("/src/governance/AppsTab.tsx")) return "\0apps-fixture-data"; },
+      resolveId(id, importer) { if (id === "./data" && (importer?.endsWith("/src/governance/AppsTab.tsx") || importer?.endsWith("/src/governance/AppOrganizationsDrawer.tsx"))) return "\0apps-fixture-data"; },
       load(id) { if (id === "\0apps-fixture-data") return FIXTURE_LOADER; },
     }],
   });
@@ -69,6 +69,7 @@ before(async () => {
   messages = await server.ssrLoadModule("/src/governance/apps.messages.ts");
   dialog = await server.ssrLoadModule("/src/governance/AppChangeDialog.tsx");
   tab = await server.ssrLoadModule("/src/governance/AppsTab.tsx");
+  orgs = await server.ssrLoadModule("/src/governance/AppOrganizationsDrawer.tsx");
   // the page's whole catalogue, as the browser has it on the administration page
   await server.ssrLoadModule("/src/Admin.tsx");
 });
@@ -88,6 +89,24 @@ const OFF = { ...APP, id: "fx_tools", name: "Fixture Tools", status: "disabled",
 const ORG = { ...APP, id: "fx_chat", name: "Fixture Chat", workspaces_enabled: 0, explicit_grants: 0, explicit_revocations: 0, running_jobs: null,
   scope: "organization", changes: ["disable"] };
 const HELD = { ...OFF, id: "fx_held", name: "Fixture Held", changes: ["policy_members"] };
+// B3: an application switched per organization — the server sends how many organizations have it off
+const MSG = { ...ORG, id: "messages", name: "Fixture Message", organizations_disabled: 2 };
+const NOW = Date.now() / 1000;
+const ORGANIZATION = { id: "org_fx_on", name: "Fixture Org On", status: "active", deleted_at: null, recover_until: null,
+  enabled: true, updated_at: null, members: 6, conversations: 9 };
+const ORGANIZATIONS = [ORGANIZATION,
+  { ...ORGANIZATION, id: "org_fx_off", name: "Fixture Org Off", enabled: false, updated_at: T },
+  { ...ORGANIZATION, id: "org_fx_frozen", name: "Fixture Org Frozen", status: "frozen", enabled: false, updated_at: T },
+  { ...ORGANIZATION, id: "org_fx_window", name: "Fixture Org Window", status: "deleted", deleted_at: NOW - 60, recover_until: NOW + 86400, enabled: false, updated_at: T },
+  { ...ORGANIZATION, id: "org_fx_lost", name: "Fixture Org Lost", status: "deleted", deleted_at: T, recover_until: null, enabled: false, updated_at: T }];
+const ORG_IMPACT = { members_affected: 6, members_with_conversations: 5, members_left_without_messages: 4,
+  conversations: { groups: 3, direct: 7, object: 2 }, open_reports: 1, pending_notifications: { email: 8, push: 11 }, pending_cards: 12,
+  signed_in_sessions: 13, open_streams: null };
+const ORG_AWAY = ["data_kept", "conversations_paused", "streams_end_within_heartbeat", "notifications_skipped", "cards_skipped",
+  "agent_sends_refused", "moderation_continues", "export_unaffected", "platform_switch_outranks"];
+const ORG_BACK = ["data_kept", "history_unchanged_on_enable", "skipped_not_replayed"];
+const orgPlan = (change) => ({ change, scope: "organization", target: { ...MSG, organization: ORGANIZATION }, impact: ORG_IMPACT,
+  notes: change === "disable" ? ORG_AWAY : ORG_BACK, expires_at: T + 300, preview_token: "fixture-signed-preview" });
 const WS = { id: "ws_fx_on", name: "Fixture Workspace On", kind: "team", status: "active", organization_id: "org_fx_one",
   enabled: true, enabled_at: T, members: 5, members_with_access: 4 };
 const WORKSPACES = [WS,
@@ -111,11 +130,15 @@ const PLATFORM_HINT = "平台范围的变更（全平台启用、停用和访问
 const CHANGES = ["disable", "enable", "policy_explicit", "policy_members"];
 const LOCALES = ["zh-Hans", "zh-Hant", "en"];
 const HAN = /[㐀-鿿]/;
-const FIXTURE_TEXT = /Fixture (?:Docs|Tools|Chat|Held|Workspace (?:On|Off|Frozen|Legacy))|fx_[a-z]+|ws_fx_[a-z]+|org_fx_[a-z]+|https:\/\/docs\.example\.test\//g;
+const FIXTURE_TEXT = /Fixture (?:Docs|Tools|Chat|Held|Message|Workspace (?:On|Off|Frozen|Legacy)|Org (?:On|Off|Frozen|Window|Lost))|fx_[a-z]+|ws_fx_[a-z]+|org_fx_[a-z]+|https:\/\/docs\.example\.test\//g;
 
 function inLocale(locale, run) { ui.setLocale(locale); try { return run(); } finally { ui.setLocale("zh-Hans"); } }
 const render = (locale, element) => inLocale(locale, () => renderToStaticMarkup(element).replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
-const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+// The text a reader sees: tags break words and runs of HTML white space (space, tab, LF, FF, CR) fold into one
+// space, as a browser lays them out. A thin or no-break space a formatter emits is part of the text and stays:
+// ICU 78 (Node 22) puts U+2009 between the date and the time in zh-Hant, ICU 76 (Node 23) a plain space, and the
+// expected dates come from the same ui.fmtTime, so they match under either.
+const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/[ \t\n\f\r]+/g, " ").trim();
 const tx = (locale, source, params) => ui.translate(locale, source, params);
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const row = (html, id) => html.split("<tr").find((part) => part.includes(id)).split("</tr>")[0];
@@ -128,9 +151,13 @@ function drawer(locale, held, items = WORKSPACES) {
   globalThis.__fixtures = { [`/api/admin/apps/${APP.id}/workspaces`]: { items } };
   return render(locale, React.createElement(tab.AppWorkspacesDrawer, { app: APP, held, onDenied() {}, onClose() {}, onChanged() {} }));
 }
+function orgDrawer(locale, held, items = ORGANIZATIONS, app = MSG) {
+  globalThis.__fixtures = { [`/api/admin/apps/${app.id}/organizations`]: { items } };
+  return render(locale, React.createElement(orgs.AppOrganizationsDrawer, { app, held, onDenied() {}, onClose() {}, onChanged() {} }));
+}
 const impact = (locale, change, p = plan(change)) => render(locale, React.createElement(dialog.AppChangeImpact, { change, plan: p }));
-const fullDialog = (locale, change, workspace) => render(locale, React.createElement(dialog.AppChangeDialog,
-  { app: APP, change, workspace, onClose() {}, onDone() {} }));
+const fullDialog = (locale, change, workspace, organization) => render(locale, React.createElement(dialog.AppChangeDialog,
+  { app: organization ? MSG : APP, change, workspace, organization, onClose() {}, onDone() {} }));
 
 // ------------------------------------------------------------------------------------ tests
 test("the catalogue is offered by platform.apps.view: the auditor and support see it, finance and the API administrator do not", () => {
@@ -379,7 +406,10 @@ test("the refusals of the preview and the change read as sentences, worded for a
 test("the English render has no untranslated text", () => {
   const en = [appsTab("en", MANAGE), appsTab("en", WORKSPACE_MANAGE), appsTab("en", VIEW), drawer("en", MANAGE), drawer("en", VIEW),
     ...CHANGES.map((change) => fullDialog("en", change)), fullDialog("en", "disable", WS), fullDialog("en", "enable", WS),
-    ...CHANGES.map((change) => impact("en", change)), impact("en", "disable", wsPlan("disable")), impact("en", "enable", wsPlan("enable"))]
+    ...CHANGES.map((change) => impact("en", change)), impact("en", "disable", wsPlan("disable")), impact("en", "enable", wsPlan("enable")),
+    appsTab("en", MANAGE, [APP, MSG]), orgDrawer("en", MANAGE), orgDrawer("en", VIEW), orgDrawer("en", MANAGE, ORGANIZATIONS, { ...MSG, status: "disabled" }),
+    fullDialog("en", "disable", undefined, ORGANIZATION), fullDialog("en", "enable", undefined, ORGANIZATION),
+    impact("en", "disable", orgPlan("disable")), impact("en", "enable", orgPlan("enable"))]
     .map((html) => text(html).replace(FIXTURE_TEXT, "")).join("\n");
   assert.ok(!HAN.test(en), `untranslated in English:\n${en.split("\n").filter((l) => HAN.test(l)).join("\n").slice(0, 2000)}`);
   assert.doesNotMatch(en, /undefined|NaN|\[object/);
@@ -388,10 +418,15 @@ test("the English render has no untranslated text", () => {
 test("every sentence of the tab and the dialog is catalogued in English and Traditional Chinese, and this catalogue's wording is the one in effect", () => {
   assert.deepEqual(ui.validateMessages(messages.appsMessages), []);
   for (const [source, entry] of Object.entries(messages.appsMessages)) {
-    for (const locale of ["en", "zh-Hant"]) assert.equal(tx(locale, source), entry[locale], `${locale}: ${source} is worded by another catalogue`);
+    for (const locale of ["en", "zh-Hant"]) {
+      const want = entry[locale];
+      // a plural entry ({one, other}) is in effect when both forms come out of it
+      if (typeof want === "object") for (const [form, count] of [["one", 1], ["other", 2]]) assert.equal(tx(locale, source, { count }), want[form].replace("{count}", String(count)), `${locale}: ${source} is worded by another catalogue`);
+      else assert.equal(tx(locale, source), want, `${locale}: ${source} is worded by another catalogue`);
+    }
   }
   const sentences = new Set();
-  for (const file of ["AppsTab.tsx", "AppChangeDialog.tsx"]) {
+  for (const file of ["AppsTab.tsx", "AppChangeDialog.tsx", "AppOrganizationsDrawer.tsx"]) {
     const src = readFileSync(new URL(`../src/governance/${file}`, import.meta.url), "utf8")
       .split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*\*)/.test(line)).join("\n");
     for (const m of src.matchAll(/"([^"\n]*[㐀-鿿][^"\n]*)"/g)) sentences.add(m[1]);
@@ -405,4 +440,113 @@ test("every sentence of the tab and the dialog is catalogued in English and Trad
   }
   assert.deepEqual(missing, [], "no catalogue entry in the admin bundle");
   assert.deepEqual(untranslated, [], "untranslated in English");
+});
+
+// ------------------------------------------------------------------------------------ B3: per organization
+test("Synwevo Message's row says in how many organizations it is off and opens the per-organization list, for every reader", () => {
+  for (const locale of LOCALES) {
+    for (const held of [VIEW, WORKSPACE_MANAGE, MANAGE]) {
+      const msg = row(appsTab(locale, held, [APP, MSG]), ">Fixture Message<");
+      assert.ok(text(msg).includes(tx(locale, "{count} 个组织已停用", { count: 2 })), `${locale}: the count\n${msg}`);
+      assert.match(msg, new RegExp(`aria-label="${esc(tx(locale, "按组织管理：{p0}", { p0: MSG.name }))}"[^>]*>${esc(tx(locale, "按组织管理"))}</button>`), `${locale}: the list button`);
+      assert.ok(!msg.includes(`>${tx(locale, "按工作空间")}</button>`), `${locale}: not a per-workspace application`);
+      assert.ok(text(msg).includes(tx(locale, "这个应用不按工作空间开通或授权：每个有效账户都可以使用；可以在全平台或按组织启用、停用。")), `${locale}: ${msg}`);
+    }
+    // an application the server does not switch per organization (no count) offers no such list
+    const docs = row(appsTab(locale, MANAGE, [APP, MSG]), ">Fixture Docs<");
+    assert.ok(!docs.includes(tx(locale, "按组织管理")) && !text(docs).includes(tx(locale, "{count} 个组织已停用", { count: 0 })), `${locale}: ${docs}`);
+    assert.ok(text(row(appsTab(locale, MANAGE, [MSG, { ...MSG, id: "fx_zero", name: "Fixture Chat", organizations_disabled: 0 }]), ">Fixture Chat<"))
+      .includes(tx(locale, "{count} 个组织已停用", { count: 0 })), `${locale}: zero is said too`);
+  }
+  assert.equal(tx("en", "{count} 个组织已停用", { count: 1 }), "Off in 1 organization");
+});
+
+test("the per-organization list offers the switch per organization only with platform.apps.manage, and says why not for a lost organization", () => {
+  const before = Date.now() / 1000;
+  assert.ok(ORGANIZATIONS[3].recover_until > before);
+  for (const locale of LOCALES) {
+    const html = orgDrawer(locale, WORKSPACE_MANAGE);              // the access administrator: platform.apps.manage alone
+    assert.ok(html.includes(tx(locale, "「{app}」的组织", { app: MSG.name })), `${locale}: the title`);
+    assert.match(html, /<input[^>]*type="search"/, `${locale}: the search`);
+    const on = row(html, ">Fixture Org On<"), off = row(html, ">Fixture Org Off<"), frozen = row(html, ">Fixture Org Frozen<");
+    const window = row(html, ">Fixture Org Window<"), lost = row(html, ">Fixture Org Lost<");
+    const button = (key, name, danger) => new RegExp(`<button type="button" class="btn sm${danger ? " danger" : ""}"[^>]*aria-label="${esc(tx(locale, "{action}：{p0}", { action: label(locale, key), p0: name }))}"[^>]*>${esc(label(locale, key))}</button>`);
+    assert.match(on, button("organization_disable", "Fixture Org On", true), `${locale}: off where it is on\n${on}`);
+    assert.ok(text(on).includes(tx(locale, "已启用")) && text(on).includes(" 6 ") && text(on).includes(" 9 "), `${locale}: ${text(on)}`);
+    assert.match(off, button("organization_enable", "Fixture Org Off", false), `${locale}: on where it is off`);
+    assert.ok(text(off).includes(tx(locale, "已停用")) && text(off).includes(tx(locale, "更改于 {time}", { time: inLocale(locale, () => ui.fmtTime(T)) })), `${locale}: ${text(off)}`);
+    // frozen, or deleted and still recoverable: either way (their conversations are paused by the lifecycle anyway)
+    assert.match(frozen, button("organization_enable", "Fixture Org Frozen", false), `${locale}: ${frozen}`);
+    assert.ok(text(frozen).includes(tx(locale, "已冻结")), `${locale}: ${text(frozen)}`);
+    assert.match(window, button("organization_enable", "Fixture Org Window", false), `${locale}: ${window}`);
+    assert.ok(text(window).includes(tx(locale, "已删除")) && text(window).includes(tx(locale, "可恢复至 {time}", { time: inLocale(locale, () => ui.fmtTime(ORGANIZATIONS[3].recover_until)) })), `${locale}: ${text(window)}`);
+    // deleted with no window (or past it): lost; the server refuses enabling, and the row says why
+    assert.ok(!lost.includes("</button>") && text(lost).includes(tx(locale, "组织已删除且过了恢复期，不能为它启用应用。")) && text(lost).includes(tx(locale, "已过恢复期")), `${locale}: ${lost}`);
+    assert.ok(!html.includes(tx(locale, "这个应用目前在全平台停用：全平台的停用优先于这里的设置，为组织启用要等全平台重新启用后才生效。")), `${locale}: no platform note while it is on`);
+    const viewOnly = orgDrawer(locale, VIEW);
+    for (const key of ["organization_disable", "organization_enable"]) assert.ok(!viewOnly.includes(`>${label(locale, key)}</button>`), `${locale}: ${key} without the permission`);
+    assert.ok(viewOnly.includes(tx(locale, "你的平台角色可以查看应用目录，但不能启用、停用应用或修改访问策略。")), `${locale}: the hint`);
+    assert.ok(!text(row(viewOnly, ">Fixture Org Lost<")).includes(tx(locale, "组织已删除且过了恢复期，不能为它启用应用。")), `${locale}: no hint about a switch not offered`);
+    // while the platform-wide switch is off, the list says it outranks
+    assert.ok(orgDrawer(locale, MANAGE, ORGANIZATIONS, { ...MSG, status: "disabled" })
+      .includes(tx(locale, "这个应用目前在全平台停用：全平台的停用优先于这里的设置，为组织启用要等全平台重新启用后才生效。")), locale);
+    assert.ok(orgDrawer(locale, MANAGE, []).includes(tx(locale, "没有匹配的组织。")), `${locale}: empty`);
+  }
+  assert.deepEqual(orgs.organizationOffer({ status: "deleted", recover_until: null, enabled: true }), { change: "disable" }, "a lost organization may still be switched off");
+});
+
+test("the organization preview shows every count with its meaning, the streams it cannot count, and the Message notes, in every language", () => {
+  for (const locale of LOCALES) {
+    for (const change of ["disable", "enable"]) {
+      const rows = text(impact(locale, change, orgPlan(change)));
+      assert.ok(rows.includes(tx(locale, "目标组织")) && rows.includes("Fixture Org On") && rows.includes("org_fx_on"), `${locale} ${change}: the organization`);
+      const on = tx(locale, "已启用"), off = tx(locale, "已停用");
+      assert.ok(rows.includes(tx(locale, "在这个组织：{before} → {after}", change === "disable" ? { before: on, after: off } : { before: off, after: on })), `${locale} ${change}\n${rows}`);
+      for (const [key, name, away, back] of dialog.ORGANIZATION_IMPACT_ROWS) {
+        const count = inLocale(locale, () => dialog.organizationCountText(key, ORG_IMPACT));
+        assert.ok(rows.includes(`${tx(locale, name)} ${count} · ${tx(locale, change === "disable" ? away : back)}`), `${locale} ${change} ${key}\n${rows}`);
+      }
+      for (const code of change === "disable" ? ORG_AWAY : ORG_BACK) {
+        const wording = code === "data_kept" ? dialog.MESSAGE_NOTE_TEXT.data_kept : dialog.NOTE_TEXT[code];
+        assert.ok(wording, code);
+        assert.ok(rows.includes(tx(locale, wording[change === "disable" ? "away" : "back"])), `${locale} ${change} ${code}\n${rows}`);
+      }
+      assert.ok(!rows.includes(tx(locale, dialog.NOTE_TEXT.data_kept.away)), `${locale}: Message's own words for its data, not a project's`);
+      assert.ok(!rows.includes(tx(locale, "将失去访问的人")), `${locale}: not the workspace counts`);
+    }
+    const streams = text(impact(locale, "disable", orgPlan("disable")));
+    assert.ok(streams.includes(`${tx(locale, "打开的实时连接")} — · ${tx(locale, "无法统计，最迟 25 秒内不再收到该组织事件。")}`), `${locale}: ${streams}`);
+    assert.ok(streams.includes(tx(locale, "群聊 {groups} · 私聊 {direct} · 项目讨论 {object}", { groups: "3", direct: "7", object: "2" })), locale);
+    assert.ok(streams.includes(tx(locale, "邮件 {email} · 推送 {push}", { email: "8", push: "11" })), locale);
+  }
+  // the platform-wide Message preview carries the same notes (G1), in Message's words
+  for (const locale of LOCALES) {
+    const platform = text(impact(locale, "disable", plan("disable", { target: { ...MSG }, impact: { ...IMPACT, workspaces_affected: null, running_jobs: null, sessions_in_app: null }, notes: ORG_AWAY.slice(0, -1) })));
+    for (const code of ORG_AWAY.slice(1, -1)) assert.ok(platform.includes(tx(locale, dialog.NOTE_TEXT[code].away)), `${locale} ${code}: ${platform}`);
+  }
+});
+
+test("the organization change dialog names the application and the organization, warns, and stays disabled until the preview is loaded", () => {
+  for (const locale of LOCALES) {
+    for (const [change, key] of [["disable", "organization_disable"], ["enable", "organization_enable"]]) {
+      const html = fullDialog(locale, change, undefined, ORGANIZATION);
+      assert.ok(html.includes('role="alertdialog"'), `${locale} ${key}`);
+      assert.ok(html.includes(tx(locale, dialog.CHANGE_WARNINGS[key])), `${locale} ${key}: the warning`);
+      assert.ok(text(html).includes(`${MSG.name} · ${ORGANIZATION.name}`), `${locale} ${key}: the target`);
+      assert.match(html, new RegExp(`<button type="submit"[^>]*class="btn ${change === "disable" ? "danger" : "primary"}"[^>]*disabled=""[^>]*>${esc(label(locale, key))}</button>`), `${locale} ${key}`);
+    }
+    assert.equal(dialog.changeKey("disable", "organization"), "organization_disable");
+    for (const code of ["no_organization", "organization_unavailable"]) {
+      const worded = inLocale(locale, () => dialog.appErrText(new client.ApiError(409, code, "")));
+      assert.equal(worded, tx(locale, dialog.APP_REFUSALS[code]), `${locale} ${code}`);
+    }
+    // the server's own sentences, catalogued (admin_apps `_target`)
+    for (const sentence of ["不能同时指定工作空间和组织", "组织编号无效", "按组织只能启用或停用应用；访问策略对全平台生效",
+      "该组织已删除且不能再恢复，不能为它启用应用", "该组织的这个应用已经处于这个状态，不需要更改"]) {
+      assert.ok(ui.hasMessage(sentence) && (locale === "zh-Hans" || tx(locale, sentence) !== sentence || locale === "zh-Hant"), sentence);
+      if (locale === "en") assert.ok(!HAN.test(tx("en", sentence)), sentence);
+    }
+  }
+  assert.equal(inLocale("en", () => orgs.organizationDoneText({ ok: true, operation_id: "ao_fx", app: MSG, organization: ORGANIZATION }, "disable", MSG, ORGANIZATION)),
+    `${tx("en", "已为「{organization}」停用「{app}」。", { app: MSG.name, organization: ORGANIZATION.name })} ${tx("en", "操作编号：{id}", { id: "ao_fx" })}`);
 });

@@ -14,8 +14,9 @@ type Facts = {
     member_import_cleanup?: boolean | null;
   };
   docs: { malware_scanner: "on" | "off" | "down" | null };
-  /** Synwevo Agent: the registry's release state and the configured model (public.py agent_fact). */
-  agent?: { released: boolean | null; provider: "deepseek" | "anthropic" | null; model_configured: boolean | null };
+  /** Synwevo Agent: the registry's release state and the configured model (public.py agent_fact).
+   *  model_paused: an enabled route is expired or closed, so nothing reaches the model for now. */
+  agent?: { released: boolean | null; provider: "deepseek" | "anthropic" | null; model_configured: boolean | null; model_paused?: boolean | null };
 };
 
 type Content = { eyebrow: string; heading: string; lead: string; summary: string[]; sections: Section[] };
@@ -132,7 +133,8 @@ function LiveStatus({ facts, page }: { facts: Facts | null | undefined; page: Pa
   const agentState = facts === undefined ? t("读取中…") : !agent || agent.released === null ? unread
     : !agent.released ? t("未开放：不会向 AI 模型发送任何内容")
     : agent.model_configured === null ? unread
-    : !agent.model_configured ? t("已上线，模型服务尚未开放：不会向 AI 模型发送任何内容")
+    : !agent.model_configured ? (agent.model_paused ? t("已上线，模型服务暂停：不会向 AI 模型发送任何内容")
+      : t("已上线，模型服务尚未开放：不会向 AI 模型发送任何内容"))
     : agent.provider === "deepseek" ? t("已开放：经你单独同意后，发送给模型提供方 DeepSeek")
     : agent.provider === "anthropic" ? t("已开放：发送给模型提供方 Anthropic") : unread;
   rows.unshift([t("Synwevo Agent（AI 助手）"), agentState]);
@@ -225,7 +227,7 @@ function privacyContent(): Content {
         ["消息与文档", "删除的消息对他人显示「消息已删除」，正文清空、序号保留。删除的文档项目在应用内标记为已删除，底层文件目前不做自动回收。"],
       ] }] },
       { id: "privacy-rights", title: "导出与删除", blocks: [{ kind: "defs", items: [
-        ["导出", "账户页「数据与账户」→ 导出，需要当前口令。得到一份 JSON：资料、工作空间与组织成员关系、通行密钥名称、安全活动、头像；你发出的消息（正文、时间、所在会话，附件只记文件名）、你所在的会话、消息设置、屏蔽列表与通知偏好。不含他人的消息与附件文件，也不含文档内容——文档在 Synwevo Docs 内按项目下载。也包含 Agent 对话的可见文字、记忆、设置、数据同意、报价、接受的条款版本与钱包流水；不含模型的思考过程、工具读取的业务数据或任何密钥。"],
+        ["导出", "账户页「数据与账户」→ 导出，需要当前口令。得到一份 JSON：资料、工作空间与组织成员关系、通行密钥名称、安全活动、头像；你发出的消息（正文、时间、所在会话，附件只记文件名）、你所在的会话、消息设置、屏蔽列表与通知偏好。不含他人的消息与附件文件，也不含文档内容——文档在 Synwevo Docs 内按项目下载。也包含 Agent 对话的可见文字、记忆、设置、数据同意、运行授权、接受的条款版本与钱包流水；不含模型的思考过程、工具读取的业务数据或任何密钥。"],
         ["删除", "在同一处申请，需要当前口令。申请后立即退出所有登录、撤销待接受的邀请，并进入 7 天缓冲期，期间邮件里的链接可以撤回。到期后删除口令、通行密钥、两步验证与恢复码，清空资料与邮箱；账户标识与该邮箱的保留记录不再分配给他人，以免旧邀请被重新领取。你退出全部会话：你是群主的群交给最早加入的管理员（没有管理员则交给最早加入的成员），只剩你一人的群归档。你在组织里留下的消息、评论与文档保留，不再关联你的资料。Agent 的对话、记忆与个人模型密钥被删除；钱包中未用完的余额作废，不退还（充值一经完成不可退款）；计费与付款记录不再关联你的资料，按法定期限保留。"],
         ["前提", "若你是某个组织的唯一所有者，或最后一位平台管理员，需要先移交。"],
       ] }] },
@@ -313,9 +315,9 @@ function termsContent(): Content {
     summary: [
       "充值一经完成不可退款。",
       "钱包余额只能用于 Synwevo 的服务，不能转让、提现、兑换现金，也不计利息。",
-      "Synwevo Agent 按实际用量扣费；每次运行前显示价格并由你确认最高预算，价格变化后需要重新确认。",
+      "Synwevo Agent 按实际用量扣费：发送后即开始运行，不再逐次确认；每条回答有最高金额（默认按当时价格计算，可在 Agent 设置中调低），实际扣费不超过该上限，并写在回答下方。",
       "AI 生成的内容可能有误，仅供参考；涉及重要决定时请自行核实。",
-      "首次付费使用 Synwevo Agent 时，记录你接受的条款、AI 使用规范与定价版本。",
+      "第一次使用 Synwevo Agent 前，你需要一次性接受本条款、AI 使用规范与定价，并单独同意向模型提供方发送内容；这些文件更新后会再请你确认一次。我们记录你接受的版本。",
     ],
     sections: [
       { id: "terms-account", title: "账户", blocks: [{ kind: "list", items: [
@@ -331,8 +333,8 @@ function termsContent(): Content {
       ] }] },
       { id: "terms-charges", title: "计费", blocks: [{ kind: "list", items: [
         "Synwevo Agent 按每次模型调用的实际用量扣费，单价见「定价」。",
-        "每次运行前，你会看到当前单价、价格版本与本次的最高预算，确认后才会扣费；实际扣费不超过你确认的上限。",
-        "价格或模型变化后，之前的确认不再有效，需要重新确认；不会按你未确认的价格扣费。",
+        "每条回答的最高金额在发送前显示在输入框旁；运行中每次模型调用前都会预留并核对余额、支出上限与组织额度，实际扣费不超过该最高金额。",
+        "价格或模型变化只适用于之后开始的回答，聊天页会提示价格已更新；正在进行的回答在下一次模型调用前停止，已完成的调用按原价格结算。不会追溯改价。",
         "被截断、被内容安全过滤、被模型提供方中断或被你停止的调用是否计费，按管理员公布的计费策略执行；每条回答的费用记录会写明。",
       ] }] },
       { id: "terms-allowance", title: "免费额度", blocks: [{ kind: "list", items: [
@@ -352,7 +354,7 @@ function termsContent(): Content {
       { id: "terms-end", title: "暂停、删除与条款变更", blocks: [{ kind: "list", items: [
         "违反「AI 使用规范」时，平台管理员可以暂停你的 Agent 使用权限，并说明理由。",
         "删除账户时，钱包中未用完的余额作废，不退还；计费与付款记录不再关联你的资料，按法定期限保留。",
-        "条款更新时会发布新版本并注明生效日期；新版本生效后的下一次付费使用会记录你接受的新版本。",
+        "条款更新时会发布新版本并注明生效日期；新版本生效后，下次使用 Synwevo Agent 前会请你接受新版本，并记录你接受的版本。",
       ] }] },
     ],
   };
@@ -408,16 +410,16 @@ function pricingContent(): Content {
     lead: "Synwevo Agent 如何计费、怎样充值，以及免费额度与组织付费。",
     summary: [
       "目前只有 Synwevo Agent 按用量收费，以人民币计价；其它应用不按用量收费。",
-      "按每次模型调用的实际用量（输入与输出的 token 数）扣费；运行前显示单价与价格版本，并由你确认最高预算。",
+      "按每次模型调用的实际用量（输入与输出的 token 数）扣费；当前单价与每条回答的最高金额显示在 Agent 输入框旁，发送即开始，不再逐次确认。",
       "充值一经完成不可退款；余额只能用于 Synwevo 的服务。",
       "在本部署开放时，每个账户在验证邮箱后可获得一次 1 元人民币的免费额度。",
     ],
     sections: [
       { id: "pricing-how", title: "怎样计价", blocks: [{ kind: "defs", items: [
         ["单价", "按模型分别定价：输入（命中缓存与未命中缓存分开）和输出各有单价。售价由模型提供方的成本价乘以管理员设定的倍率得出，按版本发布；部分模型在高峰与非高峰时段价格不同。"],
-        ["在哪里看", "本页不列出具体单价：单价由管理员发布并带版本号，可能调整。每次运行前，Agent 会显示当前单价、价格版本与本次的最高预算。"],
-        ["扣费", "按实际用量结算，不超过你确认的上限；每条回答都写明扣费金额与用量。"],
-        ["价格变化", "不会静默改价。价格或模型变化后，之前的确认失效，需要你重新确认。"],
+        ["在哪里看", "本页不列出具体单价：单价由管理员发布并带版本号，可能调整。Agent 输入框旁与 Agent 设置中显示当前单价、价格版本与每条回答的最高金额。"],
+        ["扣费", "按实际用量结算，不超过每条回答的最高金额；每条回答都写明扣费金额与用量。"],
+        ["价格变化", "不会静默或追溯改价。新价格只用于发布之后开始的回答，聊天页会提示价格已更新；正在进行的回答在下一次模型调用前停止，已完成的调用按原价格结算。"],
         ["未完成的调用", "被截断、被内容安全过滤、被中断或被你停止的调用是否计费，按管理员公布的计费策略执行；默认由平台承担。"],
       ] }] },
       { id: "pricing-wallet", title: "钱包与充值", blocks: [{ kind: "list", items: [

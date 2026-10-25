@@ -32,7 +32,7 @@ WORKSPACE_ACTIONS = ("invite.create", "invite.resend", "invite.revoke", "invite.
 CATEGORIES = {
     "organization": ("organization.create", "organization.update", "organization.transfer", "organization.freeze",
                      "organization.unfreeze", "organization.delete", "organization.recover", "organization.avatar.",
-                     "organization.workspace."),
+                     "organization.workspace.", "organization.app."),
     "members": ("organization.member.", "organization.owner.", "member.", "workspace.ownership.", "workspace.owner."),
     "invitations": ("invite.",),
     "roles": ("organization.role.", "organization.roles_assigned"),

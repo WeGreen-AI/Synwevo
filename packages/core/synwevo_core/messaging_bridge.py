@@ -79,6 +79,14 @@ EVENT_KINDS = ("docs.comment", "docs.job_finished", "copy.decided", "copy.finish
 SKIPPED_NO_CONVERSATION = "skipped_no_conversation"
 SKIPPED_OBJECT_GONE = "skipped_object_gone"
 SKIPPED_ARCHIVED = "skipped_archived"
+#: A card for a conversation that is closed when the worker reaches it (B3, G3): Synwevo Message
+#: switched off for its organization or platform-wide; its organization or its project's workspace
+#: paused (frozen, or deleted and recoverable); or lost. Skipped, not held: a held row would stay
+#: at the head of `pending()` (oldest first, 50 at a time) and starve every other organization's
+#: cards. Nothing skipped is replayed when the conversation opens again.
+SKIPPED_MESSAGES_DISABLED = "skipped_messages_disabled"
+SKIPPED_PAUSED = "skipped_paused"
+SKIPPED_LOST = "skipped_lost"
 MAX_ATTEMPTS = 10
 # A person's own message queued by another process (Suite on the workplace origin), delivered
 # here so that fan-out, notifications and digests behave exactly as for a message typed in Message.
@@ -86,7 +94,7 @@ USER_MESSAGE = "user.message"
 #: Definite refusals at delivery. Recorded on the row; the sender's receipt becomes failed.
 USER_MESSAGE_REFUSALS = frozenset({"archived", "audience_changed", "no_conversation", "not_member",
                                    "account_unavailable", "blocked", "message_too_long", "empty_message",
-                                   "workspace_unavailable"})
+                                   "workspace_unavailable", "messages_disabled", "organization_unavailable"})
 #: A reader's standing towards an object (`Objects.standing`): may open it now; may again once its
 #: workspace is available (paused — frozen, or deleted and still recoverable); or not at all.
 OPEN = "open"
@@ -389,6 +397,11 @@ class ObjectConversations:
     def _anchor_for(self, app: str, kind: str, object_id: str, uid: str) -> dict:
         anchor = self.objects.anchor(app, kind, object_id)
         state = self.objects.standing(anchor, uid) if anchor else LOST
+        if state in (OPEN, PAUSED):
+            # Synwevo Message switched off for the object's organization or platform-wide (B3):
+            # refused before anything is read or written (`open` would enrol the caller first).
+            # Outranks a pause, as everywhere; told only to someone whose own access stands.
+            self.messaging.require_messages_on(anchor.get("organization_id"))
         if state == PAUSED:
             # Only someone whose own access stands is told: they know the project already.
             raise paused_refusal()
@@ -424,6 +437,7 @@ class ObjectConversations:
             raise ServiceError(409, "organization_unavailable", "该组织当前不可用")
         created = joined = False
         with self.store.tx() as t:
+            self.messaging.require_messages_on(oid)       # again under the writer lock: a switch-off may have committed since
             m = t.execute("SELECT conversation_id FROM object_conversations WHERE app=? AND kind=? AND object_id=?", (app, anchor["kind"], anchor["id"])).fetchone()
             if m:
                 cid = m["conversation_id"]
@@ -440,7 +454,10 @@ class ObjectConversations:
         if joined:
             self.messaging.publish([uid], {"type": "conversation", "conversation_id": cid, "change": "added"})
             self.messaging.publish(self.messaging._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
-        return {"object": self._object_out(app, anchor), "conversation": self.messaging.get(cid, uid), "created": created, "joined": joined}
+        # The create or enrolment was checked again under the writer lock and committed: answer for it
+        # as every committed Message write is answered (B3), even if a switch-off committed since.
+        return {"object": self._object_out(app, anchor), "conversation": self.messaging._after_write(cid, uid),
+                "created": created, "joined": joined}
 
     def _join(self, t, cid: str, uid: str, app: str) -> bool:
         """Add a caller who may open the object to an existing object conversation (history from
@@ -772,6 +789,11 @@ class BridgeWorker:
         conv = self.store.one("SELECT * FROM conversations WHERE id=?", (cid,))
         if not conv or conv["archived_at"]:
             return self._skip(row, SKIPPED_ARCHIVED)
+        closed = self.messaging._closed(conv)
+        if closed:
+            # No card into a conversation its members cannot read now (B3, G3): it would reach
+            # their open tabs and their digests. Skipped, never held (see SKIPPED_MESSAGES_DISABLED).
+            return self._skip(row, _closed_skip(closed))
         card = build_card(self.store, self.ident, row)
         if not card:
             return self._skip(row, SKIPPED_OBJECT_GONE)
@@ -781,6 +803,11 @@ class BridgeWorker:
             body = body.get(card.get("state") or "", f"{APPS[row['app']]}")
         ts = now()
         with self.store.tx() as t:
+            # Again under the writer lock: a switch-off, a freeze or a loss that committed since the
+            # check above leaves no card either — the row is skipped in this transaction, the same way.
+            closed = self.messaging._closed(conv)
+            if closed:
+                return self._skip(row, _closed_skip(closed))
             dup = t.execute("SELECT id FROM messages WHERE conversation_id=? AND sender_id=? AND client_id=?", (cid, sender, row["id"])).fetchone()
             if dup:
                 mid = dup["id"]                                 # a crash between the insert and the mark: same card, not a second one
@@ -803,6 +830,11 @@ class BridgeWorker:
         except Exception:  # noqa: BLE001 - the card is delivered; the sweep retries
             log.exception("reconciling %s after delivery failed", cid)
         return "delivered"
+
+
+def _closed_skip(closed) -> str:
+    """The outbox code of a card skipped because its conversation is closed (`Messaging._closed`)."""
+    return {LOST: SKIPPED_LOST, PAUSED: SKIPPED_PAUSED}.get(closed.state, SKIPPED_MESSAGES_DISABLED)
 
 
 def build_card(store: Store, ident: Identity, row: dict) -> dict | None:

@@ -27,6 +27,9 @@ export const ACTION_LABEL: Record<string, string> = {
   // A44: the platform's lifecycle acts on one of the organization's workspaces (`by: platform`)
   "organization.workspace.rename": "重命名了工作空间", "organization.workspace.delete": "删除了工作空间",
   "organization.workspace.recover": "恢复了工作空间",
+  // B3: the platform switched an application off or on for this organization (`by: platform`);
+  // with the application named by `actionText` when the row says which
+  "organization.app.disable": "为组织停用了应用", "organization.app.enable": "为组织启用了应用",
   "organization.member.role": "更改了成员的组织角色", "organization.member.remove": "移除了组织成员", "organization.member.leave": "退出了组织",
   "organization.role.create": "创建了自定义角色", "organization.role.update": "修改了自定义角色", "organization.role.delete": "删除了自定义角色",
   "organization.role.assign": "调整了成员的自定义角色",
@@ -75,8 +78,17 @@ export function auditDetails(d: Record<string, unknown>, t: Translator): string[
   if (typeof d.reason === "string" && d.reason) out.push(t("原因：{reason}", { reason: d.reason }));
   return out;
 }
-/** A row's action in the reader's language; an action this page does not word shows its code. */
-export const actionText = (action: string, t: Translator) => t(ACTION_LABEL[action] || action);
+/** The applications the platform switches per organization (B3), by product name; another id is
+ *  shown as it is. */
+const ORGANIZATION_APP_NAMES: Record<string, string> = { messages: "Synwevo Message" };
+const ORGANIZATION_APP_ACTIONS: Record<string, string> = { "organization.app.disable": "为组织停用了 {app}", "organization.app.enable": "为组织启用了 {app}" };
+/** A row's action in the reader's language; an action this page does not word shows its code. A
+ *  switch of an application for the organization names the application from the row's `app_id`. */
+export const actionText = (action: string, t: Translator, detail?: Record<string, unknown>) => {
+  const app = detail?.app_id;
+  if (ORGANIZATION_APP_ACTIONS[action] && typeof app === "string" && app) return t(ORGANIZATION_APP_ACTIONS[action], { app: ORGANIZATION_APP_NAMES[app] || app });
+  return t(ACTION_LABEL[action] || action);
+};
 
 export default function OrganizationAudit({ organization, mine }: { organization: Organization; mine: string[] }) {
   const { t, locale } = useI18n();
@@ -110,7 +122,7 @@ export default function OrganizationAudit({ organization, mine }: { organization
     <div className="row wrap gap4" role="tablist">{(Object.keys(CATEGORY_LABEL) as Category[]).map(c => <button key={c || "all"} type="button" role="tab" aria-selected={category === c}
       className={`btn ${category === c ? "primary" : ""}`} onClick={() => setCategory(c)}>{t(CATEGORY_LABEL[c])}</button>)}</div>
     {!items ? <Loading /> : !items.length ? <p className="muted">{t("没有记录。")}</p> : <ul className="org-list">{items.map(i => <li key={i.seq}>
-      <div><strong>{who(i.actor)}</strong> {actionText(i.action, t)}
+      <div><strong>{who(i.actor)}</strong> {actionText(i.action, t, i.detail)}
         {i.object.person && <> · {who(i.object.person)}</>}{i.object.name && <> · {i.object.name}</>}
         {(i.workspace || i.object.workspace) && <span className="muted"> · {i.workspace?.name || i.object.workspace}</span>}
         <div className="tiny muted">{new Date(i.at * 1000).toLocaleString(locale)}{auditDetails(i.detail, t).map((x, n) => <span key={n}> · {x}</span>)}</div></div>

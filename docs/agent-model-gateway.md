@@ -3,7 +3,7 @@
 Integration worktree: `feat/business-apps`; 2026-09-30. This is executable server-side integration,
 not a configured paid service. No retail/cost price, currency, exchange, free allowance, merchant
 or model route is seeded. The existing Agent factory remains on its previously configured
-provider until route governance, wallet consent and payment policy are connected.
+provider until route governance, the person's one-time start step (provider consent, terms, limits) and payment policy are connected.
 
 `MeteredDeepSeek` receives the shared Ledger, a required current model/data/run authority check,
 and an approved `Route`. `MeteredTurnProvider` is the Agent engine port and requires an existing
@@ -46,9 +46,11 @@ as null with `state=pending`. These counters are diagnostic, not financial settl
 
 Migration is additive through Store only. Billing facts/route snapshots/metering observations
 are immutable; no balances/prices are created at startup. Rollback preserves facts. A final
-billing recovery schedule, governed route/price publication, user quote/consent/wallet UI,
-periodic/platform budgets, verified checkout/refund/dispute service, real model/merchant tests
-and deployment gates remain outstanding. No production fallback or synthetic credit path exists.
+billing recovery schedule, governed route/price publication, the wallet UI, periodic/platform
+budgets, verified checkout/refund/dispute service, real model/merchant tests and deployment gates
+remain outstanding. (Since the send-and-go decision of 2026-10-23 the run authorization is issued
+by `agent.turn.start` itself for a person's send from the page — `docs/platform/agent-run-budgets.md`;
+the quote/consent operations stay for compatibility and audit.) No production fallback or synthetic credit path exists.
 
 Isolated acceptance uses the actual Store, Ledger, Agent and Forms services. Only external model
 SSE and payment proof are named fixtures. It covers two separately settled model attempts around

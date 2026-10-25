@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { qs } from "@synwevo/auth-client";
 import { fmtTime, formatNumber, Modal, t as tr, useI18n, useToast } from "@synwevo/ui";
 import { useDebounced } from "../lib/hooks";
@@ -6,8 +6,9 @@ import { useAdminData, useAdminPage } from "./data";
 import { PageControls } from "./ListControls";
 import { WORKSPACE_KIND, WORKSPACE_STATUS } from "./labels";
 import { mayChangeAppPlatform, mayChangeAppWorkspace, type Held } from "./access";
-import { AppChangeDialog, CHANGE_LABELS, DONE_TEXT, POLICY_MEANING, appPolicyLabel, appStatusLabel, changeKey, workspaceScoped,
+import { AppChangeDialog, CHANGE_LABELS, DONE_TEXT, POLICY_MEANING, appPolicyLabel, appStatusLabel, changeKey, useOutcome, workspaceScoped,
   type AppChange, type AppChangeResult, type AppWorkspace, type CatalogueApp } from "./AppChangeDialog";
+import { AppOrganizationsDrawer } from "./AppOrganizationsDrawer";
 import "./messages";
 import "./apps.messages";
 
@@ -20,6 +21,10 @@ import "./apps.messages";
  * Every change goes through `AppChangeDialog`: an impact preview, a
  * written reason, fresh identity proof, one idempotency key per preview. This is the catalogue;
  * the applications' run records are the separate run pages (RunsTab.tsx).
+ *
+ * B3: an application switched per organization (Synwevo Message: `organizations_disabled` is a
+ * number) says in how many organizations it is off and opens "按组织管理"
+ * (AppOrganizationsDrawer.tsx).
  */
 
 export type AppsList = { items: CatalogueApp[] };
@@ -46,17 +51,8 @@ export function workspaceOffer(w: Pick<AppWorkspace, "status" | "enabled">): { c
   return { change: "enable" };
 }
 
-/** The live region and the notice inside it: present from the first render (a region inserted
- *  together with its text is not announced by many screen readers), focused when a change ends,
- *  because the button that opened the dialog may be gone or changed by then. */
-function useOutcome() {
-  const [notice, setNotice] = useState("");
-  const [focus, setFocus] = useState(0);
-  const ref = useRef<HTMLParagraphElement>(null);
-  useEffect(() => { if (focus) ref.current?.focus(); }, [focus]);
-  const region = <div role="status" aria-live="polite">{notice && <p className="notice ok" ref={ref} tabIndex={-1}>{notice}</p>}</div>;
-  return { region, say: (message: string) => { setNotice(message); setFocus((n) => n + 1); } };
-}
+/** Whether an application is switched per organization by this server (B3): it sends the count. */
+export const perOrganization = (app: Pick<CatalogueApp, "organizations_disabled">) => typeof app.organizations_disabled === "number";
 function doneText(result: AppChangeResult, change: AppChange, app: { name: string }, workspace?: { name: string }) {
   const key = changeKey(change, workspace ? "workspace" : "platform");
   return `${tr(DONE_TEXT[key], { app: result.app?.name || app.name, workspace: result.workspace?.name || workspace?.name || "" })} ${tr("操作编号：{id}", { id: result.operation_id })}`;
@@ -72,6 +68,7 @@ export function AppsTab({ onDenied, held }: { onDenied: () => void; held: Held }
   const items = loading || err ? [] : data?.items || [];
   const [change, setChange] = useState<{ app: CatalogueApp; change: AppChange } | null>(null);
   const [drawer, setDrawer] = useState<CatalogueApp | null>(null);
+  const [orgDrawer, setOrgDrawer] = useState<CatalogueApp | null>(null);
   const outcome = useOutcome();
   const busy = loading || !!err;
   return <section className="card card-b col gap12" aria-labelledby="platform-apps">
@@ -94,10 +91,13 @@ export function AppsTab({ onDenied, held }: { onDenied: () => void; held: Held }
       <tbody>{items.map((app) => <tr key={app.id}>
         <th scope="row">{app.name}<div className="who2 mono">{app.id}</div>
           {app.launch_url && <span className="cell-note">{tr("入口地址：{url}", { url: app.launch_url })}</span>}</th>
-        <td data-label={tr("状态")}><span className={`badge ${app.status === "active" ? "ok" : "warn"}`}>{appStatusLabel(app.status)}</span></td>
+        <td data-label={tr("状态")}><div><span className={`badge ${app.status === "active" ? "ok" : "warn"}`}>{appStatusLabel(app.status)}</span>
+          {perOrganization(app) && <span className="cell-note">{tr("{count} 个组织已停用", { count: app.organizations_disabled! })}</span>}</div></td>
         <td data-label={tr("访问策略")}>{workspaceScoped(app) ? <div>{appPolicyLabel(app.access_policy)}
           {POLICY_MEANING[app.access_policy] && <span className="cell-note">{tr(POLICY_MEANING[app.access_policy])}</span>}</div>
-          : <div>{tr("每个有效账户")}<span className="cell-note">{tr("这个应用不按工作空间开通或授权：每个有效账户都可以使用，只能在全平台启用或停用。")}</span></div>}</td>
+          : <div>{tr("每个有效账户")}<span className="cell-note">{perOrganization(app)
+            ? tr("这个应用不按工作空间开通或授权：每个有效账户都可以使用；可以在全平台或按组织启用、停用。")
+            : tr("这个应用不按工作空间开通或授权：每个有效账户都可以使用，只能在全平台启用或停用。")}</span></div>}</td>
         <td data-label={tr("已开通的工作空间")}>{formatNumber(app.workspaces_enabled)}</td>
         <td data-label={tr("当前可使用的人")}>{formatNumber(app.members_with_access)}</td>
         <td data-label={tr("明确授权")}>{formatNumber(app.explicit_grants)}</td>
@@ -106,6 +106,8 @@ export function AppsTab({ onDenied, held }: { onDenied: () => void; held: Held }
         <td className="act" data-label={tr("操作")}><div className="row gap4 wrap">
           {workspaceScoped(app) && <button type="button" className="btn sm" disabled={busy} aria-label={tr("按工作空间查看：{p0}", { p0: app.name })}
             onClick={() => setDrawer(app)}>{tr("按工作空间")}</button>}
+          {perOrganization(app) && <button type="button" className="btn sm" disabled={busy} aria-label={tr("按组织管理：{p0}", { p0: app.name })}
+            onClick={() => setOrgDrawer(app)}>{tr("按组织管理")}</button>}
           {canPlatform && rowChanges(app).map((c) => <button key={c} type="button" className={`btn sm${c === "disable" || c === "policy_explicit" ? " danger" : ""}`}
             disabled={busy} aria-label={tr("{action}：{p0}", { action: tr(CHANGE_LABELS[c]), p0: app.name })}
             onClick={() => setChange({ app, change: c })}>{tr(CHANGE_LABELS[c])}</button>)}
@@ -115,6 +117,7 @@ export function AppsTab({ onDenied, held }: { onDenied: () => void; held: Held }
       {!loading && !err && !items.length && <tr className="empty-row"><td colSpan={9}>{tr("还没有登记任何应用。")}</td></tr>}</tbody>
     </table></div>
     {drawer && <AppWorkspacesDrawer app={drawer} held={held} onDenied={onDenied} onClose={() => setDrawer(null)} onChanged={reload} />}
+    {orgDrawer && <AppOrganizationsDrawer app={orgDrawer} held={held} onDenied={onDenied} onClose={() => setOrgDrawer(null)} onChanged={reload} />}
     {change && <AppChangeDialog app={change.app} change={change.change} onClose={() => setChange(null)}
       onDone={(result) => {
         const message = doneText(result, change.change, change.app);

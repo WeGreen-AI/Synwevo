@@ -268,7 +268,8 @@ def test_the_catalogue_counts_by_the_rule_the_gate_runs(cat):
     assert item == {"id": DOCS_APP_ID, "name": item["name"], "status": "active", "access_policy": "members",
                     "launch_url": item["launch_url"], "scope": "workspace", "workspaces_enabled": 10,
                     "members_with_access": 7, "explicit_grants": 12, "explicit_revocations": 1,
-                    "running_jobs": 4, "changes": ["disable", "policy_explicit"]}
+                    "running_jobs": 4, "changes": ["disable", "policy_explicit"],
+                    "organizations_disabled": None}                  # B3: only for an application switched per organization
     assert can_open(w, "suspended"), "check_access leaves the account's own state to the session gate"
     assert can_open(w, "revoked") and not can_open(w, "revoked", workspace=w["shared"])
     messages = catalogue(w, MESSAGES_APP_ID)
@@ -590,7 +591,10 @@ def test_every_refusal_of_the_target(cat):
     assert m["impact"] == {"people_losing_access": 7, "people_gaining_access": 0, "memberships_losing_access": None,
                            "memberships_gaining_access": None, "workspaces_affected": None, "running_jobs": None,
                            "credentials_stopping": None, "sessions_in_app": None}
-    assert m["notes"] == ["data_kept"]
+    # G1: the platform-wide switch holds for signed-in Message sessions too, so its preview says what
+    # it does to conversations (the organization switch's notes; test_admin_apps_organizations)
+    assert m["notes"] == ["data_kept", "conversations_paused", "streams_end_within_heartbeat", "notifications_skipped",
+                          "cards_skipped", "agent_sends_refused", "moderation_continues", "export_unaffected"]
     # The same refusals at confirmation, before any token is looked at.
     refused(execute(w, "explode", {"reason": REASON}), 400, "bad_change")
     refused(execute(w, "enable", {"reason": REASON}), 409, "no_change")

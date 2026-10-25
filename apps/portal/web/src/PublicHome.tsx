@@ -64,7 +64,7 @@ export function PublicHome({ signedIn, registerUrl: registerBase, accountBase }:
     ["支持哪些文件格式？", "Synwevo Docs 的模板可用 DOCX、XLSX、PDF、PPTX 以及 PNG / JPEG 图片，来源数据可以是表格、文档或扫描件。各格式支持的能力以应用内说明为准。"],
     ["可以导出或删除我的数据吗？", "可以。账户页可以随时导出你的账户数据，包括你发出的消息；也可以申请删除账户，删除有 7 天缓冲期，期间可以撤回。"],
     ["数据保存在哪里？有 AI 处理我的内容吗？", "数据库与文件保存在位于日本东京的单台服务器上，每次发布前做备份，传输经 HTTPS 加密。只有在你使用 Synwevo Agent 并单独同意后，你的消息和允许 AI 处理的工作空间内容才会发送给模型提供方 DeepSeek，按其隐私政策存储在中国境内；Agent 是否在本部署开放，见「数据与隐私」页的当前状态。"],
-    ["Synwevo Agent 怎么收费？", "按实际用量从人民币钱包扣费，运行前显示价格并由你确认上限；充值不可退款。详见「定价」与「服务条款」。"],
+    ["Synwevo Agent 怎么收费？", "按实际用量从人民币钱包扣费，输入框旁显示每条回答的最高金额，发送即开始；充值不可退款。详见「定价」与「服务条款」。"],
   ];
   return <Shell publicHome right={<PublicNav signedIn={signedIn} registerUrl={registerUrl} home />}>
     <section className="pt-hero" aria-labelledby="pt-hero-title">

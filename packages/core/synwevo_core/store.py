@@ -277,6 +277,20 @@ CREATE TABLE IF NOT EXISTS workspace_apps (
   PRIMARY KEY (workspace_id, app_id)
 );
 
+CREATE TABLE IF NOT EXISTS organization_apps (
+  -- B3: an application switched per organization by the platform (today only Synwevo Message,
+  -- whose conversations belong to an organization, not a workspace). On by default: no row means
+  -- on, so nothing is adopted when this table arrives. Turning it off upserts `disabled` and is
+  -- journalled (`organization_app_disabled`); turning it back on UPDATEs the row to `active`
+  -- rather than deleting it, so `updated_at` stays evidence for the journal's
+  -- `_touched_since`. No foreign key on purpose: `PRAGMA foreign_keys=ON`, and a restore replays
+  -- the switch-off into a backup that may predate the organization row.
+  organization_id TEXT NOT NULL, app_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active','disabled')),
+  updated_at REAL NOT NULL, updated_by TEXT,
+  PRIMARY KEY (organization_id, app_id)
+);
+
 CREATE TABLE IF NOT EXISTS app_entitlements (
   -- A person's right to use one app inside one workspace.
   --

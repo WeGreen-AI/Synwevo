@@ -1,0 +1,4 @@
+# Browser-proof screenshots and probe logs stay in the repository but are not part of the release
+# archive (`git archive`) that CI and the host receiver build from: the receiver caps it at 50 MiB
+# and the evidence alone had grown to 19 MB (pre-deploy review host-03, 2026-10-23).
+docs/agent-work/evidence/** export-ignore

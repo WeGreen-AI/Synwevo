@@ -140,7 +140,13 @@ COLUMNS = (("agent_turns", "usage_state", "TEXT NOT NULL DEFAULT 'known'"),
            ("agent_turns", "credential_binding", "TEXT"),
            # Which other workspaces' content a write would carry into its target, and the policy
            # facts the person confirmed (synwevo_core.data_flow); NULL when it carries none.
-           ("agent_tool_calls", "transfer_json", "TEXT"))
+           ("agent_tool_calls", "transfer_json", "TEXT"),
+           # The person's own maximum for one answer (send-and-go, D-2): integer sale units as a
+           # decimal string and the sale unit's code it was set in. NULL = the governed default
+           # (one call's hold x the call limit). Read at every send; a cap in another unit than
+           # the current sale unit refuses the send rather than being ignored.
+           ("agent_settings", "run_budget_cap", "TEXT"),
+           ("agent_settings", "run_budget_cap_unit", "TEXT"))
 
 
 def migrate(c):

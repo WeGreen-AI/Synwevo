@@ -100,14 +100,24 @@ async function compiled(file: string, initialProps: any, overrides: Record<strin
     button: (label: string) => find((el) => el.type === 'button' && (el.props['aria-label'] === label || strings(el.props.children) === label)).props,
     control: (suffix: string) => find((el) => el.props.id === `context-fixture-${suffix}`).props };
 }
-async function appFixture(billing = true, withConsent = false) {
+/** FIXTURE `agent.setup.get` (send-and-go contract §3): everything done, or the terms still to accept. */
+function setupFixture(complete: boolean) {
+  return { required: true, complete, provider_consent: null,
+    terms: { complete, documents: [{ id: 'terms', version: 'fixture-1', effective: '2026-10-24', accepted: complete }] },
+    limits: { configured: true, enabled: true, revision: 1, unit: { code: 'CNY', scale: 2 }, suggested: null } };
+}
+/** FIXTURE `agent.billing.status`: the run bound with the price every paid send repeats (AD-1); a paid
+ *  send without a shown price is held in the page (addendum-2 W3). */
+const SEEN = { seen_price_id: 'price_fixture', seen_route_version: 'fixture-v1' };
+const statusFixture = () => ({ available: true, environment: 'test', unit: { code: 'CNY', scale: 2 }, per_call_hold: '39',
+  run: { maximum: '468', default: '468', cap: null, source: 'default', per_call_hold: '39', max_calls: 12, run_seconds: 3600, usable: true,
+    price_id: SEEN.seen_price_id, route_version: SEEN.seen_route_version }, price_notice: null });
+async function appFixture(billing = true, setupComplete = true) {
   const chat = await server.ssrLoadModule('/src/apps/agent/Chat.tsx');
-  const controls = await server.ssrLoadModule('/src/apps/agent/ConsentControls.tsx');
-  const consents = await server.ssrLoadModule('/src/apps/agent/consent.ts');
+  const setupCard = await server.ssrLoadModule('/src/apps/agent/AgentSetup.tsx');
   const current = conversation({ scope: ['ws_a'] });
   const writes: any[] = [], navigations: string[] = [];
-  let failure: unknown, route: string | undefined = current.id;
-  const consent = { id: 'consent_fixture', conversation_id: current.id, scope: ['ws_a'], status: 'active', expires_at: null, remaining_runs: 2 };
+  let failure: unknown, failing: string | undefined, route: string | undefined = current.id;
   const h = await compiled('index.tsx', {}, {
     'react-router-dom': { ...router, useMatch: (path: string) => path === '/agent/c/:cid' && route ? { params: { cid: route } } : null,
       useLocation: () => ({ pathname: route ? `/agent/c/${route}` : '/agent' }), useNavigate: () => (path: string) => navigations.push(path) },
@@ -117,24 +127,23 @@ async function appFixture(billing = true, withConsent = false) {
     '../../shared/catalog': { useApp: () => ({ app: { id: 'agent' } }) },
     './useConversation': { useConversation: () => ({ value: route ? { ...current, id: route } : undefined, refresh: async () => {}, connection: 'connected' }) },
     './useHistory': { useHistory: () => ({ rows: [], cursor: null }) },
-    './ConsentControls': { ...controls, useConversationConsents: () => ({ data: withConsent ? [consent] : [], refresh() {} }) },
-    // Actual consent writer; only its surrounding read state is a fixture.
-    './consent': { ...consents },
     '../../shared/ops': { newKey: () => `fixture_key_${writes.length}`, read: async (operation: string) => {
       if (operation === 'agent.settings.get') return { active: true, billing: { required: billing } };
       if (operation === 'agent.workspace_policy.list') return { workspaces: spaces };
+      if (operation === 'agent.setup.get') return setupFixture(setupComplete);
+      if (operation === 'agent.billing.status') return statusFixture();
       return null;
     }, op: async (operation: string, input: any, options: any) => {
-      writes.push({ operation, input, options }); if (failure) throw failure;
-      return { status: 'succeeded', output: operation === 'agent.turn.quote'
-        ? { id: 'quote_fixture', payer_user_id: 'usr_fixture' } : operation === 'agent.conversation.create' ? { id: 'conv_new_fixture' } : { turn_id: 'turn_fixture' } };
+      writes.push({ operation, input, options }); if (failure && (!failing || failing === operation)) throw failure;
+      return { status: 'succeeded', output: operation === 'agent.conversation.create' ? { id: 'conv_new_fixture' } : { turn_id: 'turn_fixture' } };
     } },
   }, 'app');
   await settle(); h.render(); await settle(); h.render();
-  return { ...h, writes, navigations, consent, fail: (value: any) => { failure = value; },
+  const fixture = { ...h, writes, navigations, fail: (value: any, operation?: string) => { failure = value; failing = operation; },
     route: (id?: string) => { route = id; h.render(); },
     chat: () => h.find((el) => el.type === chat.default).props,
-    dialog: () => h.find((el) => typeof el.props.onQuote === 'function').props };
+    card: () => all(fixture.chat().aside).filter((el) => el.type === setupCard.default) };
+  return fixture;
 }
 
 
@@ -158,7 +167,7 @@ test('capabilities govern formats and size; incomplete records, unsafe downloads
   assert.equal(helpers.canRetryFile(queued({ status: 'failed', attempts: 3 })), false);
 });
 
-test('combined five-source limit and exact file refs bind intent identity by id, snapshot and order', () => {
+test('combined five-source limit and exact file refs by id and snapshot', () => {
   const selected = helpers.selectFile(record());
   assert.deepEqual(helpers.fileReferences([selected], 4), [record().reference]);
   assert.throws(() => helpers.fileReferences([selected], 5), /invalid_context/);
@@ -166,13 +175,6 @@ test('combined five-source limit and exact file refs bind intent identity by id,
   assert.equal(helpers.addFile([selected], selected, 0).length, 1);
   const business = { reference: { kind: 'form', workspace_id: 'fixture', resource_id: 'fixture', snapshot: 'b'.repeat(64) }, title: 'Fixture' };
   assert.deepEqual(contextHelpers.addContext([], business, 5), []);
-  const a = { conversation_id: 'fixture', text: 'Fixture', file_refs: [record().reference] };
-  assert.equal(budget.sameIntent(a, plain(a)), true);
-  for (const file_refs of [[], [{ ...a.file_refs[0], file_id: 'different' }], [{ ...a.file_refs[0], snapshot: 'b'.repeat(64) }]]) {
-    assert.equal(budget.sameIntent(a, { ...a, file_refs }), false);
-  }
-  assert.equal(budget.sameIntent({ ...a, file_refs: [a.file_refs[0], { file_id: 'other', snapshot: 'b'.repeat(64) }] },
-    { ...a, file_refs: [{ file_id: 'other', snapshot: 'b'.repeat(64) }, a.file_refs[0]] }), false);
 });
 
 test('real File multipart uses the authenticated API, CSRF and a stable retry key; replaced bytes get a new key', async () => {
@@ -379,7 +381,7 @@ async function chatFixture(send: any) {
       './ReportDialog': { ...reports, useReportText: () => (key: string) => key },
     });
 }
-test('Chat preserves file drafts through quote cancellation/failure, clears only accepted sends and never replays history refs', async () => {
+test('Chat preserves file drafts through a kept send or a failure, clears only accepted sends and never replays history refs', async () => {
   const sends: any[] = []; let outcome: any = false;
   const h = await chatFixture(async (...args: any[]) => { sends.push(args); if (outcome instanceof Error) throw outcome; return outcome; });
   const choose = () => h.find((el) => el.type === picker.default).props;
@@ -398,34 +400,34 @@ test('Chat preserves file drafts through quote cancellation/failure, clears only
   h.unmount();
 });
 
-test('direct, quoted, requoted and consent-paid starts carry file_refs at top level and keep context_refs separate', async () => {
+test('billed or not, a start carries file_refs at top level and keeps context_refs separate, also through the setup step', async () => {
   const files = [record().reference], contexts = [{ kind: 'form', workspace_id: 'ws_a', resource_id: 'fixture', snapshot: 'b'.repeat(64) }];
   const direct = await appFixture(false); await direct.chat().send('Fixture', contexts, files);
   assert.deepEqual(plain(direct.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture', context_refs: contexts, file_refs: files }); direct.unmount();
-  const quoted = await appFixture(); assert.equal(await quoted.chat().send('Fixture', contexts, files), false); quoted.render();
-  const params = { budget: '500', max_calls: 3, run_seconds: 300 };
-  const quote = await quoted.dialog().onQuote(params); await quoted.dialog().onQuote({ ...params, budget: '600' });
-  for (const write of quoted.writes) assert.deepEqual(plain(write.input.file_refs), files);
-  quoted.dialog().onClose(); quoted.render(); assert.equal(quoted.chat().sentDraft, 0);
-  await quoted.chat().send('Fixture', contexts, files); quoted.render(); await quoted.dialog().onConfirm(quote); quoted.render();
-  assert.deepEqual(plain(quoted.writes.at(-1).input.file_refs), files); assert.equal(quoted.chat().sentDraft, 1); quoted.unmount();
-  const consent = await appFixture(true, true); assert.equal(await consent.chat().send('Fixture', contexts, files), true);
-  assert.deepEqual(plain(consent.writes.at(-1).input.file_refs), files); consent.unmount();
-  const created = await appFixture(); await created.chat().send('Fixture', contexts, files); created.render();
-  await created.dialog().consent.send(created.consent, false); created.render();
-  assert.deepEqual(plain(created.writes.at(-1).input.file_refs), files); assert.equal(created.chat().sentDraft, 1); created.unmount();
+  const billed = await appFixture(); assert.equal(await billed.chat().send('Fixture', contexts, files), true);
+  assert.deepEqual(billed.writes.map((w) => w.operation), ['agent.turn.start']);
+  assert.deepEqual(plain(billed.writes[0].input), { conversation_id: 'conv_fixture', text: 'Fixture', context_refs: contexts, file_refs: files, ...SEEN }); billed.unmount();
+  const first = await appFixture(true, false); assert.equal(await first.chat().send('Fixture', contexts, files), false); first.render();
+  assert.deepEqual(first.writes, []); assert.equal(first.chat().sentDraft, 0);
+  await first.card()[0].props.onComplete(); first.render();
+  assert.deepEqual(plain(first.writes.at(-1).input), { conversation_id: 'conv_fixture', text: 'Fixture', context_refs: contexts, file_refs: files, ...SEEN });
+  assert.equal(first.chat().sentDraft, 1); first.unmount();
 });
 
-test('file refusals exit quotation without clearing the draft; new conversations retain refs and regeneration does not attach them', async () => {
+test('file refusals keep the draft; new conversations retain refs and regeneration does not attach them', async () => {
   const h = await appFixture(); h.route(undefined);
+  const refusal = new client.ApiError(409, 'agent_file_changed', 'fixture'); h.fail(refusal, 'agent.turn.start');
+  await assert.rejects(h.chat().send('Fixture', undefined, [record().reference])); h.render();
+  assert.equal(h.writes[0].operation, 'agent.conversation.create');
+  assert.equal(h.chat().sentDraft, 0);
+  h.fail(undefined);
+  // The created conversation is reused for the retry, with the same file refs.
   await h.chat().send('Fixture', undefined, [record().reference]); h.render();
-  assert.equal(h.dialog().intent.conversation_id, 'conv_new_fixture'); assert.deepEqual(plain(h.dialog().intent.file_refs), [record().reference]);
-  const refusal = new client.ApiError(409, 'agent_file_changed', 'fixture'); h.fail(refusal);
-  await assert.rejects(h.dialog().onQuote({ budget: '500', max_calls: 3, run_seconds: 300 })); h.render();
-  assert.equal(h.elements().filter((el) => typeof el.props.onQuote === 'function').length, 0); assert.equal(h.chat().sentDraft, 0);
-  h.fail(undefined); h.route('conv_fixture');
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_new_fixture', text: 'Fixture', file_refs: [record().reference], ...SEEN });
+  assert.equal(h.writes.filter((w) => w.operation === 'agent.conversation.create').length, 1);
+  h.route('conv_fixture');
   await h.chat().act('agent.turn.start', { conversation_id: 'conv_fixture', regenerate_of: 'fixture_message' }); h.render();
-  assert.equal(h.dialog().intent.file_refs, undefined); h.unmount();
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', regenerate_of: 'fixture_message', ...SEEN }); h.unmount();
 });
 
 test('upload UI accepts a native File, cancels explicitly and offers the same pending attempt after reopening without auto-upload', async () => {

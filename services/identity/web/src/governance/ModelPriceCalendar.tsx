@@ -241,7 +241,7 @@ export function ModelPriceCalendar({ manage, onDenied }: { manage: boolean; onDe
     {state?.environment === null && <p className="notice warn">{t('计费环境尚未配置，日历编辑与发布已禁用。')}</p>}
     {!manage && <p className="notice">{t('你可以查看日历和历史，不能修改或发布。')}</p>}
     {error != null && <div className="notice err" role="alert"><p>{t('日历请求未完成。你的输入已保留，请核对下方状态。')}</p><p>{errText(error)}</p></div>}
-    {result && <p className="notice ok" role="status">{t('日历版本 {revision} 已发布，操作编号 {id}。仅影响之后派发的调用；绑定旧日历的报价与持续同意需要重新确认。', { revision: result.state.revision, id: result.operation_id })}</p>}
+    {result && <p className="notice ok" role="status">{t('日历版本 {revision} 已发布，操作编号 {id}。仅影响之后派发的调用，且只影响使用分时价格的路线：这些路线之后开始的回答自动按新日历计价，正在进行的回答在下一次模型调用前停止；其他路线不受影响。用户无需重新确认。', { revision: result.state.revision, id: result.operation_id })}</p>}
     {uncertain && attempt && <div className="notice warn col gap8" role="alert">
       <p>{t('发布结果尚不确定，输入已锁定。请保留此页面，仅重试原请求；刷新记录不能确认原请求失败。')}</p>
       <p className="small">{t('原请求编号：{id}', { id: attempt.body.idempotency_key })}</p>
@@ -347,7 +347,7 @@ export function ModelPriceCalendar({ manage, onDenied }: { manage: boolean; onDe
           <li>{t('改名的节假日：{dates}', { dates: plan.changes.holidays_renamed.join(t('、')) || '—' })}</li>
         </ul>
         <ScheduleDetails spec={plan.after} />
-        <p>{t('发布后，新派发的调用按新日历定档；已派发的调用保持原时段。使用分时价格的路线版本随之变化，用户尚未使用的报价与持续同意须重新确认。')}</p>
+        <p>{t('发布后，新派发的调用按新日历定档；已派发的调用保持原时段。使用分时价格的路线版本随之变化：正在进行的回答在下一次模型调用前停止，之后开始的回答按新价格计费，聊天页会提示价格已更新。')}</p>
         <p className="small">{t('服务器确认预览有效至 {time}。', { time: time(plan.expires_at) })}</p>
         {attempt && <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{t('原发布理由：{reason}', { reason: attempt.body.reason })}</p>}
         {uncertain && <p className="notice warn">{t('重试将发送完全相同的原请求、理由和请求编号，即使原预览已经到期。不会创建另一笔发布。')}</p>}

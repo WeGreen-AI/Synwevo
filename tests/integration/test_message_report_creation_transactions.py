@@ -173,6 +173,9 @@ def test_service_report_rechecks_message_after_waiting_for_review_commit(world, 
     ("account", 404, "no_conversation"), ("organization_member", 404, "no_conversation"),
     ("conversation_member", 404, "no_conversation"), ("history", 404, "no_message"),
     ("frozen", 409, "organization_unavailable"), ("deleted", 409, "organization_unavailable"),
+    # B3/G2: deleted past its recovery window — or without one (a legacy deletion) — is LOST: the
+    # same nothing a non-member gets, at once.
+    ("lost", 404, "no_conversation"),
 ])
 def test_report_rechecks_current_authority_inside_writer(world, monkeypatch, loss, status, error):
     w = world
@@ -200,6 +203,12 @@ def test_report_rechecks_current_authority_inside_writer(world, monkeypatch, los
                 independent.execute("UPDATE conversation_members SET left_at=? WHERE conversation_id=? AND user_id=?", (now(), w["cid"], uid))
             elif loss == "history":
                 independent.execute("UPDATE conversation_members SET joined_seq=? WHERE conversation_id=? AND user_id=?", (w["message"]["seq"]+1, w["cid"], uid))
+            elif loss == "deleted":
+                # deleted and still recoverable: paused, like a freeze
+                independent.execute("UPDATE organizations SET status='deleted', deleted_at=?, recover_until=? WHERE id=?",
+                                    (now(), now() + 7 * 86400, w["oid"]))
+            elif loss == "lost":
+                independent.execute("UPDATE organizations SET status='deleted', deleted_at=? WHERE id=?", (now(), w["oid"]))
             else:
                 independent.execute("UPDATE organizations SET status=? WHERE id=?", (loss, w["oid"]))
         with original(store) as tx:

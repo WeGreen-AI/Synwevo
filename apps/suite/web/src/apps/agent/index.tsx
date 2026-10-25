@@ -1,3 +1,11 @@
+/** The personal Agent page. Send-and-go (owner decision 2026-10-23, design D-1…D-7): a person
+ *  types a request, presses Send, and the answer starts at once — one `agent.turn.start` per
+ *  send with the payer named inline, never a quote, a consent or a dialog in between. The server
+ *  issues and binds the run's authorization inside its own admission transaction and enforces
+ *  every money bound there; this page only shows the facts it reports (the maximum an answer can
+ *  cost, the balance, a price notice) and words its refusals. The one-time "Start using Synwevo
+ *  Agent" step (AgentSetup) appears inline when a send needs something the person has not done
+ *  yet; the draft stays in the composer until it is sent. */
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Link, NavLink, Route, useLocation, useMatch, useNavigate } from "react-router-dom";
 import { ApiError, PlatformNav, RequireSession, get, useSession } from "@synwevo/auth-client";
@@ -6,21 +14,22 @@ import { useApp } from "../../shared/catalog";
 import { Empty, Loading } from "../../shared/states";
 import { AgentFailure as Failure } from "./errors";
 import { newKey, op, read } from "../../shared/ops";
-import Chat from "./Chat";
-import { activeTurn, branchMessages, type ContextReference, type FileReference, type Workspace } from "./types";
+import Chat, { type ComposerDraft, type Draft } from "./Chat";
+import { activeTurn, branchMessages, type Workspace } from "./types";
 import { createFileClient, fileErrorKey } from './files';
 import { contextErrorKey } from "./context";
 import { useConversation } from "./useConversation";
 import { useHistory } from "./useHistory";
-import { ConsentPanel, ConsentRecovery, useConversationConsents } from "./ConsentControls";
-import { ConsentStateError, PendingConsentOperation, createConsentWriter, effectiveConsentStatus, validateConsent,
-  validateCreatedConsent, type Consent, type ConsentWriter } from "./consent";
-import { validateOffer, type BudgetIntent } from "./budget";
+import { validateOffer, type Pricing } from "./budget";
 import { chatCopy } from "./chat.messages";
-import { ComposerStatus, TurnMaximum, type ModelOffer } from "./ComposerStatus";
-import { accountHref, turnMaximum, walletHref, type BillingStatus } from "./composer";
+import { RefusalNotice, TurnMaximum } from "./ChatParts";
+import { ComposerStatus, type ModelOffer } from "./ComposerStatus";
+import { accountHref, composerMaximum, seenPrice, walletHref, type BillingStatus, type PriceNoticeFacts } from "./composer";
 import { conversationMarkdown, downloadText, exportFileName } from "./exportChat";
-import { choosePayer, parsePayers, payerInput, payerKey, payerOf, personal, recallPayer, rememberPayer, samePayer, type Payer } from "./payers";
+import { choosePayer, parsePayers, payerInput, payerKey, personal, recallPayer, rememberPayer, type Payer } from "./payers";
+import { errorCode, refusalOf } from "./refusals";
+import AgentSetup, { completedSetup, setupNeeded, validateSetup, type SetupState } from "./AgentSetup";
+import PriceNotice from "./PriceNotice";
 import "./messages";
 import { automationCopy } from "./automations.messages";
 import { integrationCopy } from "./integrations/integrations.messages";
@@ -29,7 +38,6 @@ import "./agent.css";
 const Settings = lazy(() => import("./Settings"));
 const Automations = lazy(() => import("./Automations"));
 const Integrations = lazy(() => import("./integrations/Integrations"));
-const BudgetDialog = lazy(() => import("./BudgetDialog"));
 
 function AgentApp() {
   const { t } = useI18n();
@@ -51,24 +59,19 @@ function AgentApp() {
   const [actionError, setActionError] = useState<unknown>();
   const [configured, setConfigured] = useState<boolean>();
   const [billingRequired, setBillingRequired] = useState(false);
-  const [budgetIntent, setBudgetIntent] = useState<BudgetIntent>();
   const [sentDraft, setSentDraft] = useState(0);
   const [fileClient] = useState(createFileClient);
   const currentConversation = useRef(id);
   currentConversation.current = id;
-  const currentBudgetIntent = useRef(budgetIntent);
-  currentBudgetIntent.current = budgetIntent;
   const [spaces, setSpaces] = useState<Workspace[]>([]);
-  const intents = useRef(new Map<string, string>());
   const retryCreate = useRef<string | undefined>(undefined);
   function contextRefused(error: unknown, input: Record<string, unknown>) {
     if (!contextErrorKey(error) && !fileErrorKey(error)) return;
     const cid = input.conversation_id;
     if (cid !== currentConversation.current && !(currentConversation.current === undefined && cid === retryCreate.current)) return;
-    // A refused source must be removed/reselected in the preserved draft, not silently re-resolved
-    // under a previously accepted quote. Bring that draft and its actionable error back into view.
+    // A refused source must be removed or reselected in the preserved draft, never silently
+    // re-resolved: bring that draft and its actionable error back into view.
     setActionError(error);
-    if (currentBudgetIntent.current?.conversation_id === cid) setBudgetIntent(undefined);
   }
   const { me, state: auth } = useSession();
   const payerName = me?.display_name || me?.email || "";
@@ -84,28 +87,60 @@ function AgentApp() {
   const payers = payerFacts.payers;
   const payer: Payer = userId ? choosePayer(payers, payerRef) : personal(userId, payerName);
   const organizationPayer = payer.kind !== "user";
-  const walletUrl = walletHref(auth?.account_url, auth?.app_id);
-  const accountUrl = accountHref(auth?.account_url, auth?.app_id);
-  /** A consent pays only for the payer it was issued for (shared contract "Payer"). */
-  const paysFor = (terms: object) => samePayer(payerOf(terms, userId), payer);
+  // What the composer shows now, read when a turn is started: a send from a function an earlier
+  // render handed out (a click handler, the setup step's button) still carries the price and payer
+  // on screen, never ones the page has since replaced (addendum AD-1).
+  const shown = useRef({ status, offer, payer });
+  shown.current = { status, offer, payer };
+  const walletUrl = walletHref(auth?.account_url, AGENT_APP_ID);
+  const accountUrl = accountHref(auth?.account_url, AGENT_APP_ID);
   const organizationName = (ref: { kind: "organization"; id: string }) => payers.find((p) => payerKey(p) === payerKey(ref))?.name;
-  // One payment writer per conversation: an uncertain outcome stays locked across navigation.
-  const writers = useRef(new Map<string, ConsentWriter>());
-  const writerFor = useCallback((cid: string) => {
-    let writer = writers.current.get(cid);
-    if (!writer) {
-      writer = createConsentWriter(async (operation, input, key) => {
-        try { return await op(operation, input, { key }); }
-        catch (error) { contextRefused(error, input); throw error; }
-      }, newKey);
-      writers.current.set(cid, writer);
-    }
-    return writer;
-  }, []);
-  const consents = useConversationConsents(id, conversation?.scope, connection, billingRequired && !!id);
+  // The one-time setup state (agent.setup.get): undefined while loading, null when unreadable.
+  // An unreadable state never blocks a send; the server's refusal then names the missing step.
+  const [setup, setSetup] = useState<SetupState | null>();
+  const [setupTick, setSetupTick] = useState(0);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [focusTick, setFocusTick] = useState(0);
+  // The message waiting in the composer while the setup step is open (sent by its button).
+  const [draft, setDraft] = useState<Draft | null>(null);
+  // The composer kept while the person is in Agent settings (a refusal's next step, the maximum's
+  // or a limit's link), for the conversation it was written in, until that composer takes it back
+  // (addendum-2 W10) or a send from that conversation completes. Chat hands it over as it goes
+  // away; only a move to Agent settings keeps it.
+  const [kept, setKept] = useState<{ key: string; draft: ComposerDraft } | null>(null);
+  const inSettings = useRef(settings);
+  inSettings.current = settings;
+  // Focus for the refusal of the setup step's send: the step is gone, so focus moves to the notice (W10).
+  const [refusalFocus, setRefusalFocus] = useState(0);
   const answering = !!conversation?.messages?.some(activeTurn);
+  // The answers this page started or saw running, and those of them it has since seen in a final
+  // state. A settled answer is when the ledger charged its payer, so the money facts beside the
+  // composer are read again then, once per answer and never polled: the payer list (an
+  // organization's balance and this member's allowance) and the status (the personal balance).
+  // An answer already final when the page first sees it (a quick one) counts as well.
+  const watchedTurns = useRef(new Set<string>());
+  const settledTurns = useRef(new Set<string>());
+  for (const m of conversation?.messages ?? []) {
+    const turn = m.turn?.id;
+    if (!turn) continue;
+    if (activeTurn(m)) watchedTurns.current.add(turn);
+    else if (watchedTurns.current.has(turn)) settledTurns.current.add(turn);
+  }
+  const settled = settledTurns.current.size;
+  // Addendum AD-1: the price the composer shows is the price a send runs at. The status is read
+  // again on demand (a refused stale price), when the window regains focus or becomes visible,
+  // and at most every 5 minutes while the page is visible, so a long-open page rarely shows an
+  // out-of-date price; a send that still carries one is refused by the server, never run.
+  const [statusTick, setStatusTick] = useState(0);
+  const statusRead = useRef(0);
+  // The payer list is read again when an answer settles and when the window regains focus.
+  const [payersTick, setPayersTick] = useState(0);
+  const payersRead = useRef(0);
+  // The pricing the page was showing when a send was refused for a newer price (a notice, not a gate).
+  const [shownBefore, setShownBefore] = useState<Pricing | null>(null);
   useEffect(() => {
     if (!billingRequired) { setStatus(undefined); setOffer(undefined); return; }
+    statusRead.current = Date.now();
     const abort = new AbortController();
     void Promise.allSettled([
       read<BillingStatus>("agent.billing.status", {}, null, abort.signal),
@@ -118,36 +153,93 @@ function AgentApp() {
       setOffer(valid);
     });
     return () => abort.abort();
-  }, [billingRequired, tick, answering]);
+  }, [billingRequired, tick, answering, statusTick, settled]);
+  // Back from Agent settings, where the maximum (W2) and the setup facts (consent, limits: W4) may
+  // have changed: both are read again.
+  const wasSettings = useRef(settings);
+  useEffect(() => {
+    if (wasSettings.current && !settings) { setStatusTick((n) => n + 1); setSetupTick((n) => n + 1); }
+    wasSettings.current = settings;
+  }, [settings]);
+  useEffect(() => {
+    if (!billingRequired || typeof window === "undefined") return;
+    const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
+    // focus and visibilitychange usually arrive together: one read.
+    const again = (after: number) => { if (visible() && Date.now() - statusRead.current >= after) setStatusTick((n) => n + 1); };
+    // Back to the page: the payer list too (another tab or member may have spent from it); only
+    // the status is read periodically.
+    const onFocus = () => {
+      again(2000);
+      if (visible() && Date.now() - payersRead.current >= 2000) setPayersTick((n) => n + 1);
+    };
+    const timer = window.setInterval(() => again(5 * 60_000), 60_000);
+    window.addEventListener("focus", onFocus);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [billingRequired]);
+  useEffect(() => {
+    if (!billingRequired || !userId) { setSetup(undefined); return; }
+    const abort = new AbortController();
+    read<unknown>("agent.setup.get", {}, null, abort.signal).then((value) => {
+      if (abort.signal.aborted) return;
+      try { setSetup(validateSetup(value)); } catch { setSetup(null); }
+    }).catch(() => { if (!abort.signal.aborted) setSetup(null); });
+    return () => abort.abort();
+  }, [billingRequired, userId, setupTick]);
+  // Whose payer list the page shows, once one was read.
+  const payersOf = useRef<string | null>(null);
   useEffect(() => {
     if (!billingRequired || !userId) return;
+    payersRead.current = Date.now();
     const abort = new AbortController();
     // Organization payment (shared contract "Payer") lists who may pay; before it exists the
-    // endpoint is absent and only the personal wallet is offered.
+    // endpoint is absent and only the personal wallet is offered. A re-read that fails keeps the
+    // list the page shows, so the chosen payer never changes behind the person's back.
     get<unknown>("/api/suite/agent/payers", abort.signal)
-      .then((value) => { if (!abort.signal.aborted) { setPayerList(value); setPayersError(false); } })
-      .catch((e) => { if (!abort.signal.aborted) { setPayerList(undefined); setPayersError(!(e instanceof ApiError && e.status === 404)); } });
+      .then((value) => { if (!abort.signal.aborted) { setPayerList(value); setPayersError(false); payersOf.current = userId; } })
+      .catch((e) => {
+        if (abort.signal.aborted || payersOf.current === userId) return;
+        setPayerList(undefined); setPayersError(!(e instanceof ApiError && e.status === 404));
+      });
     return () => abort.abort();
-  }, [billingRequired, userId]);
+  }, [billingRequired, userId, settled, payersTick]);
   function choose(next: Payer) {
     setPayerRef({ kind: next.kind, id: next.id });
     if (userId) rememberPayer(userId, next);
   }
-  const [single, setSingle] = useState(false);
-  useEffect(() => setSingle(false), [id]);
 
+  /** One explicit action of the person (Send, Regenerate, "send again", the setup step's button)
+   *  is one attempt with one fresh idempotency key (addendum-2 W1). The key is sent again by the
+   *  automatic retry of that same attempt when it got no answer from the server (the connection
+   *  failed, or a gateway in front of Synwevo could not reach it), so a lost response is answered
+   *  from the server's record of the attempt instead of running it twice. An attempt that never
+   *  got an answer, even after those retries, may still have been admitted: its key is kept for
+   *  that exact request (operation and body), and the next click that sends it unchanged sends it
+   *  with that key, so an admitted answer is replayed rather than started (and paid) a second time
+   *  (fv-agent-1). Any answer from the server ends the attempt and drops a kept key: the next click
+   *  is a new one, so a cause fixed in between (terms accepted, the maximum raised, the price read
+   *  again, a top-up) is never met with the replay of the earlier refusal. */
+  const unansweredKeys = useRef(new Map<string, string>());
   const write = useCallback(async (operation: string, input: Record<string, unknown>) => {
-    const signature = JSON.stringify([operation, input]);
-    const key = intents.current.get(signature) ?? newKey();
-    intents.current.set(signature, key);
-    let result;
-    try { result = await op(operation, input, { key }); }
-    catch (error) { contextRefused(error, input); throw error; }
-    intents.current.delete(signature);
-    return result.output;
+    const request = JSON.stringify([operation, input]);
+    const key = unansweredKeys.current.get(request) ?? newKey();
+    unansweredKeys.current.delete(request);
+    for (let attempt = 0; ; attempt += 1) {
+      try { return (await op(operation, input, { key })).output; }
+      catch (error) {
+        if (unanswered(error)) {
+          if (attempt < NO_ANSWER_RETRIES.length) { await pause(NO_ANSWER_RETRIES[attempt]); continue; }
+          unansweredKeys.current.set(request, key);
+        }
+        contextRefused(error, input);
+        throw error;
+      }
+    }
   }, []);
-
-
 
   useEffect(() => {
     const abort = new AbortController();
@@ -159,76 +251,100 @@ function AgentApp() {
     return () => abort.abort();
   }, [settings]);
 
-  /** The active consent for a manual send, or null for a single-run quote. Never guessed from a stale list. */
-  function consentFor(cid: string): Consent | null {
-    if (writers.current.get(cid)?.pending()) throw new PendingConsentOperation();
-    if (cid !== id) return null;  // A conversation created by this send has no consent yet.
-    // Continuing consents are created for the personal wallet only; an organization's run goes
-    // through a single-run quote that names it.
-    if (organizationPayer) return null;
-    if (!conversation || conversation.id !== cid || consents.error != null || !consents.data) throw new ConsentStateError("consent_state_unavailable");
-    if (single) return null;
-    return consents.data.find((c) => effectiveConsentStatus(c, conversation.scope) === "active" && paysFor(c)) ?? null;
+  /** One request: the turn starts at once. The payer is named inline when billing applies; the
+   *  server issues the run's authorization itself (design D-1) and refuses with a code the chat
+   *  words when something is missing. */
+  async function start(next: Draft) {
+    if (billingRequired) shownPrice(shown.current.status);   // held before a conversation is made for it
+    const from = id ?? "new";
+    let cid = id ?? retryCreate.current;
+    if (!cid) { cid = (await write("agent.conversation.create", {})).id; retryCreate.current = cid; }
+    checkTurn(await startTurn({ conversation_id: cid, ...next }));
+    retryCreate.current = undefined;
+    // Sent: a copy of this message kept while the person went to Agent settings meanwhile is not
+    // put back in the composer (the composer is cleared when a send completes).
+    setKept((kept) => (kept?.key === from ? null : kept));
+    navigate(`/agent/c/${cid}`); setTick((n) => n + 1); await refresh();
   }
-  /** The writer shows a refusal or an unresolved outcome itself; nothing is resent or switched to a quote. */
-  async function consentSend(consent: Consent, input: Record<string, unknown>) {
+  /** The price the composer shows, as a paid send repeats it (AD-1). Without one (the status is
+   *  loading, unreadable or has no run) nothing is sent (addendum-2 W3): the status is read again
+   *  and the held send is shown like a refusal, with the message kept and "send again". */
+  function shownPrice(status: BillingStatus | null | undefined) {
+    const seen = seenPrice(status);
+    if ("seen_price_id" in seen) return seen;
+    setStatusTick((n) => n + 1);
+    throw Object.assign(new Error("price_not_shown"), { code: "price_not_shown" });
+  }
+  /** `agent.turn.start` with what billing needs beside the message: the payer, and the price the
+   *  composer showed (AD-1, W3). A refusal for a newer price keeps the message, reads the status
+   *  again and keeps what the page showed for the price notice. */
+  async function startTurn(input: Record<string, unknown>) {
+    const showing = shown.current;
+    const body = billingRequired ? { ...input, ...payerInput(showing.payer, userId), ...shownPrice(showing.status) } : input;
     try {
-      await writerFor(consent.conversation_id).start("agent.turn.start", { ...input, consent_id: consent.id }, checkTurn);
-      return true;
-    } catch { return false; } finally { consents.refresh(); setTick((n) => n + 1); await refresh(); }
-  }
-  async function revoke(consent: Consent) {
-    try {
-      await writerFor(consent.conversation_id).start("agent.consent.revoke", { consent_id: consent.id }, (value: Consent) => {
-        validateConsent(value, consent.conversation_id);
-        if (value.id !== consent.id || value.status !== "revoked") throw new Error("invalid_consent_response");
-      });
-    } finally { consents.refresh(); }
-  }
-  function finishDialogSend(acceptedIntent: BudgetIntent) {
-    const sameDialog = currentBudgetIntent.current === acceptedIntent;
-    const sameConversation = currentConversation.current === acceptedIntent.conversation_id
-      || (currentConversation.current === undefined && retryCreate.current === acceptedIntent.conversation_id);
-    // A closed dialog does not undo a submitted request. Late completion must not
-    // dismiss another consent dialog, clear its text or steal a newly opened page.
-    if (sameDialog && sameConversation && acceptedIntent.text !== undefined) setSentDraft((n) => n + 1);
-    if (retryCreate.current === acceptedIntent.conversation_id) retryCreate.current = undefined;
-    setBudgetIntent((current) => current === acceptedIntent ? undefined : current);
-    if (sameDialog && sameConversation) navigate(`/agent/c/${acceptedIntent.conversation_id}`);
-    setSingle(false);
-    setTick((n) => n + 1);
-  }
-
-  async function act(operation: string, input: Record<string, unknown>) {
-    if (operation === "agent.turn.start" && billingRequired) {
-      const intent: BudgetIntent = { conversation_id: String(input.conversation_id),
-        ...(typeof input.regenerate_of === "string" ? { regenerate_of: input.regenerate_of } : {}),
-        ...(typeof input.text === "string" ? { text: input.text } : {}),
-        ...(typeof input.parent_message_id === "string" ? { parent_message_id: input.parent_message_id } : {}),
-        ...(input.context_refs !== undefined ? { context_refs: input.context_refs as ContextReference[] } : {}),
-        ...(input.file_refs !== undefined ? { file_refs: input.file_refs as FileReference[] } : {}) };
-      const consent = consentFor(intent.conversation_id);
-      if (consent) await consentSend(consent, { ...intent });
-      else setBudgetIntent(intent);
-      return;
+      const out = await write("agent.turn.start", body);
+      setShownBefore(null);
+      if (typeof out?.turn_id === "string") watchedTurns.current.add(out.turn_id);   // its settlement re-reads the money facts
+      return out;
+    } catch (error) {
+      if (errorCode(error) === "billing_price_changed") {
+        const refused = showing.offer;
+        if (refused) setShownBefore((before) => before ?? refused);
+        setStatusTick((n) => n + 1);
+      }
+      throw error;
     }
-    const result = await write(operation, input);
+  }
+  /** Open the one-time setup step with the draft kept; focus moves to its heading. The state is
+   *  read again and the step shows it loading until it arrives (addendum-2 W4), so a step opened
+   *  from a refusal never asks from the state read when the page loaded. */
+  function openSetup(next?: Draft) {
+    if (next !== undefined) setDraft(next);
+    setSetup(undefined); setSetupTick((n) => n + 1);
+    setSetupOpen(true); setFocusTick((n) => n + 1);
+  }
+  const readSetupFact = useCallback((operation: string) => read<unknown>(operation, {}, null), []);
+  const rereadStatus = useCallback(() => setStatusTick((n) => n + 1), []);
+  const updateDraft = useCallback((next: Draft | null) => setDraft(next), []);
+  const chatKey = id ?? "new";
+  function leaveComposer(composer: ComposerDraft) {
+    if (!inSettings.current || !(composer.text.trim() || composer.contexts.length || composer.files.length)) return;
+    setKept({ key: chatKey, draft: composer });
+  }
+  /** Send the kept message in one request; on success the composer is cleared. A refusal leaves
+   *  it in the composer and is shown above it with its next step. */
+  async function sendDraft(next: Draft): Promise<unknown> {
+    setActionError(undefined);
+    try { await start(next); setDraft(null); setSentDraft((n) => n + 1); return undefined; }
+    catch (e) { setActionError(e); return e ?? new Error("refused"); }
+  }
+  /** Everything the step needed is recorded: send the kept message, then read the state again. A
+   *  refused send moves focus to its notice (the step's button is gone), or to the composer. */
+  async function completeSetup() {
+    const next = draft;
+    setSetup((current) => (current ? completedSetup(current, organizationPayer) : current));
+    setSetupTick((n) => n + 1);
+    setSetupOpen(false);
+    if (!next?.text.trim()) { focusComposer(); return; }
+    const refused = await sendDraft(next);
+    if (refused === undefined) return;
+    if (refusalOf(refused, { organization: organizationPayer })) setRefusalFocus((n) => n + 1);
+    else focusComposer();
+  }
+  /** Back to the message box (the step was closed without sending). */
+  function focusComposer() {
+    if (typeof document !== "undefined") document.getElementById("agent-message")?.focus();
+  }
+  async function act(operation: string, input: Record<string, unknown>) {
+    const result = operation === "agent.turn.start" ? await startTurn(input) : await write(operation, input);
     await refresh(); setTick((n) => n + 1);
     return result;
   }
-  async function send(text: string, context_refs?: ContextReference[], file_refs?: FileReference[]) {
+  async function send(text: string, context_refs?: Draft["context_refs"], file_refs?: Draft["file_refs"]) {
     setActionError(undefined);
-    let cid = id ?? retryCreate.current;
-    if (!cid) { cid = (await write("agent.conversation.create", {})).id; retryCreate.current = cid; }
-    const intent: BudgetIntent = { conversation_id: cid!, text, ...(context_refs?.length ? { context_refs } : {}), ...(file_refs?.length ? { file_refs } : {}) };
-    if (billingRequired) {
-      const consent = consentFor(cid!);
-      if (consent) return consentSend(consent, { ...intent });
-      setBudgetIntent(intent); return false;
-    }
-    checkTurn(await write("agent.turn.start", { ...intent }));
-    retryCreate.current = undefined;
-    navigate(`/agent/c/${cid}`); setTick((n) => n + 1); await refresh();
+    const next: Draft = { text, ...(context_refs?.length ? { context_refs } : {}), ...(file_refs?.length ? { file_refs } : {}) };
+    if (billingRequired && setupNeeded(setup, organizationPayer)) { openSetup(next); return false; }
+    await start(next);
     return true;
   }
   async function newConversation() {
@@ -262,15 +378,21 @@ function AgentApp() {
   if (app === undefined) return <Loading />;
   if (!app) return <Empty title={t("个人 Agent 尚未开放")} />;
   const running = conversation?.messages?.some(activeTurn);
-  const writer = billingRequired && id ? writerFor(id) : undefined;
-  const blocking = consents.data?.some((c) => !["revoked", "expired"].includes(effectiveConsentStatus(c, conversation?.scope ?? null)));
-  const dialogScope = budgetIntent?.conversation_id === id ? conversation?.scope ?? null : null;
   const title = conversation?.title === "新会话" ? t("新会话") : conversation?.title;
-  const activeConsent = !organizationPayer && conversation ? consents.data?.find((c) => effectiveConsentStatus(c, conversation.scope) === "active" && paysFor(c)) ?? null : null;
-  // The newest consent for this payer whose model or price no longer applies: what the person last confirmed.
-  const staleConsent = consents.data?.filter((c) => c.status === "model_changed" && paysFor(c)).sort((a, b) => b.created_at - a.created_at)[0] ?? null;
   const money = billingRequired ? { status, offer, payers, payersError, payer, setPayer: choose, walletUrl, accountUrl,
     environment: payerFacts.environment, welcome: payerFacts.welcome } : null;
+  // The most the next answer can cost: the run bound the server reports (status.run.maximum), or
+  // that it is being read or cannot be shown (W3).
+  const maximum = billingRequired ? composerMaximum(status) : null;
+  // What changed since the person's last answer (server), or since the price this page showed
+  // when a send was refused for a newer one (AD-1). Information only.
+  const priceNotice: PriceNoticeFacts | null = status?.price_notice
+    ?? (shownBefore && offer && (shownBefore.price_id !== offer.price_id || shownBefore.route_version !== offer.route_version)
+      ? { previous: shownBefore, previous_run_at: Math.floor(Date.now() / 1000) } : null);
+  // A refusal of the send the setup step made (the draft is still in the composer). While it waits,
+  // the page follows the composer as it does while the step is open, so "send again" sends the
+  // message as it now stands (onDraft below).
+  const actionRefusal = actionError != null ? refusalOf(actionError, { organization: organizationPayer }) : null;
   function exportConversation() {
     if (!conversation) return;
     const name = title ?? t("新会话");
@@ -302,7 +424,9 @@ function AgentApp() {
         <Link className="btn ghost" to="/workspace">{t("返回工作空间")}</Link>
       </aside>
       <main className="ag-main">
-        {automations ? <Automations /> : integrations ? <Integrations /> : settings ? <Settings /> : <>
+        {automations ? <Suspense fallback={<Loading />}><Automations /></Suspense>
+          : integrations ? <Suspense fallback={<Loading />}><Integrations /></Suspense>
+          : settings ? <Suspense fallback={<Loading />}><Settings onBillingChanged={rereadStatus} /></Suspense> : <>
           <div className="ag-toolbar"><h1>{title ?? t("新会话")}</h1>
             {conversation && <div className="ag-toolbar-actions">
               <button className="btn ghost sm" disabled={busy} onClick={() => void manage("rename")}>{t("重命名会话")}</button>
@@ -312,71 +436,51 @@ function AgentApp() {
               <button className="btn ghost sm" disabled={busy || running} onClick={() => void manage("delete")}>{t("删除会话")}</button>
             </div>}
           </div>
-          {actionError != null && <Failure error={actionError} />}
-          <Chat key={id ?? "new"} conversation={conversation} loading={!!id && !conversation && !error} error={error} connection={connection}
+          {actionError != null && (actionRefusal
+            ? <RefusalNotice refusal={actionRefusal} walletUrl={walletUrl} live busy={busy || !!running} focusTick={refusalFocus}
+              onPersonal={organizationPayer && payers[0] ? () => choose(payers[0]) : undefined}
+              onRetry={draft?.text.trim() ? () => void sendDraft(draft) : undefined} onSetup={() => openSetup()} />
+            : <Failure error={actionError} />)}
+          <Chat key={chatKey} conversation={conversation} loading={!!id && !conversation && !error} error={error} connection={connection}
             spaces={spaces} fileClient={fileClient} configured={configured} act={act} send={send} refresh={refresh} sentDraft={sentDraft}
             walletUrl={walletUrl} organizationPayer={organizationPayer} payerName={organizationName}
             onPersonal={organizationPayer && payers[0] ? () => choose(payers[0]) : undefined}
+            onSetup={billingRequired ? openSetup : undefined}
+            onDraft={setupOpen || (actionRefusal != null && draft != null) ? updateDraft : undefined}
+            restore={kept?.key === chatKey ? kept.draft : undefined} onRestored={() => setKept(null)} onLeave={leaveComposer}
             status={money && <ComposerStatus money={money} disabled={running} />}
-            maximum={money && <TurnMaximum maximum={turnMaximum(single ? null : activeConsent, offer)} />}
+            maximum={money && <TurnMaximum maximum={maximum} />}
             hint={money ? t(chatCopy.turnMaximumHint[0]) : undefined}
-            aside={writer && id && <>
-              <details className="ag-payment-settings">
-                <summary>{t("付款授权设置")}</summary>
-              <ConsentPanel consents={consents.data} loading={consents.loading} error={consents.error} refresh={consents.refresh}
-                scope={conversation?.scope ?? null} spaces={spaces} payer={payerName} writer={writer} single={single} setSingle={setSingle} revoke={revoke}
-                offer={offer ?? null} />
-              </details>
-              <ConsentRecovery writer={writer} retry={async () => {
-                try { await writer.retry(); } finally { consents.refresh(); setTick((n) => n + 1); await refresh(); }
-              }} />
+            aside={money && <>
+              {priceNotice != null && <PriceNotice notice={priceNotice} offer={offer} currentKey={status?.run?.price_key} userId={userId} />}
+              {setupOpen && <AgentSetup setup={setup} organizationPayer={organizationPayer} hasDraft={!!draft?.text}
+                maximum={maximum && "amount" in maximum && maximum.key === "turnMaximum" ? { amount: maximum.amount, unit: maximum.unit } : null}
+                siteUrl={auth?.site_url} read={readSetupFact} write={write}
+                onComplete={completeSetup} onChanged={() => setSetupTick((n) => n + 1)} focus focusTick={focusTick}
+                onDismiss={() => { setSetupOpen(false); focusComposer(); }} onRetryRead={() => setSetupTick((n) => n + 1)} />}
             </>} />
         </>}
       </main>
-      {/* Its own boundary: through the route's Suspense the first (lazy) open hid the composer while the
-          chunk loaded, so the dialog found nothing focused to return focus to on close (CR-079). */}
-      {budgetIntent && <Suspense fallback={null}><BudgetDialog intent={budgetIntent} onClose={() => setBudgetIntent(undefined)}
-        onQuote={async (params) => {
-          const quote = await write("agent.turn.quote", { ...budgetIntent, ...params, ...payerInput(payer, userId) });
-          // The quote must name the payer shown in the dialog; a server that ignores the choice
-          // (or a different payer) is never confirmed.
-          if (!samePayer(payerOf(quote, userId), payer)) throw new Error("quote_payer_mismatch");
-          return quote;
-        }}
-        payerLabel={organizationPayer ? t(chatCopy.payerOrganization[0], { name: payer.name }) : undefined}
-        siteUrl={auth?.site_url}
-        previous={budgetIntent.conversation_id === id && staleConsent && !organizationPayer ? { terms: staleConsent, budget: staleConsent.budget,
-          max_calls: staleConsent.max_calls, run_seconds: staleConsent.run_seconds } : undefined}
-        onConfirm={async (quote) => {
-          const acceptedIntent = budgetIntent;
-          if (writers.current.get(acceptedIntent.conversation_id)?.pending()) throw new PendingConsentOperation();
-          checkTurn(await write("agent.turn.start", { ...acceptedIntent, quote_id: quote.id }));
-          finishDialogSend(acceptedIntent);
-          await refresh();
-        }}
-        consent={organizationPayer || (budgetIntent.conversation_id === id && (!consents.data || blocking)) ? undefined : {
-          scope: dialogScope, spaces, payer: payerName, writer: writerFor(budgetIntent.conversation_id),
-          create: async (quote, input, params, retry) => {
-            const scope = dialogScope ?? [];
-            const target = writerFor(input.conversation_id);
-            try {
-              return retry ? await target.retry<Consent>() : await target.start<Consent>("agent.consent.create", { ...input },
-                (value) => validateCreatedConsent(value, input, quote, scope, params));
-            } finally { consents.refresh(); }
-          },
-          send: async (consent, retry) => {
-            const acceptedIntent = budgetIntent;
-            const target = writerFor(consent.conversation_id);
-            if (retry) await target.retry();
-            else await target.start("agent.turn.start", { ...acceptedIntent, consent_id: consent.id }, checkTurn);
-            finishDialogSend(acceptedIntent);
-            consents.refresh();
-            await refresh();
-          },
-        }} /></Suspense>}
     </div>
   </div>;
 }
+
+/** Where the person comes from, for the account pages' "back to <application>" link (`from=<id>`,
+ *  matched there against the applications the server lists for the person, never a URL): this page
+ *  is Synwevo Agent (its registry id, synwevo_suite.agent MANIFEST), not the serving process's OIDC
+ *  application (`auth.app_id`: "docweave" on a combined process, "platform" on the workplace origin),
+ *  which would send the person back to Synwevo Docs or to no listed application. */
+const AGENT_APP_ID = "agent";
+/** The waits before the automatic retries of an attempt that got no answer (W1): two, then the
+ *  attempt ends with the connection error and the message stays in the composer (its key kept
+ *  for the same request, fv-agent-1). */
+const NO_ANSWER_RETRIES = [1000, 3000];
+/** No answer from Synwevo: the request may or may not have arrived, so only the same key may ask again. */
+function unanswered(error: unknown): boolean {
+  return error instanceof ApiError && ((error.status === 0 && error.code === "network")
+    || (error.upstream && [502, 503, 504].includes(error.status)));
+}
+const pause = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
 
 function checkTurn(value: { turn_id?: unknown }) {
   if (!value || typeof value.turn_id !== "string" || !value.turn_id) throw new Error("invalid_turn_response");

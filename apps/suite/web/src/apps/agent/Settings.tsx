@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError } from "@synwevo/auth-client";
-import { useDialog, useI18n } from "@synwevo/ui";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { ApiError, useSession } from "@synwevo/auth-client";
+import { useDialog, useI18n, type Params } from "@synwevo/ui";
 import { newKey, op, read, type RunStatus } from "../../shared/ops";
 import { Empty, Failure, Loading, RunBadge } from "../../shared/states";
+import { validateSetup, type SetupDocument, type SetupState } from "./AgentSetup";
+import { formatAmount, majorUnits, parseBudget, validateOffer } from "./budget";
+import { chatCopy, type ChatText } from "./chat.messages";
+import { composerMaximum, publicHref, type BillingStatus, type MoneyUnit } from "./composer";
+import { PriceFacts, type ModelOffer } from "./ComposerStatus";
+import { formatMoney } from "./cost";
 import PayerBudget from "./PayerBudget";
 import ProviderConsent from "./ProviderConsent";
 import McpBindings from "./integrations/Bindings";
@@ -20,7 +26,8 @@ interface AgentSettings {
   memory_enabled: boolean;
   personal_key: { set: boolean };
   personal_key_supported: boolean;
-  billing: { required: boolean };
+  /** `run_budget_cap`: the person's own per-answer maximum (send-and-go contract §3), or null for the default. */
+  billing: { required: boolean; run_budget_cap?: { amount: string; unit: MoneyUnit } | null };
   model_configured: boolean;
   platform_configured: boolean;
   active: { credential: "platform" | "personal"; model: string; provider: ModelProvider } | null;
@@ -194,7 +201,7 @@ function WriteFeedback({ write }: { write: ReturnType<typeof useWrite> }) {
   </div>;
 }
 
-function AccessSettings() {
+function AccessSettings({ onBillingChanged }: { onBillingChanged?: () => void }) {
   const { t } = useI18n();
   const resource = useRead<AgentSettings>("agent.settings.get");
   return <><section className="card" aria-labelledby="ag-access-title">
@@ -205,7 +212,168 @@ function AccessSettings() {
     </div>
   </section>
     {resource.data?.billing.required && <PayerBudget />}
+    {resource.data?.billing.required && <AnswerBilling settings={resource.data} onChanged={resource.setData} onBillingChanged={onBillingChanged} />}
   </>;
+}
+
+/** The per-answer maximum and the accepted document versions, read beside each other. A saved or
+ *  cleared maximum reads the run bound again here and tells the page (`onBillingChanged`), which
+ *  reads it for the composer (addendum-2 W2), so no maximum on screen is older than the save. */
+export function AnswerBilling({ settings, onChanged, onBillingChanged }: {
+  settings: AgentSettings; onChanged: (value: AgentSettings) => void; onBillingChanged?: () => void;
+}) {
+  const status = useRead<BillingStatus>("agent.billing.status");
+  const saved = (value: AgentSettings) => { onChanged(value); status.reload(); onBillingChanged?.(); };
+  const setup = useRead<unknown>("agent.setup.get");
+  const offerRead = useRead<ModelOffer>("agent.billing.offer");
+  let documents: SetupState | null | undefined;
+  if (setup.loading && setup.data === null) documents = undefined;
+  else { try { documents = validateSetup(setup.data); } catch { documents = null; } }
+  let offer: ModelOffer | null | undefined;
+  if (offerRead.loading && offerRead.data === null) offer = undefined;
+  else { try { validateOffer(offerRead.data as ModelOffer); offer = offerRead.data; } catch { offer = null; } }
+  const shown = status.loading && !status.data ? undefined : status.data;
+  return <>
+    <CurrentPrice offer={offer} status={shown} />
+    <RunCapSettings settings={settings} status={shown} onChanged={saved} />
+    <AcceptedDocuments setup={documents} />
+  </>;
+}
+
+/** The prices a send now runs at (addendum-2 C1): the unit prices, the price version and the
+ *  maximum per answer, as the model panel beside the composer shows them (`PriceFacts`).
+ *  `offer`: undefined while loading, null when it cannot be read. */
+export function CurrentPrice({ offer, status }: { offer: ModelOffer | null | undefined; status: BillingStatus | null | undefined }) {
+  const { t } = useI18n();
+  const c = (key: ChatText, params?: Params) => t(chatCopy[key][0], params);
+  const id = useId();
+  return <section className="card" aria-labelledby={`${id}-title`}>
+    <div className="card-h"><h2 id={`${id}-title`}>{c("modelTitle")}</h2></div>
+    <div className="card-b col gap12">
+      {offer === undefined ? <Loading /> : offer === null ? <p className="notice warn" role="status">{c("priceUnavailable")}</p> : <>
+        <p>{c("modelButton", { model: offer.model })}</p>
+        <h3>{c("modelPrices")}</h3>
+        <PriceFacts offer={offer} maximum={composerMaximum(status)} />
+      </>}
+    </div>
+  </section>;
+}
+
+const sameUnit = (a: MoneyUnit | null | undefined, b: MoneyUnit | null | undefined) => !!a && !!b && a.code === b.code && a.scale === b.scale;
+
+/** "每条回答的最高金额" (design §3, §4 B): the default bound — one call's hold × the call limit at
+ *  the current price, reported by `agent.billing.status.run` — or a lower maximum of the
+ *  person's own, saved with `agent.settings.update` (`run_budget_cap` / `clear_run_budget_cap`).
+ *  The server checks the cap at every send; here a cap below one call's hold is not saved, since
+ *  it would only make every send refuse. It applies to answers started afterwards. */
+export function RunCapSettings({ settings, status, onChanged }: {
+  settings: AgentSettings;
+  /** `agent.billing.status`: undefined while loading, null when it could not be read. */
+  status: BillingStatus | null | undefined;
+  onChanged: (value: AgentSettings) => void;
+}) {
+  const { t, locale } = useI18n();
+  const c = (key: ChatText, params?: Params) => t(chatCopy[key][0], params);
+  const id = useId();
+  const write = useWrite();
+  const cap = settings.billing.run_budget_cap ?? null;
+  const unit = status?.unit ?? null;
+  const run = status?.run ?? null;
+  const current = cap && unit && sameUnit(cap.unit, unit) ? majorUnits(cap.amount, unit) : "";
+  const [mode, setMode] = useState<"default" | "custom">(cap ? "custom" : "default");
+  const [amount, setAmount] = useState(current);
+  // Until the person types, the box shows the saved maximum (addendum-2 W7): its unit comes with
+  // agent.billing.status, which may arrive after the card mounted.
+  const typing = useRef(false);
+  useEffect(() => { if (!typing.current) setAmount(current); }, [current]);
+  const [issue, setIssue] = useState<ChatText | null>(null);
+  const money = (minor: string, u: MoneyUnit) => { try { return formatMoney(minor, u, locale); } catch { return formatAmount(minor, u); } };
+  let typed: string | null = null;
+  if (unit && amount.trim()) { try { typed = parseBudget(amount.trim(), unit.scale); } catch { typed = null; } }
+  // Nothing to save: the default kept, an empty box, or the saved maximum written either way.
+  const changed = mode === "default" ? !!cap
+    : !!amount.trim() && !(cap && unit && sameUnit(cap.unit, unit) && typed === cap.amount);
+  const unitChanged = !!cap && !!unit && !sameUnit(cap.unit, unit);
+  // "Cannot be lower than one call's hold" is said only of a saved maximum below the current hold,
+  // not of every bound the server cannot use right now.
+  const below = !!cap && !!unit && sameUnit(cap.unit, unit) && !!run && /^[0-9]+$/.test(cap.amount)
+    && /^[0-9]+$/.test(run.per_call_hold) && BigInt(cap.amount) < BigInt(run.per_call_hold);
+  function saved(value: AgentSettings) {
+    onChanged(value);
+    const next = value.billing?.run_budget_cap ?? null;
+    typing.current = false;
+    setMode(next ? "custom" : "default");
+    setAmount(next && unit && sameUnit(next.unit, unit) ? majorUnits(next.amount, unit) : "");
+  }
+  function save(event: FormEvent) {
+    event.preventDefault();
+    if (write.locked || !changed) return;
+    if (mode === "default") { write.start<AgentSettings>("agent.settings.update", { clear_run_budget_cap: true }, saved); return; }
+    if (!unit) return;
+    let units: string;
+    try { units = parseBudget(amount.trim(), unit.scale); }
+    catch { setIssue("runCapInvalid"); if (typeof document !== "undefined") document.getElementById(`${id}-amount`)?.focus(); return; }
+    if (run && /^[0-9]+$/.test(run.per_call_hold) && BigInt(units) < BigInt(run.per_call_hold)) {
+      setIssue("runCapMinimum"); if (typeof document !== "undefined") document.getElementById(`${id}-amount`)?.focus(); return;
+    }
+    setIssue(null);
+    write.start<AgentSettings>("agent.settings.update", { run_budget_cap: units }, saved);
+  }
+  const hold = run && unit ? money(run.per_call_hold, unit) : null;
+  return <section className="card" aria-labelledby={`${id}-title`}>
+    <div className="card-h"><h2 id={`${id}-title`}>{c("runCapTitle")}</h2></div>
+    <div className="card-b col gap12">
+      <p className="muted small">{c("runCapNote")}</p>
+      {status === undefined && <Loading />}
+      {cap && <p>{c("runCapCurrent", { amount: money(cap.amount, cap.unit) })}</p>}
+      {unitChanged ? <p className="notice warn" role="status">{c("runCapUnitChanged")}</p>
+        : below && hold ? <p className="notice warn" role="status">{c("runCapMinimum", { amount: hold })}</p> : null}
+      <form className="col gap12" noValidate onSubmit={save}>
+        <fieldset className="col gap8 ag-plain-fieldset" disabled={write.locked}>
+          <legend className="sr-only">{c("runCapTitle")}</legend>
+          <label className="check"><input type="radio" name={`${id}-mode`} value="default" checked={mode === "default"}
+            onChange={() => { setMode("default"); setIssue(null); write.dismiss(); }} />
+            <span>{run && unit ? c("runCapDefault", { amount: money(run.default, unit), calls: String(run.max_calls) }) : c("runCapDefaultUnknown")}</span></label>
+          <label className="check"><input type="radio" name={`${id}-mode`} value="custom" checked={mode === "custom"} disabled={!unit}
+            onChange={() => { setMode("custom"); setIssue(null); write.dismiss(); }} />
+            <span>{c("runCapCustom")}</span></label>
+          {mode === "custom" && unit && <label className="field" htmlFor={`${id}-amount`}>
+            <span>{c("runCapAmount", { unit: unit.code })}</span>
+            <input className="input" id={`${id}-amount`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false} maxLength={128}
+              value={amount} aria-invalid={issue != null} aria-describedby={[hold ? `${id}-minimum` : "", issue ? `${id}-issue` : ""].filter(Boolean).join(" ") || undefined}
+              onChange={(event) => { typing.current = true; setAmount(event.target.value); setIssue(null); write.dismiss(); }} />
+          </label>}
+          {mode === "custom" && hold && <p className="muted small" id={`${id}-minimum`}>{c("runCapMinimum", { amount: hold })}</p>}
+        </fieldset>
+        {issue && <p className="notice err" id={`${id}-issue`} role="alert">{c(issue, issue === "runCapMinimum" && hold ? { amount: hold } : undefined)}</p>}
+        <div className="row wrap"><button type="submit" className="btn primary" disabled={write.locked || !changed}>{c("runCapSave")}</button></div>
+      </form>
+      <WriteFeedback write={write} />
+    </div>
+  </section>;
+}
+
+const DOCUMENT_NAMES: Record<SetupDocument, ChatText> = { terms: "docTerms", "ai-use": "docAiUse", pricing: "docPricing" };
+
+/** The versions of the terms, AI use rules and pricing the person accepted in the one-time
+ *  setup step (`agent.setup.get`), read-only, each linked to its page on the public site. */
+export function AcceptedDocuments({ setup }: { setup: SetupState | null | undefined }) {
+  const { t, locale } = useI18n();
+  const { state: auth } = useSession();
+  const c = (key: ChatText, params?: Params) => t(chatCopy[key][0], params);
+  const id = useId();
+  return <section className="card" aria-labelledby={`${id}-title`}>
+    <div className="card-h"><h2 id={`${id}-title`}>{c("docsTitle")}</h2></div>
+    <div className="card-b col gap12">
+      <p className="muted small">{c("docsIntro")}</p>
+      {setup === undefined ? <Loading /> : setup === null ? <p className="notice warn" role="status">{c("docsUnavailable")}</p>
+        : <ul className="ag-docs">{setup.terms.documents.map((document) => <li key={document.id}>
+          <a href={publicHref(auth?.site_url, document.id, locale)}>{c(DOCUMENT_NAMES[document.id])}</a>
+          {" · "}<span className={document.accepted ? undefined : "warn"}>{c(document.accepted ? "docAccepted" : "docPending",
+            { version: document.version, effective: document.effective })}</span>
+        </li>)}</ul>}
+    </div>
+  </section>;
 }
 
 function AccessForm({ settings, onChanged }: { settings: AgentSettings; onChanged: (value: AgentSettings) => void }) {
@@ -288,7 +456,7 @@ function AccessForm({ settings, onChanged }: { settings: AgentSettings; onChange
         onChange={(e) => { setPrefer(e.target.checked); write.dismiss(); }} /><span>{t("优先使用个人密钥")}</span></label>
       <p className="muted small">{settings.personal_key_supported
         ? t("启用后优先使用已保存且可解密的个人密钥，否则使用平台凭据。未启用时优先使用平台凭据；平台未配置时仍会尝试个人密钥。平台专用的工作空间不会自动切换凭据。")
-        : t("已保存的个人密钥偏好保留，但在当前付费模型服务中不可用。请求使用平台凭据并按已确认的报价收费。")}</p>
+        : t("已保存的个人密钥偏好保留，但在当前付费模型服务中不可用。请求使用平台凭据，按实际用量计费。")}</p>
       <label className="field"><span>{t("推理投入")}</span>
         <select className="input" value={effort} disabled={locked} onChange={(e) => { setEffort(e.target.value as Effort); write.dismiss(); }}>
           {settings.efforts.map((value) => <option key={value} value={value}>{t(effortLabels[value] ?? value)}</option>)}
@@ -534,13 +702,15 @@ function WorkspacePolicies() {
   </section>;
 }
 
-export default function Settings() {
+/** `onBillingChanged`: something that changes what a send is bound to was saved here (the page
+ *  then reads `agent.billing.status` again for the composer). */
+export default function Settings({ onBillingChanged }: { onBillingChanged?: () => void } = {}) {
   const { t } = useI18n();
   return <div className="ag-settings col gap16">
     <header className="suite-head"><div><h1>{t("Agent 设置")}</h1>
       <p className="lede">{t("管理你的模型访问、个人记忆，以及获授权管理的工作空间处理政策。")}</p></div></header>
     <ProviderConsent />
-    <AccessSettings />
+    <AccessSettings onBillingChanged={onBillingChanged} />
     <Memories />
     <McpBindings />
     <WorkspacePolicies />

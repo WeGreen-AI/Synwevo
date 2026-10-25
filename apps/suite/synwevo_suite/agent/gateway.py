@@ -54,8 +54,10 @@ TOOLS_TEMPLATE_TOKENS = 1024
 #: observation and settle it: one SQLite busy timeout (Store waits up to 30 s for the writer
 #: lock) covers the ledger's whole-second clock as well. See MeteredDeepSeek.send_window.
 SETTLE_MARGIN_S = 30
-#: What a person sees when the run has too little time left for one more model call.
-RUN_TIME_TOO_SHORT = "本次运行剩余的时间不足以完成一次模型调用，本次没有发送，也不扣费。请重新确认运行时间后继续。"
+#: What a person sees when the run has too little time left for one more model call. Worded for
+#: mid-run as well as at the first call: what was done and charged before it stays; a new send
+#: continues (send-and-go issues the next run's authorization by itself).
+RUN_TIME_TOO_SHORT = "本次回答已用完单次运行时限，没有发起新的模型调用，也没有为此扣费。已完成的操作和费用保留；可以重新发送继续。"
 
 
 def _json(value):

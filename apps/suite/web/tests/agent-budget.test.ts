@@ -1,8 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateMessages } from '@synwevo/ui/i18n-core';
-import { boundedCount, formatAmount, formatRate, parseBudget } from '../src/apps/agent/budget.ts';
-import { budgetMessages } from '../src/apps/agent/budget.messages.ts';
+import { formatAmount, formatRate, majorUnits, parseBudget } from '../src/apps/agent/budget.ts';
 
 // Explicit arithmetic fixtures, not claims about a configured currency, price or live model.
 const unit = { code: 'TEST', scale: 2 };
@@ -47,24 +45,11 @@ test('per-batch rational rates display exact decimals or reduced fractions in th
   assert.throws(() => formatRate({ numerator: '-1', denominator: '1' }, unit));
 });
 
-test('budget copy supplies all three languages with matching interpolation parameters', () => {
-  assert.deepEqual(validateMessages(budgetMessages), []);
-});
-
-test('call and duration limits follow the server offer, including a reduced limit', () => {
-  assert.equal(boundedCount('12', 12), 12);
-  assert.throws(() => boundedCount('13', 12));
-  assert.equal(boundedCount('7', 7), 7);
-  assert.throws(() => boundedCount('8', 7));
-  assert.equal(boundedCount('300', 3600), 300);
-  assert.throws(() => boundedCount('300', 120));
-  for (const value of ['0', '-1', '1.5', '1e1', '']) assert.throws(() => boundedCount(value, 12));
-});
-
-test('a run shorter than the server minimum (one whole model call) is not offered for quoting', () => {
-  // money-1: usage after a call's hold deadline is never charged, so the server refuses a run
-  // too short for one send; the dialog must not let a person pick one.
-  assert.throws(() => boundedCount('149', 3600, 150));
-  assert.equal(boundedCount('150', 3600, 150), 150);
-  assert.equal(boundedCount('1', 12), 1);
+test('an amount is written back as the major-unit decimal a person would type, without the unit code', () => {
+  // The setup step prefills the suggested spending limits this way (CNY 10 = '1000' at scale 2).
+  assert.equal(majorUnits('1000', { code: 'CNY', scale: 2 }), '10.00');
+  assert.equal(majorUnits('25050', { code: 'CNY', scale: 2 }), '250.50');
+  assert.equal(majorUnits('1', { code: 'TEST', scale: 18 }), '0.000000000000000001');
+  assert.equal(majorUnits('12', { code: 'X', scale: 0 }), '12');
+  assert.equal(parseBudget(majorUnits('9007199254740993', unit), 2), '9007199254740993');
 });

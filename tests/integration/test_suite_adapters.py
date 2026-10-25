@@ -555,3 +555,30 @@ def test_real_partial_and_failed_jobs_are_not_reported_as_success(world, values,
     assert result["counts"]["files"] == files and result["counts"]["skipped"] == 1
     w.adapters.sync_jobs()
     assert w.caps.run(run["run_id"], user_id=w.users["editor"])["status"] == expected
+
+
+def test_a_send_into_an_organization_with_message_switched_off_is_refused_and_a_queued_one_fails(world):
+    """B3: `message.send` into an organization where the platform switched Synwevo Message off is
+    refused at once with `messages_disabled`; one queued before the switch-off settles as failed
+    with that code (Message's own outbox worker refuses it), nothing is stored, and switching it
+    back on sends nothing skipped meanwhile."""
+    w = world
+    queued = w.invoke("message.send", send_input(w), app=MESSAGES_APP_ID, key="switched-off-later")
+    ready = send_input(w)
+    assert w.apps.disable_for_organization(w.oid, MESSAGES_APP_ID, w.users["admin"]) is True
+    with pytest.raises(ServiceError) as err:
+        w.invoke("message.send", ready, app=MESSAGES_APP_ID, key="switched-off-before")
+    assert (err.value.code, err.value.detail["scope"]) == ("messages_disabled", "organization")
+    deliver(w.api, w.adapters)
+    run = w.store.one("SELECT status,error_code FROM op_runs WHERE id=?", (queued["run_id"],))
+    assert (run["status"], run["error_code"]) == ("failed", "messages_disabled")
+    assert w.store.one("SELECT COUNT(*) AS n FROM messages WHERE client_id=?", (queued["run_id"],))["n"] == 0
+    assert w.apps.enable_for_organization(w.oid, MESSAGES_APP_ID, w.users["admin"]) is True
+    deliver(w.api, w.adapters)
+    assert w.store.one("SELECT COUNT(*) AS n FROM messages WHERE client_id=?", (queued["run_id"],))["n"] == 0, "not replayed"
+    receipt = w.read("message.inspect", {"run_id": queued["run_id"]}, app=MESSAGES_APP_ID)
+    assert receipt["delivery"] == "failed" and receipt["error_code"] == "messages_disabled"
+    # back on: a new send is delivered as before
+    again = w.invoke("message.send", send_input(w), app=MESSAGES_APP_ID, key="switched-back-on")
+    deliver(w.api, w.adapters)
+    assert w.store.one("SELECT COUNT(*) AS n FROM messages WHERE client_id=?", (again["run_id"],))["n"] == 1
