@@ -1,0 +1,222 @@
+{
+  "tree": "a42bc4a7",
+  "checks": {
+    "base.reduced_motion_lang": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "base.setup_card_first_use": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "base.setup_writes_then_send": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "fix.seen_route_version_is_price_key": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "base.second_send_direct": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "base.regenerate_direct": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "base.stale_price_refused_409_nothing_stored": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "base.one_click_resend_new_price_fresh_key": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "base.price_notice_reload_info_only": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "a.terms_refusal_then_card_updated_then_send": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "a.refusal_accept_unchanged_resend_fresh_key": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "b.renewal_same_prices_no_refusal": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "b.renewal_same_prices_no_notice": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "c.model_panel_price_version_and_max": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "c.settings_price_version_and_max": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "d.cap_saved_composer_updates_no_reload": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "d.model_panel_after_cap_shows_cap": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "d.send_under_cap_quote_bound": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "d.typed_message_survives_settings_trip": {
+      "zh-Hans-1024": "FAIL",
+      "zh-Hans-390": "FAIL",
+      "en-1024": "FAIL",
+      "en-390": "FAIL",
+      "zh-Hant-1024": "FAIL",
+      "zh-Hant-390": "FAIL"
+    },
+    "base.organization_payer_charged_org": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "e.org_chip_updates_without_reload": {
+      "zh-Hans-1024": "FAIL",
+      "zh-Hans-390": "FAIL",
+      "en-1024": "FAIL",
+      "en-390": "FAIL",
+      "zh-Hant-1024": "FAIL",
+      "zh-Hant-390": "FAIL"
+    },
+    "e.org_chip_updates_after_reload": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "base.empty_wallet_no_model_call_topup": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "fix.held_until_price_shown": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "fix.held_then_sent_at_current_price": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "base.no_horizontal_overflow": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    },
+    "base.no_page_errors": {
+      "zh-Hans-1024": "pass",
+      "zh-Hans-390": "pass",
+      "en-1024": "pass",
+      "en-390": "pass",
+      "zh-Hant-1024": "pass",
+      "zh-Hant-390": "pass"
+    }
+  },
+  "exceptions": {}
+}
