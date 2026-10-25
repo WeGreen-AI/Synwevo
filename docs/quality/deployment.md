@@ -1,6 +1,37 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-10-25 09:46 UTC — 311508fe, D17 send-and-go and B3, through the host receiver
+## Current release · 2026-10-25 22:15 UTC — 8a3b679d, the first deploy from `dev`
+
+**Running source: `8a3b679ddb7fa4d747054d067ec8ade6fe7a1d2e`** (origin/dev, the merge of PR #2). It is the first release
+through the new branch model (owner decision 2026-10-25): `dev` is the development and production-deploy branch, `main`
+the public open-source mirror; the `production` environment admits only `dev`, without administrator bypass; rulesets on
+`dev` and `main` require a pull request (merge commits only), forbid force pushes and deletion, and have no bypass; `dev`
+requires the `verify` check. Pipeline run 40232805667 (push to dev): verify 20:52→22:12 UTC (full runtime suite in the
+image at 3 GiB / 2 CPU), deploy 22:12→22:15 UTC through the restricted SSH command to the host receiver. Receiver backup
+`/opt/synwevo/backups/20261025T221441Z`.
+
+**What it ships over 311508fe:** the MCP platform (Synwevo as an MCP server and the Agent as an MCP client; both
+directions off by default behind a versioned policy; additive schema: nine `mcp_*` tables, four `oauth_clients` columns;
+restore rehearsal from 311508fe's schema passed, and 311508fe's code still opens the migrated database), the CI/CD switch
+to `dev` (PR #2: verify on every pull request into `dev` or `main` with a fail-closed records-only path, deploy only from
+`dev`, release-archive check against the receiver's rules, verify limit 120 minutes), and test fixes (Node 22 date
+assertions, cross-test socket leaks, statement counting, the SDK interrupt test). Earlier attempts for this content: run
+40188380863 (de4eff93, the accidental push to main) was cancelled before any step; run 40200899191 (5db93f86) reached 98%
+of the runtime suite with no failure when the former 75-minute limit cancelled it — nothing was deployed by either.
+
+**Post-deploy checks (22:16–22:20 UTC, read-only):** `/readyz` 200 on synwevo.com, workplace, accounts, docwave and
+message; accounts, docs, portal and messages all on `synwevo:8a3b679d…` and healthy, gateway recreated; no traceback or
+error line in the last 15 minutes of any role; nine `mcp_*` tables present and empty; the four `oauth_clients` columns
+present; `PRAGMA quick_check` ok; `/public/deployment.json` reports the Agent released with the model paused (the
+DeepSeek route expired 2026-10-15 and has not been renewed). The host's `SYNWEVO_ISSUER` equals the canonical
+`https://accounts.synwevo.com` on all four roles (checked before the deploy; the new start-up check refuses any other form).
+
+**Still the owner's to do:** renew the DeepSeek route in Admin; publish card-only payment settings (production still has
+revision 3); counsel review of the 2026-10-25 terms; and, from the open-source readiness audit, move the local key files
+out of the checkout, enable secret scanning / push protection / private vulnerability reporting, and apply the account-hardening steps
+the audit gave the owner directly.
+
+## 2026-10-25 09:46 UTC — 311508fe (historical; superseded above), D17 send-and-go and B3, through the host receiver
 
 **Running source: `311508fe2ba1a83f09f051030bf0cf032404491b`** (origin/main, 79 commits over 217d66d4). Receiver
 receipt: `{"deployed": "synwevo:311508fe2ba1a83f09f051030bf0cf032404491b", "backup": "/opt/synwevo/backups/20261025T094644Z"}`

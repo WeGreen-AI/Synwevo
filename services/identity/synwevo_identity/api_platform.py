@@ -143,10 +143,12 @@ def build_router(store: Store, ident, sessions, audit,
                 "calls": {**counts, "errors": counts["errors"] or 0},
                 "pending_approvals": store.one("SELECT COUNT(*) AS n FROM api_platform_approvals "
                                                "WHERE status='pending' AND expires_at>?", (now(),))["n"],
+                # dev is the branch production deploys from; main is a mirror synced only on request
+                # and can document an older API than the one running (AGENTS.md「分支与发布」).
                 "sdk_links": [
-                    {"name": "Python SDK", "url": "https://github.com/WeGreen-AI/Synwevo/tree/main/apps/docs/sdk/python"},
-                    {"name": "TypeScript SDK", "url": "https://github.com/WeGreen-AI/Synwevo/tree/main/apps/docs/sdk/typescript"},
-                    {"name": "API", "url": "https://github.com/WeGreen-AI/Synwevo/blob/main/docs/integration/api.md"}],
+                    {"name": "Python SDK", "url": "https://github.com/WeGreen-AI/Synwevo/tree/dev/apps/docs/sdk/python"},
+                    {"name": "TypeScript SDK", "url": "https://github.com/WeGreen-AI/Synwevo/tree/dev/apps/docs/sdk/typescript"},
+                    {"name": "API", "url": "https://github.com/WeGreen-AI/Synwevo/blob/dev/docs/integration/api.md"}],
                 "resource_boundary": "workspace_and_audience"}
 
     @r.get(PREFIX + "/approvals")

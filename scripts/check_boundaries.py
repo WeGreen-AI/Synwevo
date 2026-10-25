@@ -24,6 +24,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -293,8 +294,35 @@ def walk():
             yield Path(dirpath) / f
 
 
+def tracked_links(seen: set[str]) -> list[str]:
+    """Every symbolic link and submodule in the Git index, wherever it is.
+
+    The walk prunes data/, docs/screenshots and every dist or node_modules by name, so it never sees
+    a link placed there; the release archive (`git archive`) carries every tracked one all the same,
+    and the host receiver refuses an archive with a link in it. Outside a Git checkout there is no
+    index and the walk is the whole check; inside one, a failed listing is a failed check.
+    """
+    if not (ROOT / ".git").exists():
+        return []
+    try:
+        listing = subprocess.run(["git", "ls-files", "--stage", "-z"], cwd=ROOT,
+                                 capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as e:
+        return [f"无法列出 Git 索引，被跟踪的链接没有检查：{e}"]
+    found = []
+    for entry in listing.split(b"\0"):
+        meta, _, name = entry.partition(b"\t")
+        mode = meta.split(b" ", 1)[0]
+        rel = name.decode("utf-8", "replace")
+        if mode in (b"120000", b"160000") and rel not in seen:
+            kind = "符号链接" if mode == b"120000" else "子模块"
+            found.append(f"{rel}: 被跟踪的{kind}；发布归档不能含链接，部署接收器会拒绝整个版本")
+    return found
+
+
 def main() -> int:
     problems: list[str] = []
+    links: set[str] = set()
     checked = 0
     web_checked = 0
     imports: dict[str, set[str]] = {}
@@ -303,6 +331,7 @@ def main() -> int:
         # 指向旧目录的符号链接会让一切在这台机器上"能跑"，换一台就不能。
         if p.is_symlink():
             problems.append(f"{rel}: 符号链接 → {p.readlink()}；模块化不能靠链接回旧路径")
+            links.add(rel)
             continue
         web_root = _longest(rel, WEB)
         if web_root and p.suffix in TS_SUFFIXES:
@@ -338,6 +367,7 @@ def main() -> int:
             problems.append(f"{rel}: 写死了本机绝对路径 {m.group(0)[:60]}")
 
     problems += check_dependencies(imports)
+    problems += tracked_links(links)
 
     print(f"检查了 {checked} 个 Python 文件、{web_checked} 个前端文件，覆盖 {len(ALLOWED)} 个模块边界、"
           f"{len(PACKAGES)} 个包的依赖声明。")
