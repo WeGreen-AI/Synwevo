@@ -538,6 +538,36 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 - 风险/未做：指纹按当前密钥，重叠期内由旧密钥验签的接收方看到的是新密钥指纹（行记"用哪把签"，当前+旧两把都签在头里）。
 - 验证：新增 4 例 + 两应用 webhook 契约/投递/加固/重投/CLI/示例 254 项与迁移测试通过。
 
+## CR-135 · 公开条款与定价改为发送即运行，公开状态如实反映模型服务（2026-10-24，本轮新增，本地已验证）
+
+- 位置：packages/core/synwevo_core/terms.py（仅 DOCUMENTS：terms、pricing → 2026-10-24）；apps/portal/synwevo_portal/public.py、apps/portal/web/src/{PublicPages.tsx,PublicHome.tsx,messages.ts,publicRoutes.ts}；services/identity/web/src/governance/{ModelPriceCalendar.tsx,ModelPriceMarkups.tsx,ModelProviderTab.tsx,*.messages.ts}、pages/account.messages.ts、PrivacySection.tsx；tests/integration/test_public_ai_facts.py。
+- 审查要点：旧条款与定价承诺“每次运行前确认最高预算 / 价格变化后重新确认”，与 D17 不符；条款页另有“新版本生效后的下一次付费使用会记录你接受的新版本”（按使用推定接受，审查 copy-1）；公开状态在 DeepSeek 路线过期时仍显示模型可用（copy-3，线上原有）；日历发布提示对未分时的路线也说“正在进行的回答将停止”（低）。
+- 修复：三语言新文本（发送即开始、每条回答的最高金额显示在输入框旁、价格变化只适用于之后的回答、首次使用一次性接受并记录版本）；禁用承诺扫描测试（9 个旧短语 + “下一次付费使用会记录”等，并要求出现“每条回答的最高金额”）；公开状态仅在提供方启用、路线未过期且未关闭时显示可用，否则显示“已上线，模型服务暂停”；日历提示改为只对分时价格路线生效。
+- 验证：失败先行（旧源码扫描出 16 处禁用承诺；状态测试在过期路线下失败）；版本一致性、门户公开页 28 项、账户前端 301→309 项通过；变异检查（重新插入旧短语、去掉过期判断）均被测试捕获。
+
+## CR-134 · rr-money-2：入账时补放的先到争议以拒绝结束却不告警（2026-10-24，10-05 复审遗留，本地已验证）
+
+- 位置：services/identity/synwevo_identity/payments.py `TopupService._revive`。
+- 证据：`_revive` 丢弃重放结果；争议先于入账到达、入账后重放以 `rejected/dispute_payment_mismatch`（另一币种或商户）结束时，管理员收不到告警，而同一结果经直接投递与 `process_pending` 都会告警。
+- 修复：每个重放行经 `_ended(status, code)`；保留 `payment_not_credited` 豁免；按日去重，不与 `process_pending` 重复告警。
+- 验证：失败先行测试 `test_revive_then_mismatch_alerts_admins`（旧代码 `alerts == []`）与豁免测试；支付相关 12 个文件 225 项通过；变异检查通过。
+
+## CR-133 · Agent 发送即运行（D17）及其审查修正（2026-10-23/24，本轮新增，本地已验证）
+
+- 位置：apps/suite/synwevo_suite/agent/{ops.py,engine.py,quotes.py,payers.py,setup.py（新）,gateway.py 文本}；packages/core/synwevo_core/{terms.py TermsAcceptances,agent_records.py,suite_schema/agent.py,capabilities.py 幂等指纹}；apps/suite/web/src/apps/agent/**（移除 BudgetDialog、budgetSources、ConsentControls 等；新 AgentSetup、PriceNotice、设置中的每条回答最高金额）；docs/platform/agent-run-budgets.md、docs/integration/suite-api.md、docs/agent-runtime.md。
+- 行为：页面发送在准入事务内自动签发并绑定运行授权（审计字段见 D17）；默认上限 = 单次预留 × 12，可在设置中调低；一次性开始步骤（DeepSeek 单独同意、条款/AI 使用规范/定价单独接受、个人支出上限）；价格变化非阻断提示；组织付款人在输入框旁选择；机器、流程、自动化与 Agent 自身工具调用不能走自动路径。
+- 第一轮审查（A/C，6 项确认）：页面显示价格与实际运行价格可能不一致（中，AD-1：发送携带 seen_* 校验）；条款按使用推定接受（中，AD-4：旧路径页面发送也须先接受）；超大上限保存后阻断所有发送、自动授权 1 秒到期的边界拒绝、两个契约外错误码（低）——均已修正。
+- 集成审查（f834ae50，5 个视角 × 反驳核实）：被拒绝的发送原样重发会重放旧拒绝（中：每次明确尝试改用新幂等键）；路线续期但价格不变会提示“价格已更新”并拒绝一次发送（中：改比较价格键）；定价页称输入框旁与设置中显示价格版本但界面未显示（中：模型面板与设置显示价格版本与最高金额）；设置中改上限后输入框仍显示旧上限（中）；跨版本重试误报幂等冲突、缺少显示价格时可绕过校验、开始卡片状态陈旧、首次与更新措辞颠倒等（低）——均已修正（addendum-2 W1–W10、S1–S4、C1）。
+- 随本项一并关闭：rr-money-1（报价到绑定的空档；自动路径在准入时定截止时间，旧路径 expires_at 扣除发送窗口并在绑定时拒绝）、rr-glue-2（运行中拒绝措辞改为“没有发起新的模型调用，也没有为此扣费”）、authz-4（成员只看到 min(组织钱包可用, 本月剩余额度)）、money-3 措辞（不再提及按空间额度）。
+- 验证：每项失败先行与变异检查（如恢复旧的路线版本比较 → 29 项失败）；Python 3.12 下 apps/suite + messages 1355 项、账户服务 2040 项、集成 1552 项、Docs 1681 项运行（负载 40 时 3 项超时，单独重跑通过）；前端 6 个工作区 786 项通过；真实服务端浏览器验收（三语言 × 1024/390、减少动态效果；测试钱包与回环 DeepSeek 测试替身）见 EVIDENCE。
+
+## CR-132 · Synwevo Message 按组织开关（B3，D16）及 CR-050 编辑/表情竞态（2026-10-13/24，本轮新增，本地已验证）
+
+- 位置：packages/core/synwevo_core/{store.py organization_apps,apps.py,journal.py,messaging.py,messaging_bridge.py,notifications.py,workspace_availability.py,organization_audit.py}；apps/messages/synwevo_messages/routes.py；services/identity/synwevo_identity/{admin_apps.py,admin_actions.py,cli.py}；账户前端应用目录、组织抽屉与生命周期对话框；Message 前端横幅、实时监听与拒绝处理；文档 messaging.md、admin-coverage.md（B3 行、§4.2 第 7 项）、admin-operations.md、monorepo.md。
+- 行为：见 D16；转发在一个写事务内复核所有目标；编辑与表情在事务内重读并只更新未删除的消息（`409 already_gone`，关闭 CR-050 残余）；添加成员、公告、头像、附件、私信、建群、项目讨论加入等在事务内复核开关；恢复用例覆盖备份前、回执与之后启用、写前记录与提交之间、作废失败、组织行缺失、日志写入失败（503 且不变更）。
+- 集成审查（5 项确认）：组织预览错误声称集成需重新授权（中）；卡片在检查后、写入前停用时仍落入会话；部分写入在停用后落地却回答 403；发送已存储却回答 403；持续流量下开关不被通知（低）——均已修正（addendum-2 M1–M5）。
+- 验证：19 项变异全部被捕获；apps/messages 101 项、账户服务 2040 项、集成 1552 项、Message 前端 30 项、账户前端 309 项通过。
+
 ## CR-131 · 安全日志第二阶段：全部撤回种类写前记录、带回执与有证明的作废（2026-10-13，线上原有问题，本地已验证）
 
 - 位置：核心 `journal.py`（`ATTEMPTED` = 全部种类；`apply(..., since, outcome)`：未提交证明 E1/E2、纪元跳过、报告分项）、`auth.py`、`apps.py`、`oauth_consent.py`、`agent_safety.py`、计费 `risk.py` / `ledger.py` / `provider_settings.py`；账户服务 `api_platform.py`、`auth_routes.py`、`account_routes.py`、`members.py`、`member_import_routes.py`、`admin_invitations.py`、`admin_second_factor.py`、`admin_routes.py`（管理员移除安全密钥、`workspace_unclaimed`）、`cli.py`、`profile.py`、`provider_routes.py`（中心会话撤销与登出通知拆分）、`invites.py`（拒绝邀请）、`identity.py`（`password_phc` 先哈希后写）；Docs `webhooks.py`、`v1_governance.py`；Suite `machine_webhooks.py`；`apps/docs/scripts/snapshot.py`（恢复报告、纪元）。
