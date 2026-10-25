@@ -10,6 +10,7 @@
 
 - **生产当前为 `311508fe2ba1a83f09f051030bf0cf032404491b`**（2026-10-25 09:47Z，D17 发送即运行 + B3，经主机 receive.py 部署；备份 `/opt/synwevo/backups/20261025T094644Z`；五域 /readyz 200、四角色同镜像且 healthy、无错误日志；`organization_apps` 与 `run_budget_cap` 已迁移，quick_check ok；记录 `docs/quality/deployment.md` 当前段）。本机 verify 镜像：Python 3.12、守卫、类型检查、构建、前端、SDK、infra、Docker 运行时镜像 3g/2cpu 全量 6519 通过 / 5 跳过 / 0 失败。
 - **GitHub Actions 已恢复**：运行 40181913056（311508fe）作业正常启动，verify 在 `services/identity/web` `npm test` 失败——10 个账户前端测试按 Node 23 ICU 的日期/时间文字断言，在流水线的 Node 22 下不一致（本机镜像跑的是 Node 23.6.1，所以没暴露）；deploy 跳过。生产代码不受影响（日期由浏览器格式化）。正在把这些测试改为与 ICU 版本无关（wf_17830410-6c4），之后推送并回到流水线。**不要重跑早于已部署版本的旧运行**（会把旧代码推到已迁移的数据库上）；40181913056 本身与生产同一 SHA，也无需重跑。
+- **main 暂停推送（2026-10-25 11:19Z 起）**：MCP 会话误把 `claude/mcp-platform` 推到了 origin/main（de4eff93，MCP 服务端与 Agent 的 MCP 客户端，104 个文件，新增表与 oauth_clients 列，均为追加式；分支跟踪设置所致），并已取消其运行 40188380863（未部署）。**由所有者决定保留还是撤销**；决定前协调者不向 main 推送。本地待推：5ea0cca8 之后的 de90192d（BACKLOG）、59721962（组织详情语句计数只数本库）、2853a66d（Docs 测试关闭所有实时编辑连接 + 守卫）、65508143（集成测试失败时也关闭连接；守卫说明）——均为测试/记录，不改产品代码。CI 40182684885 的失败即由 2853a66d 所修的跨测试连接泄漏引起。若保留 MCP：部署前须其完整三套件、Node 22 前端、运行时镜像 3g/2cpu 全量、verify-restore 演练，并核对主机 `SYNWEVO_ISSUER` 规范值。
 - 待所有者：① Admin 支付设置仍为 v3（card + wechat_pay + alipay，2026-10-08），10-23 所说的“只含银行卡”未形成新版本——请重新发布（重认证后版本号应为 4）；② DeepSeek 路线 revision 1 有效期 2026-10-15T11:00Z 已过，所有付费 Agent 调用被拒（公开状态如实显示“模型服务暂停”），请在 Admin 续期（材料 `evidence/2026-10-11-route-renewal/README.md`）；③ 2026-10-25 条款与定价文本建议法律顾问复核；④ DeepSeek 训练与保留的书面答复仍未取得。
 
 ## 当前工作包与下一条动作
