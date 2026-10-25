@@ -18,12 +18,15 @@ from urllib.parse import urlsplit
 
 import anyio
 import mcp_types as types
+from mcp_types import DEFAULT_NEGOTIATED_VERSION, jsonrpc_message_adapter
+from mcp_types import methods as _methods
 from mcp.server.streamable_http import check_accept_headers
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
 from mcp.shared.auth import ProtectedResourceMetadata
 from mcp.shared.inbound import InboundLadderRejection, classify_inbound_request, find_duplicated_routing_header
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
+from pydantic import ValidationError
 from starlette.requests import Request
 
 from synwevo_core import env
@@ -112,9 +115,11 @@ class McpEndpoint:
         it — because only here can the answer still be HTTP 403, with the challenge a client steps
         up on where stepping up can help (`McpTools.scope_refusal`). Returns the refusal and the
         JSON-RPC id it answers, or None to let the SDK serve the request: anything it would refuse
-        first (Host, Origin, Content-Type, Accept, a body too large; for revision 2026-07-28 routing
-        headers that disagree with the body or name no revision it serves, which Streamable HTTP
-        says MUST be a 400) and anything that is not one such call."""
+        first (Host, Origin, Content-Type, Accept, a body too large; a JSON-RPC envelope or call
+        parameters its own models reject — no `jsonrpc: "2.0"`, an id that is no request id,
+        `arguments` that are not an object; for revision 2026-07-28 routing headers that disagree
+        with the body or name no revision it serves, which Streamable HTTP says MUST be a 400) and
+        anything that is not one such call."""
         request = Request(scope)
         if body is None or await self.security.validate_request(request, is_post=True) is not None:
             return None
@@ -125,23 +130,39 @@ class McpEndpoint:
             message = json.loads(body)
         except (ValueError, RecursionError):
             return None
-        if not isinstance(message, dict) or message.get("method") != "tools/call" or message.get("id") is None:
-            return None
-        params = message.get("params")
-        name = params.get("name") if isinstance(params, dict) else None
-        if not isinstance(name, str):
+        if not isinstance(message, dict) or message.get("method") != "tools/call" or "id" not in message:
             return None
         version = request.headers.get("mcp-protocol-version")
-        # the SDK's own era routing and validation ladder for a request of the per-message revisions
-        if version is not None and version not in HANDSHAKE_PROTOCOL_VERSIONS and (
-                find_duplicated_routing_header(request.headers.items()) is not None
-                or isinstance(classify_inbound_request(message, headers=dict(request.headers)), InboundLadderRejection)):
+        modern = version is not None and version not in HANDSHAKE_PROTOCOL_VERSIONS
+        # The envelope as the SDK reads it for this era (a per-message revision: one request object;
+        # a handshake revision: any JSON-RPC message, where an id that is no request id makes it a
+        # notification the SDK acknowledges with 202): what it refuses as malformed is its 400.
+        try:
+            request_message = (types.JSONRPCRequest.model_validate(message) if modern
+                               else jsonrpc_message_adapter.validate_python(message, by_name=False))
+        except ValidationError:
             return None
-        arguments = params.get("arguments")
+        if not isinstance(request_message, types.JSONRPCRequest):
+            return None
+        if modern:
+            # the SDK's own era routing and validation ladder for a request of the per-message revisions
+            if find_duplicated_routing_header(request.headers.items()) is not None:
+                return None
+            verdict = classify_inbound_request(message, headers=dict(request.headers))
+            if isinstance(verdict, InboundLadderRejection):
+                return None
+            version = verdict.protocol_version
+        # The call's parameters as the SDK's dispatcher validates them for the revision it serves
+        # (`arguments` an object, `_meta` where the revision needs it) before any handler runs.
+        try:
+            _methods.validate_client_request("tools/call", version or DEFAULT_NEGOTIATED_VERSION, request_message.params)
+            params = types.CallToolRequestParams.model_validate(request_message.params or {}, by_name=False)
+        except (ValueError, KeyError):                    # a pydantic ValidationError is a ValueError
+            return None
         # reads the registration (and, for synwevo.run.get, the run): off the event loop, as the handlers do
-        err = await anyio.to_thread.run_sync(self.tools.scope_refusal, principal, name,
-                                             arguments if isinstance(arguments, dict) else {})
-        return (err, message["id"]) if err is not None else None
+        err = await anyio.to_thread.run_sync(self.tools.scope_refusal, principal, params.name,
+                                             dict(params.arguments or {}))
+        return (err, request_message.id) if err is not None else None
 
     async def __call__(self, scope, receive, send) -> None:
         state = scope.get("state") or {}
@@ -262,7 +283,12 @@ def protected_resource_metadata() -> dict:
                                     scopes_supported=list(MCP_DEFAULT_SCOPES),
                                     bearer_methods_supported=["header"],
                                     resource_name="Synwevo MCP")
-    return doc.model_dump(mode="json", exclude_none=True)
+    out = doc.model_dump(mode="json", exclude_none=True)
+    # The authorization server as it names itself — its metadata's `issuer` and the RFC 9207 `iss`
+    # are compared with this as strings — never as the model re-renders it. Startup refuses an
+    # issuer the two would differ on (`oidc.validate_issuer`); this keeps them one string regardless.
+    out["authorization_servers"] = [issuer()]
+    return out
 
 
 def install(ctx) -> McpEndpoint:

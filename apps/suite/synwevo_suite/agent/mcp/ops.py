@@ -17,7 +17,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.http import MCP_CLIENT_METADATA_PATH, MCP_METADATA_PATH, mcp_metadata_url
 from synwevo_core.oidc import MCP_SCOPES, issuer, mcp_resource
 
-from .connections import Connections
+from .connections import Connections, bounded_resources
 from .oauth import CALLBACK_PATH, OutboundOAuth, client_metadata_document
 from .tools import (AGENT_CALL, CANCEL_CHECK, REGISTERED_CALL, REGISTERED_READ, REGISTERED_RESOURCE_LIST,
                     REGISTERED_RESOURCE_READ, McpTools, result_connection)
@@ -81,6 +81,10 @@ class UpdateConnection(ConnectionRef):
     auth_kind: Literal["none", "bearer", "oauth"] | None = None
     credential: SecretStr | None = None
     oauth_client: OAuthClientIn | None = None
+    #: The address the change was made against (the page sends the one it shows): a new address,
+    #: authentication or credential is written only while the connection still has it. Required with
+    #: a `credential` or `oauth_client` that comes without a `url` (Connections.update).
+    expected_url: str | None = F(default=None, min_length=1, max_length=2048)
 
 
 class SetGrant(ConnectionRef):
@@ -161,7 +165,8 @@ def register(ctx, agent, connections: Connections) -> None:
 
     def guard(c, row):
         # A stored result of a carrier stays readable only while the person may still use the
-        # connection it came through (the one its call record or, for a resource list, it names).
+        # connection it came through (the one its call record or, for a resource list, it names) —
+        # a workspace's connection only while the workspace and its organization are open to them.
         inp = _stored(row.get("input"))
         conn = result_connection(store, c.user_id, inp.get("connection") if isinstance(inp, dict) else None,
                                  _stored(row.get("output")))
@@ -178,36 +183,39 @@ def register(ctx, agent, connections: Connections) -> None:
             raise ServiceError(409, "result_access_changed", "连接已不可用")
 
     # ------------------------------------------------------------------ what the engine runs for the model
-    def engine_call(c) -> dict:
+    def engine_call(c, alias: str, tool: str | None = None) -> dict:
         """The tool call of the Agent's engine this carrier runs for (`engine._execute` names it
         around `Capabilities.invoke`), checked again here rather than trusted from the caller: the
-        data-flow outbound question is asked at the moment the request would leave."""
+        data-flow outbound question is asked at the moment the request would leave — for the
+        connection it would leave through (`tool` of `alias`, or its resources)."""
         ids = AGENT_CALL.get() or {}
         t = store.one("SELECT * FROM agent_turns WHERE id=? AND user_id=? AND conversation_id=?",
                       (ids.get("turn_id"), c.user_id, ids.get("conversation_id"))) if c.via == "agent" else None
         if t is None or ids.get("carrier") != c.op.id:
             raise ServiceError(403, "mcp_agent_only", "这个操作只在 Agent 调用外部 MCP 工具时使用，不能直接调用")
-        McpTools(connections, c.user).require_outbound(agent.mcp_sources(t))
+        tools = McpTools(connections, c.user)
+        tools.require_outbound(agent.mcp_sources(t, to=tools.destination_of(alias, tool)))
         return ids
 
     def agent_call(c, i, *, require_mode=None):
-        ids = engine_call(c)
+        ids = engine_call(c, i.connection, i.tool)
         return connections.call_tool(c.user, i.connection, i.tool, i.arguments, origin="agent",
                                      conversation_id=ids.get("conversation_id"), turn_id=ids.get("turn_id"),
                                      tool_call_id=ids.get("tool_call_id"), should_stop=CANCEL_CHECK.get(),
                                      require_mode=require_mode)
 
     def agent_read_resource(c, i):
-        ids = engine_call(c)
+        ids = engine_call(c, i.connection)
         return connections.read_resource(c.user, i.connection, i.uri, origin="agent",
                                          **{k: ids.get(k) for k in ("conversation_id", "turn_id", "tool_call_id")})
 
     def agent_list_resources(c, i):
-        engine_call(c)
+        engine_call(c, i.connection)
         entry = _agent_resource_connection(c.user, i.connection)
-        # The list makes no request, so no call record names its connection: the result does.
-        return {"connection": i.connection, "connection_id": entry["connection_id"],
-                "resources": connections.list_resources(c.user, entry["connection_id"])}
+        # The list makes no request, so no call record names its connection: the result does. It is
+        # what discovery kept, bounded to what the run record holds (connections.bounded_resources).
+        resources, cut = bounded_resources(connections.list_resources(c.user, entry["connection_id"]))
+        return {"connection": i.connection, "connection_id": entry["connection_id"], "resources": resources, "truncated": cut}
 
     # Each reaches an external server (or answers for one): a stored result is never rebuilt by
     # running the carrier again (rereadable=False), only checked against the connection (guard).
@@ -257,9 +265,11 @@ def register(ctx, agent, connections: Connections) -> None:
        summary="Change a connection's name, address, description or credential.", input=UpdateConnection, side_effect="write",
        transactional=False, result_guard=written,
        handler=lambda c, i: connections.update(c.user, i.connection_id, name=i.name, description=i.description, url=i.url,
-                                               auth_kind=i.auth_kind, credential=_secret(i.credential), oauth_client=_oauth_client(i.oauth_client)))
+                                               auth_kind=i.auth_kind, credential=_secret(i.credential), oauth_client=_oauth_client(i.oauth_client),
+                                               expected_url=i.expected_url))
     op(id="agent.mcp.connection.delete", title=T("删除 MCP 连接", "刪除 MCP 連線", "Delete an MCP connection"),
-       summary="Delete a connection and forget its credentials.", input=ConnectionRef, side_effect="write", transactional=False,
+       summary="Delete a connection and forget its credentials (not while the platform has stopped it).", input=ConnectionRef,
+       side_effect="write", transactional=False,
        handler=lambda c, i: connections.delete(c.user, i.connection_id))
     op(id="agent.mcp.connection.disable", title=T("停用 MCP 连接", "停用 MCP 連線", "Disable an MCP connection"),
        summary="Stop every use of a connection without deleting it.", input=ConnectionRef, side_effect="write", transactional=False,
@@ -295,7 +305,7 @@ def register(ctx, agent, connections: Connections) -> None:
        handler=lambda c, i: {"items": connections.calls(c.user, i.connection_id, limit=i.limit, before=i.before)})
     op(id="agent.mcp.resource.browse", title=T("浏览 MCP 资源", "瀏覽 MCP 資源", "Browse MCP resources"),
        summary="The resources a connection offers, as last discovered.", input=ConnectionRef,
-       handler=lambda c, i: {"items": connections.list_resources(c.user, i.connection_id)})
+       handler=lambda c, i: _browse(c.user, i.connection_id))
     op(id="agent.mcp.resource.read_page", title=T("读取 MCP 资源", "讀取 MCP 資源", "Read an MCP resource"),
        summary="Read one resource of a connection for the person to look at (bounded, text only).", input=ResourceReadIn,
        side_effect="write", transactional=False,
@@ -308,6 +318,10 @@ def register(ctx, agent, connections: Connections) -> None:
        summary="Begin the OAuth authorization of a connection; returns the address to send the browser to.",
        input=ConnectionRef, side_effect="write", transactional=False,
        handler=lambda c, i: oauth.start(c.user, i.connection_id))
+
+    def _browse(user, cid):
+        items, cut = bounded_resources(connections.list_resources(user, cid))
+        return {"items": items, "truncated": cut}
 
     def _page_resource(user, cid, uri):
         conn = connections._row(cid)

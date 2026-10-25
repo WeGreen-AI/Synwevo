@@ -12,7 +12,7 @@ import { read } from '../../../shared/ops';
 import { Empty, Loading } from '../../../shared/states';
 import type { IntegrationText } from './integrations.messages';
 import {
-  grantView, isReadOnly, mcpErrorKey, needsToken, oauthOutcome, personalModes, platformStopped, pointedElsewhere, repointSteps,
+  grantView, isReadOnly, mcpErrorKey, mcpRefusalKey, needsToken, oauthOutcome, ownStop, personalModes, platformStopped, pointedElsewhere, repointSteps,
   safeAuthorizationUrl, slugifyAlias, toolHints, KIND_TEXT, ORIGIN_TEXT,
   type Binding, type CallRecord, type ConnectionDetail, type ConnectionSummary, type GrantMode, type OAuthStart, type OAuthOutcome,
   type PersonalMode, type Prompt, type RenderedPrompt, type Resource, type ResourcePage, type Tool,
@@ -36,11 +36,11 @@ const GRANT_TEXT: Record<GrantMode, IntegrationText> = { off: 'modeOff', confirm
 const PERSONAL_TEXT: Record<'' | PersonalMode, IntegrationText> = { '': 'personalFollow', confirm: 'personalConfirm', off: 'personalOff' };
 
 /** A refusal code the server recorded, in the centre's words, with the code itself beside it. */
-function ErrorLine({ code }: { code: string }) {
+function ErrorLine({ code, cause }: { code: string; cause?: string | null }) {
   const { m } = useText();
-  // The centre's own sentence for the code; the message the server recorded may be an external
-  // server's prose, so it is never rendered.
-  return <span><span>{m(mcpErrorKey(code) ?? 'error')}</span> <code className="muted">{code}</code></span>;
+  // The centre's own sentence for the code (and where it happened, `cause`); the message the server
+  // recorded may be an external server's prose, so it is never rendered.
+  return <span><span>{m(mcpRefusalKey(code, { cause }) ?? 'error')}</span> <code className="muted">{code}</code></span>;
 }
 
 function JsonBlock({ value, label }: { value: unknown; label: string }) {
@@ -80,8 +80,10 @@ export function OverviewTab({ detail, update, onDeleted, reload = noReload, onDe
   const [tokenIssue, setTokenIssue] = useState(false);
   const manage = detail.manage;
   // Refused while the platform's stop holds (connections._platform_stop): enabling, testing,
-  // refreshing, authenticating and giving a credential. Disabling and deleting stay open.
+  // refreshing, authenticating and giving a credential. Disabling stays open; deleting too, except for
+  // the stopped connection itself, which is the record of the stop.
   const stopped = platformStopped(detail);
+  const undeletable = ownStop(detail);
   const repointed = !stopped && pointedElsewhere(detail);
   const askToken = manage && !stopped && needsToken(detail);
   const locked = write.locked || tokenWrite.locked || confirming;
@@ -126,8 +128,10 @@ export function OverviewTab({ detail, update, onDeleted, reload = noReload, onDe
     const credential = token.trim();
     setTokenIssue(!credential);
     if (!credential) return;
-    // The token is sealed on the server; this page forgets it as soon as the server has answered.
-    tokenWrite.start<ConnectionSummary>('agent.mcp.connection.update', { ...ref, credential }, (summary) => {
+    // The token is sealed on the server; this page forgets it as soon as the server has answered. It
+    // is for the address shown here: if another manager has pointed the connection elsewhere since,
+    // the server refuses it (`mcp_address_changed`) rather than give it to that server.
+    tokenWrite.start<ConnectionSummary>('agent.mcp.connection.update', { ...ref, credential, expected_url: detail.url }, (summary) => {
       setToken('');
       refreshed(withSummary(detail, summary));
     }, () => { setToken(''); reload(); });
@@ -140,7 +144,7 @@ export function OverviewTab({ detail, update, onDeleted, reload = noReload, onDe
           {detail.health_checked_at != null && <span className="muted small">{m('lastChecked')} {date(detail.health_checked_at)}</span>}</span></Fact>
         {stopped && detail.platform_disabled_at != null && <Fact label={m('platformStoppedAt')}>{date(detail.platform_disabled_at)}</Fact>}
         {detail.last_ok_at != null && <Fact label={m('lastOk')}>{date(detail.last_ok_at)}</Fact>}
-        {detail.last_error && <Fact label={m('lastError')}><ErrorLine code={detail.last_error.code} /></Fact>}
+        {detail.last_error && <Fact label={m('lastError')}><ErrorLine code={detail.last_error.code} cause={detail.last_error.cause} /></Fact>}
         <Fact label={m('circuit')}>{detail.circuit_open_until ? <span className="mi-err">{m('circuitOpen', { time: date(detail.circuit_open_until) })}</span> : m('circuitClosed')}</Fact>
         <Fact label={m('reviewOwner')}><OwnerText summary={detail} /></Fact>
         <Fact label={m('url')}><code className="mi-break">{detail.url}</code></Fact>
@@ -152,7 +156,11 @@ export function OverviewTab({ detail, update, onDeleted, reload = noReload, onDe
         {detail.auth_kind !== 'none' && <Fact label={m('credential')}>{!detail.has_credential ? m('credentialNone')
           : detail.credential_hint && detail.credential_hint !== 'oauth' ? m('credentialEnding', { hint: detail.credential_hint.replace(/^…/, '') }) : m('credentialSet')}</Fact>}
         {detail.auth_kind === 'oauth' && <Fact label={m('oauthClient')}>{detail.oauth_client
-          ? <span>{m(detail.oauth_client.kind === 'preregistered' ? 'oauthPreregistered' : detail.oauth_client.kind === 'cimd' ? 'oauthCimd' : 'oauthDynamic')} · <code className="mi-break">{detail.oauth_client.client_id}</code></span>
+          ? <span>{m(detail.oauth_client.kind === 'preregistered' ? 'oauthPreregistered' : detail.oauth_client.kind === 'cimd' ? 'oauthCimd' : 'oauthDynamic')} · <code className="mi-break">{detail.oauth_client.client_id}</code>
+            {/* The authorization server a registered client is kept to (oauth._bound_issuer, _dynamic_at): another one is
+                refused. The document is every server's client, so it names none. */}
+            {detail.oauth_client.kind !== 'cimd' && typeof detail.oauth_client.issuer === 'string' && detail.oauth_client.issuer
+              && <> · <span className="mi-break">{m('oauthClientAt', { issuer: detail.oauth_client.issuer })}</span></>}</span>
           : m('oauthNotYet')}</Fact>}
         <Fact label={m('createdAt')}>{date(detail.created_at)}</Fact>
       </Facts>
@@ -165,7 +173,7 @@ export function OverviewTab({ detail, update, onDeleted, reload = noReload, onDe
       </details>}
     </div></section>
     <section className="card"><div className="card-b">
-      {stopped ? <p className="notice warn" role="status">{m('platformStopped')}</p>
+      {stopped ? <p className="notice warn" role="status">{m(undeletable ? 'platformStopped' : 'destinationStopped')}</p>
         : detail.status === 'disabled' && <p className="notice warn">{m('disabledHint')}</p>}
       {repointed && <div className="notice warn col" role="status">
         <p>{m('repointed')}</p>
@@ -173,6 +181,7 @@ export function OverviewTab({ detail, update, onDeleted, reload = noReload, onDe
         <ol className="mi-list-plain">{repointSteps(detail).map((key) => <li key={key}>{m(key)}</li>)}</ol>
       </div>}
       {!stopped && !repointed && detail.auth_kind === 'oauth' && !detail.has_credential && <p className="notice info">{m('authFirst')}</p>}
+      {detail.owner_kind === 'workspace' && <p className="muted small">{m('workspaceContent')}</p>}
       {askToken && <form className="col gap4" onSubmit={saveToken} noValidate>
         {!repointed && <p className="notice info">{m('tokenMissing')}</p>}
         <label className="field"><span>{m('tokenLabel')}</span>
@@ -190,9 +199,10 @@ export function OverviewTab({ detail, update, onDeleted, reload = noReload, onDe
         <button type="button" className="btn" disabled={!manage || locked || (stopped && detail.status === 'disabled')} onClick={toggle}>{m(detail.status === 'disabled' ? 'enable' : 'disable')}</button>
         {detail.auth_kind !== 'none' && <button type="button" className="btn" disabled={!manage || locked || !detail.has_credential} onClick={() => void revoke()}>{m('revoke')}</button>}
         <span className="spacer" />
-        <button type="button" className="btn danger" disabled={!manage || locked} onClick={() => void remove()}>{m('remove')}</button>
+        <button type="button" className="btn danger" disabled={!manage || locked || undeletable} onClick={() => void remove()}>{m('remove')}</button>
       </div>
       {!manage && <p className="muted small">{m('manageOnly')}</p>}
+      {manage && undeletable && <p className="muted small">{m('deleteStopped')}</p>}
       {badAuthUrl && <p className="notice err" role="alert">{m('mcp_oauth_failed')}</p>}
       {tested && <p className="notice ok" role="status">{m('testPassed', { tools: m('toolsCount', { n: tested.counts.tools }),
         resources: m('resourcesCount', { n: tested.counts.resources }), prompts: m('promptsCount', { n: tested.counts.prompts }) })}</p>}
@@ -432,6 +442,7 @@ export function MineTab({ detail, update, reload }: { detail: ConnectionDetail; 
   }
   return <form className="col gap12" onSubmit={submit} noValidate>
     <p className="muted">{m('mineIntro')}</p>
+    {detail.owner_kind === 'workspace' && <p className="notice info">{m('workspaceContent')}</p>}
     <div className="row wrap">{binding.bound ? (binding.enabled ? <span className="badge info">{m('bound')}</span> : <span className="badge">{m('boundDisabled')}</span>) : <span className="badge">{m('notBound')}</span>}
       {(detail.status === 'disabled' || platformStopped(detail)) && <ConnectionStatusBadge status={detail.status} stopped={platformStopped(detail)} />}</div>
     {platformStopped(detail) && <p className="notice warn" role="status">{m('platformStoppedAgent')}</p>}

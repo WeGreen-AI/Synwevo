@@ -8,7 +8,7 @@ import { useI18n, type Params } from '@synwevo/ui';
 import { newKey, op, read, type RunStatus } from '../../../shared/ops';
 import { Failure, RunBadge } from '../../../shared/states';
 import { integrationCopy, type IntegrationText } from './integrations.messages';
-import { callStatusView, errorCodeOf, formatDuration, healthView, mcpErrorKey } from './model';
+import { callStatusView, errorCodeOf, errorDetailOf, formatDuration, healthView, mcpRefusalKey } from './model';
 
 export function useText() {
   const { t, locale } = useI18n();
@@ -30,7 +30,7 @@ const GENERIC: Record<string, IntegrationText> = {
 /** The sentence for a refusal, in the centre's words. */
 export function errorKeyOf(error: unknown): IntegrationText {
   const code = errorCodeOf(error);
-  const mcp = mcpErrorKey(code);
+  const mcp = mcpRefusalKey(code, errorDetailOf(error));
   if (mcp) return mcp;
   if (GENERIC[code]) return GENERIC[code];
   if (error instanceof ApiError) {

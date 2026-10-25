@@ -25,7 +25,8 @@ may happen — that is the connection service's (grants, bindings, policy flags)
   a discovery's lists are followed to their end or to `MAX_LISTED` entries, and a cut is said too.
 * **What the HTTP layer said is kept.** The SDK turns a non-2xx answer into a JSON-RPC error of its
   own making; the transport records how each JSON-RPC request was answered, so a 401 is
-  `mcp_auth_required` and a 429 `mcp_rate_limited`, not a protocol error.
+  `mcp_auth_required` and a 429 `mcp_rate_limited`, not a protocol error. A 403 `insufficient_scope`
+  keeps the scope it names, and the next authorization of the connection asks for it (step-up).
 * **Cancellation propagates**: when the person stops the Agent's answer, the awaiting coroutine
   is cancelled, which closes the request's response stream — the transport's cancellation signal.
 * **Credentials pass through once**: the bearer token for the server goes into the HTTP client's
@@ -56,7 +57,8 @@ from mcp_types import REQUEST_TIMEOUT, Implementation
 from synwevo_core import env
 from synwevo_core.errors import ServiceError
 from synwevo_core.mcp_policy import McpPolicy, McpPolicySpec
-from synwevo_core.webhook_delivery import DNS_SLOTS, UrlRejected, UrlUnresolvable, check_address_text, resolve_checked
+from synwevo_core.webhook_delivery import (DNS_SLOTS, ResolverBusy, UrlRejected, UrlUnresolvable, check_address_text,
+                                           resolve_checked)
 
 log = logging.getLogger("synwevo.mcp.client")
 
@@ -86,6 +88,19 @@ OWN_ORIGIN_SETTINGS = ("APP_URL", "PUBLIC_URL", "ISSUER", "PORTAL_URL", "SITE_UR
 _LOOPBACK = ("localhost", "127.0.0.1", "::1")
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 _BEARER_ERRORS = ("invalid_request", "invalid_token", "insufficient_scope")
+#: The bounds of a scope set this client keeps from a server (a challenge's `scope`, oauth's step-up
+#: record) or asks an authorization server for: past them it is no scope set an authorization would
+#: grant, and a challenge naming one is not kept at all.
+MAX_SCOPE_TOKENS = 64
+MAX_SCOPE_CHARS = 2048
+# RFC 6750 §3 (and RFC 6749 §3.3): scope-token = 1*( %x21 / %x23-5B / %x5D-7E ).
+_SCOPE_TOKEN = re.compile(r"[\x21\x23-\x5b\x5d-\x7e]+")
+# RFC 9110 §5.6.2 token: an auth-scheme or an auth-param's name, and an unquoted value.
+_HTTP_TOKEN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+_AUTH_PARAM = re.compile(r"[\s,]*(" + _HTTP_TOKEN + r")[ \t]*=[ \t]*")
+# An unquoted value, read as far as the next space or comma: servers write `scope=files:read` although
+# ":" is no token character (the SDK reads it so too); what it says is checked by whoever uses it.
+_UNQUOTED = re.compile(r'[^\s,"]*')
 
 
 class McpCancelled(Exception):
@@ -259,10 +274,49 @@ def _is_self(host: str) -> ServiceError:
                         {"host": host})
 
 
+def scope_tokens(value) -> list[str] | None:
+    """The scope tokens `value` names, in order and each once; None when it is not a scope set
+    (RFC 6750 §3: scope tokens of the RFC's charset separated by spaces) within this client's bounds."""
+    if not isinstance(value, str) or len(value) > MAX_SCOPE_CHARS:
+        return None
+    tokens = [t for t in value.split(" ") if t]
+    if not tokens or len(tokens) > MAX_SCOPE_TOKENS or not all(_SCOPE_TOKEN.fullmatch(t) for t in tokens):
+        return None
+    return list(dict.fromkeys(tokens))
+
+
+def _auth_params(raw: str) -> dict[str, str]:
+    """The auth-params of the first challenge in a `WWW-Authenticate` value (RFC 9110 §11.6.1:
+    `name=token` or `name="quoted-string"`), names lower-cased. A value inside a quoted string —
+    an `error_description` that mentions `scope=` — is that parameter's, not another parameter."""
+    m = re.match(r"\s*" + _HTTP_TOKEN, raw)
+    pos, params = (m.end() if m else 0), {}
+    while pos < len(raw):
+        m = _AUTH_PARAM.match(raw, pos)
+        if not m:
+            break                                     # another challenge, or a token68: the first challenge ends
+        name, pos = m.group(1).lower(), m.end()
+        if raw.startswith('"', pos):
+            out, i = [], pos + 1
+            while i < len(raw) and raw[i] != '"':
+                if raw[i] == "\\" and i + 1 < len(raw):
+                    i += 1
+                out.append(raw[i])
+                i += 1
+            value, pos = "".join(out), i + 1
+        else:
+            v = _UNQUOTED.match(raw, pos)
+            value, pos = v.group(0), v.end()
+        params.setdefault(name, value)
+    return params
+
+
 def _challenge(headers) -> dict | None:
     """What a `WWW-Authenticate` challenge says, in fixed words only: its scheme, its RFC 6750 error
-    code, and whether it points at protected resource metadata (RFC 9728). Never the header text,
-    which is the server's and may carry anything."""
+    code, and whether it points at protected resource metadata (RFC 9728) — and, when the error is
+    `insufficient_scope`, the scope it names if that is a scope set within this client's bounds
+    (`scope_tokens`: RFC 6750's charset, nothing else). Never the header's other text, which is the
+    server's and may carry anything."""
     raw = (headers.get("www-authenticate") if headers is not None else None) or ""
     raw = raw.strip()[:4096]
     if not raw:
@@ -273,7 +327,24 @@ def _challenge(headers) -> dict | None:
     m = re.search(r'\berror\s*=\s*"?([A-Za-z_]+)', raw)
     if m and m.group(1).lower() in _BEARER_ERRORS:
         out["error"] = m.group(1).lower()
+    if out.get("error") == "insufficient_scope":
+        # MCP authorization, "Scope Challenge Handling": the scopes the current operation needs,
+        # which the next authorization of the connection asks for (oauth.record_scope_challenge).
+        tokens = scope_tokens(_auth_params(raw).get("scope"))
+        if tokens:
+            out["scope"] = " ".join(tokens)
     return out
+
+
+def challenged_scope(err: ServiceError) -> str | None:
+    """The scope an `insufficient_scope` refusal of the server's names (`_challenge`), if any."""
+    if err.code != "mcp_auth_required" or not isinstance(err.detail, dict):
+        return None
+    challenge = err.detail.get("www_authenticate")
+    if not isinstance(challenge, dict) or challenge.get("error") != "insufficient_scope":
+        return None
+    scope = challenge.get("scope")
+    return scope if isinstance(scope, str) and scope else None
 
 
 def _retry_after(headers) -> int | None:
@@ -637,6 +708,12 @@ class McpRuntime:
             addresses = resolve_checked(url, owner=owner, allow_http=spec.allow_http,
                                         allow_private=spec.allow_private_networks, timeout=CONNECT_TIMEOUT_S,
                                         http_refusal="MCP 服务地址默认要求 https")
+        except ResolverBusy:
+            # No resolver of this process was free in time for the owner (its own lookups still
+            # running, or the shared pool full): this process's refusal, not the name's or the
+            # server's — like a busy connection, it marks nothing and counts toward no breaker.
+            raise ServiceError(429, "mcp_resolver_busy", "MCP 服务地址的解析暂时排满，请稍后再试",
+                               {"host": host, "retryable": True, "retry_after": 2}) from None
         except UrlUnresolvable:
             raise ServiceError(502, "mcp_unresolvable", "无法解析 MCP 服务地址", {"host": host, "retryable": True}) from None
         except UrlRejected:
@@ -708,8 +785,27 @@ class McpRuntime:
         """Run one exchange from a worker thread. The policy is read here, on the caller's thread, so
         admission on the loop never waits for a database read or behind someone else's DNS lookup."""
         spec = self.policy.current()
-        return self._submit(self._with_client(conn, credential, user_id, timeout, fn, exchange, spec),
-                            timeout=timeout + 5, should_stop=should_stop)
+        try:
+            return self._submit(self._with_client(conn, credential, user_id, timeout, fn, exchange, spec),
+                                timeout=timeout + 5, should_stop=should_stop)
+        except ServiceError as err:
+            scope = challenged_scope(err)
+            if scope:
+                self._scope_challenged(conn, scope, err)
+            raise
+
+    def _scope_challenged(self, conn: dict, scope: str, err: ServiceError) -> None:
+        """The server refused the token for want of `scope`: recorded, on this thread, where the
+        connection's next authorization reads it (oauth.record_scope_challenge), and what became of
+        it said on the refusal (`step_up`). Recording it never changes the refusal itself."""
+        from .oauth import record_scope_challenge
+        try:
+            verdict = record_scope_challenge(self.store, conn, scope)
+        except Exception as exc:  # noqa: BLE001 — the refusal stands whatever happens to its record
+            log.warning("mcp scope challenge of %s was not recorded: %s", conn.get("id"), type(exc).__name__)
+            return
+        if verdict:
+            err.detail["step_up"] = verdict
 
     async def _with_client(self, conn: dict, credential: str | None, user_id: str | None, timeout: float, fn,
                            exchange: _Exchange, spec: McpPolicySpec):

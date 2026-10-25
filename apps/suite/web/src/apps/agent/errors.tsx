@@ -138,8 +138,12 @@ export function agentErrorText(error: unknown, t: (key: string) => string): stri
   let code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
   if (error instanceof ApiError && code === "idempotent_failure") code = error.detail?.code ?? code;
   if (errors[code]) return t(errors[code]);
-  // An external MCP connection's refusal (agent/mcp): the integration centre's sentence for it.
-  const mcp = mcpErrorText(code);
+  // An external MCP connection's refusal (agent/mcp): the integration centre's sentence for it, with
+  // what its detail adds (a refresh the authorization server failed, a step-up) — an ApiError's own
+  // detail (not a replay's), or the detail a recorded error carries beside its code.
+  const detail = error instanceof ApiError ? (code === error.code ? error.detail : null)
+    : error && typeof error === "object" && "detail" in error ? (error as { detail?: unknown }).detail : null;
+  const mcp = mcpErrorText(code, detail);
   if (mcp) return t(mcp);
   if (code.startsWith("billing_cost_")) return t("平台模型服务暂不接纳新调用，当前调用尚未发送。请稍后重试或联系管理员。");
   if (code.startsWith("billing_")) return t("费用或授权状态暂不允许继续，请核对后重试。");

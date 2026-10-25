@@ -691,8 +691,9 @@ for (const locale of LOCALES) test(`a platform stop is named on the list, the de
     if (kind === 'oauth') assert.ok(button(overview, tr(locale, 'authenticate'))?.includes('disabled=""'), 'authenticate disabled');
     assert.ok(!overview.includes(tr(locale, 'authFirst')) && !overview.includes(tr(locale, 'tokenMissing')), 'no step the stop refuses is offered');
     assert.ok(!/type="password"/.test(overview), 'no credential can be given while stopped');
-    // Deleting stays open to the manager.
-    assert.ok(!button(overview, tr(locale, 'remove'))?.includes('disabled=""'), `${kind}: delete stays open`);
+    // Deleting the stopped connection is refused (it is the record of the stop), and the manager is told why.
+    assert.ok(button(overview, tr(locale, 'remove'))?.includes('disabled=""'), `${kind}: delete refused while stopped`);
+    assert.ok(overview.includes(tr(locale, 'deleteStopped')), `${kind}: why delete is refused`);
   }
   // Disabling stays open if the connection is somehow still on.
   assert.ok(!button(view('overview', stoppedFixture({ status: 'active' })), tr(locale, 'disable'))?.includes('disabled=""'));
@@ -711,6 +712,52 @@ for (const locale of LOCALES) test(`a platform stop is named on the list, the de
   const row = render(locale, React.createElement(bindings.BindingRow, { item: summary({ status: 'disabled', platform_disabled: true }), toolCount: 0, onChanged() {} }));
   assert.ok(row.includes(tr(locale, 'statusPlatformStopped')) && row.includes(tr(locale, 'platformStoppedAgent')));
   assert.ok(!render(locale, React.createElement(bindings.BindingRow, { item: summary(), toolCount: 2, onChanged() {} })).includes(tr(locale, 'platformStoppedAgent')));
+});
+
+/** A connection at a server address another connection's platform stop closes (fixture): itself not stopped. */
+const closedAddressFixture = (overrides: Record<string, unknown> = {}) => detailFixture({ destination_stopped: true, platform_disabled: false,
+  platform_disabled_at: null, ...overrides });
+
+for (const locale of LOCALES) test(`a connection whose server address a stop closes is refused the same uses, and may still be deleted, in ${locale}`, () => {
+  const view = (tab: string, data: any) => render(locale, React.createElement(detail.DetailView, { detail: data, tab, setTab() {}, update() {}, onDeleted() {}, reload() {} }),
+    '/agent/integrations/mcpc_0123456789ab');
+  const overview = view('overview', closedAddressFixture({ has_credential: false, credential_hint: null }));
+  assert.ok(overview.includes(tr(locale, 'destinationStopped')) && !overview.includes(tr(locale, 'platformStopped')), 'the address, not this connection, was stopped');
+  assert.ok(overview.includes(tr(locale, 'statusPlatformStopped')) && !overview.includes(tr(locale, 'platformStoppedAt')));
+  for (const label of ['testConnection', 'refreshCaps'] as const) assert.ok(button(overview, tr(locale, label))?.includes('disabled=""'), `${label} disabled`);
+  assert.ok(!/type="password"/.test(overview), 'no credential can be given for a closed address');
+  assert.ok(!button(overview, tr(locale, 'remove'))?.includes('disabled=""') && !overview.includes(tr(locale, 'deleteStopped')), 'it is not the record of the stop');
+  assert.ok(view('resources', closedAddressFixture()).includes(tr(locale, 'platformStoppedUse')));
+  assert.ok(view('mine', closedAddressFixture()).includes(tr(locale, 'platformStoppedAgent')));
+  const listed = render(locale, React.createElement(list.ListView, { items: [summary({ destination_stopped: true })], policy: policy(), q: '', setQ() {},
+    loading: false, error: null, reload() {} }));
+  assert.ok(listed.includes(tr(locale, 'platformStoppedRow')) && !listed.includes(`>${tr(locale, 'bound')}<`));
+  assert.equal(model.platformStopped({ destination_stopped: true }), true);
+  assert.equal(model.ownStop({ destination_stopped: true } as any), false);
+});
+
+test('a token is sent with the address the page shows, so the server can refuse it for another one', () => {
+  const source = readFileSync(new URL('../src/apps/agent/integrations/Detail.tsx', import.meta.url), 'utf8');
+  const write = source.slice(source.indexOf("tokenWrite.start<ConnectionSummary>('agent.mcp.connection.update'"));
+  assert.ok(/^tokenWrite\.start<ConnectionSummary>\('agent\.mcp\.connection\.update', \{ \.\.\.ref, credential, expected_url: detail\.url \}/.test(write), write.slice(0, 160));
+  const ops = readFileSync(new URL('../../../../apps/suite/synwevo_suite/agent/mcp/ops.py', import.meta.url), 'utf8');
+  assert.ok(/expected_url: str \| None = F\(/.test(ops) && /expected_url=i\.expected_url/.test(ops), 'the operation takes it and hands it to the service');
+});
+
+test('the refusals added for the address a change was made against, a stopped address and a busy resolver read as what happened', () => {
+  const t = (s: string) => s;
+  for (const code of ['mcp_address_changed', 'mcp_destination_stopped', 'mcp_resolver_busy', 'mcp_connection_changed'] as const) {
+    assert.equal(model.mcpErrorKey(code), code, code);
+    assert.equal(errors.agentErrorText({ code }, t), integrationCopy[code][0], `${code} in the chat`);
+    for (const locale of ['en', 'zh-Hant']) assert.notEqual(core.translate(locale, integrationCopy[code][0]), integrationCopy[code][0], `${code} in ${locale}`);
+  }
+  // The address refusal now covers a credential refused for another address as well as a test's discarded answer.
+  assert.ok(/credential given for the old address/.test(tr('en', 'mcp_address_changed')) && /test found/.test(tr('en', 'mcp_address_changed')));
+  // A changed connection says that no call was sent, not only that an authentication was not saved.
+  assert.ok(/no call was sent/.test(tr('en', 'mcp_connection_changed')) && /authentication was not saved/.test(tr('en', 'mcp_connection_changed')));
+  assert.ok(/Nothing was sent/.test(tr('en', 'mcp_resolver_busy')) && /try again/.test(tr('en', 'mcp_resolver_busy')));
+  // A stop forbids deleting the stopped connection, and says so.
+  assert.ok(/deleted/.test(tr('en', 'mcp_platform_disabled')) && /deleted/.test(tr('en', 'platformStopped')));
 });
 
 test('a connection pointed at another address is recognised from what the server reports, and its next steps follow who is reading', () => {
@@ -840,4 +887,85 @@ test('the refusals a stop or a busy connection explains name every cause the bac
   assert.ok(/token is being refreshed/.test(tr('en', 'mcp_connection_busy')) && /concurrent calls/.test(tr('en', 'mcp_connection_busy')));
   // A lifted stop leaves the connection disabled and without its credential (admin_mcp.lift).
   assert.ok(/stays disabled/.test(tr('en', 'platformStopped')) && /token or OAuth/.test(tr('en', 'platformStopped')));
+});
+
+test('a refusal is worded by what its detail adds: a refresh the authorization server failed, a step-up authenticating cannot meet, why an authorization could not begin', () => {
+  const t = (s: string) => s;
+  for (const code of ['mcp_unreachable', 'mcp_unresolvable', 'mcp_timeout', 'mcp_server_error', 'mcp_protocol_error', 'mcp_rate_limited']) {
+    assert.equal(model.mcpRefusalKey(code, { cause: 'token_refresh', retryable: true }), 'refreshFailed', code);
+    assert.equal(model.mcpRefusalKey(code, { retryable: true }), code, `${code} of the MCP server itself`);
+    assert.equal(shared.errorKeyOf(new auth.ApiError(502, code, 'server prose (fixture)', { cause: 'token_refresh' })), 'refreshFailed', code);
+    assert.equal(errors.agentErrorText(new auth.ApiError(502, code, 'server prose (fixture)', { cause: 'token_refresh' }), t), integrationCopy.refreshFailed[0]);
+  }
+  // A grant the token endpoint refused still asks for a new authentication; a local refusal keeps its own words.
+  assert.equal(model.mcpRefusalKey('mcp_auth_required', { cause: 'token_refresh' }), 'mcp_auth_required');
+  assert.equal(model.mcpRefusalKey('mcp_resolver_busy', { cause: 'token_refresh' }), 'mcp_resolver_busy');
+  assert.equal(model.mcpRefusalKey('mcp_auth_required', { step_up: 'already_requested' }), 'stepUpAlready');
+  assert.equal(model.mcpRefusalKey('mcp_auth_required', { step_up: 'capped' }), 'stepUpCapped');
+  assert.equal(model.mcpRefusalKey('mcp_auth_required', { step_up: 'requested' }), 'mcp_auth_required');
+  assert.equal(model.mcpRefusalKey('mcp_oauth_discovery_failed', { reason: 'endpoint_origin_mismatch', endpoints: ['token_endpoint'] }), 'oauthEndpointOrigin');
+  assert.equal(model.mcpRefusalKey('mcp_oauth_discovery_failed', { reason: 'issuer_mismatch' }), 'mcp_oauth_discovery_failed');
+  assert.equal(model.mcpRefusalKey('mcp_oauth_registration_unavailable', { reason: 'iss_unsupported' }), 'oauthIssUnsupported');
+  assert.equal(model.mcpRefusalKey('mcp_oauth_registration_unavailable', { reason: 'endpoint_origin_mismatch' }), 'oauthRegistrationOrigin');
+  assert.equal(model.mcpRefusalKey('mcp_oauth_registration_unavailable', { issuer: 'https://as.fixture.test' }), 'mcp_oauth_registration_unavailable');
+  assert.equal(shared.errorKeyOf(new auth.ApiError(409, 'mcp_oauth_registration_unavailable', 'x', { reason: 'iss_unsupported' })), 'oauthIssUnsupported');
+  // A replay of a refused request carries the code only.
+  assert.equal(shared.errorKeyOf(new auth.ApiError(409, 'idempotent_failure', 'x', { code: 'mcp_unreachable', cause: 'token_refresh' })), 'mcp_unreachable');
+  // Each sentence says what it means for the person.
+  assert.ok(/need not authenticate again/.test(tr('en', 'refreshFailed')) && /was not called/.test(tr('en', 'refreshFailed')));
+  assert.ok(/unlikely/.test(tr('en', 'stepUpAlready')) && /limit/.test(tr('en', 'stepUpCapped')));
+  assert.ok(/does not say it returns iss/.test(tr('en', 'oauthIssUnsupported')) && /client_id/.test(tr('en', 'oauthEndpointOrigin')));
+});
+
+for (const locale of LOCALES) test(`a workspace connection says its results are the workspace's content, and where its last failure happened, in ${locale}`, () => {
+  const team = detailFixture({ owner_kind: 'workspace', owner_id: 'ws_fixture', owner_name: 'Fixture team' });
+  const at = (d: unknown, tab: string) => render(locale, React.createElement(detail.DetailView, { detail: d, tab, setTab() {}, update() {}, onDeleted() {} }),
+    '/agent/integrations/mcpc_0123456789ab');
+  for (const tab of ['overview', 'mine']) assert.ok(at(team, tab).includes(tr(locale, 'workspaceContent')), tab);
+  assert.ok(!at(detailFixture(), 'mine').includes(tr(locale, 'workspaceContent')), 'a personal connection is the person\'s');
+  const refreshing = at(detailFixture({ health: 'failed', last_error: { code: 'mcp_unreachable', message: 'server prose (fixture)', cause: 'token_refresh' } }), 'overview');
+  assert.ok(refreshing.includes(tr(locale, 'refreshFailed')) && !refreshing.includes(tr(locale, 'mcp_unreachable')) && !refreshing.includes('server prose'));
+  const own = at(detailFixture({ health: 'failed', last_error: { code: 'mcp_unreachable', message: 'server prose (fixture)', cause: null } }), 'overview');
+  assert.ok(own.includes(tr(locale, 'mcp_unreachable')) && !own.includes(tr(locale, 'refreshFailed')));
+});
+
+test('the person\'s own client is kept to its authorization server, and an answer too large to refresh with is the authorization server\'s', () => {
+  const t = (s: string) => s;
+  // A server that now names another authorization server: its own sentence, on the pages and in the chat.
+  assert.equal(model.mcpErrorKey('mcp_oauth_issuer_changed'), 'mcp_oauth_issuer_changed');
+  assert.equal(shared.errorKeyOf(new auth.ApiError(409, 'mcp_oauth_issuer_changed', 'server prose (fixture)',
+    { issuer: 'https://other-as.fixture.test', registered_issuer: 'https://as.fixture.test' })), 'mcp_oauth_issuer_changed');
+  assert.equal(errors.agentErrorText({ code: 'mcp_oauth_issuer_changed' }, t), integrationCopy.mcp_oauth_issuer_changed[0]);
+  assert.ok(/not handed to the new authorization server/.test(tr('en', 'mcp_oauth_issuer_changed'))
+    && /register a client at the new authorization server/.test(tr('en', 'mcp_oauth_issuer_changed')));
+  // The document's refusal holds however its id came to be named, and says so.
+  assert.ok(/registration endpoint handed that id back/.test(tr('en', 'oauthIssUnsupported')) && /entered for the connection/.test(tr('en', 'oauthIssUnsupported')));
+  // Where the endpoints are matters for that shared document only (a client the person or the server registered is that server's own).
+  assert.ok(/Client ID Metadata Document is shared by every authorization server/.test(tr('en', 'oauthEndpointOrigin')));
+  // Adding a connection says when the document is used and that a client given is kept to its server.
+  assert.ok(/says it returns iss/.test(tr('en', 'oauthHint')) && /does not hand the client to another one/.test(tr('en', 'oauthHint')));
+  // The authorization server's answer too large to read while refreshing is not the MCP server's.
+  assert.equal(model.mcpRefusalKey('mcp_response_too_large', { cause: 'token_refresh', max_bytes: 1048576 }), 'refreshFailed');
+  assert.equal(model.mcpRefusalKey('mcp_response_too_large', { max_bytes: 1048576 }), 'mcp_response_too_large');
+  // A recorded error (a tool call's) that carries its detail beside the code is worded by it as well; one without stays by code.
+  assert.equal(errors.agentErrorText({ code: 'mcp_unreachable', message: 'fixture', detail: { cause: 'token_refresh' } }, t), integrationCopy.refreshFailed[0]);
+  assert.equal(errors.agentErrorText({ code: 'mcp_auth_required', message: 'fixture', detail: { step_up: 'capped' } }, t), integrationCopy.stepUpCapped[0]);
+  assert.equal(errors.agentErrorText({ code: 'mcp_unreachable', message: 'fixture' }, t), integrationCopy.mcp_unreachable[0]);
+  // A workspace connection's result the Agent did not read (tools.WITHHELD) says whose policy kept it, and that the person still sees it.
+  assert.equal(model.mcpErrorKey('mcp_result_withheld'), 'mcp_result_withheld');
+  assert.equal(errors.agentErrorText({ code: 'mcp_result_withheld' }, t), integrationCopy.mcp_result_withheld[0]);
+  assert.ok(/model processing policy/.test(tr('en', 'mcp_result_withheld')) && /still see it/.test(tr('en', 'mcp_result_withheld')));
+});
+
+for (const locale of LOCALES) test(`a connection's OAuth client names the authorization server it is kept to, in ${locale}`, () => {
+  const at = (client: unknown) => render(locale, React.createElement(detail.DetailView, { detail: detailFixture({ auth_kind: 'oauth', credential_hint: 'oauth', oauth_client: client }),
+    tab: 'overview', setTab() {}, update() {}, onDeleted() {} }), '/agent/integrations/mcpc_0123456789ab');
+  const kept = at({ kind: 'preregistered', client_id: 'fixture-preregistered', issuer: 'https://as.fixture.test' });
+  assert.ok(kept.includes(tr(locale, 'oauthClientAt', { issuer: 'https://as.fixture.test' })) && kept.includes('fixture-preregistered'));
+  const notYet = at({ kind: 'preregistered', client_id: 'fixture-preregistered' });
+  assert.ok(!notYet.includes('https://as.fixture.test') && notYet.includes(tr(locale, 'oauthPreregistered')));
+  assert.ok(at({ kind: 'dynamic', client_id: 'dyn-fixture', issuer: 'https://as.fixture.test' }).includes(tr(locale, 'oauthClientAt', { issuer: 'https://as.fixture.test' })));
+  // The document is every server's client (a step-up record of it names the last server, which it does not belong to).
+  assert.ok(!at({ kind: 'cimd', client_id: 'https://workplace.fixture.test/.well-known/mcp-client/synwevo-agent.json', issuer: 'https://as.fixture.test' })
+    .includes(tr(locale, 'oauthClientAt', { issuer: 'https://as.fixture.test' })));
 });

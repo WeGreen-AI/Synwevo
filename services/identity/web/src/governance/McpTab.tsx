@@ -52,6 +52,8 @@ type Version = { revision: number; spec: McpPolicySpec | null; actor_id: string 
 export type Connection = {
   id: string; name: string; owner_kind: "user" | "workspace"; owner_name: string | null; host: string | null;
   auth_kind: string; status: string; platform_disabled: boolean; platform_disabled_at: number | null;
+  /** Not stopped itself, but at a server address another connection's stop closes. */
+  destination_stopped?: boolean;
   health: string; last_ok_at: number | null; last_error_code: string | null;
   failure_streak: number; circuit_open_until: number | null; protocol_version: string | null;
   tools: number; granted: number; agents: number; calls_7d: number; failed_7d: number; last_call_at: number | null;
@@ -59,7 +61,12 @@ export type Connection = {
 /** What `POST …/disable` and `POST …/lift` answer: the owner's own status, and whether the platform stop holds. */
 type Stopped = { id: string; status: string; platform_disabled: boolean };
 type Totals = { connections: number; failed: number; auth_required: number; calls_24h: number; failed_calls_24h: number; inbound_requests_24h: number };
-type Overview = { items: Connection[]; totals: Totals; policy: PolicyState };
+/** A server address a platform stop closes (suite_schema.mcp.stopped_destinations): its host only
+ *  (a path may carry the server's own secret), since when, the stopped connection, and how many
+ *  other connections it holds back. */
+export type StoppedDestination = { host: string | null; since: number; connection_id: string; connection_name: string | null;
+  other_connections: number };
+type Overview = { items: Connection[]; totals: Totals; policy: PolicyState; stopped_destinations?: StoppedDestination[] };
 type Call = { id: string; origin: string; kind: string; name: string | null; status: string; error_code: string | null;
   started_at: number; finished_at: number | null; duration_ms: number | null; request_id: string | null };
 
@@ -432,12 +439,13 @@ export function OverviewPanel({ onDenied, manage }: { onDenied: () => void; mana
   const [lifting, setLifting] = useState<Connection | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const items = load.loading || load.err ? [] : load.data?.items || [];
+  const stoppedDestinations = load.loading || load.err ? [] : load.data?.stopped_destinations || [];
   const totals = load.data?.totals;
   const busy = load.loading || !!load.err;
   return <section className="card card-b col gap12" aria-labelledby="mcp-overview-heading">
     <div className="row gap12 wrap"><h2 id="mcp-overview-heading" className="grow">{t("MCP 连接概览")}</h2>
       <button type="button" className="btn sm" disabled={load.loading} onClick={load.reload}>{t("刷新连接概览")}</button></div>
-    <p className="muted small">{t("每个连接的名称、主机、状态与数量，不含凭据、参数或结果。失败的连接排在前面。")}</p>
+    <p className="muted small">{t("每个连接的名称、主机、状态与数量，不含凭据、参数或结果。平台停用的连接排在最前，其次是失败的连接。")}</p>
     {manage.disabled && <p className="notice" role="note">{t("你的平台角色可以查看 MCP 策略与连接，不能发布策略，也不能平台停用连接或解除停用。")}</p>}
     <div role="status" aria-live="polite">{notice && <p className="notice ok">{notice}</p>}</div>
     {totals && <div className="row gap12 wrap">
@@ -447,6 +455,15 @@ export function OverviewPanel({ onDenied, manage }: { onDenied: () => void; mana
       <Stat name={t("24 小时调用")} value={totals.calls_24h} />
       <Stat name={t("其中失败")} value={totals.failed_calls_24h} />
       <Stat name={t("24 小时入站请求")} value={totals.inbound_requests_24h} />
+    </div>}
+    {stoppedDestinations.length > 0 && <div className="col gap8" role="group" aria-labelledby="mcp-stopped-heading">
+      <h3 id="mcp-stopped-heading">{t("被平台停用的服务地址")}</h3>
+      <p className="muted small">{t("平台停用一个连接时，也会关闭它的服务地址：解除之前，任何人都不能为这个地址添加连接、提供凭据或通过它调用。这里只显示主机，不显示地址的路径。")}</p>
+      <ul className="col gap4">{stoppedDestinations.map((d) => <li key={d.connection_id}>
+        <b>{d.host || DASH}</b>
+        <span className="cell-note">{t("自 {time} 起，由「{name}」的平台停用关闭", { time: fmtTime(d.since), name: d.connection_name || d.connection_id })}</span>
+        {d.other_connections > 0 && <span className="cell-note">{t("因此不能使用的其他连接：{count} 个", { count: d.other_connections })}</span>}
+      </li>)}</ul>
     </div>}
     <div className="row gap12 wrap">
       <input type="search" className="input" value={q} maxLength={100} onChange={(e) => setQ(e.target.value)} placeholder={t("搜索名称或主机")} aria-label={t("搜索连接")} />
@@ -472,8 +489,10 @@ export function OverviewPanel({ onDenied, manage }: { onDenied: () => void; mana
           <td data-label={t("状态")}><div className="row gap4 wrap">
             {c.platform_disabled ? <span className="badge err">{t("已被平台停用")}</span>
               : <span className={`badge ${c.status === "active" ? "ok" : "warn"}`}>{t(STATUS_LABELS[c.status] || c.status)}</span>}
+            {!c.platform_disabled && c.destination_stopped && <span className="badge err">{t("地址已被平台停用")}</span>}
             <span className={`badge ${HEALTH_BADGE[c.health] ?? ""}`}>{t(HEALTH_LABELS[c.health] || c.health)}</span></div>
             {c.platform_disabled && <span className="cell-note">{t("平台停用于 {time}", { time: c.platform_disabled_at ? fmtTime(c.platform_disabled_at) : DASH })}</span>}
+            {!c.platform_disabled && c.destination_stopped && <span className="cell-note">{t("另一个连接的平台停用关闭了这个服务地址；解除那次停用之前，这个连接不能使用。")}</span>}
             {c.circuit_open_until && <span className="cell-note">{t("熔断至 {time}", { time: fmtTime(c.circuit_open_until) })}</span>}
             {c.last_error_code && <span className="cell-note">{t("最近错误 {code}，连续 {count} 次", { code: c.last_error_code, count: c.failure_streak })}</span>}</td>
           <td data-label={t("工具")}>{t("已授权 {granted} / {total}", { granted: c.granted, total: c.tools })}</td>
@@ -496,7 +515,7 @@ export function OverviewPanel({ onDenied, manage }: { onDenied: () => void; mana
       {!load.loading && !load.err && !items.length && <tr className="empty-row"><td colSpan={8}>{query || health ? t("没有匹配的连接。") : t("还没有任何 MCP 连接。")}</td></tr>}</tbody>
     </table></div>
     {disabling && <ActionDialog title={t("平台停用连接")} confirmLabel={t("平台停用")} reason="required" danger
-      impact={<p>{t("将在全平台停用「{name}」（{host}）：它保存的凭据（令牌、OAuth 客户端密钥与动态登记、进行中的授权）会被清除，绑定它的 {count} 个 Agent 不再得到它的工具，新的调用、读取与连接测试都会被拒绝。拥有者不能自行恢复它，也不能为它填写新的凭据或地址；只有平台管理员可以解除停用。连接本身、工具授权与调用记录保留。",
+      impact={<p>{t("将在全平台停用「{name}」（{host}）：它保存的凭据（令牌、OAuth 客户端密钥与动态登记、进行中的授权）会被清除，绑定它的 {count} 个 Agent 不再得到它的工具，新的调用、读取与连接测试都会被拒绝。它的服务地址也一并关闭（同一主机、端口与路径，不论大小写、路径参数或查询怎样书写）：同一地址的其他连接停止使用，任何人都不能再为这个地址添加连接；要停用整个主机，请在策略的「禁止连接的主机」中加入它。拥有者不能自行恢复或删除它，也不能为它填写新的凭据或地址；只有平台管理员可以解除停用。连接本身、工具授权与调用记录保留。",
         { name: disabling.name, host: disabling.host || DASH, count: disabling.agents })}</p>}
       run={(reason) => stopConnection(disabling.id, reason)}
       onClose={() => setDisabling(null)}

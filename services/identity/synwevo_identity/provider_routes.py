@@ -333,8 +333,17 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         refused rather than folded into one token that several APIs would each accept, which is
         the cross-API replay the audience exists to stop (RFC 9700 §2.3; RFC 8707 §2 lets the
         server refuse a combination it will not issue).
+
+        A value that names this deployment's MCP server is read in its canonical form first (the
+        rule the registration is kept by, `oidc.registered_audiences`): MCP authorization,
+        "Canonical Server URI", says an uppercase scheme or host SHOULD be accepted, and a client
+        may send the URL it was configured with rather than the metadata's `resource`. The token's
+        audience is then that canonical URI, the one string the MCP server checks. A value with a
+        fragment is no resource indicator at all (RFC 8707 §2) and is compared as written.
         """
-        wanted = sorted({(v or "").strip() for v in (resources or []) if (v or "").strip()})
+        mcp = oidc.mcp_resource()
+        wanted = sorted({mcp if "#" not in v and oidc.canonical_resource_uri(v) == mcp else v
+                         for v in ((v or "").strip() for v in (resources or [])) if v})
         if not wanted:
             return None, None
         registered = set(client.get("audiences") or [])

@@ -318,6 +318,27 @@ test("the overview shows every connection masked — name, host, owner, authenti
   }
 });
 
+test("a stop's closed server address is listed by host only, and a second connection at it is marked as held back", () => {
+  // FIXTURE: the overview as admin_mcp answers it while STOPPED's stop closes its address, which BEHIND also points at.
+  const BEHIND = { ...OK, id: "mcpc_fx_behind", name: "Fixture Ledger Copy", host: "ledger.fixture.invalid", destination_stopped: true };
+  const over = { "/api/admin/mcp/overview": { data: { items: [STOPPED, FAILED, OK, BEHIND], totals: TOTALS, policy: STATE,
+    stopped_destinations: [{ host: "ledger.fixture.invalid", since: T - 3600, connection_id: STOPPED.id, connection_name: STOPPED.name, other_connections: 1 }] } } };
+  for (const locale of LOCALES) {
+    const overview = section(mcpTab(locale, VIEW, over), "mcp-overview-heading");
+    const list = section(overview, "mcp-stopped-heading");
+    for (const s of [tx(locale, "被平台停用的服务地址"), "ledger.fixture.invalid",
+      tx(locale, "自 {time} 起，由「{name}」的平台停用关闭", { time: inLocale(locale, () => ui.fmtTime(T - 3600)), name: STOPPED.name }),
+      tx(locale, "因此不能使用的其他连接：{count} 个", { count: 1 })]) assert.ok(text(list).includes(s), `${locale}: ${s}\n${text(list)}`);
+    assert.ok(!/\/mcp|https?:/.test(list), `${locale}: the host only, never the address`);
+    const held = row(overview, BEHIND.id);
+    assert.match(held, new RegExp(`<span class="badge err">${esc(tx(locale, "地址已被平台停用"))}</span>`), locale);
+    assert.ok(text(held).includes(tx(locale, "另一个连接的平台停用关闭了这个服务地址；解除那次停用之前，这个连接不能使用。")), locale);
+    for (const id of [STOPPED.id, OK.id]) assert.ok(!row(overview, id).includes(tx(locale, "地址已被平台停用")), `${locale}: ${id}`);
+  }
+  // Without a closed address there is no list.
+  assert.ok(!mcpTab("en", VIEW).includes('aria-labelledby="mcp-stopped-heading"'));
+});
+
 test("the stop and its lifting go to the server's own routes with the written reason, and its refusals reach the dialog", async () => {
   // the two routes are the server's (admin_mcp.build_router), dangerous and of platform.config.manage
   const py = readFileSync(join(ROOT, "services/identity/synwevo_identity/admin_mcp.py"), "utf8");

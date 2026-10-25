@@ -30,7 +30,7 @@ from typing import Callable
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -672,6 +672,11 @@ def data_dir(explicit: str | os.PathLike | None = None) -> Path:
 
 def build_platform(data_dir_arg: str | None = None) -> Platform:
     install_private_access_log()
+    # Every role names the issuer — in tokens, in the authorization server's metadata, in the MCP
+    # server's protected resource metadata — so none starts with one clients would read back
+    # differently from how it is written (`oidc.validate_issuer`).
+    from .oidc import validate_issuer
+    validate_issuer()
     store = Store(str(data_dir(data_dir_arg)))
     auth = Auth(store)
     identity = Identity(store)
@@ -1225,6 +1230,14 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 # accounts-origin cookie reaching Synwevo Docs' data would defeat the whole point
                 # of giving them separate origins.
                 return await finish(_error_response(request, 404, "not_in_this_role", off, None))
+            if path == MCP_PATH + "/":
+                # The MCP endpoint written with a trailing slash is the same server, not an
+                # operations route: sent on to its one address before any token is read (308 keeps
+                # the method and the body; the SDK's client follows it within the origin), so a
+                # token for the MCP server is never judged as one for the operations API.
+                query = request.url.query
+                return await finish(Response(status_code=308, headers={
+                    "Location": MCP_PATH + (f"?{query}" if query else ""), "Cache-Control": "no-store"}))
             if path.startswith(DIRECTORY_V1):
                 # The workspace directory (API-5): only its own service accounts, only its own
                 # audience; the same rate gate and call record as the Docs API.

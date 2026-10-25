@@ -27,8 +27,9 @@ import json
 import os
 import secrets
 import time
+from urllib.parse import urlsplit, urlunsplit
 from authlib.jose import JsonWebKey, JsonWebToken, jwt
-from pydantic import AnyHttpUrl
+from pydantic import AnyHttpUrl, ConfigDict, TypeAdapter
 
 from . import env
 from .errors import ServiceError
@@ -203,6 +204,39 @@ def issuer() -> str:
     come from the real issuer, and clients validate `iss` against exactly this string.
     """
     return (env.get("ISSUER") or "http://accounts.localhost:8770").rstrip("/")
+
+
+# How a client's metadata parser renders an issuer URL (the MCP SDK's `OAuthMetadata` and
+# `ProtectedResourceMetadata`: pydantic's `AnyHttpUrl`, an empty path kept empty).
+_ISSUER_URL = TypeAdapter(AnyHttpUrl, config=ConfigDict(url_preserve_empty_path=True))
+
+
+def validate_issuer() -> str:
+    """The issuer, refused at startup unless it is written the way a client reads it back.
+
+    An issuer identifier is compared as a string — the `iss` of an id_token, the metadata's
+    `issuer` against the one it was discovered under (RFC 8414 §3.3), the `iss` of an authorization
+    response (RFC 9207 §2.4) — while a client that parses the metadata lowercases the scheme and host
+    and drops a default port. Written any other way (`https://Accounts.Example.com`, `…:443`), the
+    protected resource metadata and the authorization server name two strings, and the official
+    MCP SDK's client refuses every authorization response. Not rewritten here: the `iss` of tokens
+    already issued and every relying party's own setting carry the value as written, so the
+    operator changes them together."""
+    value = issuer()
+    try:
+        parsed = urlsplit(str(_ISSUER_URL.validate_python(value)))
+    except ValueError:
+        raise RuntimeError(
+            f"SYNWEVO_ISSUER={value!r} 不是 http(s) 地址。发行者是账户服务对外的地址，"
+            "例如 https://accounts.synwevo.com。") from None
+    canonical = urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+    if canonical != value:
+        raise RuntimeError(
+            f"SYNWEVO_ISSUER={value!r} 不是规范写法，应写成 {canonical!r}（协议与主机名小写、不写默认端口、"
+            "不带查询或片段）。发行者按字符串逐字比较，而客户端解析元数据时会改写成规范形式，于是受保护资源"
+            "元数据与授权服务器给出的发行者对不上，MCP 客户端的每一次授权都会被拒绝。这里不替你改写："
+            "已签发令牌里的 iss 和各依赖方配置的发行者都是原来的字符串，请把它们一并改成规范写法。")
+    return value
 
 
 def _sha(raw: str) -> str:

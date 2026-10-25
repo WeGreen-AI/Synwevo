@@ -88,7 +88,7 @@ export const mcpMessages = {
   "这个版本的记录无法读取。": { en: "This version's record could not be read.", "zh-Hant": "這個版本的記錄無法讀取。" },
   "没有写理由": { en: "No reason given", "zh-Hant": "沒有寫理由" },
   // ---- the overview
-  "每个连接的名称、主机、状态与数量，不含凭据、参数或结果。失败的连接排在前面。": { en: "Each connection's name, host, state and counts, without credentials, arguments or results. Failing connections come first.", "zh-Hant": "每個連線的名稱、主機、狀態與數量，不含憑證、參數或結果。失敗的連線排在前面。" },
+  "每个连接的名称、主机、状态与数量，不含凭据、参数或结果。平台停用的连接排在最前，其次是失败的连接。": { en: "Each connection's name, host, state and counts, without credentials, arguments or results. Connections stopped by the platform come first, then failing ones.", "zh-Hant": "每個連線的名稱、主機、狀態與數量，不含憑證、參數或結果。平台停用的連線排在最前，其次是失敗的連線。" },
   "刷新连接概览": { en: "Refresh connections", "zh-Hant": "重新整理連線概覽" },
   "正在读取连接概览…": { en: "Reading the connections…", "zh-Hant": "正在讀取連線概覽…" },
   "连接": { en: "Connections", "zh-Hant": "連線" },
@@ -127,12 +127,23 @@ export const mcpMessages = {
   // the platform stop (admin_mcp.disable) and its lifting (admin_mcp.lift), apart from the owner's own on/off
   "已被平台停用": { en: "Stopped by the platform", "zh-Hant": "已被平台停用" },
   "平台停用于 {time}": { en: "Stopped by the platform on {time}", "zh-Hant": "平台停用於 {time}" },
+  // a connection at an address another connection's stop closes (suite_schema.mcp.stopped_destinations)
+  "地址已被平台停用": { en: "Address stopped by the platform", "zh-Hant": "位址已被平台停用" },
+  "另一个连接的平台停用关闭了这个服务地址；解除那次停用之前，这个连接不能使用。": {
+    en: "Another connection's platform stop closes this server address; this connection cannot be used until that stop is lifted.",
+    "zh-Hant": "另一個連線的平台停用關閉了這個服務位址；解除那次停用之前，這個連線不能使用。" },
+  "被平台停用的服务地址": { en: "Server addresses stopped by the platform", "zh-Hant": "被平台停用的服務位址" },
+  "平台停用一个连接时，也会关闭它的服务地址：解除之前，任何人都不能为这个地址添加连接、提供凭据或通过它调用。这里只显示主机，不显示地址的路径。": {
+    en: "Stopping a connection platform-wide closes its server address too: until the stop is lifted, nobody can add a connection for that address, give it a credential or call through it. Only the host is shown here, never the address's path.",
+    "zh-Hant": "平台停用一個連線時，也會關閉它的服務位址：解除之前，任何人都不能為這個位址新增連線、提供憑證或透過它呼叫。這裡只顯示主機，不顯示位址的路徑。" },
+  "自 {time} 起，由「{name}」的平台停用关闭": { en: "Closed since {time} by the platform stop of “{name}”", "zh-Hant": "自 {time} 起，由「{name}」的平台停用關閉" },
+  "因此不能使用的其他连接：{count} 个": { en: "Other connections it holds back: {count}", "zh-Hant": "因此不能使用的其他連線：{count} 個" },
   "平台停用": { en: "Stop platform-wide", "zh-Hant": "平台停用" },
   "平台停用：{name}": { en: "Stop platform-wide: {name}", "zh-Hant": "平台停用：{name}" },
   "平台停用连接": { en: "Stop a connection platform-wide", "zh-Hant": "平台停用連線" },
-  "将在全平台停用「{name}」（{host}）：它保存的凭据（令牌、OAuth 客户端密钥与动态登记、进行中的授权）会被清除，绑定它的 {count} 个 Agent 不再得到它的工具，新的调用、读取与连接测试都会被拒绝。拥有者不能自行恢复它，也不能为它填写新的凭据或地址；只有平台管理员可以解除停用。连接本身、工具授权与调用记录保留。": {
-    en: "“{name}” ({host}) will be stopped platform-wide: every credential it holds (the token, the OAuth client secret and a dynamic registration, authorizations in progress) is cleared, the {count} Agents bound to it no longer get its tools, and new calls, reads and connection tests are refused. Its owner cannot resume it or give it a new credential or address; only a platform administrator can lift the stop. The connection itself, its tool grants and its call records are kept.",
-    "zh-Hant": "將在全平台停用「{name}」（{host}）：它儲存的憑證（權杖、OAuth 客戶端密鑰與動態登記、進行中的授權）會被清除，綁定它的 {count} 個 Agent 不再得到它的工具，新的呼叫、讀取與連線測試都會被拒絕。擁有者不能自行恢復它，也不能為它填寫新的憑證或位址；只有平台管理員可以解除停用。連線本身、工具授權與呼叫記錄保留。" },
+  "将在全平台停用「{name}」（{host}）：它保存的凭据（令牌、OAuth 客户端密钥与动态登记、进行中的授权）会被清除，绑定它的 {count} 个 Agent 不再得到它的工具，新的调用、读取与连接测试都会被拒绝。它的服务地址也一并关闭（同一主机、端口与路径，不论大小写、路径参数或查询怎样书写）：同一地址的其他连接停止使用，任何人都不能再为这个地址添加连接；要停用整个主机，请在策略的「禁止连接的主机」中加入它。拥有者不能自行恢复或删除它，也不能为它填写新的凭据或地址；只有平台管理员可以解除停用。连接本身、工具授权与调用记录保留。": {
+    en: "“{name}” ({host}) will be stopped platform-wide: every credential it holds (the token, the OAuth client secret and a dynamic registration, authorizations in progress) is cleared, the {count} Agents bound to it no longer get its tools, and new calls, reads and connection tests are refused. Its server address is closed too (the same host, port and path, however its case, path parameters or query are written): other connections to the same address stop working, and nobody can add a connection for it; to stop a whole host, add it to the policy's “Blocked hosts”. Its owner cannot resume or delete it, or give it a new credential or address; only a platform administrator can lift the stop. The connection itself, its tool grants and its call records are kept.",
+    "zh-Hant": "將在全平台停用「{name}」（{host}）：它儲存的憑證（權杖、OAuth 客戶端密鑰與動態登記、進行中的授權）會被清除，綁定它的 {count} 個 Agent 不再得到它的工具，新的呼叫、讀取與連線測試都會被拒絕。它的服務位址也一併關閉（同一主機、連接埠與路徑，不論大小寫、路徑參數或查詢怎樣書寫）：同一位址的其他連線停止使用，任何人都不能再為這個位址新增連線；要停用整個主機，請在策略的「禁止連接的主機」中加入它。擁有者不能自行恢復或刪除它，也不能為它填寫新的憑證或位址；只有平台管理員可以解除停用。連線本身、工具授權與呼叫記錄保留。" },
   "已在全平台停用「{name}」；只有平台管理员可以解除。": { en: "“{name}” has been stopped platform-wide; only a platform administrator can lift the stop.", "zh-Hant": "已在全平台停用「{name}」；只有平台管理員可以解除。" },
   "解除平台停用": { en: "Lift the platform stop", "zh-Hant": "解除平台停用" },
   "解除平台停用：{name}": { en: "Lift the platform stop: {name}", "zh-Hant": "解除平台停用：{name}" },

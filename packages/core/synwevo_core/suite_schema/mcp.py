@@ -15,11 +15,14 @@ these tables and columns.
 `settle_interrupted_calls` is here, beside the tables, because two readers of the call log must
 agree on when a 'running' record can no longer be in flight: the connection service
 (`synwevo_suite.agent.mcp`) and the platform administration's masked view
-(`synwevo_identity.admin_mcp`), which cannot import an application.
+(`synwevo_identity.admin_mcp`), which cannot import an application. `destination_key` and
+`stopped_destinations` are here for the same reason: both must agree on which destinations a
+platform stop closes.
 """
 from __future__ import annotations
 
 import time
+from urllib.parse import unquote, urlsplit
 
 #: A call record still 'running' this long after it started cannot still be in flight: no exchange
 #: outlives the longest deadline the policy allows (``call_timeout_s`` ≤ 600 s, plus the runtime's
@@ -43,6 +46,54 @@ def settle_interrupted_calls(store, *, connection_id: str | None = None, at: flo
         args += (connection_id,)
     n = store.execute(sql, args)
     return n if isinstance(n, int) else getattr(n, "rowcount", 0)
+
+
+def destination_key(url: str) -> str | None:
+    """Where `url` leads, as a platform stop compares destinations: the host (lower case, IDNA, no
+    trailing dot), the port (the scheme's default when none is written) and the path (percent-decoded,
+    in lower case, without `;` parameters, dot segments or repeated and trailing slashes). Not the
+    scheme — one port is one listener, whatever scheme a URL asks of it — and not the query. The same
+    server written another way is the same destination, on a server that routes paths without regard
+    to case or parameters too; another host, port or path is not (a stop of a whole host is the
+    policy's `blocked_hosts`). None for anything that is not an absolute http(s) address."""
+    try:
+        parts = urlsplit((url or "").strip())
+        port = parts.port
+    except ValueError:
+        return None
+    scheme, host = parts.scheme.lower(), (parts.hostname or "").rstrip(".")
+    if scheme not in ("http", "https") or not host:
+        return None
+    try:
+        host = host.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        pass
+    segments: list[str] = []
+    for segment in unquote(parts.path).lower().split("/"):
+        # RFC 3986 §3.3: a segment's parameters (`/mcp;v=1`) name the same resource on the servers that
+        # read them. Two paths only these tell apart are one destination for a stop (it may then close
+        # more than one server's address, never fewer).
+        segment = segment.split(";", 1)[0]
+        if segment == "..":
+            if segments:
+                segments.pop()
+        elif segment not in ("", "."):
+            segments.append(segment)
+    return f"{host}:{port or (443 if scheme == 'https' else 80)}/{'/'.join(segments)}"
+
+
+def stopped_destinations(store) -> dict[str, dict]:
+    """The destinations a platform stop closes (`destination_key` → the stopped connection: id, host,
+    since when): those of the connections a platform administrator stopped
+    (``platform_disabled_at``). A stopped connection cannot be re-pointed or deleted by its owner, so
+    its address stays the stop's record until the platform lifts it (synwevo_identity.admin_mcp)."""
+    out: dict[str, dict] = {}
+    for row in store.all("SELECT id, url, platform_disabled_at FROM mcp_connections WHERE platform_disabled_at IS NOT NULL "
+                         "AND deleted_at IS NULL ORDER BY platform_disabled_at"):
+        key = destination_key(row["url"])
+        if key is not None and key not in out:
+            out[key] = {"connection_id": row["id"], "host": urlsplit(row["url"]).hostname, "since": row["platform_disabled_at"]}
+    return out
 
 
 SCHEMA = """
@@ -233,4 +284,8 @@ COLUMNS = (
     # more room for it ('mcp_offer_too_large'), so the row holds a placeholder in its place and the
     # tool reaches no Agent (Connections._record_discovery).
     ("mcp_connection_tools", "unusable_code", "TEXT"),
+    # Where the last failure happened when it was not in an exchange with the MCP server itself: a
+    # stable code ('token_refresh': the authorization server, refreshing the OAuth token), NULL when it
+    # was the server's own (Connections._failed). The pages word the failure by it.
+    ("mcp_connections", "last_error_cause", "TEXT"),
 )

@@ -181,7 +181,8 @@ def test_a_new_address_forgets_the_credential_grants_and_bindings_of_the_old_ser
     assert op(world, "agent.mcp.connection.test", {"connection_id": cid}, expect=409)["error"] == "mcp_auth_required"
     assert world.state["requests"] == []
     # The new server gets the credential given for it, and only that one.
-    op(world, "agent.mcp.connection.update", {"connection_id": cid, "credential": "new-server-token-5678"})
+    op(world, "agent.mcp.connection.update", {"connection_id": cid, "credential": "new-server-token-5678",
+                                              "expected_url": "https://other-server.test/mcp"})
     detail = op(world, "agent.mcp.connection.test", {"connection_id": cid})["output"]
     assert detail["health"] == "ok" and detail["counts"]["granted"] == 0          # nothing granted for the new server yet
     sent = {(q["host"], q["authorization"]) for q in world.state["requests"]}
@@ -732,7 +733,9 @@ def test_a_refresh_overtaken_by_a_new_address_or_a_revocation_cannot_seal_its_to
     world.state["tokens"] = OvertakenTokenServer("fixture-refresh-1", meanwhile)
     with pytest.raises(Exception) as refused:
         world.connections.credential(row(world, cid))
-    assert refused.value.code == "mcp_auth_required" and refused.value.detail["cause"] == "mcp_connection_changed", refused.value
+    # The refresh's own refusal, unwrapped (oauth.OutboundOAuth.refresh, Connections._refreshed): the
+    # change overtook it, which authenticating again is not the answer to.
+    assert refused.value.code == "mcp_connection_changed", refused.value
     r = row(world, cid)
     assert r["credential_sealed"] is None and r["refresh_claim_until"] is None
     if change == "address":

@@ -7,8 +7,11 @@ settings. Nothing here reads a connection's credential, a call's arguments or a 
 administrator sees names, hosts, states, counts and failure codes.
 
 A stop is recorded on the connection (`platform_disabled_at` / `platform_disabled_by`), apart from
-the owner's own on/off: the owner cannot resume a stopped connection or give it a credential
-(synwevo_suite.agent.mcp.connections), and only `platform.config.manage` lifts the stop.
+the owner's own on/off: the owner cannot resume a stopped connection, give it a credential or delete
+it (synwevo_suite.agent.mcp.connections), and only `platform.config.manage` lifts the stop. The stop
+closes the connection's destination as well (suite_schema.mcp.stopped_destinations): no other
+connection, existing or added later by anybody, reaches that address until the lift. The overview
+lists the stopped connections first and the destinations they close.
 """
 from __future__ import annotations
 
@@ -25,7 +28,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.mcp_policy import McpPolicy, McpPolicySpec
 from synwevo_core.platform_access import require_platform
 from synwevo_core.store import new_id, now
-from synwevo_core.suite_schema.mcp import settle_interrupted_calls
+from synwevo_core.suite_schema.mcp import destination_key, settle_interrupted_calls, stopped_destinations
 
 from .admin_operations import OPERATIONS, PREVIEW_SECONDS, Operation, SignedPreview, canonical
 
@@ -143,7 +146,7 @@ class McpPolicyOperations(SignedPreview):
                    meta=meta)
 
 
-def _masked_connection(store, row: dict) -> dict:
+def _masked_connection(store, row: dict, stopped: dict) -> dict:
     from urllib.parse import urlsplit
     owner_name = None
     if row["owner_kind"] == "workspace":
@@ -160,11 +163,30 @@ def _masked_connection(store, row: dict) -> dict:
     return {"id": row["id"], "name": row["name"], "owner_kind": row["owner_kind"], "owner_name": owner_name,
             "host": urlsplit(row["url"]).hostname, "auth_kind": row["auth_kind"], "status": row["status"],
             "platform_disabled": bool(row.get("platform_disabled_at")), "platform_disabled_at": row.get("platform_disabled_at"),
+            # Not stopped itself, but at an address another connection's stop closes.
+            "destination_stopped": not row.get("platform_disabled_at") and destination_key(row["url"]) in stopped,
             "health": row["health"], "last_ok_at": row["last_ok_at"], "last_error_code": row["last_error_code"],
             "failure_streak": row["failure_streak"], "circuit_open_until": row["open_until"] if (row["open_until"] or 0) > now() else None,
             "protocol_version": row["protocol_version"], "tools": tools["n"], "granted": granted["n"], "agents": bound["n"],
             "calls_7d": counts["calls"] or 0, "failed_7d": counts["failed"] or 0, "last_call_at": counts["last_call_at"],
             "created_at": row["created_at"], "updated_at": row["updated_at"]}
+
+
+def _stopped_view(store, stopped: dict) -> list[dict]:
+    """The destinations platform stops close, as the overview shows them: the host (never the path,
+    which may carry a secret of the server's), since when, the connection whose stop closes it, and
+    how many other connections it holds back."""
+    held: dict[str, int] = {}
+    for r in store.all("SELECT url FROM mcp_connections WHERE deleted_at IS NULL AND platform_disabled_at IS NULL"):
+        key = destination_key(r["url"])
+        if key in stopped:
+            held[key] = held.get(key, 0) + 1
+    out = []
+    for key, stop in stopped.items():
+        row = store.one("SELECT name FROM mcp_connections WHERE id=?", (stop["connection_id"],))
+        out.append({"host": stop["host"], "since": stop["since"], "connection_id": stop["connection_id"],
+                    "connection_name": row["name"] if row else None, "other_connections": held.get(key, 0)})
+    return out
 
 
 def build_router(store, audit):
@@ -196,9 +218,11 @@ def build_router(store, audit):
                  health: str | None = Query(default=None, max_length=20), limit: int = Query(default=100, ge=1, le=500)):
         operations._actor(request, view=True)
         settle_interrupted_calls(store)
-        rows = store.all("SELECT * FROM mcp_connections WHERE deleted_at IS NULL ORDER BY health='failed' DESC, updated_at DESC LIMIT ?",
-                         (limit,))
-        items = [_masked_connection(store, r) for r in rows]
+        stopped = stopped_destinations(store)
+        # The stopped ones first: each is the record of a stop the platform may have to lift.
+        rows = store.all("SELECT * FROM mcp_connections WHERE deleted_at IS NULL "
+                         "ORDER BY platform_disabled_at IS NOT NULL DESC, health='failed' DESC, updated_at DESC LIMIT ?", (limit,))
+        items = [_masked_connection(store, r, stopped) for r in rows]
         if q:
             needle = q.lower()
             items = [i for i in items if needle in i["name"].lower() or needle in (i["host"] or "").lower()]
@@ -214,7 +238,7 @@ def build_router(store, audit):
                                            "auth_required": totals["auth_required"] or 0,
                                            "calls_24h": calls["n"] or 0, "failed_calls_24h": calls["failed"] or 0,
                                            "inbound_requests_24h": inbound["n"] or 0},
-                "policy": policy.read()}
+                "stopped_destinations": _stopped_view(store, stopped), "policy": policy.read()}
 
     @router.get("/connections/{cid}/calls")
     def calls(request: Request, cid: str, limit: int = Query(default=50, ge=1, le=200)):
@@ -234,9 +258,10 @@ def build_router(store, audit):
     @router.post("/connections/{cid}/disable")
     def disable(request: Request, cid: str, body: dict = Body(default=None)):
         """Stop a connection platform-wide: recorded as the platform's decision, which its owner cannot
-        undo; every credential it holds is forgotten (the token, the OAuth client secret and a dynamic
-        registration, the authorizations in progress); its Agent bindings stay but yield nothing. A
-        dangerous operation: re-authentication, a written reason, audited."""
+        undo, and closing its address to every other connection too; every credential it holds is
+        forgotten (the token, the OAuth client secret and a dynamic registration, the authorizations in
+        progress); its Agent bindings stay but yield nothing. A dangerous operation: re-authentication,
+        a written reason, audited."""
         actor = require_platform(request, OPERATIONS["admin.mcp.connection.disable"].permission, store=store, audit=audit,
                                  dangerous=True)
         reason = _reason(body)
@@ -270,7 +295,8 @@ def build_router(store, audit):
     @router.post("/connections/{cid}/lift")
     def lift(request: Request, cid: str, body: dict = Body(default=None)):
         """Lift a platform stop: the connection is its owner's again — still disabled and without a
-        credential, until the owner enables it and authenticates again. Dangerous, reasoned, audited."""
+        credential, until the owner enables it and authenticates again — and its address is open again
+        unless another stop closes it. Dangerous, reasoned, audited."""
         actor = require_platform(request, OPERATIONS["admin.mcp.connection.lift"].permission, store=store, audit=audit,
                                  dangerous=True)
         reason = _reason(body)

@@ -349,14 +349,24 @@ class ToolContext:
                         named.add(step[key].get("workspace_id"))
         return named - {None}
 
+    def allows(self, *workspaces: str | None) -> bool:
+        """Whether every one of these workspaces lets its content be processed with this credential
+        by this provider, read now."""
+        return all(policy_allows(self.store, w, self.credential_kind, self.provider) for w in workspaces)
+
+    @staticmethod
+    def withheld() -> dict:
+        """What the model reads instead of a result a workspace keeps from it."""
+        return {"withheld": True,
+                "reason": ("This workspace does not allow its content to be processed by the assistant. "
+                           "The person can see the result in the conversation; do not guess its content.")}
+
     def for_model(self, op, workspace_id: str | None, result: Any, *, also=()) -> Any:
         """What the model may read of a result: all of it, or — when the workspace (or another one
         whose content the result reflects, ``also``) does not allow its content to be processed
         with this credential — a note that the person can see it."""
-        if not all(policy_allows(self.store, w, self.credential_kind, self.provider) for w in (workspace_id, *also)):
-            return {"withheld": True,
-                    "reason": ("This workspace does not allow its content to be processed by the assistant. "
-                               "The person can see the result in the conversation; do not guess its content.")}
+        if not self.allows(workspace_id, *also):
+            return self.withheld()
         value, cut = bounded(result)
         return {"source": {"app": op.app, "operation": op.id, "workspace_id": workspace_id},
                 "note": UNTRUSTED_NOTE, "truncated": cut, "result": value}

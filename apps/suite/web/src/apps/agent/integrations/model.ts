@@ -19,9 +19,14 @@ export interface ConnectionSummary {
   description: string; url: string; host: string | null; auth_kind: AuthKind; credential_hint: string | null;
   has_credential: boolean; oauth_client: OAuthClient | null; status: 'active' | 'disabled'; health: Health;
   /** A platform administrator stopped the connection (synwevo_identity.admin_mcp): only the
-   *  platform lifts it; its managers may still rename, disable or delete it. */
+   *  platform lifts it; its managers may still rename or disable it, not delete it. */
   platform_disabled?: boolean; platform_disabled_at?: number | null;
-  health_checked_at: number | null; last_ok_at: number | null; last_error: { code: string; message: string } | null;
+  /** Not stopped itself, but at a server address another connection's platform stop closes
+   *  (connections._destination_open): refused the same uses until the platform lifts that stop. */
+  destination_stopped?: boolean;
+  /** The last failure; `cause` says where it happened when it was not the MCP server's own exchange
+   *  ('token_refresh': the authorization server, refreshing the token). */
+  health_checked_at: number | null; last_ok_at: number | null; last_error: { code: string; message: string; cause?: string | null } | null;
   circuit_open_until: number | null; protocol_version: string | null;
   server_info: { name?: string; version?: string; title?: string } | null; capabilities: Record<string, unknown>;
   discovered_at: number | null; counts: { tools: number; resources: number; prompts: number; granted: number };
@@ -123,10 +128,16 @@ export function grantView(tool: Pick<Tool, 'grant' | 'removed' | 'annotations'> 
   return { value: suspended ? '' : tool.grant.mode, suspended, reconfirm };
 }
 
-/** A platform administrator's stop, as the summary reports it. While it holds, enabling, testing,
- *  authenticating, calling, reading, rendering and changing the address or credential are refused
- *  (`mcp_platform_disabled`); renaming, disabling, deleting, grants and bindings are not. */
-export const platformStopped = (summary: Pick<ConnectionSummary, 'platform_disabled'>) => summary.platform_disabled === true;
+/** A platform administrator's stop, as the summary reports it: of the connection itself, or of its
+ *  server address through another connection's stop. While it holds, enabling, testing,
+ *  authenticating, calling, reading, rendering and giving a credential are refused
+ *  (`mcp_platform_disabled`, `mcp_destination_stopped`); renaming, disabling, grants and bindings
+ *  are not. Deleting is refused only for the stopped connection itself (`ownStop`): it is the
+ *  record of the stop. */
+export const platformStopped = (summary: Pick<ConnectionSummary, 'platform_disabled'> & Partial<Pick<ConnectionSummary, 'destination_stopped'>>) =>
+  summary.platform_disabled === true || summary.destination_stopped === true;
+/** The connection itself is the one the platform stopped. */
+export const ownStop = (summary: Pick<ConnectionSummary, 'platform_disabled'>) => summary.platform_disabled === true;
 
 /** A bearer connection without its token (revoked, or forgotten with an old address). */
 export const needsToken = (summary: Pick<ConnectionSummary, 'auth_kind' | 'has_credential'>) =>
@@ -193,9 +204,28 @@ export function mcpErrorKey(code: string): IntegrationText | null {
   if (code.startsWith('mcp_oauth_')) return 'mcp_oauth_failed';
   return 'mcp_failed';
 }
+/** What the authorization server answered for, failing to refresh a token (oauth.refresh with
+ *  `cause` "token_refresh"): not the MCP server, and not a reason to authenticate again. A local
+ *  refusal (a busy resolver, a policy) keeps its own sentence. */
+const REFRESH_FAILURES = new Set(['mcp_unreachable', 'mcp_unresolvable', 'mcp_timeout', 'mcp_server_error', 'mcp_protocol_error', 'mcp_rate_limited',
+  'mcp_response_too_large']);
+
+/** mcpErrorKey, with what a refusal's detail adds to its code: the authorization server failing a
+ *  token refresh, a scope a server keeps asking for that authenticating again will not bring
+ *  (`step_up`), and why an authorization could not begin (`reason`). */
+export function mcpRefusalKey(code: string, detail?: unknown): IntegrationText | null {
+  const d = detail && typeof detail === 'object' ? detail as Record<string, unknown> : {};
+  if (d.cause === 'token_refresh' && REFRESH_FAILURES.has(code)) return 'refreshFailed';
+  if (code === 'mcp_auth_required' && d.step_up === 'already_requested') return 'stepUpAlready';
+  if (code === 'mcp_auth_required' && d.step_up === 'capped') return 'stepUpCapped';
+  if (code === 'mcp_oauth_discovery_failed' && d.reason === 'endpoint_origin_mismatch') return 'oauthEndpointOrigin';
+  if (code === 'mcp_oauth_registration_unavailable' && d.reason === 'iss_unsupported') return 'oauthIssUnsupported';
+  if (code === 'mcp_oauth_registration_unavailable' && d.reason === 'endpoint_origin_mismatch') return 'oauthRegistrationOrigin';
+  return mcpErrorKey(code);
+}
 /** The zh-Hans sentence for an mcp_* refusal (the chat's agentErrorText translates it). */
-export function mcpErrorText(code: string): string | null {
-  const key = mcpErrorKey(code);
+export function mcpErrorText(code: string, detail?: unknown): string | null {
+  const key = mcpRefusalKey(code, detail);
   return key ? integrationCopy[key][0] : null;
 }
 
@@ -206,6 +236,13 @@ export function errorCodeOf(error: unknown): string {
   if (e.upstream) return '';
   const code = e.code === 'idempotent_failure' ? e.detail?.code : e.code;
   return safeCode(code);
+}
+
+/** The detail an error carries with its code (a replay of a refused request keeps none). */
+export function errorDetailOf(error: unknown): unknown {
+  if (!error || typeof error !== 'object') return null;
+  const e = error as { code?: unknown; detail?: unknown; upstream?: unknown };
+  return e.upstream || e.code === 'idempotent_failure' ? null : e.detail ?? null;
 }
 
 export function formatDuration(ms: number | null | undefined): { key: IntegrationText; n: number } | null {

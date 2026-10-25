@@ -35,7 +35,8 @@ from .history import open_cursor, seal_cursor
 from .context import Contexts, visible_contexts
 from .files import Files
 from .tools import TOOLS, ToolContext, policy_allows, resource_reads, snapshot_read, tool_result_text, validate_tool
-from .mcp.tools import AGENT_CALL, CANCEL_CHECK, McpTools, is_mcp, result_connection, split_id
+from .mcp.tools import (AGENT_CALL, CANCEL_CHECK, REGISTERED_RESOURCE_LIST, McpTools, destination, is_mcp, owner_workspace,
+                        result_connection, split_id)
 
 log = logging.getLogger("synwevo.agent")
 
@@ -51,6 +52,10 @@ FLUSH_S = 0.15
 #: Usage reliabilities that leave a turn's usage known: trusted terminal counters, a call never
 #: sent, and an HTTP error answer settled as known zero usage (gateway.provider_refused).
 KNOWN_USAGE = ("trusted_terminal", "not_dispatched", "provider_refused")
+#: What the model is told of a call whose operation ran but whose result could not be recorded.
+OUTCOME_UNKNOWN = ("The operation may have been carried out (an external service may already have acted on it), but its "
+                   "result could not be recorded, so its outcome is unknown. Do not run it again and do not say it failed "
+                   "or succeeded: tell the person to check in the application or the external service before asking again.")
 
 SYSTEM_PROMPT = """You are the person's own Synwevo Agent. Synwevo is a workflow platform: forms, data tables, data preparation, approvals, information extraction, documents and messages, organised in workspaces. The person may belong to several workspaces; you act for them in any workspace they can use, with exactly their rights there, and never more.
 
@@ -274,9 +279,16 @@ class Agent:
                 bound = self.store.one("SELECT k.name FROM mcp_agent_bindings b JOIN mcp_connections k ON k.id=b.connection_id "
                                        "WHERE b.user_id=? AND b.alias=?", (c["user_id"], parts[0]))
                 shown = bound["name"] if bound else parts[0]
+            # Why the model did not read a result the person sees (McpTools.withheld): which workspace
+            # keeps it, under its Agent processing policy.
+            told = _j(c.get("for_model_json"), None)
+            withheld = {"code": told.get("code") or "mcp_result_withheld", "workspace_id": told.get("workspace_id"),
+                        "workspace_name": self._ws_name(told.get("workspace_id"))} \
+                if isinstance(told, dict) and told.get("withheld") else None
             mcp = {"connection": parts[0], "connection_name": shown, "tool": parts[1],
                    "is_error": result.get("is_error"), "duration_ms": result.get("duration_ms"),
-                   "truncated": result.get("truncated"), "call_id": result.get("call_id"), "external": True}
+                   "truncated": result.get("truncated"), "call_id": result.get("call_id"), "external": True,
+                   "withheld": withheld}
             mcp_title = {k: f"{parts[1]} · {shown}" for k in ("en", "zh-Hans", "zh-Hant")}
         link = None
         clean = _j(c["input_json"], {})
@@ -1039,7 +1051,9 @@ class Agent:
             if c["assistant_message_id"] not in branch:
                 continue
             payload = _j(c["for_model_json"], {}) or {}
-            if payload.get("withheld") or "result" not in payload:
+            # A result the model read: an operation's, or an external tool's (which carries its text
+            # and structured content in place of `result`, and always says its source workspaces).
+            if payload.get("withheld") or ("result" not in payload and "source_workspaces" not in payload):
                 continue  # A previously withheld result stays withheld, even after policy changes.
             if carried:
                 workspaces.update(payload.get("carried_from") or ())
@@ -1055,18 +1069,43 @@ class Agent:
                     workspaces.add(wid)
         return workspaces
 
-    def mcp_sources(self, t: dict) -> set[str]:
+    def mcp_sources(self, t: dict, *, to: dict | None = None) -> set[str]:
         """Workspaces whose content reached the model in this turn's branch, and so would go along
-        with a request to an external MCP server (the data-flow question of docs/platform/mcp.md §4.5)."""
+        with a request to an external MCP server (the data-flow question of docs/platform/mcp.md §4.5).
+        With `to` (mcp.tools.destination: the connection the request goes through and the address it
+        has now), not a workspace whose content the model read only as that same connection's results
+        from that same address: it would go back to the server it came from."""
         asst = self.store.one("SELECT sources_json FROM agent_messages WHERE id=?", (t["assistant_message_id"],))
-        return self._content_workspaces(asst) & self._transmitted_workspaces(t, carried=True) if asst else set()
+        if not asst:
+            return set()
+        content = self._content_workspaces(asst)
+        if to:
+            content -= self._only_from(asst, to)
+        return content & self._transmitted_workspaces(t, carried=True)
+
+    @staticmethod
+    def _only_from(message: dict, to: dict) -> set[str]:
+        """Workspaces whose every content source in this answer is a result of `to`'s connection at
+        the address it has now (a source recorded before addresses were kept is no such result)."""
+        only: dict[str, bool] = {}
+        for s in _j(message["sources_json"], []) or []:
+            if isinstance(s, dict) and ("file_id" in s or "catalogue_name" in s):
+                continue
+            same = isinstance(s, dict) and s.get("mcp_connection") == to["connection_id"] \
+                and s.get("destination") == to["destination"]
+            wid = s if isinstance(s, str) else s["workspace_id"]
+            only[wid] = only.get(wid, True) and same
+        return {w for w, yes in only.items() if yes}
 
     def _mcp_dependency(self, message_id: str, conn: dict | None) -> None:
         """A result through a workspace's connection depends on that connection staying usable to
         the person (`_lost_workspaces`): leaving the workspace hides it and seals the conversation,
-        as leaving a workspace whose records were read does. A personal connection is the person's."""
-        if conn and conn["owner_kind"] == "workspace":
-            self._add_source(message_id, {"workspace_id": conn["owner_id"], "mcp_connection": conn["id"]})
+        as leaving a workspace whose records were read does. A personal connection is the person's.
+        The source names the address too (`destination`): what came from it may go back to it."""
+        owner = owner_workspace(conn)
+        if owner:
+            self._add_source(message_id, {"workspace_id": owner, "mcp_connection": conn["id"],
+                                          "destination": destination(conn)["destination"]})
 
     def _read_only_turn(self, t: dict) -> bool:
         # A regeneration is the second answer to the same user message. Persisted topology,
@@ -1150,7 +1189,8 @@ class Agent:
             # Content the conversation read from a workspace would leave the platform with this call:
             # every such workspace's data-flow policy must allow that, whatever the tool does. Asked
             # again on a confirmation (_decide) and by the carrier as the request leaves.
-            refusal = ctx.mcp.outbound_refusal(self.mcp_sources(t))
+            # A result of the same connection, from the same address, goes back where it came from.
+            refusal = ctx.mcp.outbound_refusal(self.mcp_sources(t, to=ctx.mcp.destination_for(op)))
             if refusal:
                 record("failed", error=refusal, for_model={"error": refusal}, input_hash=binding)
                 return False
@@ -1209,7 +1249,27 @@ class Agent:
                 if marks is not None:
                     AGENT_CALL.reset(marks[0])
                     CANCEL_CHECK.reset(marks[1])
-        except ServiceError as err:
+        except Exception as err:  # noqa: BLE001 — what ran is never reported as failed; anything else is re-raised
+            ran = self._ran(t, call_id, op, wid)
+            if ran is None and not isinstance(err, ServiceError):
+                raise
+            if ran is not None:
+                # A two-phase operation's handler ran, and what came after it failed: recording its
+                # result (too large to record, for one) or handing it back. What it did is not known
+                # (an external server may have acted), so the call is neither failed nor succeeded,
+                # the model is told not to repeat it, and the turn stops on it (outcome_unresolved).
+                if not isinstance(err, ServiceError):
+                    # The id only: an exception's text may carry business data or a server's answer.
+                    log.warning("agent tool call %s: its operation ran and then failed to finish", call_id)
+                e = {"code": "outcome_unresolved",
+                     "message": "操作可能已经执行，但结果未能记录，状态不明。请先在对应应用或外部服务中核实，不要重复提交"}
+                told = {"outcome": "unknown", "cause": err.code if isinstance(err, ServiceError) else "operation_failed",
+                        "error": {"code": e["code"], "message": OUTCOME_UNKNOWN}}
+                if record:
+                    record("unknown", error=e, for_model=told, run_id=ran["id"], input_hash=binding)
+                else:
+                    self._update_call(t, call_id, "unknown", error=e, for_model=told, run_id=ran["id"])
+                return
             e = {"code": err.code, "message": err.message}
             if record:
                 record("failed", error=e, for_model={"error": e}, input_hash=binding)
@@ -1236,14 +1296,26 @@ class Agent:
             path = manifest.object_path(run["object_kind"], run["object_id"], result_wid)
             if path:
                 envelope["open_path"] = path
+        external = set()
         if is_mcp(op):
+            conn = ctx.mcp.connection_of(op, result)
             # Recorded before the result is, so no stored result lacks it.
-            self._mcp_dependency(t["assistant_message_id"], ctx.mcp.connection_of(op, result))
-            for_model = ctx.mcp.for_model(op, result, max_chars=self.connections.policy.current().max_result_chars)
+            self._mcp_dependency(t["assistant_message_id"], conn)
+            # A workspace's connection answers with that workspace's content: the model reads it only
+            # when the workspace lets the assistant process its content (as with its own records), and
+            # then a later write or external call asks that workspace's data-flow policy. A result
+            # whose connection cannot be told now is not given to the model. Either way the model is
+            # told which workspace keeps it and why (McpTools.withheld), and so is the page (call_json).
+            owner = owner_workspace(conn)
+            external = {owner} if owner else set()
+            if conn is None or (owner and not ctx.allows(owner)):
+                for_model = ctx.mcp.withheld(conn)
+            else:
+                for_model = ctx.mcp.for_model(op, result, max_chars=self.connections.policy.current().max_result_chars)
         else:
             for_model = ctx.for_model(op, result_wid, envelope, also=sorted(reported))
         if not for_model.get("withheld"):
-            for_model["source_workspaces"] = sorted(result_workspaces | reported)
+            for_model["source_workspaces"] = sorted(result_workspaces | reported | external)
             if carried:
                 for_model["carried_from"] = sorted(carried)
         status = "succeeded" if out["status"] == "succeeded" else "unknown"
@@ -1259,6 +1331,19 @@ class Agent:
         if not for_model.get("withheld"):
             for source in sorted(carried):
                 self._add_source(t["assistant_message_id"], {"workspace_id": source, "carried_into": result_wid})
+
+    def _ran(self, t: dict, call_id: str, op, wid: str | None) -> dict | None:
+        """This tool call's run when its operation is two-phase (every MCP carrier is) and the
+        invocation raised although the handler had run: the run is on record and not failed. A
+        handler's own error fails its run; a refusal before it ran leaves none (or a failed one)."""
+        registered = self.caps.registry.get(op.registered if is_mcp(op) else op.id)
+        if registered is None or registered.transactional:
+            return None  # a transactional run rolls back with its handler's work
+        if registered.id == REGISTERED_RESOURCE_LIST:
+            return None  # it answers from what discovery stored: nothing external can have acted
+        run = self.store.one("SELECT id, status FROM op_runs WHERE user_id=? AND op=? AND COALESCE(workspace_id,'')=? "
+                             "AND idempotency_key=?", (t["user_id"], registered.id, wid or "", f"agent:{call_id}"))
+        return run if run and run["status"] != "failed" else None
 
     def _carried_into(self, t: dict, workspaces: set[str]) -> set[str]:
         """Other workspaces whose content writes of this conversation carried into ``workspaces``
@@ -1426,7 +1511,7 @@ class Agent:
                     # The data-flow policy as it is now: a source workspace may have stopped letting
                     # content leave the platform while the card waited (or been read since it was
                     # shown). Refused like a transfer, never reissued: no confirmation can pass it.
-                    refused = ctx.mcp.outbound_refusal(self.mcp_sources(t))
+                    refused = ctx.mcp.outbound_refusal(self.mcp_sources(t, to=ctx.mcp.destination_for(op)))
                 if refused is None:
                     try:
                         transfer = self._transfer(t, op, wid, clean)
