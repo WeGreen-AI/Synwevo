@@ -1,6 +1,6 @@
 """Exact, trigger-maintained rollups of the platform cost facts; installed only by Store.
 
-docs/platform/billing-ledger.md ("Cost rollup") and docs/platform/agent-run-budgets.md.
+docs/billing-ledger.md ("Cost rollup") and docs/platform/agent-run-budgets.md.
 
 The facts stay where they are: ``model_cost_admissions``, ``billing_usage``, ``model_cost_endings``
 and ``billing_calls`` (all insert-only or one-way). Everything here is DERIVED from them by SQL

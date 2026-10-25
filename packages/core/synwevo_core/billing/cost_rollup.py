@@ -1,7 +1,7 @@
 """Readers, verifier, rebuild, prune and latch of the exact cost rollup.
 
 The rollup itself (tables, gate, triggers, replay) is ``synwevo_core.suite_schema.model_cost_rollup``;
-docs/platform/billing-ledger.md ("Cost rollup") describes both. This module:
+docs/billing-ledger.md ("Cost rollup") describes both. This module:
 
 * ``counters`` — what ``CostAdmission._counters`` returns, read from day buckets, the class-X
   exceptions and the open set (inflight + hold), in the fixed check order of the contract
@@ -42,6 +42,8 @@ log = logging.getLogger("synwevo.billing.cost_rollup")
 B, G, DAY, HORIZON_S, SPANS = schema.B, schema.G, schema.DAY, schema.HORIZON_S, schema.SPANS
 #: Open set and class-X caps: the only remaining row limits on the admission path.
 MAX_OPEN = 10_000
+#: Limb base for summing up to MAX_OPEN+1 reserved int64 bounds in SQL without overflow.
+_LB = 10**14
 MAX_EXCEPTIONS = 10_000
 #: How long an admission can stay open (Ledger.max_hold_seconds' ceiling, I1/I7).
 OPEN_S = 86_400
@@ -231,49 +233,47 @@ def counters(t, *, environment: str, provider: str, account_ref: str, unit: Unit
         for name, start in win.items():
             if r["admitted_at"] >= start:
                 totals[name] += cost
-    # 6. The open set: still in flight, or a reserved hold without a recorded local stop.
-    rows = t.execute(
-        "SELECT o.attempt_key AS key,a.attempt_key,a.environment,a.provider,a.account_ref,a.unit,a.reserved_units,"
-        "a.admitted_at,a.expires_at,att.call_key,c.status AS call_status,c.deadline AS call_deadline,e.ending,"
-        "u.attempt_key AS usage_key,f.attempt_key AS f_key,f.expires_at AS f_expires,"
-        "h.attempt_key AS h_key,h.call_key AS h_call,h.deadline AS h_deadline FROM ("
-        "SELECT attempt_key FROM model_cost_inflight INDEXED BY model_cost_inflight_open WHERE " + _SCOPE
-        + " AND expires_at>? UNION SELECT attempt_key FROM model_cost_hold INDEXED BY model_cost_hold_open WHERE "
-        + _SCOPE + " AND deadline>? LIMIT ?) o "
+    # 6. The open set: still in flight, or a reserved hold without a recorded local stop. Joined to
+    # the admission, the call (status, deadline; through the hold row's call key), the ending and the
+    # usage, and classified with the earlier predicate verbatim (a row selected only as in flight is
+    # open whatever its call), aggregated in SQL; reserved bounds are summed in base-10^14 limbs, so
+    # a sum of 10,001 int64 values cannot overflow. Stale: usage, a missing or foreign admission, an
+    # in-flight row whose expiry differs, or a selected hold row with an ending, a call no longer
+    # reserved or another deadline.
+    row = t.execute(
+        "WITH o AS MATERIALIZED (SELECT attempt_key,MAX(fe) AS fe,MAX(hd) AS hd,MAX(hc) AS hc,MAX(in_f) AS in_f,"
+        "MAX(in_h) AS in_h FROM (SELECT attempt_key,expires_at AS fe,NULL AS hd,NULL AS hc,1 AS in_f,0 AS in_h "
+        "FROM model_cost_inflight INDEXED BY model_cost_inflight_open WHERE " + _SCOPE + " AND expires_at>? "
+        "UNION ALL SELECT attempt_key,NULL,deadline,call_key,0,1 FROM model_cost_hold INDEXED BY model_cost_hold_open "
+        "WHERE " + _SCOPE + " AND deadline>?) GROUP BY attempt_key LIMIT ?), "
+        "x AS MATERIALIZED (SELECT o.*,a.attempt_key AS ak,a.environment AS ae,a.provider AS ap,a.account_ref AS aa,"
+        "a.unit AS au,a.reserved_units AS r,a.admitted_at AS at,a.expires_at AS ex,c.status AS cs,c.deadline AS cd,"
+        "e.attempt_key AS ek,u.attempt_key AS uk FROM o "
         "LEFT JOIN model_cost_admissions a ON a.attempt_key=o.attempt_key "
-        "LEFT JOIN billing_attempts att ON att.id=a.attempt_key LEFT JOIN billing_calls c ON c.id=att.call_key "
+        "LEFT JOIN billing_calls c ON c.id=o.hc "
         "LEFT JOIN model_cost_endings e ON e.attempt_key=o.attempt_key "
-        "LEFT JOIN billing_usage u ON u.attempt_key=o.attempt_key "
-        "LEFT JOIN model_cost_inflight f ON f.attempt_key=o.attempt_key "
-        "LEFT JOIN model_cost_hold h ON h.attempt_key=o.attempt_key",
-        (*scope, now, *scope, now, MAX_OPEN + 1)).fetchall()
-    read += len(rows)
-    if len(rows) > MAX_OPEN:
+        "LEFT JOIN billing_usage u ON u.attempt_key=o.attempt_key), "
+        "y AS MATERIALIZED (SELECT *,(at>=? AND (ex>? OR (cs='reserved' AND cd>? AND ek IS NULL))) AS op FROM x) "
+        "SELECT COUNT(*) AS n,"
+        "SUM(CASE WHEN ak IS NULL OR uk IS NOT NULL OR ae IS NOT ? OR ap IS NOT ? OR aa IS NOT ?"
+        " OR (in_f AND fe IS NOT ex) OR (in_h AND (ek IS NOT NULL OR cs IS NOT 'reserved' OR hd IS NOT cd))"
+        " THEN 1 ELSE 0 END) AS stale,"
+        "SUM(at>=? AND au IS NOT ?) AS foreign_unit, SUM(at>=? AND ex>?) AS inflight, SUM(op) AS unknown_count,"
+        f"SUM(CASE WHEN op THEN r/{_LB} ELSE 0 END) AS unknown_hi, SUM(CASE WHEN op THEN r%{_LB} ELSE 0 END) AS unknown_lo,"
+        f"SUM(op AND at>=?) AS open_count, SUM(CASE WHEN op AND at>=? THEN r/{_LB} ELSE 0 END) AS open_hi,"
+        f"SUM(CASE WHEN op AND at>=? THEN r%{_LB} ELSE 0 END) AS open_lo FROM y",
+        (*scope, now, *scope, now, MAX_OPEN + 1, L, now, now, *scope, L, P, L, now, E, E, E)).fetchone()
+    read += row["n"]
+    if row["n"] > MAX_OPEN:
         raise BillingError("cost_accounting_capacity")
-    for r in rows:
-        if (r["attempt_key"] is None or r["usage_key"] is not None
-                or (r["environment"], r["provider"], r["account_ref"]) != scope
-                or (r["f_key"] is not None and r["f_expires"] != r["expires_at"])
-                or (r["h_key"] is not None and (r["ending"] is not None or r["call_status"] != "reserved"
-                                                or r["h_deadline"] != r["call_deadline"] or r["h_call"] != r["call_key"]))):
-            raise inconsistent("stale")
-    unknown = unknown_count = inflight = open_units = open_count = 0
-    for r in rows:
-        if r["admitted_at"] < L:
-            continue
-        if r["unit"] != P:
-            raise BillingError("cost_unit_mismatch")
-        cost = integer(r["reserved_units"])
-        # Verbatim the earlier classification (docs/platform/model-risk.md §1).
-        in_flight = r["expires_at"] > now
-        hold_open = r["call_status"] == "reserved" and r["call_deadline"] > now
-        if in_flight or (hold_open and r["ending"] is None):
-            unknown += cost
-            unknown_count += 1
-            if r["admitted_at"] >= E:
-                open_units += cost
-                open_count += 1
-        inflight += int(in_flight)
+    if row["stale"]:
+        raise inconsistent("stale")
+    if row["foreign_unit"]:
+        raise BillingError("cost_unit_mismatch")
+    unknown = (row["unknown_hi"] or 0) * _LB + (row["unknown_lo"] or 0)
+    unknown_count, inflight = row["unknown_count"] or 0, row["inflight"] or 0
+    open_units = (row["open_hi"] or 0) * _LB + (row["open_lo"] or 0)
+    open_count = row["open_count"] or 0
     # 7. Parity: today's pending projection agrees with today's unresolved admissions.
     pending_today = t.execute("SELECT COUNT(*) FROM model_cost_pending INDEXED BY model_cost_pending_scope WHERE "
                               + _SCOPE + " AND admitted_at>=?", (*scope, today)).fetchone()[0]
@@ -357,7 +357,7 @@ def velocity(t, *, environment: str, provider: str, account_ref: str, unit: Unit
         if cost is None:
             out[dim] = Fraction(0)
             continue
-        groups = sums.get((dim, w)) or _bucket_sums(t, scope, dim, member, now, w)
+        groups = sums[(dim, w)] if (dim, w) in sums else _bucket_sums(t, scope, dim, member, now, w)
         total = Fraction(0)
         for g in groups:
             if g["broken"] or g["den"] < 0:
