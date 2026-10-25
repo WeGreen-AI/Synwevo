@@ -2,18 +2,19 @@
 
 ## 当前状态：持续执行，不暂停
 
-- 所有者 2026-10-23：恢复 GitHub Actions 计费（实际仍被拒，见下）；改为“本机复刻 verify + 同一源码包交给主机 receive.py”部署；“继续之前没完成的任务”；**Agent 发送即运行，不再逐次确认计费**（D17）；本会话自设 /loop 按统一交付要求持续执行，检查通过即部署。
-- 实施树 `.claude/worktrees/agent-billing`，分支 `claude/agent-billing`（HEAD a42bc4a7 = origin/main 03fe8231 + D17 + B3 + 两轮审查修正）；包工作树 auto-run-server / auto-run-web / auto-run-copy 已合入。主检出其他工作保留；MCP 工作在 `.claude/worktrees/mcp-platform`（另一会话，不取锁）。
+- 所有者 2026-10-23：恢复 GitHub Actions 计费（2026-10-25 已确认恢复，见下）；Actions 不可用时改为“本机复刻 verify + 同一源码包交给主机 receive.py”部署；“继续之前没完成的任务”；**Agent 发送即运行，不再逐次确认计费**（D17）；本会话自设 /loop 按统一交付要求持续执行，检查通过即部署。
+- 实施树 `.claude/worktrees/agent-billing`，分支 `claude/agent-billing`（HEAD 311508fe = origin/main = 生产）；包工作树 auto-run-server / auto-run-web / auto-run-copy 已合入。主检出其他工作保留；MCP 工作在 `.claude/worktrees/mcp-platform`（另一会话，不取锁）。
 - 协调锁：主树 `docs/agent-work/.coordinator.lock`，2026-10-23T07:16Z 起由本会话 `80146fec-e8b8-43eb-aafb-6b062986dc5d` 持有（接自 13b6809f：心跳停在 10-13，记录最后写入 10-18，10-23 不在活动会话中且仓库自 10-14 无改动；所有者要求继续其未完成工作）。
 
 ## 实际发布与CI
 
-- **生产当前为 `217d66d405c355dcecf44114a86ebf4813b1cee4`**（2026-10-23 19:45Z，经主机 receive.py 部署；备份 `/opt/synwevo/backups/20261023T194549Z`；五域 /readyz 200、四角色同镜像且 healthy；记录 `docs/quality/deployment.md` 当前段）。本机 verify 镜像：Python 3.12、守卫、类型检查、构建、前端、SDK、infra、Docker 运行时镜像 3g/2cpu 全量 6394 通过。
-- **GitHub Actions 仍不可用**：运行 38437521899 三次重跑均在作业开始前被拒（“recent account payments have failed or your spending limit needs to be increased”；组织本月 2000 分钟免费额度已用完，需支出上限 > 0 且付款方式有效）。在 Actions 恢复前按所有者选择走本机 verify + receive.py；**不要再重跑早于已部署版本的旧运行**（会把旧代码推到已迁移的数据库上）。
-- 待所有者：① Admin 支付设置仍为 v3（card + wechat_pay + alipay，2026-10-08），10-23 所说的“只含银行卡”未形成新版本——请重新发布（重认证后版本号应为 4）；② DeepSeek 路线 revision 1 有效期 2026-10-15T11:00Z 已过，所有付费 Agent 调用被拒，请在 Admin 续期（材料 `evidence/2026-10-11-route-renewal/README.md`）；③ D17 新条款文本建议法律顾问复核；④ DeepSeek 训练与保留的书面答复仍未取得。
+- **生产当前为 `311508fe2ba1a83f09f051030bf0cf032404491b`**（2026-10-25 09:47Z，D17 发送即运行 + B3，经主机 receive.py 部署；备份 `/opt/synwevo/backups/20261025T094644Z`；五域 /readyz 200、四角色同镜像且 healthy、无错误日志；`organization_apps` 与 `run_budget_cap` 已迁移，quick_check ok；记录 `docs/quality/deployment.md` 当前段）。本机 verify 镜像：Python 3.12、守卫、类型检查、构建、前端、SDK、infra、Docker 运行时镜像 3g/2cpu 全量 6519 通过 / 5 跳过 / 0 失败。
+- **GitHub Actions 已恢复**：运行 40181913056（311508fe）作业正常启动，verify 在 `services/identity/web` `npm test` 失败——10 个账户前端测试按 Node 23 ICU 的日期/时间文字断言，在流水线的 Node 22 下不一致（本机镜像跑的是 Node 23.6.1，所以没暴露）；deploy 跳过。生产代码不受影响（日期由浏览器格式化）。正在把这些测试改为与 ICU 版本无关（wf_17830410-6c4），之后推送并回到流水线。**不要重跑早于已部署版本的旧运行**（会把旧代码推到已迁移的数据库上）；40181913056 本身与生产同一 SHA，也无需重跑。
+- 待所有者：① Admin 支付设置仍为 v3（card + wechat_pay + alipay，2026-10-08），10-23 所说的“只含银行卡”未形成新版本——请重新发布（重认证后版本号应为 4）；② DeepSeek 路线 revision 1 有效期 2026-10-15T11:00Z 已过，所有付费 Agent 调用被拒（公开状态如实显示“模型服务暂停”），请在 Admin 续期（材料 `evidence/2026-10-11-route-renewal/README.md`）；③ 2026-10-25 条款与定价文本建议法律顾问复核；④ DeepSeek 训练与保留的书面答复仍未取得。
 
 ## 当前工作包与下一条动作
 
+- 下一动作（2026-10-25 09:55Z 更新）：**311508fe 已部署并核验**（D17 + B3，CR-132–CR-135）。进行中：Node 22 账户前端日期断言修正（wf_17830410-6c4）→ 本地 Node 22/23 双跑 → 推送 → Actions verify + deploy。之后按 BACKLOG：成本容量 `_MAX_RECORDS`、authz-6（密钥与定价分权）、卡住的 usage_pending 管理视图、金额显示精度、A40 组织创建策略。
 - 下一动作（2026-10-25 02:10Z 更新）：**D17 发送即运行 + B3 Message 按组织开关**在 `claude/agent-billing` a42bc4a7 已合并两轮审查修正（CR-132–CR-135，决定 D16/D17）；Python 3.12 全量（suite+messages 1355、identity 2040、integration 1552、docs 1681；负载 40 时 3 项超时，单独重跑通过）与前端 786 项通过。进行中：最终对抗式复核与真实服务端浏览器验收重跑（wf_bc8f2bda）。之后：Docker 运行时镜像全量（3g/2cpu）→ 推送 main → 经 receive.py 部署 → 核验并记录。部署后所有现有用户首次发送会看到一次开始卡片（新条款与定价版本）。
 - **CI阻断修复已发布**：e7c1f05 verify/deploy成功并核验上线（见上）。
 - **CR-079 报价前来源审阅：代码完成、本地与隔离浏览器已验证，待提交**：BudgetDialog在报价前列出每项所选资料的名称、类别（表单/数据表）与来源空间或“个人文件”，读取只走 `agent.context.resolve`/`agent.file.get` 并核对ID/快照/有效状态；任一来源变化、删除、撤权或响应损坏即阻止进入报价（提示+重试，不漏项）；offer与来源审阅共用一个AbortSignal，关闭/重载/迟到回调由generation票据保护。顺带修复首次键盘打开后Escape焦点落到body（懒加载块经路由级Suspense隐藏了输入框）：对话框自带Suspense边界。证据 `evidence/2026-10-11-agent-budget-sources/`（verification.json、三语桌面/390截图、reduced-motion截图与日志、fixture）。

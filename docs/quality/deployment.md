@@ -1,6 +1,46 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-10-23 19:45 UTC — 217d66d4, deployed through the host receiver (GitHub Actions blocked)
+## Current release · 2026-10-25 09:46 UTC — 311508fe, D17 send-and-go and B3, through the host receiver
+
+**Running source: `311508fe2ba1a83f09f051030bf0cf032404491b`** (origin/main, 79 commits over 217d66d4). Receiver
+receipt: `{"deployed": "synwevo:311508fe2ba1a83f09f051030bf0cf032404491b", "backup": "/opt/synwevo/backups/20261025T094644Z"}`
+(09:44:59 → 09:47:06 UTC). Pre-upgrade backup manifest identifies 217d66d4 (99 blob files); not a restore drill.
+The verify job was mirrored locally and the archive handed to the same receiver, as on 2026-10-23 (owner's choice
+while Actions was blocked). Actions billing had been restored by then: run 40181913056 for this same SHA started
+(09:44:52 UTC) and its verify job failed in `services/identity/web` `npm test` — 10 of 309 account-web tests assert
+date/time text as formatted by Node 23's ICU and fail under the Node 22 the pipeline uses (the local mirror ran them on
+Node 23.6.1); its deploy job was skipped. Production code is unaffected (browsers format these dates); the tests are
+being made ICU-independent, after which the pipeline is used again.
+
+**What it ships:** D17 — the personal Agent starts on send with no per-message billing confirmation; every money
+invariant stays on the server; a one-time "Start using Synwevo Agent" step (separate DeepSeek data-sharing consent,
+terms / AI-use / pricing acceptance, personal limits); the price the page shows is the price a send runs at (price key);
+public terms and pricing version **2026-10-25** (AI use rules unchanged, 2026-10-05). B3 — Synwevo Message switched on
+or off per organization (platform.apps.manage), with G1/G2/G3. Review findings fixed this round: CR-132–CR-135 (two
+adversarial rounds plus a final verification). Decisions D16/D17.
+
+**Local verify (CI mirror) on 311508fe:** host side on a clean detached checkout with a fresh Python 3.12.6 venv —
+guards, brand/app-icon checks, typecheck, build, `npm test --workspaces`, sheet live clients, infra unittest all passed;
+Python SDK 55 + 57 subtests and TypeScript SDK 48 passed (the SDK interrupt-cancellation test timed out once under host
+load and passed 3 of 3 alone and in a full rerun). Runtime image from the receiver's extraction (archive file list
+identical to 097ab920, on which the image was built: the only later change is an export-ignored evidence file) and the
+full suite in `Dockerfile.verify` with `--memory 3g --cpus 2` on a Docker volume: **6519 passed, 5 skipped, 0 failed**
+(27 min). Release archive 22.4 MB compressed (GNU gzip -n, sha256 `fbcecb90…`): `docs/agent-work/evidence/**` is now
+`export-ignore` (was 39 MB).
+
+**Post-deploy checks (09:47–09:50 UTC, read-only):** `/readyz` 200 on synwevo.com, workplace, accounts, docwave and
+message; accounts/docs/portal/messages all `synwevo:311508fe…` and healthy, gateway recreated; no traceback or error in
+the last 10 minutes of any role; memory accounts 109 MiB, docs 95 MiB, portal 130 MiB, messages 83 MiB; schema:
+`organization_apps` present (0 rows = Message on everywhere), `agent_settings.run_budget_cap`/`_unit` present,
+`PRAGMA quick_check` ok; `/public/deployment.json` reports the Agent released with `model_paused: true` (true: the
+DeepSeek route expired 2026-10-15 and has not been renewed); `/terms` and `/pricing` 200.
+
+**Still the owner's to do (unchanged by this deploy):** renew the DeepSeek route in Admin (paid Agent calls are refused
+until then); publish card-only payment settings (production still has revision 3 with card + wechat_pay + alipay); have
+the 2026-10-25 terms text reviewed by counsel. After the deploy
+every existing user sees the start step once, for the new terms and pricing versions.
+
+## 2026-10-23 19:45 UTC — 217d66d4 (historical; superseded above)
 
 **Running source: `217d66d405c355dcecf44114a86ebf4813b1cee4`** (origin/main; 71 commits since e99212d8: CR-112–CR-131 —
 Admin governance A18/A22/A26/A34/A35/A37/A44/A47, application catalogue B1/B2, service-layer audit WP1–WP11, the top-up
