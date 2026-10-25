@@ -108,12 +108,16 @@ async function compiled(file: string, initialProps: any, overrides: Record<strin
 /** The actual AgentApp (index.tsx) over FIXTURE reads and writes. */
 /** `route: null` opens the page without a conversation (a new one is created by the send). */
 async function appFixture({ billing = true, setup: initialSetup = fixtureSetup() as any, status: initialStatus = fixtureStatus() as any,
-  route: initial = 'conv_fixture' as string | null, offer: initialOffer = fixtureOffer() as any, globals = {} as Record<string, unknown> } = {}) {
+  route: initial = 'conv_fixture' as string | null, offer: initialOffer = fixtureOffer() as any, globals = {} as Record<string, unknown>,
+  auth = { site_url: 'https://site.fixture.test' } as Record<string, unknown> } = {}) {
   const writes: any[] = [], reads: string[] = [], navigations: string[] = [];
   let failure: unknown, route: string | undefined = initial ?? undefined, status = initialStatus, offer = initialOffer, setup = initialSetup;
+  /** The payer list GET /api/suite/agent/payers serves (an Error: the read fails), and the open conversation's messages. */
+  let payers: unknown = fixturePayers(), messages: unknown[] = [];
   /** Agent settings is a route inside the same AgentApp (no conversation is open there). */
   let onSettings = false;
-  /** Errors the next requests meet, one each, before `failure` (e.g. a lost connection). */
+  /** Errors the next requests meet, one each, before `failure` (e.g. a lost connection); a Promise
+   *  instead holds that request until it settles (the server still answering it), then answers it. */
   const next: unknown[] = [];
   /** FIXTURE of the server's idempotency record (capabilities `_prior` / `_replay`): a key the
    *  server answered with a refusal is answered again with 409 idempotent_failure carrying that
@@ -123,10 +127,10 @@ async function appFixture({ billing = true, setup: initialSetup = fixtureSetup()
     'react-router-dom': { ...router, useMatch: (path: string) => path === '/agent/c/:cid' && route && !onSettings ? { params: { cid: route } } : null,
       useLocation: () => ({ pathname: onSettings ? '/agent/settings' : route ? `/agent/c/${route}` : '/agent' }), useNavigate: () => (path: string) => navigations.push(path) },
     '@synwevo/ui': { ...ui, useI18n: () => ({ t: (key: string) => key, locale: 'en' }), useDialog: () => ({}) },
-    '@synwevo/auth-client': { ...client, useSession: () => ({ me: { id: 'usr_fixture', display_name: 'Fixture user' }, state: { site_url: 'https://site.fixture.test' } }),
-      get: async () => fixturePayers() },
+    '@synwevo/auth-client': { ...client, useSession: () => ({ me: { id: 'usr_fixture', display_name: 'Fixture user' }, state: auth }),
+      get: async (path: string) => { reads.push(`GET ${path}`); if (payers instanceof Error) throw payers; return plain(payers); } },
     '../../shared/catalog': { useApp: () => ({ app: { id: 'agent' } }) },
-    './useConversation': { useConversation: () => ({ value: route ? { ...conversation(), id: route } : undefined, refresh: async () => {}, connection: 'connected' }) },
+    './useConversation': { useConversation: () => ({ value: route ? { ...conversation(), id: route, messages } : undefined, refresh: async () => {}, connection: 'connected' }) },
     './useHistory': { useHistory: () => ({ rows: [], cursor: null }) },
     '../../shared/ops': { newKey: () => `fixture_key_${writes.length}`, read: async (operation: string) => {
       reads.push(operation);
@@ -141,7 +145,8 @@ async function appFixture({ billing = true, setup: initialSetup = fixtureSetup()
       const replayed = options?.key && answered.get(`${operation}:${options.key}`);
       if (replayed) throw new client.ApiError(409, 'idempotent_failure', 'fixture', { run_id: 'run_fixture', code: (replayed as any).code });
       const error = next.length ? next.shift() : failure;
-      if (error) {
+      if (error instanceof Promise) await error;
+      else if (error) {
         if (options?.key && !((error as any).status === 0 || (error as any).upstream)) answered.set(`${operation}:${options.key}`, error);
         throw error;
       }
@@ -152,8 +157,9 @@ async function appFixture({ billing = true, setup: initialSetup = fixtureSetup()
   const fixture = { ...h, writes, reads, navigations, fail: (value: any) => { failure = value; },
     failNext: (...errors: unknown[]) => { next.push(...errors); },
     /** The server's state moves on (an administrator adopted a new price): later reads return these. */
-    serve: (later: { status?: any; offer?: any; setup?: any }) => {
-      status = later.status !== undefined ? later.status : status; offer = later.offer ?? offer; setup = later.setup ?? setup; },
+    serve: (later: { status?: any; offer?: any; setup?: any; payers?: unknown; messages?: unknown[] }) => {
+      status = later.status !== undefined ? later.status : status; offer = later.offer ?? offer; setup = later.setup ?? setup;
+      payers = later.payers ?? payers; messages = later.messages ?? messages; },
     route: (id?: string) => { route = id; h.render(); },
     /** Open Agent settings (true) or go back to the conversation (false), then let the reads settle. */
     settings: async (open: boolean) => { onSettings = open; h.render(); for (let i = 0; i < 3; i++) { await settle(); h.render(); } },
@@ -587,6 +593,68 @@ test('W1: an attempt that got no answer is retried automatically with its own ke
   h.unmount();
 });
 
+test('fv-agent-1: an attempt that never got an answer keeps its key for the same request, so Send again replays a lost admission; any server answer drops it', async () => {
+  const instant = (fn: () => void) => setTimeout(fn, 0);
+  const h = await appFixture({ globals: { setTimeout: instant } });
+  const starts = () => h.writes.filter((w) => w.operation === 'agent.turn.start');
+  const keys = () => starts().map((w) => w.options.key);
+  const down = new client.ApiError(0, 'network', 'fixture');
+  const gateway = (status: number) => new client.ApiError(status, 'upstream_unavailable', 'fixture', { status }, true);
+  // FIXTURE: the request may have been admitted (in reality the turn and its quote may be stored), but no
+  // answer came back, and the connection stays down through both automatic retries.
+  h.failNext(down, down, down);
+  await assert.rejects(h.chat().send('Fixture over a lost connection'), (e: any) => e.code === 'network');
+  assert.equal(starts().length, 3);
+  assert.equal(new Set(keys()).size, 1);
+  // The person presses Send again with the very same message: the same request, so the same key, and the
+  // server answers from its record of the first attempt instead of starting a second paid answer.
+  assert.equal(await h.chat().send('Fixture over a lost connection'), true);
+  assert.equal(starts().length, 4);
+  assert.deepEqual(plain(starts()[3].input), plain(starts()[0].input), 'the same body');
+  assert.equal(keys()[3], keys()[0], 'the first attempt\'s key, so a lost admission is replayed, not run twice');
+  // That answer ended the attempt: the next send of the same text is a new one.
+  assert.equal(await h.chat().send('Fixture over a lost connection'), true);
+  assert.notEqual(keys()[4], keys()[0]);
+  // A server refusal is an answer: Send again carries a new key (a fixed cause is never met with the replayed refusal).
+  h.fail(new client.ApiError(409, 'terms_acceptance_required', 'fixture'));
+  await assert.rejects(h.chat().send('Fixture refused'), (e: any) => e.code === 'terms_acceptance_required');
+  h.fail(undefined);
+  assert.equal(await h.chat().send('Fixture refused'), true, 'it starts, not the replayed refusal');
+  assert.notEqual(keys()[6], keys()[5]);
+  // No answer, then the replay of that key is answered with a refusal: the kept key goes with that answer.
+  const at = starts().length;
+  h.failNext(gateway(502), gateway(503), gateway(504), new client.ApiError(409, 'agent_busy', 'fixture'));
+  await assert.rejects(h.chat().send('Fixture behind a gateway'), (e: any) => e.status === 504);
+  await assert.rejects(h.chat().send('Fixture behind a gateway'), (e: any) => e.code === 'agent_busy');
+  assert.equal(keys()[at + 3], keys()[at], 'replayed with the kept key');
+  assert.equal(await h.chat().send('Fixture behind a gateway'), true);
+  assert.notEqual(keys()[at + 4], keys()[at], 'dropped on the server\'s answer');
+  // The key is kept for that request only: a changed message (or price, or payer) is another request.
+  const other = starts().length;
+  h.failNext(down, down, down);
+  await assert.rejects(h.chat().send('Fixture before an edit'));
+  assert.equal(await h.chat().send('Fixture after an edit'), true);
+  assert.notEqual(keys()[other + 3], keys()[other]);
+  // A regenerate the same way.
+  const regenerate = { conversation_id: 'conv_fixture', regenerate_of: 'msg_a' };
+  const again = starts().length;
+  h.failNext(down, down, down);
+  await assert.rejects(h.chat().act('agent.turn.start', regenerate));
+  await h.chat().act('agent.turn.start', regenerate);
+  assert.equal(keys()[again + 3], keys()[again]);
+  h.unmount();
+  // A new conversation: the resend goes into the conversation the first attempt was made for, with its key.
+  const fresh = await appFixture({ route: null, globals: { setTimeout: instant } });
+  fresh.failNext(undefined, down, down, down);
+  await assert.rejects(fresh.chat().send('Fixture first message'));
+  assert.equal(await fresh.chat().send('Fixture first message'), true);
+  assert.deepEqual(fresh.writes.map((w) => w.operation), ['agent.conversation.create', 'agent.turn.start', 'agent.turn.start', 'agent.turn.start', 'agent.turn.start']);
+  assert.equal(fresh.writes[4].options.key, fresh.writes[1].options.key);
+  assert.deepEqual(plain(fresh.writes[4].input), plain(fresh.writes[1].input));
+  assert.deepEqual(fresh.navigations, ['/agent/c/conv_new_fixture']);
+  fresh.unmount();
+});
+
 test('W8: the composer honours run.usable: an unusable cap says so with the way to Agent settings, never "at most <default>"', async () => {
   const { renderToStaticMarkup } = await import('react-dom/server');
   const run = fixtureStatus().run;
@@ -757,6 +825,250 @@ test('W10: when the setup step\'s send is refused, focus moves to the refusal no
   r.render({ focusTick: 2 });
   assert.equal(focused.length, 2, 'only when asked again');
   h.unmount();
+});
+
+// ---------------------------------------------------------------- the composer across a trip to Agent settings (browser proof, defect 1)
+
+const pendingSetup = () => fixtureSetup({ complete: false, terms: { complete: false, documents: fixtureSetup().terms.documents.map((d: any) => ({ ...d, accepted: false })) } });
+const CONTEXT = { reference: { kind: 'form', workspace_id: 'ws_a', resource_id: 'frm_fixture', snapshot: 'a'.repeat(64) },
+  title: 'Fixture form', workspace_name: 'Fixture a', open_path: null };
+const FILE = { title: 'fixture.txt', reference: { file_id: 'file_fixture', snapshot: 'b'.repeat(64) } };
+
+/** The page's Chat as React holds it: the compiled Chat.tsx mounted with the props the page renders
+ *  now, kept while the page renders the same one (same key), mounted afresh when it renders a new one
+ *  (back from Agent settings, another conversation), and unmounted (running its cleanups: it hands its
+ *  message to the page) when the page renders none. */
+async function liveChat(h: any) {
+  const reports = await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx');
+  const picker = await server.ssrLoadModule('/src/apps/agent/ContextPicker.tsx');
+  const overrides = { './ContextPicker': { ...picker, useContextText: () => (key: string) => key },
+    './ChatParts': { ...parts, useChatText: () => ({ c: (key: string) => key }) },
+    './ReportDialog': { ...reports, useReportText: () => (key: string) => key } };
+  let mounted: any = null, key: unknown, mounts = 0;
+  const live = {
+    mounts: () => mounts,
+    chat: () => mounted,
+    async sync() {
+      for (let pass = 0; pass < 4; pass++) {
+        await settle(); h.render();
+        const element = h.elements().find((el: any) => el.type === chat.default);
+        if (!element) { mounted?.unmount(); mounted = null; continue; }
+        if (mounted && element.key === key) { mounted.render(element.props); continue; }
+        mounted?.unmount();
+        key = element.key; mounts += 1;
+        mounted = await compiled('Chat.tsx', element.props, overrides);
+      }
+      h.render();
+    },
+    async type(text: string) { mounted.find((el: any) => el.type === 'textarea').props.onChange({ target: { value: text } }); mounted.render(); await live.sync(); },
+    async attach() {
+      mounted.find((el: any) => el.props?.spaces && el.props.onChoose).props.onChoose(CONTEXT); mounted.render();
+      mounted.find((el: any) => el.props?.client && el.props.onChoose).props.onChoose(FILE); mounted.render();
+      await live.sync();
+    },
+    async submit() { mounted.find((el: any) => el.type === 'form').props.onSubmit({ preventDefault() {} }); await live.sync(); await live.sync(); },
+    /** What the composer holds: the text, the source chips and the file chips. */
+    composer() {
+      const chips = (name: string) => mounted.elements().find((el: any) => el.type?.name === name)?.props.selected ?? [];
+      return plain({ text: mounted.find((el: any) => el.type === 'textarea').props.value, contexts: chips('ContextChips'), files: chips('FileChips') });
+    },
+    unmount() { mounted?.unmount(); mounted = null; },
+  };
+  await live.sync();
+  return live;
+}
+/** A new person: the setup step opens on Send and its button sends the message (the page's sentDraft). */
+async function afterSetupSend() {
+  const h = await appFixture({ setup: pendingSetup() });
+  const c = await liveChat(h);
+  await c.type('Fixture first question'); await c.submit();
+  assert.equal(h.card().length, 1, 'the setup step is open with the message kept');
+  h.serve({ setup: fixtureSetup() });   // FIXTURE: what the step records (its own writes are tested in agent-setup)
+  await h.card()[0].props.onComplete(); await c.sync();
+  assert.deepEqual(h.writes.map((w) => w.operation), ['agent.turn.start']);
+  assert.equal(h.chat().sentDraft, 1);
+  assert.deepEqual(c.composer(), { text: '', contexts: [], files: [] }, 'the sent message left the composer');
+  return { h, c };
+}
+const TYPED = { text: 'Fixture typed after the answer', contexts: plain([CONTEXT]), files: plain([FILE]) };
+
+test('proof defect 1: after the setup step\'s send, a message typed next survives trips to Agent settings with its sources and files', async () => {
+  const { h, c } = await afterSetupSend();
+  await c.type(TYPED.text); await c.attach();
+  assert.deepEqual(c.composer(), TYPED);
+  for (const trip of [1, 2]) {
+    await h.settings(true); await c.sync();
+    assert.equal(c.chat(), null, 'Agent settings replaces the conversation');
+    await h.settings(false); await c.sync();
+    assert.deepEqual(c.composer(), TYPED, `back from Agent settings (trip ${trip})`);
+  }
+  assert.equal(c.mounts(), 3, 'a new composer each time back (the case the old clearing on mount broke)');
+  // A send that completes still clears the composer.
+  await c.submit();
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: TYPED.text, context_refs: [CONTEXT.reference], file_refs: [FILE.reference], ...SEEN });
+  assert.deepEqual(c.composer(), { text: '', contexts: [], files: [] });
+  c.unmount(); h.unmount();
+});
+
+test('proof defect 1: after "send again", a refused message taken to Agent settings by its own link is back on return', async () => {
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const h = await appFixture({ setup: pendingSetup() });
+  const c = await liveChat(h);
+  await c.type('Fixture first question'); await c.submit();
+  h.serve({ setup: fixtureSetup() });
+  // The setup step's send is refused; "send again" (the page's notice) sends it.
+  h.fail(new client.ApiError(409, 'billing_price_changed', 'fixture', { current: { price_id: 'price_fixture_2' } }));
+  await h.card()[0].props.onComplete(); await c.sync();
+  h.fail(undefined);
+  h.find((el) => el.type === parts.RefusalNotice).props.onRetry(); await c.sync();
+  assert.equal(h.chat().sentDraft, 1);
+  assert.deepEqual(c.composer(), { text: '', contexts: [], files: [] });
+  // The next message is refused for the per-answer maximum: its next step is a link to Agent settings.
+  h.fail(new client.ApiError(409, 'billing_run_cap_below_call_hold', 'fixture', { per_call_hold: '39', cap: '30', unit: UNIT }));
+  await c.type(TYPED.text); await c.attach(); await c.submit();
+  h.fail(undefined);
+  const notice = c.chat().find((el: any) => el.type === parts.RefusalNotice);
+  assert.equal(notice.props.refusal.next, 'settings');
+  assert.match(renderToStaticMarkup(React.createElement(router.MemoryRouter, null, notice)), /href="\/agent\/settings"/);
+  assert.deepEqual(c.composer(), TYPED, 'refused: the message stays');
+  await h.settings(true); await c.sync(); await h.settings(false); await c.sync();
+  assert.deepEqual(c.composer(), TYPED, 'and comes back from Agent settings');
+  c.unmount(); h.unmount();
+});
+
+test('proof defect 1: a message kept in Agent settings comes back to its own conversation after a switch, never to another', async () => {
+  const { h, c } = await afterSetupSend();
+  await c.type(TYPED.text); await c.attach();
+  await h.settings(true); await c.sync();
+  // From Agent settings the person opens another conversation, then the one they wrote in.
+  h.route('conv_other'); await h.settings(false); await c.sync();
+  assert.deepEqual(c.composer(), { text: '', contexts: [], files: [] }, 'another conversation does not receive it');
+  h.route('conv_fixture'); await c.sync();
+  assert.deepEqual(c.composer(), TYPED, 'its own conversation does');
+  assert.equal(c.mounts(), 3);
+  c.unmount(); h.unmount();
+});
+
+test('proof defect 1: a message whose send completes while the person is in Agent settings does not come back', async () => {
+  const h = await appFixture({ setup: pendingSetup() });
+  const c = await liveChat(h);
+  await c.type('Fixture in flight'); await c.submit();
+  h.serve({ setup: fixtureSetup() });
+  let answer!: () => void;
+  h.failNext(new Promise<void>((resolve) => { answer = resolve; }));   // FIXTURE: the server is still answering
+  const sending = h.card()[0].props.onComplete(); await c.sync();
+  await h.settings(true); await c.sync();
+  answer(); await sending; await c.sync();
+  await h.settings(false); await c.sync();
+  assert.equal(h.chat().sentDraft, 1);
+  assert.deepEqual(c.composer(), { text: '', contexts: [], files: [] }, 'it was sent: it is not put back');
+  c.unmount(); h.unmount();
+});
+
+// ---------------------------------------------------------------- the money chips after an answer (browser proof, defect 2)
+
+/** The open conversation with one answer whose turn is in `status` (FIXTURE, design §3 shapes). */
+const answerIn = (status: string, turn = 'turn_fixture') => [
+  { id: 'msg_u', parent_id: null, role: 'user', status: 'done', body: 'Fixture question', hidden: false, error: null, turn: null, tool_calls: [], created_at: 1 },
+  { id: 'msg_a', parent_id: 'msg_u', role: 'assistant', status: status === 'running' ? 'streaming' : 'done', body: 'Fixture answer', hidden: false, error: null,
+    turn: { id: turn, status, model: 'fixture-model', credential: 'platform' }, tool_calls: [], created_at: 2 }];
+/** FIXTURE: the organization's wallet and this member's allowance after the ledger charged an answer. */
+const chargedPayers = () => { const list = fixturePayers();
+  list.payers[1] = { ...list.payers[1], available: '4990', spent_this_month: '10', remaining_this_month: '1990' }; return list; };
+
+test('proof defect 2: an answer that settles reads the payer list and the status again, once, so the organization chips are current', async () => {
+  const h = await appFixture();
+  const payerReads = () => h.reads.filter((r) => r === 'GET /api/suite/agent/payers').length;
+  const statusReads = () => h.reads.filter((r) => r === 'agent.billing.status').length;
+  const money = h.money(); money.setPayer(money.payers[1]); h.render();
+  const facts = () => h.money().payer.facts;
+  assert.deepEqual([facts().available, facts().monthly.remaining], ['5000', '2000']);
+  const payersBefore = payerReads();
+  assert.equal(await h.chat().send('Fixture paid by the organization'), true);
+  // The answer runs: the stream shows its turn. Nothing is charged yet, and nothing is polled.
+  h.serve({ messages: answerIn('running') }); h.render(); await settle(); h.render(); await settle(); h.render();
+  assert.equal(payerReads(), payersBefore, 'not while it runs');
+  const statusBefore = statusReads();
+  // The turn reaches a final state; the ledger has charged the organization.
+  h.serve({ messages: answerIn('succeeded'), payers: chargedPayers() }); h.render(); await settle(); h.render(); await settle(); h.render();
+  assert.equal(payerReads(), payersBefore + 1, 'the payer list is read again when the answer settles');
+  assert.equal(statusReads(), statusBefore + 1, 'and the status (the personal balance) once');
+  assert.deepEqual([facts().available, facts().monthly.remaining], ['4990', '1990'], 'the chips show the charged figures without a reload');
+  assert.equal(h.money().payer.kind, 'organization');
+  for (let i = 0; i < 3; i++) { h.render(); await settle(); }
+  assert.equal(payerReads(), payersBefore + 1, 'once per answer');
+  assert.equal(statusReads(), statusBefore + 1);
+  // Another conversation with finished answers is not a settlement.
+  h.serve({ messages: answerIn('succeeded', 'turn_elsewhere') }); h.route('conv_other'); await settle(); h.render(); await settle(); h.render();
+  assert.equal(payerReads(), payersBefore + 1);
+  h.unmount();
+  // A quick answer, already final the first time the page sees it (it was never seen running): one read.
+  const quick = await appFixture();
+  const quickReads = () => quick.reads.filter((r) => r === 'GET /api/suite/agent/payers').length;
+  const first = quickReads();
+  assert.equal(await quick.chat().send('Fixture quick'), true);
+  await settle(); quick.render(); await settle(); quick.render();
+  const quickStatus = quick.reads.filter((r) => r === 'agent.billing.status').length;
+  quick.serve({ messages: answerIn('succeeded'), payers: chargedPayers() }); quick.render(); await settle(); quick.render(); await settle(); quick.render();
+  assert.equal(quickReads(), first + 1);
+  assert.equal(quick.reads.filter((r) => r === 'agent.billing.status').length, quickStatus + 1, 'the status too');
+  assert.equal(quick.money().payers[1].facts.available, '4990');
+  quick.unmount();
+});
+
+test('proof defect 2: the payer list is read again when the window regains focus, not by the periodic status read, and a failed re-read keeps the payer', async () => {
+  const listeners: Record<string, (() => void)[]> = {}, timers: { fn: () => void; ms: number }[] = [];
+  let now = 1_000_000;
+  const fakeWindow = { addEventListener: (type: string, fn: () => void) => { (listeners[`window:${type}`] ||= []).push(fn); },
+    removeEventListener: (type: string, fn: () => void) => { listeners[`window:${type}`] = (listeners[`window:${type}`] || []).filter((f) => f !== fn); },
+    setInterval: (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length; }, clearInterval: (n: number) => { timers[n - 1] = { fn() {}, ms: 0 }; } };
+  const fakeDocument = { visibilityState: 'visible', getElementById: () => null,
+    addEventListener: (type: string, fn: () => void) => { (listeners[`document:${type}`] ||= []).push(fn); },
+    removeEventListener: (type: string, fn: () => void) => { listeners[`document:${type}`] = (listeners[`document:${type}`] || []).filter((f) => f !== fn); } };
+  const h = await appFixture({ globals: { window: fakeWindow, document: fakeDocument, Date: { now: () => now } } });
+  const payerReads = () => h.reads.filter((r) => r === 'GET /api/suite/agent/payers').length;
+  const fire = async (key: string) => { for (const fn of listeners[key] ?? []) fn(); await settle(); h.render(); await settle(); h.render(); };
+  const money = h.money(); money.setPayer(money.payers[1]); h.render();
+  const first = payerReads();
+  // FIXTURE: another member's answer was charged to the organization while this tab was in the background.
+  h.serve({ payers: chargedPayers() });
+  now += 60_000; await fire('window:focus');
+  assert.equal(payerReads(), first + 1, 'focus reads the payer list again');
+  assert.equal(h.money().payer.facts.available, '4990');
+  await fire('document:visibilitychange');
+  assert.equal(payerReads(), first + 1, 'focus and visibilitychange together: one read');
+  // The 5-minute status read is not a payer poll.
+  const tick = timers.find((t) => t.ms > 0)!;
+  now += 5 * 60_000; tick.fn(); await settle(); h.render(); await settle(); h.render();
+  assert.equal(payerReads(), first + 1, 'no polling of the payer list');
+  // A re-read that fails keeps what the page showed: the payer stays the organization.
+  h.serve({ payers: new client.ApiError(0, 'network', 'fixture') });
+  now += 60_000; await fire('window:focus');
+  assert.equal(payerReads(), first + 2);
+  assert.equal(h.money().payer.kind, 'organization', 'a failed re-read never switches the payer');
+  assert.equal(h.money().payer.facts.available, '4990');
+  h.unmount();
+});
+
+test('proof minor: the top-up and account links name Synwevo Agent as where the person came from, not the process\'s Docs app id', async () => {
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  // FIXTURE auth state as a combined process reports it: its OIDC application id is Synwevo Docs'.
+  const h = await appFixture({ auth: { site_url: 'https://site.fixture.test', account_url: 'https://accounts.fixture.test/account', app_id: 'docweave' } });
+  // The account page matches `from` against the applications the person may open (server
+  // return_targets); this page's registry id is "agent" (synwevo_suite.agent MANIFEST), so "back"
+  // leads to Synwevo Agent, and an unknown id would fall back to the workspace.
+  assert.equal(h.money().walletUrl, 'https://accounts.fixture.test/account/wallet?from=agent');
+  assert.equal(h.money().accountUrl, 'https://accounts.fixture.test/account?from=agent');
+  assert.equal(h.chat().walletUrl, 'https://accounts.fixture.test/account/wallet?from=agent');
+  // A funds refusal's top-up next step uses it.
+  const refusals = await server.ssrLoadModule('/src/apps/agent/refusals.ts');
+  const html = renderToStaticMarkup(React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_insufficient_funds' }), walletUrl: h.chat().walletUrl }));
+  assert.match(html, /href="https:\/\/accounts\.fixture\.test\/account\/wallet\?from=agent"/);
+  h.unmount();
+  // Without an account URL (a single-host install) the same page of this origin.
+  const local = await appFixture({ auth: { app_id: 'platform' } });
+  assert.equal(local.money().walletUrl, '/account/wallet?from=agent');
+  local.unmount();
 });
 
 test('C1: the model panel beside the composer shows the unit prices, the price version and the per-answer maximum', async () => {

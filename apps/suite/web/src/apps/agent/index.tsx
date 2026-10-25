@@ -89,8 +89,8 @@ function AgentApp() {
   // on screen, never ones the page has since replaced (addendum AD-1).
   const shown = useRef({ status, offer, payer });
   shown.current = { status, offer, payer };
-  const walletUrl = walletHref(auth?.account_url, auth?.app_id);
-  const accountUrl = accountHref(auth?.account_url, auth?.app_id);
+  const walletUrl = walletHref(auth?.account_url, AGENT_APP_ID);
+  const accountUrl = accountHref(auth?.account_url, AGENT_APP_ID);
   const organizationName = (ref: { kind: "organization"; id: string }) => payers.find((p) => payerKey(p) === payerKey(ref))?.name;
   // The one-time setup state (agent.setup.get): undefined while loading, null when unreadable.
   // An unreadable state never blocks a send; the server's refusal then names the missing step.
@@ -102,19 +102,37 @@ function AgentApp() {
   const [draft, setDraft] = useState<Draft | null>(null);
   // The composer kept while the person is in Agent settings (a refusal's next step, the maximum's
   // or a limit's link), for the conversation it was written in, until that composer takes it back
-  // (addendum-2 W10). Chat hands it over as it goes away; only a move to Agent settings keeps it.
+  // (addendum-2 W10) or a send from that conversation completes. Chat hands it over as it goes
+  // away; only a move to Agent settings keeps it.
   const [kept, setKept] = useState<{ key: string; draft: ComposerDraft } | null>(null);
   const inSettings = useRef(settings);
   inSettings.current = settings;
   // Focus for the refusal of the setup step's send: the step is gone, so focus moves to the notice (W10).
   const [refusalFocus, setRefusalFocus] = useState(0);
   const answering = !!conversation?.messages?.some(activeTurn);
+  // The answers this page started or saw running, and those of them it has since seen in a final
+  // state. A settled answer is when the ledger charged its payer, so the money facts beside the
+  // composer are read again then, once per answer and never polled: the payer list (an
+  // organization's balance and this member's allowance) and the status (the personal balance).
+  // An answer already final when the page first sees it (a quick one) counts as well.
+  const watchedTurns = useRef(new Set<string>());
+  const settledTurns = useRef(new Set<string>());
+  for (const m of conversation?.messages ?? []) {
+    const turn = m.turn?.id;
+    if (!turn) continue;
+    if (activeTurn(m)) watchedTurns.current.add(turn);
+    else if (watchedTurns.current.has(turn)) settledTurns.current.add(turn);
+  }
+  const settled = settledTurns.current.size;
   // Addendum AD-1: the price the composer shows is the price a send runs at. The status is read
   // again on demand (a refused stale price), when the window regains focus or becomes visible,
   // and at most every 5 minutes while the page is visible, so a long-open page rarely shows an
   // out-of-date price; a send that still carries one is refused by the server, never run.
   const [statusTick, setStatusTick] = useState(0);
   const statusRead = useRef(0);
+  // The payer list is read again when an answer settles and when the window regains focus.
+  const [payersTick, setPayersTick] = useState(0);
+  const payersRead = useRef(0);
   // The pricing the page was showing when a send was refused for a newer price (a notice, not a gate).
   const [shownBefore, setShownBefore] = useState<Pricing | null>(null);
   useEffect(() => {
@@ -132,7 +150,7 @@ function AgentApp() {
       setOffer(valid);
     });
     return () => abort.abort();
-  }, [billingRequired, tick, answering, statusTick]);
+  }, [billingRequired, tick, answering, statusTick, settled]);
   // Back from Agent settings, where the maximum (W2) and the setup facts (consent, limits: W4) may
   // have changed: both are read again.
   const wasSettings = useRef(settings);
@@ -145,7 +163,12 @@ function AgentApp() {
     const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
     // focus and visibilitychange usually arrive together: one read.
     const again = (after: number) => { if (visible() && Date.now() - statusRead.current >= after) setStatusTick((n) => n + 1); };
-    const onFocus = () => again(2000);
+    // Back to the page: the payer list too (another tab or member may have spent from it); only
+    // the status is read periodically.
+    const onFocus = () => {
+      again(2000);
+      if (visible() && Date.now() - payersRead.current >= 2000) setPayersTick((n) => n + 1);
+    };
     const timer = window.setInterval(() => again(5 * 60_000), 60_000);
     window.addEventListener("focus", onFocus);
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", onFocus);
@@ -164,35 +187,51 @@ function AgentApp() {
     }).catch(() => { if (!abort.signal.aborted) setSetup(null); });
     return () => abort.abort();
   }, [billingRequired, userId, setupTick]);
+  // Whose payer list the page shows, once one was read.
+  const payersOf = useRef<string | null>(null);
   useEffect(() => {
     if (!billingRequired || !userId) return;
+    payersRead.current = Date.now();
     const abort = new AbortController();
     // Organization payment (shared contract "Payer") lists who may pay; before it exists the
-    // endpoint is absent and only the personal wallet is offered.
+    // endpoint is absent and only the personal wallet is offered. A re-read that fails keeps the
+    // list the page shows, so the chosen payer never changes behind the person's back.
     get<unknown>("/api/suite/agent/payers", abort.signal)
-      .then((value) => { if (!abort.signal.aborted) { setPayerList(value); setPayersError(false); } })
-      .catch((e) => { if (!abort.signal.aborted) { setPayerList(undefined); setPayersError(!(e instanceof ApiError && e.status === 404)); } });
+      .then((value) => { if (!abort.signal.aborted) { setPayerList(value); setPayersError(false); payersOf.current = userId; } })
+      .catch((e) => {
+        if (abort.signal.aborted || payersOf.current === userId) return;
+        setPayerList(undefined); setPayersError(!(e instanceof ApiError && e.status === 404));
+      });
     return () => abort.abort();
-  }, [billingRequired, userId]);
+  }, [billingRequired, userId, settled, payersTick]);
   function choose(next: Payer) {
     setPayerRef({ kind: next.kind, id: next.id });
     if (userId) rememberPayer(userId, next);
   }
 
   /** One explicit action of the person (Send, Regenerate, "send again", the setup step's button)
-   *  is one attempt with one fresh idempotency key (addendum-2 W1). The key is sent again only by
-   *  the automatic retry of that same attempt when it got no answer from the server (the
-   *  connection failed, or a gateway in front of Synwevo could not reach it), so a lost response
-   *  is answered from the server's record of the attempt instead of running it twice. Any answer
-   *  from the server ends the attempt: the next click is a new one, so a cause fixed in between
-   *  (terms accepted, the maximum raised, the price read again, a top-up) is never met with the
-   *  replay of the earlier refusal. */
+   *  is one attempt with one fresh idempotency key (addendum-2 W1). The key is sent again by the
+   *  automatic retry of that same attempt when it got no answer from the server (the connection
+   *  failed, or a gateway in front of Synwevo could not reach it), so a lost response is answered
+   *  from the server's record of the attempt instead of running it twice. An attempt that never
+   *  got an answer, even after those retries, may still have been admitted: its key is kept for
+   *  that exact request (operation and body), and the next click that sends it unchanged sends it
+   *  with that key, so an admitted answer is replayed rather than started (and paid) a second time
+   *  (fv-agent-1). Any answer from the server ends the attempt and drops a kept key: the next click
+   *  is a new one, so a cause fixed in between (terms accepted, the maximum raised, the price read
+   *  again, a top-up) is never met with the replay of the earlier refusal. */
+  const unansweredKeys = useRef(new Map<string, string>());
   const write = useCallback(async (operation: string, input: Record<string, unknown>) => {
-    const key = newKey();
+    const request = JSON.stringify([operation, input]);
+    const key = unansweredKeys.current.get(request) ?? newKey();
+    unansweredKeys.current.delete(request);
     for (let attempt = 0; ; attempt += 1) {
       try { return (await op(operation, input, { key })).output; }
       catch (error) {
-        if (attempt < NO_ANSWER_RETRIES.length && unanswered(error)) { await pause(NO_ANSWER_RETRIES[attempt]); continue; }
+        if (unanswered(error)) {
+          if (attempt < NO_ANSWER_RETRIES.length) { await pause(NO_ANSWER_RETRIES[attempt]); continue; }
+          unansweredKeys.current.set(request, key);
+        }
         contextRefused(error, input);
         throw error;
       }
@@ -214,10 +253,14 @@ function AgentApp() {
    *  words when something is missing. */
   async function start(next: Draft) {
     if (billingRequired) shownPrice(shown.current.status);   // held before a conversation is made for it
+    const from = id ?? "new";
     let cid = id ?? retryCreate.current;
     if (!cid) { cid = (await write("agent.conversation.create", {})).id; retryCreate.current = cid; }
     checkTurn(await startTurn({ conversation_id: cid, ...next }));
     retryCreate.current = undefined;
+    // Sent: a copy of this message kept while the person went to Agent settings meanwhile is not
+    // put back in the composer (the composer is cleared when a send completes).
+    setKept((kept) => (kept?.key === from ? null : kept));
     navigate(`/agent/c/${cid}`); setTick((n) => n + 1); await refresh();
   }
   /** The price the composer shows, as a paid send repeats it (AD-1). Without one (the status is
@@ -238,6 +281,7 @@ function AgentApp() {
     try {
       const out = await write("agent.turn.start", body);
       setShownBefore(null);
+      if (typeof out?.turn_id === "string") watchedTurns.current.add(out.turn_id);   // its settlement re-reads the money facts
       return out;
     } catch (error) {
       if (errorCode(error) === "billing_price_changed") {
@@ -415,8 +459,15 @@ function AgentApp() {
   </div>;
 }
 
+/** Where the person comes from, for the account pages' "back to <application>" link (`from=<id>`,
+ *  matched there against the applications the server lists for the person, never a URL): this page
+ *  is Synwevo Agent (its registry id, synwevo_suite.agent MANIFEST), not the serving process's OIDC
+ *  application (`auth.app_id`: "docweave" on a combined process, "platform" on the workplace origin),
+ *  which would send the person back to Synwevo Docs or to no listed application. */
+const AGENT_APP_ID = "agent";
 /** The waits before the automatic retries of an attempt that got no answer (W1): two, then the
- *  attempt ends with the connection error and the message stays in the composer. */
+ *  attempt ends with the connection error and the message stays in the composer (its key kept
+ *  for the same request, fv-agent-1). */
 const NO_ANSWER_RETRIES = [1000, 3000];
 /** No answer from Synwevo: the request may or may not have arrived, so only the same key may ask again. */
 function unanswered(error: unknown): boolean {

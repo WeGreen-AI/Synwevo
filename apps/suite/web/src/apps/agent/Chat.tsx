@@ -166,7 +166,16 @@ export default function Chat({ conversation, loading, error, connection, configu
   const pickerSpaces = contextSpaces(spaces, conversation?.scope ?? null);
   const pickerScope = JSON.stringify([conversation?.id, conversation?.scope, pickerSpaces.map((ws) => ws.workspace_id)]);
   const outsideScope = conversation?.scope != null && selectedContexts.some((item) => !conversation.scope!.includes(item.reference.workspace_id));
-  useEffect(() => { if (sentDraft) { setText(""); setSelectedContexts([]); setSelectedFiles([]); setFailure(undefined); stick.current = true; input.current?.focus(); } }, [sentDraft]);
+  // `sentDraft` counts the sends the page made for this composer's message (the setup step's
+  // button, "send again"): each one that completes clears it. A composer that mounts (back from
+  // Agent settings, another conversation) starts from the count as it is then, so a send from
+  // before it existed never clears the message it was given back.
+  const sentSeen = useRef(sentDraft);
+  useEffect(() => {
+    if (sentDraft === sentSeen.current) return;
+    sentSeen.current = sentDraft;
+    setText(""); setSelectedContexts([]); setSelectedFiles([]); setFailure(undefined); stick.current = true; input.current?.focus();
+  }, [sentDraft]);
   // A kept message is taken once; the composer as it stands goes back to the page when this chat
   // goes away (W10: a refusal whose next step is Agent settings must not lose the message).
   const composer = useRef<{ draft: ComposerDraft; leave?: (draft: ComposerDraft) => void }>({ draft: { text, contexts: selectedContexts, files: selectedFiles } });
