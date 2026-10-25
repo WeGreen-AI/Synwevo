@@ -6027,9 +6027,9 @@ export const messages = {
     "en": "Everything runs on this server; files are never sent to external services. Scaling and date shifting use one factor or offset per column, so totals and ordering are preserved.",
     "zh-Hant": "所有處理都在本伺服器完成，文件不發送到外部服務。數值縮放與日期平移對整列使用同一比例或天數，保留合計與排序關係。"
   },
-  "均为开源组件；不使用付费组件或外部云服务": {
-    "en": "All open-source components; no paid components or external cloud services",
-    "zh-Hant": "均為開源組件；不使用付費組件或外部雲服務"
+  "均为开源组件": {
+    "en": "All open-source components",
+    "zh-Hant": "均為開源組件"
   },
   "当前部署：排版引擎 ": {
     "en": "This deployment: layout engine ",

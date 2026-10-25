@@ -225,12 +225,82 @@ def test_the_copy_parser_is_not_fooled_by_a_similar_path():
 
 
 def test_notice_lists_every_third_party_component():
-    """NOTICE is generated from THIRD_PARTY; this stops the two drifting apart."""
+    """NOTICE repeats THIRD_PARTY by hand; this stops the two drifting apart — name, licence, role
+    and order, not only "every name appears somewhere"."""
     notice = (ROOT / "NOTICE").read_text(encoding="utf-8")
-    for name, lic, _role in licensing.THIRD_PARTY:
-        assert name in notice, f"NOTICE 缺少组件 {name}"
-        assert lic in notice, f"NOTICE 中 {name} 的许可与 THIRD_PARTY 不一致"
+    block = "\n".join(f"* {name}\n    许可：{lic}\n    用途：{role}\n" for name, lic, role in licensing.THIRD_PARTY)
+    assert block in notice, "NOTICE 的第三方组件一节必须与 THIRD_PARTY 逐条一致（名称、许可、用途、顺序）"
     assert "AGPL-3.0" in notice
+
+
+def _tokens(text: str) -> set[str]:
+    """Package names as they appear in a THIRD_PARTY row, normalised like PEP 503 names."""
+    import re
+    return {re.sub(r"[-_.]+", "-", t.lower()) for t in re.findall(r"@?[A-Za-z0-9][A-Za-z0-9._/-]*", text)}
+
+
+def _named() -> set[str]:
+    return set().union(*(_tokens(name) for name, _lic, _role in licensing.THIRD_PARTY))
+
+
+# Pins in infra/server/requirements.lock that only build or test the program (pip, setuptools and
+# wheel build it; pytest and Playwright test it, with what they bring). Every other pin is installed
+# by infra/server/requirements.txt and runs in the deployment.
+BUILD_AND_TEST_ONLY = {"greenlet", "iniconfig", "packaging", "pip", "playwright", "pluggy", "pyee",
+                       "pygments", "pytest", "pyyaml", "setuptools", "wheel"}
+
+
+def test_every_runtime_python_pin_is_attributed():
+    """The list used to stop at the original Docs set: py-vapid and certifi (MPL-2.0), the Anthropic
+    and MCP SDKs, pycrdt and a dozen more ran in production unlisted."""
+    import re
+    lock = (ROOT / "infra" / "server" / "requirements.lock").read_text(encoding="utf-8")
+    pins = {re.sub(r"[-_.]+", "-", m.group(1).lower())
+            for m in re.finditer(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==", lock, re.M)}
+    assert BUILD_AND_TEST_ONLY <= pins, f"例外表里这些包已不在锁文件中，删掉它们：{sorted(BUILD_AND_TEST_ONLY - pins)}"
+    missing = sorted(pins - BUILD_AND_TEST_ONLY - _named())
+    assert not missing, f"这些运行时依赖没有写进 THIRD_PARTY 与 NOTICE：{missing}"
+
+
+def test_every_front_end_runtime_dependency_is_attributed():
+    """Each direct runtime dependency of a shell has a row (a scope such as @tiptap counts for its
+    packages); every other package the shells bundle carries a licence the catch-all row states."""
+    import json
+    packages = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))["packages"]
+    named = _named()
+    direct = set()
+    for path, entry in packages.items():
+        if path and "node_modules" not in path:                      # a workspace
+            direct |= set(entry.get("dependencies") or {})
+    direct = {d for d in direct if not d.startswith(("@synwevo/", "@types/"))}
+
+    def covered(dep: str) -> bool:
+        canon = next(iter(_tokens(dep)))
+        return canon in named or (canon.startswith("@") and canon[1:].split("/")[0] in named)
+
+    missing = sorted(d for d in direct if not covered(d))
+    assert not missing, f"这些前端运行时依赖没有写进 THIRD_PARTY 与 NOTICE：{missing}"
+    catch_all = [lic for name, lic, _role in licensing.THIRD_PARTY if "package-lock.json" in name]
+    assert len(catch_all) == 1
+    allowed = {part.strip() for part in catch_all[0].split("/")}
+    bundled = {path.removeprefix("node_modules/"): entry.get("license") for path, entry in packages.items()
+               if path.startswith("node_modules/") and not entry.get("dev") and not entry.get("devOptional")
+               and not entry.get("link")}
+    assert bundled, "锁文件里没有非开发依赖？"
+    other = sorted(f"{name} ({lic})" for name, lic in bundled.items() if lic not in allowed)
+    assert not other, f"这些随界面打包的依赖的许可不在兜底行（{catch_all[0]}）里：{other}"
+
+
+def test_every_attribution_has_its_translation():
+    """The About page shows these rows in three languages; a row without a catalogue entry would
+    show Chinese inside the English page."""
+    import re
+    web = ROOT / "apps" / "docs" / "web" / "src"
+    catalogues = "".join((web / f).read_text(encoding="utf-8") for f in ("messages.server.ts", "messages.ts"))
+    cjk = re.compile(r"[㐀-鿿]")
+    untranslated = sorted({text for row in licensing.THIRD_PARTY for text in row
+                           if cjk.search(text) and f'"{text}"' not in catalogues and f"'{text}'" not in catalogues})
+    assert not untranslated, f"Docs 外壳的目录缺少这些关于页文案的翻译：{untranslated}"
 
 
 # SHA-256 of the licence texts exactly as their stewards publish them: the GNU AGPL version 3 from

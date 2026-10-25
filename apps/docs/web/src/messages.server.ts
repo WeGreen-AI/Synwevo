@@ -424,10 +424,6 @@ export const serverMessages = {
     "en": "Legacy conversion, PDF export, actual pagination and formula fallback",
     "zh-Hant": "舊格式轉換、PDF 導出、真實分頁、公式後備計算"
   },
-  "Tesseract OCR（外部程序）+ chi_sim / eng 模型": {
-    "en": "Tesseract OCR (external program) + chi_sim / eng models",
-    "zh-Hant": "Tesseract OCR（外部程序）+ chi_sim / eng 模型"
-  },
   "扫描件 / 图片本地 OCR": {
     "en": "Local OCR for scans and images",
     "zh-Hant": "掃描件 / 圖片本地 OCR"
@@ -455,10 +451,6 @@ export const serverMessages = {
   "字体子集": {
     "en": "Font subsetting",
     "zh-Hant": "字體子集"
-  },
-  "argon2-cffi（含 argon2-cffi-bindings、cffi、pycparser）": {
-    "en": "argon2-cffi (including argon2-cffi-bindings, cffi and pycparser)",
-    "zh-Hant": "argon2-cffi（含 argon2-cffi-bindings、cffi、pycparser）"
   },
   "口令哈希（Argon2id；参数经部署机实测，见 synwevo_core/passwords.py）": {
     "en": "Password hashing (Argon2id; parameters measured on the deployment host; see synwevo_core/passwords.py)",
@@ -515,6 +507,118 @@ export const serverMessages = {
   "PDF 中文字体": {
     "en": "Chinese font for PDFs",
     "zh-Hant": "PDF 中文字體"
+  },
+  "Tesseract OCR（外部程序）+ tessdata_fast 模型（chi_sim / eng / osd）": {
+    "en": "Tesseract OCR (external program) + tessdata_fast models (chi_sim / eng / osd)",
+    "zh-Hant": "Tesseract OCR（外部程式）+ tessdata_fast 模型（chi_sim / eng / osd）"
+  },
+  "Pydantic 与 FastAPI 的运行时依赖": {
+    "en": "Runtime dependencies of Pydantic and FastAPI",
+    "zh-Hant": "Pydantic 與 FastAPI 的執行期相依套件"
+  },
+  "Uvicorn 的 WebSocket 与 HTTP/1.1 协议实现、命令行解析": {
+    "en": "WebSocket and HTTP/1.1 protocol implementations and command-line parsing for Uvicorn",
+    "zh-Hant": "Uvicorn 的 WebSocket 與 HTTP/1.1 協定實作、命令列解析"
+  },
+  "MIT / MIT 或 Apache-2.0 / BSD-3-Clause": {
+    "en": "MIT / MIT or Apache-2.0 / BSD-3-Clause",
+    "zh-Hant": "MIT / MIT 或 Apache-2.0 / BSD-3-Clause"
+  },
+  "异步运行时与国际化域名": {
+    "en": "Async runtime and internationalized domain names",
+    "zh-Hant": "非同步執行環境與國際化網域名稱"
+  },
+  "多文件上传": {
+    "en": "Multi-file upload",
+    "zh-Hant": "多檔案上傳"
+  },
+  "出站 HTTP 客户端（登出回调、MCP、模型调用）": {
+    "en": "Outbound HTTP clients (logout callbacks, MCP, model calls)",
+    "zh-Hant": "對外 HTTP 用戶端（登出回呼、MCP、模型呼叫）"
+  },
+  "出站 HTTPS 的根证书与系统证书库": {
+    "en": "Root certificates and the system certificate store for outbound HTTPS",
+    "zh-Hant": "對外 HTTPS 的根憑證與系統憑證庫"
+  },
+  "openpyxl 与 python-pptx 的依赖": {
+    "en": "Dependencies of openpyxl and python-pptx",
+    "zh-Hant": "openpyxl 與 python-pptx 的相依套件"
+  },
+  "Web 推送（VAPID 签名与载荷加密）": {
+    "en": "Web Push (VAPID signatures and payload encryption)",
+    "zh-Hant": "Web 推播（VAPID 簽章與酬載加密）"
+  },
+  "文档实时协同（服务端共享文档）": {
+    "en": "Live document co-editing (shared document on the server)",
+    "zh-Hant": "文件即時協作（伺服器端共享文件）"
+  },
+  "个人 Agent 调用所配置的模型提供方（Anthropic）": {
+    "en": "The personal Agent's calls to the configured model provider (Anthropic)",
+    "zh-Hant": "個人 Agent 呼叫所設定的模型提供者（Anthropic）"
+  },
+  "MCP 服务端与 Agent 的 MCP 客户端": {
+    "en": "MCP server and the Agent's MCP client",
+    "zh-Hant": "MCP 伺服器與 Agent 的 MCP 用戶端"
+  },
+  "按 JSON Schema 校验外部工具的输入": {
+    "en": "Validating external tool input against JSON Schema",
+    "zh-Hant": "依 JSON Schema 驗證外部工具的輸入"
+  },
+  "MCP 服务端的流式响应": {
+    "en": "Streamed responses of the MCP server",
+    "zh-Hant": "MCP 伺服器的串流回應"
+  },
+  "MCP SDK 的可观测性接口（未配置导出器）": {
+    "en": "Observability interface of the MCP SDK (no exporter configured)",
+    "zh-Hant": "MCP SDK 的可觀測性介面（未設定匯出器）"
+  },
+  "MCP SDK 授权模块的依赖": {
+    "en": "Dependency of the MCP SDK's authorization module",
+    "zh-Hant": "MCP SDK 授權模組的相依套件"
+  },
+  "类型标注的运行时支持": {
+    "en": "Runtime support for type annotations",
+    "zh-Hant": "型別標註的執行期支援"
+  },
+  "文档实时协同（浏览器端）": {
+    "en": "Live document co-editing (in the browser)",
+    "zh-Hant": "文件即時協作（瀏覽器端）"
+  },
+  "TOTP 绑定二维码": {
+    "en": "QR code for setting up TOTP",
+    "zh-Hant": "TOTP 綁定 QR 碼"
+  },
+  "其余前端依赖（package-lock.json 中的非开发依赖）": {
+    "en": "Other front-end dependencies (non-development entries in package-lock.json)",
+    "zh-Hant": "其餘前端相依套件（package-lock.json 中的非開發相依套件）"
+  },
+  "随界面一同打包": {
+    "en": "Bundled with the interface",
+    "zh-Hant": "隨介面一同打包"
+  },
+  "Noto Sans / Serif CJK（fonts-noto-cjk，镜像内安装）": {
+    "en": "Noto Sans / Serif CJK (fonts-noto-cjk, installed in the image)",
+    "zh-Hant": "Noto Sans / Serif CJK（fonts-noto-cjk，映像內安裝）"
+  },
+  "LibreOffice 导出 PDF 时的中文字体": {
+    "en": "Chinese fonts for PDF export by LibreOffice",
+    "zh-Hant": "LibreOffice 匯出 PDF 時的中文字型"
+  },
+  "ClamAV（生产部署的独立容器）": {
+    "en": "ClamAV (separate container in the production deployment)",
+    "zh-Hant": "ClamAV（正式部署的獨立容器）"
+  },
+  "上传文件的恶意软件扫描（经网络调用，不与本程序链接）": {
+    "en": "Malware scanning of uploads (called over the network, not linked with this program)",
+    "zh-Hant": "上傳檔案的惡意軟體掃描（經網路呼叫，不與本程式連結）"
+  },
+  "nginx（生产部署的反向代理容器）": {
+    "en": "nginx (reverse-proxy container in the production deployment)",
+    "zh-Hant": "nginx（正式部署的反向代理容器）"
+  },
+  "TLS 终止与反向代理": {
+    "en": "TLS termination and reverse proxy",
+    "zh-Hant": "TLS 終止與反向代理"
   },
   "Synwevo Docs · 文档工作台": {
     "en": "Synwevo Docs · Document workspace",

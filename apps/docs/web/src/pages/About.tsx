@@ -25,7 +25,7 @@ export default function AboutPage() {
       {a && (
         <div className="col gap12">
           <div className="card">
-            <div className="card-h"><b>{tr("第三方组件")}</b><span className="spacer" /><span className="tiny muted">{tr("均为开源组件；不使用付费组件或外部云服务")}</span></div>
+            <div className="card-h"><b>{tr("第三方组件")}</b><span className="spacer" /><span className="tiny muted">{tr("均为开源组件")}</span></div>
             <table className="tbl">
               <thead><tr><th>{tr("组件")}</th><th>{tr("许可证")}</th><th>{tr("用途")}</th></tr></thead>
               <tbody>{a.third_party.map((t) => <tr key={t.name}><td>{serverText(t.name)}</td><td>{serverText(t.license)}</td><td className="muted">{serverText(t.role)}</td></tr>)}</tbody>

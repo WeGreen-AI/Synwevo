@@ -53,30 +53,58 @@ MAX_FILE = 5 * 1024 * 1024
 PROGRAM_LICENSE = "AGPL-3.0-or-later"
 SDK_LICENSE = "Apache-2.0"
 
+# Every component the running deployment uses or ships, grouped by what it does. "Every" is held by
+# apps/docs/tests/test_licensing.py: each runtime pin in infra/server/requirements.lock and each
+# direct front-end dependency must be named in a row, and every non-development npm package must
+# carry a licence the catch-all row states. NOTICE repeats this table by hand; a test keeps the two
+# in step. The production services that run beside the image (ClamAV, nginx) are listed too.
 THIRD_PARTY = [
     # name, licence, role
     ("PyMuPDF", "AGPL-3.0 或 Artifex 商业许可", "PDF 模板、图片模板、PDF 读取（pymupdf 引擎）"),
     ("pypdfium2 / PDFium", "Apache-2.0 或 BSD-3-Clause（绑定）；BSD-3-Clause / Apache-2.0（PDFium）", "PDF 读取（pdfium 引擎）"),
     ("LibreOffice（外部程序）", "MPL-2.0", "旧格式转换、PDF 导出、真实分页、公式后备计算"),
-    ("Tesseract OCR（外部程序）+ chi_sim / eng 模型", "Apache-2.0", "扫描件 / 图片本地 OCR"),
+    ("Tesseract OCR（外部程序）+ tessdata_fast 模型（chi_sim / eng / osd）", "Apache-2.0", "扫描件 / 图片本地 OCR"),
     ("FastAPI / Starlette / Uvicorn / Pydantic", "MIT / BSD-3-Clause", "Web 服务"),
+    ("pydantic-core / annotated-types / annotated-doc / typing-inspection", "MIT", "Pydantic 与 FastAPI 的运行时依赖"),
+    ("websockets / h11 / click", "BSD-3-Clause / MIT / BSD-3-Clause", "Uvicorn 的 WebSocket 与 HTTP/1.1 协议实现、命令行解析"),
+    ("anyio / sniffio / idna", "MIT / MIT 或 Apache-2.0 / BSD-3-Clause", "异步运行时与国际化域名"),
+    ("python-multipart", "Apache-2.0", "多文件上传"),
+    ("httpx / httpcore / httpx2 / httpcore2", "BSD-3-Clause", "出站 HTTP 客户端（登出回调、MCP、模型调用）"),
+    ("certifi / truststore", "MPL-2.0 / MIT", "出站 HTTPS 的根证书与系统证书库"),
     ("openpyxl", "MIT", "XLSX 读取与预览"),
     ("python-docx / python-pptx", "MIT", "DOCX / PPTX 读取与内置模板生成"),
+    ("et-xmlfile / XlsxWriter", "MIT / BSD-2-Clause", "openpyxl 与 python-pptx 的依赖"),
     ("lxml", "BSD-3-Clause", "OOXML 直接编辑"),
     ("Pillow", "MIT-CMU (HPND)", "图片处理"),
     ("fontTools", "MIT", "字体子集"),
-    ("argon2-cffi（含 argon2-cffi-bindings、cffi、pycparser）", "MIT",
+    ("argon2-cffi / argon2-cffi-bindings / cffi / pycparser", "MIT / MIT / MIT-0 / BSD-3-Clause",
      "口令哈希（Argon2id；参数经部署机实测，见 synwevo_core/passwords.py）"),
     ("PyOTP", "MIT", "TOTP 第二因素"),
     ("cryptography", "Apache-2.0 或 BSD-3-Clause", "TOTP 种子落地加密（AES-256-GCM）、WebAuthn 签名校验"),
+    ("py-vapid / http-ece", "MPL-2.0 / MIT", "Web 推送（VAPID 签名与载荷加密）"),
     ("webauthn（Duo）", "BSD-3-Clause", "Passkey / WebAuthn 注册与登录仪式（协议实现）"),
-    ("cbor2 / pyOpenSSL / pyasn1", "MIT / Apache-2.0 / BSD-2-Clause", "WebAuthn 的 COSE 与证书解析依赖"),
+    ("cbor2 / pyOpenSSL / pyasn1 / pyasn1-modules", "MIT / Apache-2.0 / BSD-2-Clause / BSD-2-Clause",
+     "WebAuthn 的 COSE 与证书解析依赖"),
     ("Authlib", "BSD-3-Clause", "OAuth 2.0 / OpenID Connect 授权服务器与客户端（协议实现）"),
     ("charset-normalizer", "MIT", "CSV 编码识别"),
     ("xlrd / olefile", "BSD-3-Clause / BSD-2-Clause", "XLS 读取、旧格式检测"),
-    ("React / React Router / Vite / TypeScript", "MIT / Apache-2.0", "界面"),
+    ("pycrdt", "MIT", "文档实时协同（服务端共享文档）"),
+    ("anthropic / jiter / docstring-parser", "MIT", "个人 Agent 调用所配置的模型提供方（Anthropic）"),
+    ("mcp / mcp-types", "MIT", "MCP 服务端与 Agent 的 MCP 客户端"),
+    ("jsonschema / jsonschema-specifications / referencing / rpds-py / attrs", "MIT", "按 JSON Schema 校验外部工具的输入"),
+    ("sse-starlette", "BSD-3-Clause", "MCP 服务端的流式响应"),
+    ("opentelemetry-api", "Apache-2.0", "MCP SDK 的可观测性接口（未配置导出器）"),
+    ("PyJWT", "MIT", "MCP SDK 授权模块的依赖"),
+    ("typing_extensions", "PSF-2.0", "类型标注的运行时支持"),
+    ("react / react-dom / react-router-dom / Vite / TypeScript", "MIT / Apache-2.0", "界面"),
     ("TipTap（开源部分）", "MIT", "内置文档编辑器"),
+    ("Yjs / y-websocket / y-protocols / lib0 / @tiptap/y-tiptap", "MIT", "文档实时协同（浏览器端）"),
+    ("qrcode", "MIT", "TOTP 绑定二维码"),
+    ("其余前端依赖（package-lock.json 中的非开发依赖）", "MIT / ISC", "随界面一同打包"),
     ("Droid Sans Fallback（随 PyMuPDF 分发的字体）", "Apache-2.0", "PDF 中文字体"),
+    ("Noto Sans / Serif CJK（fonts-noto-cjk，镜像内安装）", "OFL-1.1", "LibreOffice 导出 PDF 时的中文字体"),
+    ("ClamAV（生产部署的独立容器）", "GPL-2.0-only", "上传文件的恶意软件扫描（经网络调用，不与本程序链接）"),
+    ("nginx（生产部署的反向代理容器）", "BSD-2-Clause", "TLS 终止与反向代理"),
 ]
 
 
