@@ -1,34 +1,103 @@
 name: Verify and deploy Synwevo
+# Branches (AGENTS.md「分支与发布」): every change reaches `dev` through a pull request, and `dev` is the
+# only source of production deploys. `main` is the public open-source branch, a merge-mirror of dev
+# that only receives dev→main sync pull requests (main-sync-guard.yml). A push to main runs nothing.
+#
+# `verify` is the status check the branch rules require on dev and main, so it must report on every
+# pull request into either branch: the pull_request trigger has no path filter. Records under docs/
+# are not part of the product, except docs/integration/ (tests compare its generated contracts with
+# the code) and docs/operations.md (a test parses its model-risk policy). A pull request that only
+# changes records is recognised inside the job, runs the guards that read every tracked file and
+# reports success; whatever the classifier cannot prove to be records-only gets the full verify.
+# A push to dev that only changes records neither verifies nor deploys (same rule, as a path filter).
+# workflow_dispatch runs everything and deploys only when dispatched on dev.
 # Actions minutes are a budget. The complete runtime suite is kept in one bounded verify job.
-# Records under docs/ are not part of the product — nothing at
-# runtime reads them — so a push that only changes them does not verify or deploy. docs/integration/ stays
-# in: tests compare its generated OpenAPI file with the code. workflow_dispatch still runs anything.
 on:
   pull_request:
-    paths: ['**', '!docs/**', 'docs/integration/**']
+    branches: [dev, main]
   push:
-    branches: [main]
-    paths: ['**', '!docs/**', 'docs/integration/**']
+    branches: [dev]
+    paths: ['**', '!docs/**', 'docs/integration/**', 'docs/operations.md']
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: synwevo-${{ github.event_name == 'pull_request' && github.ref || 'production' }}
-  cancel-in-progress: false
+  # Runs that can deploy (push or dispatch on dev) share one group and run in push order: an older
+  # commit never deploys after a newer one, and a newer pending run replaces an older pending one.
+  # Pull requests and runs on other refs each have their own group, so they never cancel or hold up
+  # a deploy; a new push to a pull request cancels that pull request's older verify.
+  group: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/dev') && 'synwevo-production' || format('synwevo-verify-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   verify:
+    # The job id is the check name the branch rules require: keep it `verify`, without a `name:` or
+    # a matrix (either would change the reported name and leave the required check waiting).
     runs-on: ubuntu-24.04
     # Run 36997527305: 2,922 tests took 39m37s at ~69% (before an SDK install failure).
     # Allow the complete suite plus image build; retain every test and the 3 GiB / 2 CPU limits.
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with: {persist-credentials: false}
+        with:
+          persist-credentials: false
+          # A pull request checks out its test merge commit, whose first parent is the base branch:
+          # depth 2 is enough to list exactly what the pull request changes.
+          fetch-depth: 2
+      - name: Classify the change
+        id: changes
+        run: |
+          # Fail closed. The full verify is the default; only a complete, error-free proof that every
+          # changed path is a record lowers it. Every exit status is checked by hand (no `set -e`:
+          # `grep -c` exits 1 when it counts zero) and nothing is piped (under pipefail a reader that
+          # stops early turns a match into a failure). Any later step reads `!= 'false'`, so even a
+          # missing output means the full verify.
+          set +e
+          code=true
+          reason='not a pull request'
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            reason='the changed paths could not be listed'
+            paths="$RUNNER_TEMP/changed-paths.txt"
+            # --no-renames lists both sides of a move; a name git has to quote starts with '"' and
+            # therefore never counts as a record.
+            if git rev-parse --verify --quiet 'HEAD^2^{commit}' > /dev/null \
+               && git -c core.quotePath=false diff --name-only --no-renames 'HEAD^1' HEAD > "$paths"; then
+              total=$(grep -c '' "$paths"); s1=$?
+              outside=$(grep -c -v -E '^docs/' "$paths"); s2=$?
+              tested=$(grep -c -E '^docs/(integration/|operations\.md$)' "$paths"); s3=$?
+              if [ "$s1" -gt 1 ] || [ "$s2" -gt 1 ] || [ "$s3" -gt 1 ]; then
+                reason='the changed paths could not be read'
+              elif [ "$total" -eq 0 ]; then
+                reason='the pull request changes no file'
+              elif [ "$outside" -ne 0 ] || [ "$tested" -ne 0 ]; then
+                reason="$total changed paths: $outside outside docs/, $tested under docs/ that tests read"
+              else
+                code=false
+                reason="all $total changed paths are records under docs/"
+              fi
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = false ]; then
+            echo "Records-only pull request ($reason): only the repository-wide guards run."
+          else
+            echo "Full verify: $reason."
+          fi
+      - name: Repository-wide guards (records-only pull request)
+        # Both read every tracked path, docs/ included, and need only the standard library: a records
+        # pull request cannot add an unclassified old-brand string or a symbolic link that the next
+        # code change would then fail on.
+        if: steps.changes.outputs.code == 'false'
+        run: |
+          python3 scripts/check_brand.py
+          python3 scripts/check_boundaries.py
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: steps.changes.outputs.code != 'false'
         with: {python-version: '3.12', cache: pip, cache-dependency-path: '**/requirements*.txt'}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.changes.outputs.code != 'false'
         with: {node-version: '22', cache: npm}
       - name: Install locked dependencies
+        if: steps.changes.outputs.code != 'false'
         run: |
           python -m pip install -r infra/server/requirements-build.txt
           python -m pip install -r requirements-dev.txt
@@ -36,6 +105,7 @@ jobs:
           python -m pip check
           npm ci
       - name: Verify and build
+        if: steps.changes.outputs.code != 'false'
         run: |
           python scripts/check_boundaries.py
           python scripts/check_brand.py
@@ -49,6 +119,11 @@ jobs:
           # the live table's browser sync engine against the real room (Node + Python: only here;
           # the runtime image below has no Node and skips it)
           SYNWEVO_SHEET_CLIENTS=required python -m pytest apps/docs/tests/test_sheet_live_clients.py -q
+          # Licensing against the repository checkout as well as inside the image: the image holds
+          # only what infra/Dockerfile copies, so a LICENSE or other promised source path that a COPY
+          # leaves out is simply absent there and its check skips; here it is present and must be copied.
+          python -m pytest apps/docs/tests/test_licensing.py -q
+          # Deployment safety regressions, this workflow's branch model and its records-only classifier.
           python -m unittest discover -s infra/production/tests -v
           # Both SDKs' unit tests (loopback stubs, no network). They sit outside the repository's
           # pytest testpaths, so without this step an SDK regression would ship unnoticed.
@@ -56,6 +131,7 @@ jobs:
           python -m pytest apps/docs/sdk/python/tests -q
           node --test apps/docs/sdk/typescript/test/*.test.mjs
       - name: Verify the deployment runtime
+        if: steps.changes.outputs.code != 'false'
         run: |
           df -h "$RUNNER_TEMP"
           df -i "$RUNNER_TEMP"
@@ -84,7 +160,7 @@ jobs:
           docker run --rm --init --network none --memory 3g --cpus 2 \
             --mount "type=bind,source=$RUNNER_TEMP/ci-test-artifacts,target=/tmp/ci-test-artifacts" synwevo:verify
       - name: Runtime test disk diagnostics
-        if: always()
+        if: always() && steps.changes.outputs.code != 'false'
         run: |
           df -h "$RUNNER_TEMP"
           df -i "$RUNNER_TEMP"
@@ -94,12 +170,56 @@ jobs:
             sudo du -h --max-depth=2 "$RUNNER_TEMP/ci-test-artifacts" | sort -hr | sed -n '1,40p'
           fi
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    # Only dev of this repository deploys, and only from a push or a dispatch: pull requests, forks
+    # and other branches never reach the environment, whose branch policy admits dev only as well.
+    if: >-
+      github.repository == 'WeGreen-AI/Synwevo' && github.ref == 'refs/heads/dev' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: verify
     environment: production
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      deployments: read   # the guard below reads which commit production runs
     steps:
+      - name: Refuse a commit older than the one in production
+        # Older code on a database that a newer release already migrated is a silent rollback, and a
+        # re-run keeps its original commit. Production runs the commit of the newest production
+        # deployment that succeeded (this job's own has not yet). The same commit is a redeploy and
+        # passes — so does the first dev deploy of the commit main deployed last; a newer one passes;
+        # an older or unrelated one is refused. A re-run must also still be dev's head, because a
+        # deploy through the host receiver leaves no deployment record here. To deploy dev's head
+        # again, dispatch this workflow on dev; to roll back, see infra/production/README.md.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="repos/$GITHUB_REPOSITORY"
+          gh api "$api/deployments?environment=production&per_page=100" \
+            --jq '.[] | "\(.id) \(.sha)"' > "$RUNNER_TEMP/deployments.txt"
+          deployed=''
+          while read -r id sha; do
+            ok=$(gh api "$api/deployments/$id/statuses?per_page=100" --jq 'any(.[]; .state == "success")')
+            if [ "$ok" = true ]; then deployed=$sha; break; fi
+          done < "$RUNNER_TEMP/deployments.txt"
+          if [ -z "$deployed" ]; then
+            echo "::error::No successful production deployment among the newest 100, so the commit production runs is unknown. Deploy through the host receiver (infra/production/README.md) instead."
+            exit 1
+          fi
+          relation=$(gh api "$api/compare/$deployed...$GITHUB_SHA?per_page=1" --jq .status)
+          case "$relation" in
+            identical|ahead) echo "Production runs $deployed; $GITHUB_SHA is $relation." ;;
+            *) echo "::error::Production runs $deployed and $GITHUB_SHA is $relation relative to it: refusing to deploy an older or unrelated commit. Dispatch this workflow on dev to deploy dev's head."
+               exit 1 ;;
+          esac
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            head=$(gh api "$api/branches/dev" --jq .commit.sha)
+            if [ "$head" != "$GITHUB_SHA" ]; then
+              echo "::error::This re-run would deploy $GITHUB_SHA, but dev is at $head. Dispatch this workflow on dev instead."
+              exit 1
+            fi
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with: {persist-credentials: false}
       - name: Deploy through restricted SSH command
@@ -115,7 +235,22 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/synwevo-ssh/known_hosts"
           trap 'rm -f "$RUNNER_TEMP/synwevo-ssh/key"' EXIT
           git archive --format=tar HEAD | gzip -n > "$RUNNER_TEMP/source.tar.gz"
-          ssh -i "$RUNNER_TEMP/synwevo-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/synwevo-ssh/known_hosts" -o ConnectTimeout=20 "synwevo-deploy@$DEPLOY_HOST" "deploy $GITHUB_SHA" < "$RUNNER_TEMP/source.tar.gz"
+          # The receiver's build output describes the host: it stays in this runner's temporary
+          # directory, and the public log keeps the receipt, or the last 30 lines when it fails.
+          log="$RUNNER_TEMP/receiver.log"
+          if ! ssh -i "$RUNNER_TEMP/synwevo-ssh/key" -o BatchMode=yes -o IdentitiesOnly=yes \
+               -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/synwevo-ssh/known_hosts" \
+               -o ConnectTimeout=20 "synwevo-deploy@$DEPLOY_HOST" "deploy $GITHUB_SHA" \
+               < "$RUNNER_TEMP/source.tar.gz" > "$log" 2>&1; then
+            echo "::error::The receiver did not deploy $GITHUB_SHA; its last 30 lines follow."
+            tail -n 30 "$log"
+            exit 1
+          fi
+          if grep -E '^\{"deployed": ' "$log" > "$RUNNER_TEMP/receipt.txt"; then
+            tail -n 1 "$RUNNER_TEMP/receipt.txt"
+          else
+            echo "::warning::The receiver exited successfully but printed no receipt line."
+          fi
       - name: Verify public health
         env:
           # Space-separated public hosts. The operator sets the repository variable at the
