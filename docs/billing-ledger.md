@@ -226,6 +226,55 @@ update both cached balances atomically, reject negative wallet balance and integ
 Journal, price, order, payment, usage, settlement and audit event facts reject mutation.
 Corrections need future explicitly modeled reversal records, never editing existing facts.
 
+### Cost rollup (derived from the cost facts; D17 §6)
+
+The platform cost admission and the velocity brake read an exact rollup of the provider-cost
+facts instead of the facts themselves (`suite_schema/model_cost_rollup.py`,
+`billing/cost_rollup.py`). The facts are unchanged and stay the authority:
+`model_cost_admissions` and `billing_usage` (insert-only), `model_cost_endings` (insert-only) and
+the one-way `billing_calls.status`. Everything below is derived and can always be rebuilt from them.
+
+* **Tables.** `model_cost_buckets` (per scope = environment, provider, account_ref; dim `account`
+  per UTC day, dims `payer` (wallet owner) and `route` (requested model) per 1, 60 and 3,600 s;
+  counts, admitted and resolved bounds and exact resolved cost; `den` 0 for counts, bounds and
+  on-grid cost, `den` d for other canonical rationals over d), `model_cost_inflight` and
+  `model_cost_hold` (the open set), `model_cost_exceptions` (costs that fit neither form, read back
+  and parsed as before). Integers are two int64 limbs (base 10^15); an on-grid cost keeps its
+  fraction as an integer count of 10^-15 plus a carry. SQL never parses big text and never
+  overflows; Python rebuilds exact integers and Fractions from the limbs.
+* **Triggers.** An INSERT of an admission or a usage fact (from the Ledger, a fixture, an older
+  release or plain SQL), an ending, and a call leaving `reserved` each insert a row into the
+  transient `model_cost_rollup_deltas`; apply triggers on that table upsert the buckets and the
+  open set; the producing trigger empties it again. One producer template serves the triggers
+  and the replay, so a backfill and a live write use the same arithmetic. Everything runs in the
+  writer's transaction: the rollup commits or rolls back with the fact. No Python runs on a fact
+  write path, and there is no backlog to drain.
+* **Totality.** Derived tables have no CHECK and no NOT NULL and are written only with COALESCE
+  and upserts, so no derived row can make a fact INSERT raise. A malformed admission (time not an
+  integer, negative, or expiry more than a day after admission) or an orphan one (no attempt,
+  call or wallet) becomes a fault `fact:<attempt_key>` of its scope instead of a bucket.
+* **Gate.** BEFORE INSERT/UPDATE/DELETE triggers on the four derived tables refuse with
+  `cost_rollup_derived` unless a delta row exists, i.e. unless the write comes from an apply
+  trigger. Hand-writing deltas or dropping triggers bypasses the gate; the hourly verifier finds it.
+* **Sentinels and marker.** Each derived table holds one sentinel row in the empty scope; meta
+  `model_cost_rollup_v1` marks the backfill. A start that finds the marker and all four sentinels
+  issues no fact query. A dropped or emptied derived table (sentinel gone) or a missing marker
+  replays all facts once, inside the migration's BEGIN IMMEDIATE (recorded as a global rebuild and
+  a `backfill` audit row).
+* **Faults, verify, rebuild, prune.** `model_cost_rollup_faults` latches one scope (resolved once,
+  never deleted); the risk monitor verifies hourly (two days) and daily (from the previous month);
+  `platform.py cost-rollup verify|rebuild` is the operator's tool (docs/platform/model-risk.md §13).
+  Rebuilds and verifier results are insert-only (`model_cost_rollup_rebuilds`,
+  `model_cost_rollup_audits`). The daily prune deletes, under the gate, velocity buckets older than
+  the newest admission minus two days and open-set rows its time has passed; day buckets stay.
+
+**Backup, restore, rollback.** The SQLite backup API copies the facts and the rollup in one
+consistent snapshot, so a restored copy verifies as it was; the restore rehearsal
+(`platform.py verify-restore`) recomputes every day from the facts and fails on a difference. A
+backup from before the rollup replays once when the restored store first opens. A code rollback
+leaves the tables and triggers in place: older code ignores the tables, the triggers keep them
+current under it, and a later roll-forward finds the marker and sentinels and replays nothing.
+
 ## Exact arithmetic and rounding
 
 `Unit.scale` defines smallest units: an integer `n` represents `n / 10**scale` displayed

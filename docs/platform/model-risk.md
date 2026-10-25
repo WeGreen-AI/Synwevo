@@ -29,7 +29,7 @@
 |---|---|---|
 | 1 | 成本策略启用（`enabled`） | `cost_admission_disabled` |
 | 2 | 单次调用的保守成本上界 ≤ `max_call_cost` | `cost_call_limit_exceeded` |
-| 3 | 平台日/周/月成本、未知用量金额、在途与未知数量（既有） | `cost_*` |
+| 3 | 平台日/周/月成本、未知用量金额、在途与未知数量（既有）；该提供方账户的成本汇总无未处理故障且通过读取时的一致性检查 | `cost_*`（含 `cost_rollup_inconsistent`） |
 | 4 | 平台总闸未关闭 | `risk_breaker_open` |
 | 5 | 放行名单模式开启时付款方在名单中 | `risk_not_allowlisted` |
 | 6 | 付款方、模型路线没有生效中的暂停 | `risk_payer_suspended` / `risk_route_suspended` |
@@ -44,7 +44,14 @@
 未知，到期后只按上界留在成本窗口里。上游返回的 HTTP 错误（429、402、400、500 等）不是未知：网关立即按“已知零用量”结算、
 不售出、立即释放冻结（`docs/deepseek-provider.md`“Error answers”，含依据与假设）。因此未知数量不会无限累积。
 
-`risk_accounting_capacity`：窗口内记录超过 10,000 条时拒绝（不在发送路径上读无界历史）。策略、计数或状态不可读时拒绝，不放行。
+第 3、7 行读的是**精确成本汇总**（`billing/cost_rollup.py`，触发器在写入事实的同一事务里维护；`docs/billing-ledger.md`
+“Cost rollup”），不再逐行读取窗口内的准入记录，所以记录多少都不会因“容量”拒绝：成本窗口最多读 31 个日汇总行，速率窗口最多读
+143 个（1 秒、60 秒、3,600 秒）汇总行。仍按行读取的只有“例外”成本（分子或分母超过 2^63−1、非规范文本，生产价目不会产生）。
+`risk_accounting_capacity`：付款方或路线在最大速率窗口内的**例外成本记录**超过 10,000 条时拒绝；`cost_accounting_capacity`：
+仍敞口的调用超过 10,000 条（在准入规则下不可能，只可能来自带外写入）或成本窗口内例外记录超过 10,000 条时拒绝。
+`cost_rollup_inconsistent`：该提供方账户的成本汇总有未处理的故障（校验发现与事实不一致、事实本身损坏或孤立、读取时的结构/
+敞口/当日待确认数/已吸收金额检查失败），或这次读取的检查失败；只影响这一个提供方账户，处理见 §13。
+策略、计数或状态不可读时拒绝，不放行。
 Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成 `billing_<code>`）。这些代码是稳定契约，界面文字归对话界面：
 `apps/suite/web/src/apps/agent/refusals.ts`（chat-ux 工作包）按代码与词干分类——`billing_cost_call_limit_exceeded` → 单次上限；
 `billing_risk_*` 中含 `allowlist` → 分阶段开放、含 `breaker` → 服务暂不可用、含 `brake` → 自动暂停、含 `suspend` → 已暂停，其余
@@ -72,7 +79,8 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 ## 3. 自动刹车
 
 - 计量的是**平台付出的提供方成本**：窗口内已结算调用取精确成本（分数），用量未知的调用取保守预留上界；按准入时刻
-  `admitted_at` 落入窗口。付款方按付费钱包的所有者统计（个人或组织付款方），路线按请求的模型路线统计。
+  `admitted_at` 落入窗口。付款方按付费钱包的所有者统计（个人或组织付款方），路线按请求的模型路线统计。数值来自成本汇总的
+  1/60/3,600 秒桶（窗口 `(now−w, now]` 拆成互不重叠的三段，精确相加），与逐行相加结果相同。
 - 一次调用会使窗口合计超过阈值时：拒绝这次调用，并在拒绝事务回滚**之后**锁定暂停（`CostAdmission.after_refusal`，网关调用；
   写在拒绝事务里会随之回滚）。锁定写入 `model_risk_suspensions`、系统审计 `billing.risk.brake_triggered`、安全日志
   `model_dispatch_suspended`（先写日志再提交），并在提交后通知平台管理员与该付款调用的发起人（三语言）。
@@ -127,7 +135,9 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 
 `RiskMonitor` 由计量 Agent 组合（portal 角色，受治理的 DeepSeek 路径）与计量恢复线程一同启动、在关闭时停止；每 60 秒一轮，
 数据库租约（120 秒）保证多个进程同一时刻只有一个执行。一轮：到期则读余额 → 暴露提醒 → 前一 UTC 日的定时对账（每日一次）
-→ 账本审计（每日一次）。每一步独立，失败只按异常类型记录，不影响其他步骤。
+→ 账本审计（每日一次）→ 成本汇总校验：每个 UTC 日一次从上个月 1 日起全面校验并清理过期的速率桶与敞口行（`cost_rollup_verify`、
+`cost_rollup_prune`），其余时间每小时校验最近两天（`cost_rollup_verify_recent`）。成本汇总的步骤即使还没有发布成本策略也会执行；
+校验在只读快照里进行，不占写锁。每一步独立，失败只按异常类型记录，不影响其他步骤。
 
 ## 9. 告警
 
@@ -144,6 +154,7 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 | `billing.risk.ledger_audit` | 管理员 | 账本审计发现差异 | 每条结果一次 |
 | `billing.risk.pending_exposure` | 管理员 | 用量待确认的预留成本 > `pending_alert` | 每个 UTC 日一次 |
 | `billing.risk.payment_webhook_failed` | 管理员 | 支付渠道调用 `alert_payment_webhook_failure(store, environment=, provider=, code=)` | 每渠道每代码每 UTC 日一次 |
+| `billing.cost.rollup_inconsistent` | 管理员 | 成本汇总与事实不一致，某提供方账户被锁定（§13） | 每个提供方账户每 UTC 日一次 |
 
 `alert_payment_webhook_failure` 是给支付渠道工作包的挂钩：只接受渠道名与稳定代码，从不接受载荷、签名或客户信息。
 
@@ -173,6 +184,9 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 
 ## 12. 未实现与边界
 
+- 个人支出上限（`PayerBudgets`）仍按行读取最多 10,000 条调用；改用同样的汇总是下一阶段（第二阶段），本次不含。
+- 成本汇总的重建只有命令行（`platform.py cost-rollup rebuild`），没有管理端接口。
+
 - 网关在上游 402 时调用 `trip_platform_breaker` 的接线属于网关工作包；本包提供并测试了该函数与关闭后的拒绝。
 - 支付回调失败的告警已接线：`services/identity/synwevo_identity/payments.py` 在收件箱事件以 `failed`/`rejected`
   结束（含 `process_pending` 重放）以及签名、载荷、环境校验失败时调用 `alert_payment_webhook_failure`
@@ -182,3 +196,23 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 - 对账按准入时刻归属调用，不把跨边界的结算分摊到两个窗口；差异靠容差与人工复核。
 - 暂停不会自动到期；总闸不会自动重新开启。
 - 浏览器验收（三语言、390px、键盘、读屏）尚未在真实浏览器中完成；类型检查、构建与前端单元测试已通过。
+
+## 13. 成本汇总不一致：处理步骤（runbook）
+
+成本准入（§1 第 3 行）与自动刹车（§3）读的是触发器维护的精确成本汇总。它与事实不一致时，只锁定那一个提供方账户
+（`environment` + `provider` + `account_ref`）：该账户的付费调用以 `cost_rollup_inconsistent` 拒绝，没有发起、没有扣费；其他账户不受影响。
+管理员收到 `billing.cost.rollup_inconsistent`，系统审计里有同名记录（含差异数量与来源：每日/每小时校验、读取时的检查）。
+
+1. **看差异，不改任何东西**：在服务器上 `python scripts/platform.py cost-rollup verify --all --no-record`。输出每个不一致账户的前几条
+   差异（哪个桶、期望值、实际值；或哪个敞口行多了/少了；或哪条成本事实本身损坏）。
+2. **事实本身损坏**（`fact_fault`：准入时间不是整数或为负、到期超过准入后一天、找不到调用或钱包）：重建会拒绝并列出这些准入的
+   attempt key。不要手改事实表；按 `docs/operations.md` 的恢复演练，从备份核对并修复这些行（`platform.py verify-restore` 先演练），
+   修复后再重建。
+3. **汇总与事实不一致**（`bucket` / `inflight_*` / `hold_*` / `exceptions` / `structure` / `counters`）：说明有人绕过了闸门（手写了
+   `model_cost_rollup_deltas`、关闭过触发器）或程序有缺陷。保留 verify 输出，排查来源后重建：
+   `python scripts/platform.py cost-rollup rebuild --environment live --provider deepseek --account-ref <账户> --reason "<8–500 字理由>"`。
+   重建在一个事务里从事实重放、校验并解除该账户的故障；校验不通过时什么也不改。重建写入 `billing.cost.rollup_rebuilt` 审计。
+4. 重建后再跑一次 `cost-rollup verify --all`，确认一致；付费调用随即恢复。
+
+不要用删除故障行、改汇总表或关闭触发器来“恢复”：这些写入会被闸门拒绝（`cost_rollup_derived`），故障行不可删除；绕过闸门的写入会在
+下一次每小时校验时被发现并重新锁定。恢复从来不是自动的。
