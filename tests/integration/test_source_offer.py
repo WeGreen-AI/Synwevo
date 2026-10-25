@@ -30,12 +30,14 @@ def _client(data_dir, monkeypatch, *, mode: str, role: str) -> TestClient:
 
 @pytest.fixture()
 def small_tree(tmp_path, monkeypatch):
-    """TEST FIXTURE: a two-file installation, so each role's archive is built in milliseconds."""
-    from synwevo_docs import licensing
+    """TEST FIXTURE: a two-file installation as an image build leaves it — the files, then the
+    release manifest the build wrote from them — so each role's archive is built in milliseconds."""
+    from synwevo_docs import licensing, source_manifest
     root = tmp_path / "installed"
     (root / "apps" / "docs").mkdir(parents=True)
     (root / "apps" / "docs" / "x.py").write_text("# code\n", encoding="utf-8")
     (root / "LICENSE").write_text("licence text\n", encoding="utf-8")
+    source_manifest.write(root, commit="0123456789abcdef0123456789abcdef01234567", commit_time=1767225600)
     monkeypatch.setattr(licensing, "ROOT", root)
     return root
 
@@ -112,6 +114,22 @@ def test_an_encoded_query_mark_does_not_borrow_the_probe_exemption(tmp_path, mon
         r = c.get(target)
         assert r.status_code == 401 and not reached, (target, r.status_code)
     assert c.get("/healthz").status_code == 200
+
+
+def test_without_a_release_list_the_archive_is_refused_not_walked(tmp_path, monkeypatch):
+    """An installation with neither the image's manifest nor a Git checkout cannot tell its source
+    from whatever else sits in the directory, so it serves nothing rather than everything."""
+    from synwevo_docs import licensing
+    root = tmp_path / "bare"
+    (root / "apps" / "docs").mkdir(parents=True)
+    (root / "apps" / "docs" / "x.py").write_text("# code\n", encoding="utf-8")
+    (root / "apps" / "docs" / "runtime.env.bak").write_text("SECRET=fixture\n", encoding="utf-8")
+    monkeypatch.setattr(licensing, "ROOT", root)
+    c = _client(tmp_path / "bare-data", monkeypatch, mode="session", role="accounts")
+    r = c.get("/api/source-code")
+    assert r.status_code == 503 and r.json()["error"] == "source_unavailable", r.text
+    assert "git archive" in r.json()["message"]
+    assert c.get("/api/about").json()["source_offer"] is True
 
 
 def test_switching_the_offer_off_is_said_on_every_role(tmp_path, monkeypatch, small_tree):

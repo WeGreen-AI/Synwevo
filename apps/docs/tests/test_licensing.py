@@ -14,12 +14,24 @@ failure AGPL-3.0 §13 exists to prevent.
 from __future__ import annotations
 
 import io
+import os
 import tarfile
 from pathlib import Path
 
-from synwevo_docs import licensing
+from synwevo_docs import licensing, source_manifest
 
 ROOT = __import__("synwevo_core.http", fromlist=["repo_root"]).repo_root()
+
+# TEST FIXTURE values: the commit and commit time an image build would have been stamped with.
+FIXTURE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
+FIXTURE_COMMIT_TIME = 1767225600
+
+
+def _as_built(root: Path) -> Path:
+    """TEST FIXTURE: finish a tree as the image build does — the build context's files are in
+    place, and the build writes the release manifest from exactly them."""
+    source_manifest.write(root, commit=FIXTURE_COMMIT, commit_time=FIXTURE_COMMIT_TIME)
+    return root
 
 
 def test_agpl_obligation_follows_the_binary_not_the_engine_setting(monkeypatch):
@@ -58,7 +70,7 @@ def test_archive_says_so_when_it_is_incomplete(monkeypatch, tmp_path):
     """Simulate a partial image: the business package present, everything else absent."""
     (tmp_path / "apps" / "docs" / "synwevo_docs").mkdir(parents=True)
     (tmp_path / "apps" / "docs" / "synwevo_docs" / "x.py").write_text("# code\n", encoding="utf-8")
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    monkeypatch.setattr(licensing, "ROOT", _as_built(tmp_path))
 
     status = licensing.source_status()
     assert not status["complete"]
@@ -84,7 +96,7 @@ def test_archive_reports_complete_when_everything_is_present(monkeypatch, tmp_pa
         else:
             p.mkdir(parents=True, exist_ok=True)
             (p / "f.txt").write_text("x\n", encoding="utf-8")
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    monkeypatch.setattr(licensing, "ROOT", _as_built(tmp_path))
     assert licensing.source_status()["complete"]
     blob, _ = licensing.source_archive()
     tar = tarfile.open(fileobj=io.BytesIO(blob))
@@ -203,14 +215,16 @@ def test_every_tracked_path_is_offered_or_excluded_with_a_reason():
 
 
 def test_filled_in_configuration_never_enters_the_archive(monkeypatch, tmp_path):
-    """The archive is anonymous. An operator's runtime.env or .env beside the templates stays out."""
+    """The archive is anonymous. An operator's runtime.env or .env beside the templates stays out —
+    even when it did reach the release list (a build context that carried it, a file tracked by
+    mistake): the name rule is kept behind the manifest, not replaced by it."""
     for rel in ("infra/production/runtime.env", "infra/production/smtp.env", ".env", ".env.local", "apps/docs/.env"):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("SECRET=fixture\n", encoding="utf-8")
     for rel in ("infra/production/runtime.env.example", ".env.example", "apps/docs/x.py"):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("# template\n", encoding="utf-8")
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    monkeypatch.setattr(licensing, "ROOT", _as_built(tmp_path))
     offered = {name for _, name in licensing._archive_files()}
     assert {"infra/production/runtime.env.example", ".env.example", "apps/docs/x.py"} <= offered
     assert not {n for n in offered if n.endswith(".env") or n.split("/")[-1].startswith(".env.local")}
@@ -247,7 +261,7 @@ def test_an_oversized_file_is_named_in_the_offer(monkeypatch, tmp_path):
             p.mkdir(parents=True, exist_ok=True)
             (p / "f.txt").write_text("x\n", encoding="utf-8")
     (tmp_path / "docs" / "big.bin").write_bytes(b"\0" * 64)
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    monkeypatch.setattr(licensing, "ROOT", _as_built(tmp_path))
     monkeypatch.setattr(licensing, "MAX_FILE", 32)
     blob, _ = licensing.source_archive()
     tar = tarfile.open(fileobj=io.BytesIO(blob))
@@ -255,6 +269,246 @@ def test_an_oversized_file_is_named_in_the_offer(monkeypatch, tmp_path):
     offer = tar.extractfile([m for m in tar.getmembers() if m.name.endswith("SOURCE_OFFER.txt")][0]).read().decode()
     assert not any(n.endswith("docs/big.bin") for n in names)
     assert "  - docs/big.bin" in offer and "包含所列全部内容" not in offer
+
+
+# Files an operator or an editor leaves beside the source: the shapes a name blocklist missed.
+# Placeholder contents only (TEST FIXTURE).
+PLANTED = ("infra/production/runtime.env.bak", "infra/production/runtime.env~",
+           "infra/production/.runtime.env.swp", "infra/production/smtp.env.orig",
+           "infra/production/runtime.env.2026-10-01", "infra/production/origin.key",
+           "infra/production/certs/origin.pem", "infra/production/htpasswd",
+           "infra/production/deploy_ed25519", "scripts/.pgpass", "apps/docs/.npmrc", "apps/docs/.pypirc",
+           "tests/.secrets.toml", "packages/core/credentials.json", ".github/deploy.key",
+           "docs/agent-work/.coordinator.lock", "docs/agent-work/CLAUDE_CODE_HANDOFF_probe.txt",
+           "scripts/probe_api.txt", "apps/docs/backup.sqlite3")
+SOURCE = ("apps/docs/synwevo_docs/x.py", "infra/production/compose.yaml", "infra/production/runtime.env.example",
+          "scripts/platform.py", "tests/test_x.py", ".github/workflows/ci.yml", "docs/a.md", "LICENSE")
+
+
+def _plant(root: Path, names) -> None:
+    for rel in names:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("PLACEHOLDER-NOT-A-SECRET\n", encoding="utf-8")
+
+
+def _git(root: Path, *args: str) -> str:
+    import subprocess
+    return subprocess.run(["git", "-C", str(root), "-c", "user.name=fixture", "-c", "user.email=fixture@example.test",
+                           "-c", "commit.gpgsign=false", *args],
+                          check=True, capture_output=True, text=True).stdout
+
+
+def test_files_beside_the_source_in_a_checkout_are_never_offered(monkeypatch, tmp_path):
+    """Running from a checkout, the release list is `git ls-files`: an untracked file under an
+    offered directory — a backup of runtime.env, a swap file, a key, a .pgpass — is not source and
+    never leaves the server, whatever its name. The archive used to walk the directories."""
+    import shutil
+    if shutil.which("git") is None:
+        import pytest
+        pytest.skip("needs git")
+    _plant(tmp_path, SOURCE)
+    (tmp_path / ".gitattributes").write_text("docs/evidence/** export-ignore\n", encoding="utf-8")
+    _plant(tmp_path, ["docs/evidence/shot.txt"])
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "add", "-A")
+    _plant(tmp_path, PLANTED)
+    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    offered = {name for _, name in licensing._archive_files()}
+    assert set(SOURCE) <= offered
+    assert not offered & set(PLANTED), sorted(offered & set(PLANTED))
+    assert "docs/evidence/shot.txt" not in offered, "git archive 不导出的文件，检出里也不提供（与镜像一致）"
+
+
+def test_files_added_after_the_image_build_are_never_offered(monkeypatch, tmp_path):
+    """In the image the release list is the manifest the build wrote from its context (a git
+    archive): anything that appears in the directory later is not on it."""
+    _plant(tmp_path, SOURCE)
+    _as_built(tmp_path)
+    _plant(tmp_path, PLANTED)
+    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    offered = {name for _, name in licensing._archive_files()}
+    assert set(SOURCE) <= offered and not offered & set(PLANTED), sorted(offered & set(PLANTED))
+
+
+def test_without_a_release_list_nothing_is_offered(monkeypatch, tmp_path):
+    """Neither a manifest nor a checkout: refuse, never fall back to walking the directory."""
+    import pytest
+    _plant(tmp_path, SOURCE + PLANTED)
+    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    with pytest.raises(licensing.SourceUnavailable) as refused:
+        licensing.source_archive()
+    assert "git archive" in str(refused.value)
+    status = licensing.source_status()
+    assert status["available"] is False and status["complete"] is False
+
+
+def test_the_manifest_writer_needs_a_context_stamped_by_git_archive(tmp_path, capsys):
+    """In a checkout the writer's stamp still reads as git's placeholder: a build from a working
+    tree writes no manifest (and says so in the build log), so its image refuses to offer rather
+    than offering whatever the working tree held."""
+    assert source_manifest.release_stamp() is None, "检出里的占位符不应被当成发布提交"
+    _plant(tmp_path, SOURCE)
+    assert source_manifest.main([str(tmp_path)]) == 0
+    assert not (tmp_path / source_manifest.MANIFEST_NAME).exists()
+    assert "git archive" in capsys.readouterr().err
+
+
+def test_git_archive_stamps_the_writer_and_the_manifest_lists_only_the_archive(tmp_path):
+    """End to end, with this repository's own writer and its own .gitattributes line: a commit,
+    `git archive` of it (what CI and the deploy receiver build from), the writer run from the
+    extracted context. The manifest names that commit and exactly the archived files."""
+    import shutil
+    import subprocess
+    import sys
+    import pytest
+    if shutil.which("git") is None:
+        pytest.skip("needs git")
+    rel = "apps/docs/synwevo_docs/source_manifest.py"
+    lines = [ln for ln in (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+             if ln.strip() and not ln.startswith("#") and "source_manifest" in ln]
+    assert lines == [f"{rel} export-subst"], lines
+    repo, ctx = tmp_path / "repo", tmp_path / "context"
+    (repo / rel).parent.mkdir(parents=True)
+    shutil.copyfile(ROOT / rel, repo / rel)
+    (repo / ".gitattributes").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _plant(repo, SOURCE)
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "fixture")
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    _plant(repo, PLANTED)                                   # untracked: not in the archive
+    raw = subprocess.run(["git", "-C", str(repo), "archive", "--format=tar", "HEAD"], check=True,
+                         capture_output=True).stdout
+    with tarfile.open(fileobj=io.BytesIO(raw)) as tar:
+        tar.extractall(ctx, filter="data")
+    run = subprocess.run([sys.executable, "-P", str(ctx / rel), str(ctx)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    manifest = source_manifest.read(ctx)
+    assert manifest is not None and manifest["commit"] == head
+    assert set(manifest["files"]) == set(SOURCE) | {rel, ".gitattributes"}
+
+
+def _final_stage(text: str) -> list[str]:
+    instructions = _dockerfile_instructions(text)
+    last_from = max(i for i, ins in enumerate(instructions) if ins.upper().startswith("FROM "))
+    return instructions[last_from + 1:]
+
+
+def test_the_image_writes_its_manifest_from_the_build_context_alone():
+    """The manifest lists what the build context delivered: written after the last COPY from the
+    context and before anything the build itself produces (the compiled shells, the installed
+    packages' metadata), so a build product can never be offered as source either."""
+    stage = _final_stage((ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8"))
+    writes = [i for i, ins in enumerate(stage) if ins.upper().startswith("RUN ") and "source_manifest.py" in ins]
+    assert len(writes) == 1, "Dockerfile 要在最后阶段写一次发布清单"
+    at = writes[0]
+    for i, ins in enumerate(stage):
+        tokens = ins.split()
+        if tokens and tokens[0].upper() == "COPY":
+            from_stage = any(t.startswith("--from=") for t in tokens)
+            assert (i > at) == from_stage, f"清单必须写在全部上下文 COPY 之后、构建产物之前：{ins}"
+        if ins.upper().startswith("RUN ") and _dockerfile_editable_installs(ins):
+            assert i > at, "可编辑安装产生的元数据不能先于清单出现"
+
+
+def test_the_build_context_keeps_backups_swap_files_and_keys_out():
+    """`**/*.env` stopped runtime.env but let runtime.env.bak, runtime.env~, a swap file, origin.key,
+    htpasswd and .pgpass into a working-tree build — and from there into the image."""
+    lines = [ln.strip() for ln in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+             if ln.strip() and not ln.startswith("#")]
+    for pattern in ("**/*.env", "**/*.env.*", "**/.*.swp", "**/*~", "**/*.bak", "**/*.orig", "**/*.key",
+                    "**/*.pem", "**/*_ed25519", "**/*_rsa", "**/htpasswd", "**/.pgpass", "**/.npmrc",
+                    "**/.pypirc", "**/.netrc", "**/credentials.json", "**/.secrets.*", "**/*.sqlite3",
+                    "**/*_api.txt", "docs/agent-work/CLAUDE_CODE_HANDOFF_*.txt", "docs/agent-work/.coordinator.lock*"):
+        assert pattern in lines, f".dockerignore 缺少 {pattern}"
+    # The templates are re-admitted after every exclusion that would match them.
+    assert lines.index("!**/*.env.example") > lines.index("**/*.env.*")
+    assert lines.index("!**/*.env.example") > lines.index("**/*.env")
+
+
+def test_archive_members_reveal_no_owner_and_the_archive_is_reproducible(monkeypatch, tmp_path):
+    """Members used to carry the server's uid, user name, gid, group and modification times: the
+    local account name of a checkout deployment went to every anonymous downloader. Now owner
+    0/0 with empty names, the release's commit time, sorted names, gzip without a timestamp — so the
+    same release gives the same bytes in every process and on every role (one ETag)."""
+    import shutil
+    first = tmp_path / "one"
+    _plant(first, SOURCE)
+    (first / "scripts" / "platform.py").chmod(0o755)
+    _as_built(first)
+    monkeypatch.setattr(licensing, "ROOT", first)
+    blob, name = licensing.source_archive()
+    with tarfile.open(fileobj=io.BytesIO(blob)) as tar:
+        members = tar.getmembers()
+    assert {(m.uid, m.gid, m.uname, m.gname) for m in members} == {(0, 0, "", "")}
+    assert {m.mtime for m in members} == {FIXTURE_COMMIT_TIME}
+    assert all(m.isfile() for m in members)
+    names = [m.name for m in members]
+    assert names[:-1] == sorted(names[:-1]) and names[-1].endswith("/SOURCE_OFFER.txt")
+    modes = {m.name.split("/", 1)[1]: m.mode for m in members}
+    assert modes["scripts/platform.py"] == 0o755 and modes["LICENSE"] == 0o644
+    assert name == f"synwevo-source-{FIXTURE_COMMIT[:12]}.tar.gz" and names[0].startswith(f"synwevo-source-{FIXTURE_COMMIT[:12]}/")
+    assert blob[4:8] == b"\0\0\0\0", "gzip 头里不带生成时间"
+
+    second = tmp_path / "two"                       # the same release installed elsewhere, later
+    shutil.copytree(first, second)
+    for f in second.rglob("*"):
+        if f.is_file():
+            os.utime(f, (1_900_000_000, 1_900_000_000))
+    monkeypatch.setattr(licensing, "ROOT", second)
+    again, _ = licensing.source_archive()
+    assert again == blob, "同一发布在另一个位置、另一个时间生成的包应当逐字节相同"
+
+
+def _count_filesystem_calls(monkeypatch) -> list:
+    calls = []
+    for fn in ("stat", "lstat", "scandir", "listdir"):
+        real = getattr(os, fn)
+        monkeypatch.setattr(os, fn, lambda *a, _real=real, _fn=fn, **k: calls.append(_fn) or _real(*a, **k))
+    return calls
+
+
+def test_repeat_requests_do_not_touch_the_tree(monkeypatch, tmp_path):
+    """Each request used to walk and stat the whole tree (about 2,200 files, twice) just to find
+    the archive already built: ~120 ms of CPU per anonymous request. The image's release list
+    cannot change (read-only root filesystem), so after the first build a request costs nothing."""
+    _plant(tmp_path, SOURCE)
+    monkeypatch.setattr(licensing, "ROOT", _as_built(tmp_path))
+    first = licensing.current_archive()
+    calls = _count_filesystem_calls(monkeypatch)
+    for _ in range(3):
+        again = licensing.current_archive()
+    assert again is first and calls == [], calls[:10]
+
+
+def test_a_checkout_is_listed_again_after_its_ttl(monkeypatch, tmp_path):
+    """From a checkout the files can change, so the list is trusted for CHECKOUT_TTL_S and then
+    asked of git again; the archive is rebuilt only when what it would hold has changed."""
+    import shutil
+    import pytest
+    if shutil.which("git") is None:
+        pytest.skip("needs git")
+    _plant(tmp_path, SOURCE)
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "add", "-A")
+    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    clock = [1000.0]
+    monkeypatch.setattr(licensing, "_now", lambda: clock[0])
+    first = licensing.current_archive()
+    calls = _count_filesystem_calls(monkeypatch)
+    assert licensing.current_archive() is first and calls == []        # within the TTL: nothing
+    clock[0] += licensing.CHECKOUT_TTL_S + 1
+    monkeypatch.undo()                                                   # real os functions again
+    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    monkeypatch.setattr(licensing, "_now", lambda: clock[0])
+    assert licensing.current_archive() is first, "没有变化就不重新打包"
+    f = tmp_path / "docs" / "a.md"
+    f.write_text("changed\n", encoding="utf-8")
+    os.utime(f, (1_900_000_000, 1_900_000_000))
+    assert licensing.current_archive() is first, "TTL 之内不重新列出"
+    clock[0] += licensing.CHECKOUT_TTL_S + 1
+    changed = licensing.current_archive()
+    assert changed is not first and changed.etag != first.etag
 
 
 def test_the_install_parser_reads_continued_run_lines():

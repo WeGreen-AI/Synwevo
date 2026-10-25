@@ -50,10 +50,17 @@ SMTP 的已授权配置方式仍见第 6 节，不能为本轮自动获取 VPS �
 
 ```bash
 cp .env.example .env            # 按需修改；密钥不要写进文件，用 CLI 创建
-docker compose -f infra/docker-compose.yml up -d --build    # 监听 127.0.0.1:8765，数据卷 ./data
+# 从 git archive 构建：镜像只含受版本控制的文件，并记下源代码发布清单（/api/source-code 只打包清单上的文件）。
+# 未提交的修改用 `git stash create` 生成的临时提交带上（工作树干净时它不输出，退回 HEAD）。
+rev=$(git stash create); git archive --format=tar "${rev:-HEAD}" | docker build -f infra/Dockerfile -t synwevo:local -
+docker compose -f infra/docker-compose.yml up -d             # 监听 127.0.0.1:8765，数据卷 ./data
 docker compose -f infra/docker-compose.yml exec synwevo python -m synwevo_docs.cli apikey create --name ci --tenant <工作空间ID> --scopes read,write
 curl -s localhost:8765/readyz
 ```
+
+`docker compose … up -d --build` 仍可用，但它从工作树构建：上下文不是 `git archive`，构建日志会提示没有写入
+源代码发布清单，这样的镜像对 `/api/source-code` 返回 503（分不清源代码与工作树里的其他文件时不提供，
+而不是把备份、密钥一起发出去）。对外提供服务时请用上面的 `git archive` 构建。
 
 镜像内含 LibreOffice、Tesseract（chi_sim/eng）与 Noto CJK 字体。对外请在宿主机用反向代理：界面走你自己的认证，
 `/api/v1` 由 API 密钥鉴权（示例配置见 ports.md 第 3 节）。
