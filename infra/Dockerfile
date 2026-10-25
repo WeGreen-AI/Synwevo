@@ -66,7 +66,9 @@ COPY infra/server/ infra/server/
 COPY scripts/ scripts/
 COPY tests/ tests/
 COPY docs/ docs/
-COPY README.md NOTICE pyproject.toml package.json package-lock.json requirements-dev.txt ./
+# LICENSE, NOTICE and TRADEMARKS.md travel with the program: the image and the /api/source-code archive
+# built from it carry the licence text, not only a reference to the repository.
+COPY LICENSE NOTICE TRADEMARKS.md README.md README.en.md pyproject.toml package.json package-lock.json requirements-dev.txt ./
 COPY infra/Dockerfile infra/docker-compose.yml infra/
 COPY --from=ui /ui/apps/docs/web/dist apps/docs/web/dist
 COPY --from=ui /ui/services/identity/web/dist services/identity/web/dist
@@ -79,8 +81,6 @@ RUN pip install --no-cache-dir --no-deps --no-build-isolation \
       -e packages/core -e packages/auth-client/python \
       -e services/identity -e apps/portal -e apps/docs -e apps/messages -e apps/suite -e infra/server \
     && pip check
-# LICENSE is deliberately absent: this project has not chosen one yet, and COPY of a missing
-# file fails the build. The source archive reports it as missing rather than pretending.
 # The data directory is the volume, owned by the unprivileged user the server runs as. HOST and
 # DATA_DIR above describe the container itself; infra/docker-compose.yml pins them again so an
 # operator's .env cannot move the database out of the volume or bind the container's loopback.

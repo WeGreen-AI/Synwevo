@@ -428,3 +428,11 @@ python apps/docs/sdk/python/tools/audit_openapi.py /tmp/synwevo-openapi.json --o
 The manifest records source/spec/evidence hashes and observed HTTP statuses. A successful
 response does not establish every parameter or behavior. Transport fault tests are labelled
 fixtures; the separate Account/Docs acceptance is the evidence for the business chain.
+
+## License
+
+Copyright 2026 the Synwevo contributors. This SDK is licensed under the Apache License,
+Version 2.0 (SPDX: `Apache-2.0`); the full text is in [`LICENSE`](LICENSE). Everything under
+`apps/docs/sdk/` is Apache-2.0, so a client can be copied into closed-source code. The Synwevo
+server itself is AGPL-3.0-or-later (see the repository's `LICENSE` and `NOTICE`), and the
+Synwevo name, logos and icons are not licensed by either (see `TRADEMARKS.md`).

@@ -336,7 +336,7 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     def source_code():
         from ..licensing import source_archive, source_offer_enabled
         if not source_offer_enabled():
-            raise ServiceError(404, "source_offer_off", "本部署已关闭源代码下载（运营方已取得相应许可或未使用 AGPL 组件）")
+            raise ServiceError(404, "source_offer_off", "本部署已关闭源代码下载（运营方以其他方式提供对应源代码，或运行未经修改、不含第三方 AGPL 组件的版本）")
         data, name = source_archive()
         return Response(data, media_type="application/gzip",
                         headers={"Content-Disposition": f"attachment; filename=\"{name}\""})

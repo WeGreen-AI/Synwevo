@@ -1,11 +1,36 @@
-Synwevo —— 第三方组件与许可声明（NOTICE）
+Synwevo
+Copyright (C) 2026 the Synwevo contributors
+维护方 / Maintainer: WeGreen-AI — https://github.com/WeGreen-AI/Synwevo
 
-本文件列出 Synwevo 运行时使用或分发的第三方组件及其许可。
-本文件由 apps/docs/synwevo_docs/licensing.py 的 THIRD_PARTY 表生成，
-两者由 apps/docs/tests/test_licensing.py 保证一致。
+许可 / License
+--------------
+本程序是自由软件：你可以依据自由软件基金会发布的 GNU Affero 通用公共许可证第 3 版，
+或（由你选择）任何更高版本的条款，再分发和/或修改它（SPDX：AGPL-3.0-or-later）。
+发布本程序是希望它有用，但不提供任何担保，甚至不含适销性或特定用途适用性的默示担保。
+许可证全文是仓库根目录的 LICENSE（GNU AGPL 第 3 版英文原文，未经改动）。
+这些条款同样适用于本仓库此前已公开的提交。
 
-注意：本文件不是 Synwevo 自身的许可证。Synwevo 目前没有 LICENSE 文件，
-需由项目所有者选定后添加；在此之前不要假定任何授权条款。
+This program is free software: you can redistribute it and/or modify it under the terms of
+the GNU Affero General Public License as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See the GNU Affero General Public License in the LICENSE file for more details.
+These terms also apply to the earlier public commits of this repository.
+
+不在上述许可之内 / Not covered by the license above
+* apps/docs/sdk/：客户端 SDK、n8n 工作流与验收脚本以 Apache-2.0 许可
+  （apps/docs/sdk/LICENSE；python/ 与 typescript/ 各带一份）。
+  The client SDKs, n8n workflows and acceptance scripts under apps/docs/sdk/ are Apache-2.0.
+* Synwevo 名称、Logo 与应用图标不以任何代码许可授权，见 TRADEMARKS.md。
+  The Synwevo name, logos and icons are not licensed; see TRADEMARKS.md.
+* 第三方组件按各自的许可，见下文。
+  Third-party components keep their own licenses, listed below.
+
+第三方组件 / Third-party components
+-----------------------------------
+下列条目与 apps/docs/synwevo_docs/licensing.py 的 THIRD_PARTY 表逐条对应（两处都是手工维护），
+apps/docs/tests/test_licensing.py 保证两者一致。
 
 ==============================================================================
 
@@ -96,8 +121,11 @@ Synwevo —— 第三方组件与许可声明（NOTICE）
 ==============================================================================
 
 关于 AGPL-3.0：
+  Synwevo 本身以 AGPL-3.0-or-later 许可。向网络用户提供修改过的 Synwevo 时，第 13 条要求
+  向他们提供对应源代码；本服务通过 /api/source-code 提供（由正在运行的文件生成，含 LICENSE、
+  NOTICE 与 TRADEMARKS.md）。
   PyMuPDF 以 AGPL-3.0（或 Artifex 商业许可）分发，其 wheel 中内含 MuPDF 原生二进制。
-  只要镜像中安装了 pymupdf，无论 SYNWEVO_DOCS_PDF_ENGINE 选的是哪个引擎，
-  AGPL-3.0 第 13 条的「向网络用户提供对应源代码」义务都适用。
-  本服务通过 /api/source-code 提供对应源代码。
-  若要真正不含 AGPL 依赖，请按 apps/docs/requirements-pdfium.txt 构建，且不安装 pymupdf。
+  只要镜像中安装了 pymupdf，无论 SYNWEVO_DOCS_PDF_ENGINE 选的是哪个引擎，它的 AGPL-3.0 义务都适用。
+  默认构建（infra/Dockerfile、CI 与 scripts/platform.py setup）都安装 pymupdf。
+  目前没有经过验证的不含 AGPL 组件的平台构建：apps/docs/requirements-pdfium.txt 只覆盖
+  Synwevo Docs，缺少实时协同需要的 pycrdt，也没有任何构建从它安装。

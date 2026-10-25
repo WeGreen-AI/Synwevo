@@ -303,10 +303,21 @@ python scripts/platform.py restore <归档> --into DIR  # 恢复并重放备份�
 
 ## 许可与数据
 
-* **Synwevo 尚未选定许可证。** 在仓库加入 `LICENSE` 文件之前，不应假定任何授权条款。
-* PyMuPDF 为 AGPL-3.0（或 Artifex 商业许可）。启用它并对外提供服务时，AGPL-3.0 §13 的对应源代码提供义务适用；
-  `/api/source-code` 由**正在运行的文件**生成该压缩包。需要无 AGPL 依赖的部署，按 `apps/docs/requirements-pdfium.txt` 构建并选择 `pdfium` 引擎。
-* 所有处理在本机或自有服务器完成，不向外部服务发送文件；无需任何付费组件。
+* **许可证：[AGPL-3.0-or-later](LICENSE)。** Synwevo 是自由软件：你可以依据 GNU Affero 通用公共许可证第 3 版，
+  或（由你选择）任何更高版本的条款，再分发和/或修改它；它不提供任何担保。版权属于 Synwevo 的贡献者
+  （the Synwevo contributors），由 WeGreen-AI 维护，详见 [NOTICE](NOTICE)。这些条款同样适用于本仓库此前已公开的提交。
+* **SDK 为 Apache-2.0。** `apps/docs/sdk/` 下的 Python / TypeScript 客户端、n8n 工作流与验收脚本以
+  [Apache-2.0](apps/docs/sdk/LICENSE) 许可，可以复制进闭源的调用方代码。
+* **名称、Logo 与图标不在许可之内。** 见 [TRADEMARKS.md](TRADEMARKS.md)：可以如实说「基于 Synwevo」；
+  分发修改过的版本、或把它作为服务提供给他人时，要换成你自己的名称与图形。
+* **对外提供服务时提供源代码。** 向网络用户提供修改过的 Synwevo 时，AGPL-3.0 第 13 条要求向他们提供对应源代码；
+  `/api/source-code` 由**正在运行的文件**生成该压缩包（含 `LICENSE`、`NOTICE` 与 `TRADEMARKS.md`）。
+* **默认构建包含 PyMuPDF（AGPL-3.0，或 Artifex 商业许可）。** 镜像、CI 与 `scripts/platform.py setup` 都安装它，
+  生产使用 `pymupdf` 引擎。目前**没有**经过验证的不含 AGPL 组件的平台构建：`apps/docs/requirements-pdfium.txt`
+  只覆盖 Synwevo Docs、缺少实时协同需要的 `pycrdt`，也没有任何构建从它安装；`SYNWEVO_DOCS_PDF_ENGINE=pdfium`
+  只切换引擎，不会把 PyMuPDF 从镜像里去掉。第三方组件与许可见 [NOTICE](NOTICE) 与 [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md)。
+* 文档的解析、转换、文字识别与生成都在本机或自有服务器完成。只有使用个人 Agent 时，对话以及你选择发送的文件内容
+  会发送给所配置的模型提供方（Anthropic）。
 * 用户数据、数据库、密钥与备份不进 Git、不进镜像上下文、不写入日志。
 
 ---

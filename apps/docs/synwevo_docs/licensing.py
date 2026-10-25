@@ -1,11 +1,13 @@
 """Licences of the running deployment and the Corresponding Source offer.
 
-When the PyMuPDF engine (AGPL-3.0) is active and the service is used by others over a
-network, AGPL-3.0 §13 requires offering those users the complete source of the running
-program.  ``source_archive`` builds that archive from the files actually installed
-(backend code, frontend source, scripts, docs, dependency pins) – not from a separate
-copy that could drift.  Operators with an Artifex commercial licence, or running the
-AGPL-free pdfium engine, can switch the offer off with ``SYNWEVO_DOCS_SOURCE_OFFER=off``.
+Synwevo itself is licensed AGPL-3.0-or-later (``LICENSE``, ``NOTICE``; the SDKs under
+``apps/docs/sdk/`` are Apache-2.0), and every default build also installs PyMuPDF (AGPL-3.0).
+When the service is used by others over a network, AGPL-3.0 §13 requires offering those users the
+complete source of the running program. ``source_archive`` builds that archive from the files
+actually installed (backend code, frontend source, scripts, docs, dependency pins, the licence
+files) – not from a separate copy that could drift. ``SYNWEVO_DOCS_SOURCE_OFFER=off`` switches the
+download off; it is for an operator who offers the Corresponding Source another way, or who runs
+an unmodified Synwevo without PyMuPDF (or with an Artifex commercial licence for it).
 """
 from __future__ import annotations
 
@@ -39,11 +41,15 @@ INCLUDE = (
     # how it is built, run and documented
     "infra/Dockerfile", "infra/docker-compose.yml", "scripts", "tests", "docs",
     "package.json", "package-lock.json", "pyproject.toml", "requirements-dev.txt",
-    "README.md", "LICENSE", "NOTICE",
+    "README.md", "README.en.md", "LICENSE", "NOTICE", "TRADEMARKS.md",
 )
 EXCLUDE_PARTS = {"__pycache__", "node_modules", ".venv", "dist", ".pytest_cache", "screenshots",
                  "data", "testdata", ".local"}
 MAX_FILE = 5 * 1024 * 1024
+
+# The program's own licence (LICENSE); the SDKs under apps/docs/sdk/ are Apache-2.0 (their own LICENSE).
+PROGRAM_LICENSE = "AGPL-3.0-or-later"
+SDK_LICENSE = "Apache-2.0"
 
 THIRD_PARTY = [
     # name, licence, role
@@ -102,18 +108,24 @@ def about() -> dict:
     from .engine import pdf_engine
     engine_uses = pdf_engine.ENGINE == "pymupdf"
     present = pymupdf_installed()
+    own = ("Synwevo 以 AGPL-3.0-or-later 许可（见 LICENSE 与 NOTICE；apps/docs/sdk/ 下的 SDK 为 Apache-2.0）。"
+           "向网络用户提供修改过的 Synwevo 时，第 13 条要求向他们提供对应源代码。")
     if engine_uses:
         notice = ("当前部署启用了 PyMuPDF（AGPL-3.0）。按 AGPL-3.0 第 13 条，通过网络向他人提供本服务时，应向其提供本程序完整的对应源代码；"
-                  "本页提供的源代码包即由正在运行的文件生成。如已取得 Artifex 商业许可，或改用 pdfium 引擎（SYNWEVO_DOCS_PDF_ENGINE=pdfium）"
-                  "并从镜像中移除 pymupdf，可关闭此下载（SYNWEVO_DOCS_SOURCE_OFFER=off）。")
+                  "本页提供的源代码包即由正在运行的文件生成。关闭此下载（SYNWEVO_DOCS_SOURCE_OFFER=off）的前提是："
+                  "PyMuPDF 已取得 Artifex 商业许可，或已改用 pdfium 引擎（SYNWEVO_DOCS_PDF_ENGINE=pdfium）并从镜像中移除 pymupdf；"
+                  "并且运行的是未经修改的 Synwevo，或已通过其他途径向用户提供对应源代码。")
     elif present:
         notice = ("当前 PDF 引擎是 pdfium（pypdfium2，Apache-2.0 / BSD-3-Clause），**但本部署仍然安装了 PyMuPDF**："
                   "AGPL-3.0 的 MuPDF 二进制仍随镜像分发，且图片模板包装页与中文后备字体两处仍会调用它。"
-                  "因此 AGPL-3.0 第 13 条的源代码提供义务依然适用。要真正去掉 AGPL 依赖，需按 "
-                  "apps/docs/requirements-pdfium.txt 构建、镜像中不安装 pymupdf。")
+                  "因此 AGPL-3.0 第 13 条的源代码提供义务依然适用。要去掉这一 AGPL 依赖，镜像中就不能安装 pymupdf；"
+                  "目前没有经过验证的这种平台构建（apps/docs/requirements-pdfium.txt 只覆盖 Synwevo Docs，且缺少 pycrdt）。")
     else:
         notice = "本部署未安装 PyMuPDF，镜像中不含 MuPDF 二进制，无 AGPL 依赖；PDF / 图片模板的部分能力在此模式下受限。"
+    notice = own + notice
     return {
+        "license": PROGRAM_LICENSE,
+        "sdk_license": SDK_LICENSE,
         "pdf_engine": pdf_engine.ENGINE,
         # the three claims, kept apart on purpose
         "pymupdf_used_by_engine": engine_uses,
