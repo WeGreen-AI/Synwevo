@@ -62,6 +62,27 @@ def fixture(respond):
             os.environ["NO_PROXY"] = old_bypass
 
 
+@contextmanager
+def interruptible_children():
+    """Children started inside this block meet SIGINT the way a terminal's Ctrl-C does.
+
+    A test run started as ``cmd &`` from a non-interactive shell (``nohup local-ci.sh &``, a
+    wrapper running suites side by side) has SIGINT ignored, and an ignored signal stays ignored
+    across fork and exec. Python keeps an inherited SIG_IGN instead of installing
+    KeyboardInterrupt, so the CLI would discard the SIGINT the test sends and go on polling. A
+    *caught* signal is reset to the default on exec, so catching SIGINT here while the child
+    starts gives it the default disposition, whatever this process inherited.
+    """
+    previous = signal.getsignal(signal.SIGINT)
+    if previous == signal.SIG_IGN:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        yield
+    finally:
+        if previous == signal.SIG_IGN:
+            signal.signal(signal.SIGINT, previous)
+
+
 class HTTPTests(unittest.TestCase):
     def test_builtin_keyed_revision_retry_and_validation(self):
         from synwevo_docs_sdk import ValidationError
@@ -357,8 +378,9 @@ class HTTPTests(unittest.TestCase):
                 p = subprocess.run(cmd + args, env=env, capture_output=True, text=True, timeout=10)
                 self.assertEqual(p.returncode, code, p.stderr)
                 self.assertIsInstance(json.loads(p.stdout or p.stderr), dict)
-            p = subprocess.Popen(cmd + ["jobs", "wait", "interrupt", "--cancel-on-interrupt"],
-                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            with interruptible_children():
+                p = subprocess.Popen(cmd + ["jobs", "wait", "interrupt", "--cancel-on-interrupt"],
+                                     env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
                 self.assertTrue(polled.wait(5), "CLI did not poll")
                 p.send_signal(signal.SIGINT)
