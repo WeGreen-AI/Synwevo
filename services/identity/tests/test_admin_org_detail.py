@@ -325,14 +325,18 @@ def test_addresses_are_for_readers_of_accounts_and_are_not_searched_without_them
 
 
 # ---------------------------------------------------------------- caps, totals, statements
-def _statements(monkeypatch):
-    """Every Store.one/Store.all call the next requests make (FIXTURE: a counting wrapper)."""
+def _statements(monkeypatch, store):
+    """Every Store.one/Store.all call the next requests make on this world's database (FIXTURE: a
+    counting wrapper). Only this database: the wrapper is on the class, and in a full run another
+    test's live-editing socket may still be re-checking its own session in a thread of its own."""
     calls: list[str] = []
+    db_path = store.db_path
     for name in ("one", "all"):
         original = getattr(Store, name)
 
         def counted(self, sql, args=(), _original=original):
-            calls.append(sql)
+            if self.db_path == db_path:
+                calls.append(sql)
             return _original(self, sql, args)
 
         monkeypatch.setattr(Store, name, counted)
@@ -388,9 +392,10 @@ def test_an_organizations_workspaces_are_read_by_index(world):
 def test_caps_totals_and_no_query_per_row(world, monkeypatch):
     w = world
     store, oid, owner = w["store"], w["oid"], w["owner"]["id"]
-    calls = _statements(monkeypatch)
+    calls = _statements(monkeypatch, w["store"])
     ok(w, f"{BASE}/{oid}")
     small = len(calls)
+    assert any("FROM organization_memberships" in sql for sql in calls), "the counter sees the detail's own reads"
     base_ts = now()
     for n in range(55):
         # FIXTURE: many admins (accounts without a password or personal workspace) and workspaces.
@@ -505,9 +510,10 @@ def test_the_list_counts_by_grouped_queries_and_searches_literally(world, monkey
                                               "AND deleted_at IS NULL", (org["id"],))["n"], org
     assert {o["name"]: (o["members"], o["workspaces"]) for o in items}["Fixture xzy org"] == (1, 2)
     assert {o["name"]: o["members"] for o in items}["Atlas fixture organization"] == 5
-    calls = _statements(monkeypatch)
+    calls = _statements(monkeypatch, w["store"])
     ok(w, BASE, limit=1)
     one = len(calls)
+    assert any("FROM organizations" in sql for sql in calls), "the counter sees the list's own reads"
     del calls[:]
     ok(w, BASE, limit=5)
     assert len(calls) == one, "the list's statements do not grow with its page"
