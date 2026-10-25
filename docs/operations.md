@@ -435,7 +435,7 @@ docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwev
 | 项 | 值 |
 |---|---|
 | 启用 | `runtime.env` 同时设置 `SYNWEVO_TURNSTILE_SITE_KEY` 与 `SYNWEVO_TURNSTILE_SECRET`（只设一个则 accounts 拒绝启动）；`SYNWEVO_TURNSTILE_HOSTNAMES` 默认 `SYNWEVO_ISSUER` 的主机 |
-| 创建 Widget | Cloudflare 仪表盘 → Turnstile → Add widget → 主机名 `accounts.wegreen.ltd`，模式 Managed；由持有 Cloudflare 账户的人完成，密钥不经聊天或提交 |
+| 创建 Widget | Cloudflare 仪表盘 → Turnstile → Add widget → 主机名 `accounts.synwevo.com`（域名迁移前为 `accounts.wegreen.ltd`），模式 Managed；由持有 Cloudflare 账户的人完成，密钥不经聊天或提交 |
 | 生效 | `docker compose restart accounts`；核对 `GET /api/auth/state` 的 `challenge.site_key`（无 secret）、注册页出现组件、审计 `auth.challenge result=ok` |
 | 故障 | siteverify 不可达时注册/找回/验证码登录返回 503 `challenge_unavailable`（`Retry-After: 30`），不放行；已登录业务、未触发风险的口令登录、机器接口不受影响。审计 `auth.challenge result=error` 记录原因 |
 | 回滚 | 删除两个变量并重启；页面不再加载 Cloudflare 脚本，CSP 回到默认 |
