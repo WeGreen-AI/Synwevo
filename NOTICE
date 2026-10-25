@@ -136,9 +136,13 @@ apps/docs/tests/test_licensing.py 保证两者一致。
     许可：MIT
     用途：CSV 编码识别
 
-* xlrd / olefile
-    许可：BSD-3-Clause / BSD-2-Clause
-    用途：XLS 读取、旧格式检测
+* xlrd
+    许可：BSD-3-Clause；早期部分代码为 David Giffin 的 BSD 式许可（含广告与致谢条款，见 NOTICE）
+    用途：XLS 读取
+
+* olefile
+    许可：BSD-2-Clause
+    用途：旧格式检测
 
 * pycrdt
     许可：MIT
@@ -209,6 +213,15 @@ apps/docs/tests/test_licensing.py 保证两者一致。
     用途：TLS 终止与反向代理
 
 ==============================================================================
+
+第三方致谢 / Third-party acknowledgments
+  xlrd 的许可分两部分：主体为 BSD-3-Clause（Stephen John Machin, Lingfo Pty Ltd）；部分早期代码
+  沿用 David Giffin 的 BSD 式许可，其第 4 条要求任何形式的再分发都保留以下致谢。
+  xlrd carries two licences: BSD-3-Clause for the bulk of the work, and for some earlier work a
+  BSD-style licence by David Giffin whose clause 4 asks every redistribution, in any form, to keep
+  this acknowledgment:
+
+    This product includes software developed by David Giffin <david@giffin.org>.
 
 关于 AGPL-3.0：
   Synwevo 本身以 AGPL-3.0-or-later 许可。向网络用户提供修改过的 Synwevo 时，第 13 条要求

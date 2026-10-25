@@ -484,9 +484,17 @@ export const serverMessages = {
     "en": "CSV encoding detection",
     "zh-Hant": "CSV 編碼識別"
   },
-  "XLS 读取、旧格式检测": {
-    "en": "XLS reading and legacy format detection",
-    "zh-Hant": "XLS 讀取、舊格式檢測"
+  "XLS 读取": {
+    "en": "XLS reading",
+    "zh-Hant": "XLS 讀取"
+  },
+  "旧格式检测": {
+    "en": "Legacy format detection",
+    "zh-Hant": "舊格式檢測"
+  },
+  "BSD-3-Clause；早期部分代码为 David Giffin 的 BSD 式许可（含广告与致谢条款，见 NOTICE）": {
+    "en": "BSD-3-Clause; some earlier code under David Giffin's BSD-style licence (with advertising and acknowledgment clauses, see NOTICE)",
+    "zh-Hant": "BSD-3-Clause；早期部分程式碼為 David Giffin 的 BSD 式授權（含廣告與致謝條款，見 NOTICE）"
   },
   "界面": {
     "en": "User interface",

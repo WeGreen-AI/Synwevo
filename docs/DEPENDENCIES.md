@@ -1,6 +1,6 @@
 # 依赖组件、许可证与部署要求
 
-Synwevo 自身以 **AGPL-3.0-or-later** 许可，`apps/docs/sdk/` 下的 SDK 为 Apache-2.0，名称、Logo 与图标不在许可之内（见根目录 `LICENSE`、`NOTICE`、`TRADEMARKS.md`）。下列第三方组件均为开源组件。文档的解析、转换、文字识别与生成都在本机 / 用户自有服务器完成；例外是可选的个人 Agent：它用官方 SDK（`anthropic`）调用所配置的模型提供方 Anthropic，需要该提供方的账号与 API 密钥并按用量计费，对话以及用户选择发送的文件内容会发给它（见 1.2 节）。版本与许可证取自实际安装包的元数据（`pip show` / `package-lock.json`），核对日期 2026-09-23，1.2 节与第 3 节的补充条目核对于 2026-10-25。完整的运行时清单在根目录 `NOTICE`（与 `apps/docs/synwevo_docs/licensing.py` 的 `THIRD_PARTY` 逐条一致），`apps/docs/tests/test_licensing.py` 对照 `infra/server/requirements.lock` 与 `package-lock.json` 检查它没有漏项。
+Synwevo 自身以 **AGPL-3.0-or-later** 许可，`apps/docs/sdk/` 下的 SDK 为 Apache-2.0，名称、Logo 与图标不在许可之内（见根目录 `LICENSE`、`NOTICE`、`TRADEMARKS.md`）。下列第三方组件均为开源组件。文档的解析、转换、文字识别与生成都在本机 / 用户自有服务器完成；例外是可选的个人 Agent：它用官方 SDK（`anthropic`）调用所配置的模型提供方 Anthropic，需要该提供方的账号与 API 密钥并按用量计费，对话以及用户选择发送的文件内容会发给它（见 1.2 节）。版本与许可证取自实际安装包的元数据（`pip show` / `package-lock.json`）；元数据只写大类或与包内 `LICENSE` 文件不一致时以文件为准（xlrd 的元数据只写 "BSD"，文件里还有一份带广告与致谢条款的早期许可，见第 1 节），核对日期 2026-09-23，1.2 节与第 3 节的补充条目核对于 2026-10-25。完整的运行时清单在根目录 `NOTICE`（与 `apps/docs/synwevo_docs/licensing.py` 的 `THIRD_PARTY` 逐条一致），`apps/docs/tests/test_licensing.py` 对照 `infra/server/requirements.lock` 与 `package-lock.json` 检查它没有漏项。
 
 ## 1. 服务端（Python，`apps/docs/requirements.txt`）
 
@@ -18,7 +18,7 @@ Synwevo 自身以 **AGPL-3.0-or-later** 许可，`apps/docs/sdk/` 下的 SDK 为
 | fontTools | 4.65.0 | MIT | 免费 | PDF 中文字体子集化（输出从 3.5 MB 降到约 10 KB） | — |
 | Pillow | 12.3.0 | MIT-CMU | 免费 | 图片读取、EXIF 方向校正、OCR 前处理 | 像素上限 `SYNWEVO_DOCS_MAX_IMAGE_MPIX` |
 | charset-normalizer | 3.5.1 | MIT | 免费 | CSV/TXT 编码猜测（兜底） | 优先按 BOM / UTF-8 / GB18030 判断 |
-| xlrd | 2.0.2 | BSD | 免费 | 无 LibreOffice 时直接读取 XLS | 只支持 .xls |
+| xlrd | 2.0.2 | BSD-3-Clause；部分早期代码为 David Giffin 的 BSD-4-Clause 式许可（安装包元数据只写 "BSD"，以包内 LICENSE 为准） | 免费 | 无 LibreOffice 时直接读取 XLS | 只支持 .xls。**许可注意**：早期代码那部分许可的第 3 条是广告条款，第 4 条要求任何形式的再分发都保留致谢「This product includes software developed by David Giffin」（根目录 `NOTICE` 已带）。自由软件基金会认为带广告条款的 BSD 许可与 GPL 不兼容，而本程序以 AGPL 许可、在同一进程中导入 xlrd。目前不传播 xlrd：镜像不发布到任何仓库，对应源代码包也不含依赖，所以没有现实义务冲突；**若要发布镜像或含依赖的二进制包**，先解决它——例如让 .xls 一律经 LibreOffice 转换（镜像里已有），不再导入 xlrd——并随附上述致谢 |
 | pycrdt | 0.14.6 | MIT | 免费 | 内置文档模板的多人实时协同：服务端的共享文档（y-crdt 的 Python 绑定），与浏览器端 Yjs 同一协议 | 房间在 Docs 进程内存中，状态持久化到唯一数据库；多 worker 部署需要粘性路由（见 docs/platform/docs-collaboration.md） |
 | olefile | 0.47 | BSD | 免费 | 识别 DOC/XLS/PPT 与加密的 OOXML | — |
 

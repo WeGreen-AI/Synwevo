@@ -110,7 +110,11 @@ THIRD_PARTY = [
      "WebAuthn 的 COSE 与证书解析依赖"),
     ("Authlib", "BSD-3-Clause", "OAuth 2.0 / OpenID Connect 授权服务器与客户端（协议实现）"),
     ("charset-normalizer", "MIT", "CSV 编码识别"),
-    ("xlrd / olefile", "BSD-3-Clause / BSD-2-Clause", "XLS 读取、旧格式检测"),
+    # xlrd's LICENSE has two parts: BSD-3-Clause for the bulk, and for some earlier work David
+    # Giffin's 4-clause BSD-style licence, whose clause 4 asks every redistribution to keep an
+    # acknowledgment (NOTICE carries it). Its metadata says only "BSD"; the file says more.
+    ("xlrd", "BSD-3-Clause；早期部分代码为 David Giffin 的 BSD 式许可（含广告与致谢条款，见 NOTICE）", "XLS 读取"),
+    ("olefile", "BSD-2-Clause", "旧格式检测"),
     ("pycrdt", "MIT", "文档实时协同（服务端共享文档）"),
     ("anthropic / jiter / docstring-parser", "MIT", "个人 Agent 调用所配置的模型提供方（Anthropic）"),
     ("mcp / mcp-types", "MIT", "MCP 服务端与 Agent 的 MCP 客户端"),
