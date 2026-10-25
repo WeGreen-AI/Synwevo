@@ -37,8 +37,9 @@ order, the others with one of them). Real admissions and ``RiskControls.guard`` 
 5db93f86 one) decide exactly what the oracle's numbers decide. Every third step covers all four
 provider accounts. ``test_12000_records_*`` is the capacity case.
 
-Kept out of the random traces: admissions violating I1's lower bound (``expires_at <= admitted_at``)
-and cost encodings no trace can carry as JSON (BLOBs, tested below).
+Kept out of the random traces, each with a test of its own below: admissions violating I1's lower
+bound (``expires_at <= admitted_at``, a disagreement between the write-time producer and the
+verifier, xfail) and cost encodings no trace can carry as JSON (BLOBs).
 
 A disagreement is minimised (delta debugging over the recorded operation trace, replayed on fresh
 Stores, then halving bulk writes) and reported with its seed, step, fields and minimal trace, so
@@ -1451,3 +1452,23 @@ def test_odd_cost_encodings_agree_across_rollup_oracle_and_legacy(cost, tmp_path
             read_velocity(w, t, facts, {"check": "velocity", "scope": scope, "now": now,
                                         "unit": [MAIN.code, MAIN.scale], "owner": 0, "route": ROUTES[0],
                                         "risk": risk, "amount": 3})
+
+
+# ================================================================ disagreements found (regressions)
+@pytest.mark.xfail(strict=True, reason=(
+    "FINDING (equivalence property test, seed 13 before the generator excluded it): an admission with "
+    "expires_at <= admitted_at violates I1. CostRollup.check reports it (fact_i1), but the write-time producer "
+    "does not count it as malformed (contract §5 bounds expires_at only from above), so no fault is recorded: "
+    "reads keep answering until a verify latches verify_mismatch, and a rebuild then refuses with differences "
+    "instead of naming the fact to repair from backup. Producer and verifier should agree."))
+def test_an_admission_expiring_when_it_is_admitted_is_a_fault_or_verifies_clean(tmp_path, monkeypatch):
+    monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
+    at = ANCHORS[2] - 60
+    w = make_world(tmp_path / "store", at)
+    run_op(w, {"op": "admit_sql", "env": "test", "acct": ACCOUNT_REFS[1], "route": ROUTES[0], "unit": MAIN.code,
+               "reserved": 871, "admitted_at": at, "created_at": at, "attempt": "fx-attempt-1", "expires_at": at,
+               "call": "fx-call-1", "new_call": {"key": "fx-call-1", "env": "test", "owner": 0, "created_at": at,
+                                                 "deadline": at + 600, "status": "reserved"}})
+    report = CostRollup.check(w.store, all=True, now=at)
+    faults = w.store.one("SELECT COUNT(*) AS n FROM model_cost_rollup_faults WHERE resolved_at IS NULL")["n"]
+    assert report.ok or faults, report.summary()
