@@ -313,6 +313,18 @@ def client_ip(request: Request) -> str:
     return (request.client.host if request.client else "") or ""
 
 
+def routed_path(request: Request) -> str:
+    """The path the router matches — the ASGI ``path``, already percent-decoded — exactly.
+
+    Not ``request.url.path``: Starlette rebuilds the URL from the scope and splits it again, so a
+    percent-encoded ``?`` or ``#`` in the request target ends the path there. ``/api/about%3F/x``
+    reads as ``/api/about`` while the router matches ``/api/about?/x``, and a decision taken on the
+    shorter string (an exact-path exemption, a role's prefix) is granted to whatever route takes the
+    longer one. Nothing in this deployment sets ``root_path``, so the scope path is the route path.
+    """
+    return request.scope.get("path") or "/"
+
+
 # --------------------------------------------------------------------- RFC 9457 problem details
 PROBLEM_JSON = "application/problem+json"
 PROBLEM_TITLES = {400: "请求无效", 401: "需要认证", 403: "没有权限", 404: "资源不存在",
@@ -1190,7 +1202,9 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         request.state.trace_id = trace_id_of(request.headers.get("traceparent"))
         request.state.ratelimit = None
         request.state.error_code = None
-        path = request.url.path
+        # Every decision below — the role's refusals, the exact anonymous paths, the prefixes —
+        # is taken on the path the router will match, never on request.url.path (routed_path).
+        path = routed_path(request)
         token = None
 
         async def finish(resp):

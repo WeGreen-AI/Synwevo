@@ -73,6 +73,47 @@ def test_the_archive_is_rate_limited_per_address(tmp_path, monkeypatch, small_tr
     assert refused["error"] == "too_many_attempts" and refused["detail"]["retry_after"] >= 1
 
 
+@pytest.mark.parametrize("role", ["all", "accounts", "app"])
+@pytest.mark.parametrize("target", ["/api/about%3F/probe", "/api/about%3f/probe", "/api/source-code%23/probe",
+                                    "/api/source-code%3F/probe"])
+def test_an_encoded_query_mark_does_not_borrow_the_exemption(tmp_path, monkeypatch, small_tree, role, target):
+    """`/api/about%3F/x` is decoded to the path `/api/about?/x`; Starlette's `request.url` re-splits
+    that at the `?` and reads `/api/about`. The gate used to decide on that shorter string, so the
+    request passed both the role gate and the session gate as the exempt path while the router
+    matched the longer one. A route shaped like any future `/api/{name}/…` route, placed first so
+    nothing in front of it answers, must stay behind the gate."""
+    c = _client(tmp_path / role, monkeypatch, mode="session", role=role)
+    reached = []
+
+    @c.app.get("/api/{name}/probe")
+    def probe(name: str):          # TEST FIXTURE: a parameterised route the gate must protect
+        reached.append(name)
+        return {"name": name}
+
+    c.app.router.routes.insert(0, c.app.router.routes.pop())
+    r = c.get(target)
+    assert not reached and r.status_code in (401, 404), (target, r.status_code, r.text)
+    assert r.json()["error"] in ("unauthorized", "not_in_this_role")
+    assert c.get("/api/about").status_code == 200, "精确路径本身仍然匿名可达"
+
+
+def test_an_encoded_query_mark_does_not_borrow_the_probe_exemption(tmp_path, monkeypatch, small_tree):
+    """The probes had the same shape: under `basic`, `/healthz%3F/x` skipped the password."""
+    c = _client(tmp_path / "basic", monkeypatch, mode="basic", role="all")
+    reached = []
+
+    @c.app.get("/{name}/probe")
+    def probe(name: str):          # TEST FIXTURE: a parameterised route the gate must protect
+        reached.append(name)
+        return {"name": name}
+
+    c.app.router.routes.insert(0, c.app.router.routes.pop())
+    for target in ("/healthz%3F/probe", "/readyz%23/probe"):
+        r = c.get(target)
+        assert r.status_code == 401 and not reached, (target, r.status_code)
+    assert c.get("/healthz").status_code == 200
+
+
 def test_switching_the_offer_off_is_said_on_every_role(tmp_path, monkeypatch, small_tree):
     monkeypatch.setenv("SYNWEVO_DOCS_SOURCE_OFFER", "off")
     for role in ROLES:
