@@ -83,7 +83,11 @@ const FIXTURE_TEXT = /Fixture organization|Frozen fixture|Expired fixture|Recove
 
 function inLocale(locale, run) { ui.setLocale(locale); try { return run(); } finally { ui.setLocale("zh-Hans"); } }
 const render = (locale, element) => inLocale(locale, () => renderToStaticMarkup(element).replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
-const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+// The text a reader sees: tags break words and runs of HTML white space (space, tab, LF, FF, CR) fold into one
+// space, as a browser lays them out. A thin or no-break space a formatter emits is part of the text and stays:
+// ICU 78 (Node 22) puts U+2009 between the date and the time in zh-Hant, ICU 76 (Node 23) a plain space, and the
+// expected dates come from the same ui.fmtTime, so they match under either.
+const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/[ \t\n\f\r]+/g, " ").trim();
 const tx = (locale, source, params) => ui.translate(locale, source, params);
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const impact = (locale, action, p = plan(action)) => render(locale, React.createElement(dialog.OrganizationLifecycleImpact, { action, plan: p }));
