@@ -78,8 +78,12 @@ Queue behaviour, local configuration and error meanings: [operations](../../docs
 
 ## CI/CD
 
-`.github/workflows/production.yml` runs on pull requests, main pushes and manual dispatch. Hosted
-Ubuntu runners install pinned Python/Node dependencies, check boundaries/brand/types, build all
+`.github/workflows/production.yml` runs on pull requests into `dev` or `main`, pushes to `dev` and
+manual dispatch (branch model: [AGENTS.md](../../AGENTS.md#分支与发布)). Its `verify` job is the check the
+branch rules require, so it reports on every such pull request; one that only changes records under
+`docs/` (not `docs/integration/` or `docs/operations.md`, which tests read) runs only the guards that
+read every tracked file, and anything the classifier cannot prove to be records-only gets the full run.
+Otherwise hosted Ubuntu runners install pinned Python/Node dependencies, check boundaries/brand/types, build all
 frontends, run frontend suites and deployment safety regressions. The Python suite runs in a
 test-only derivative of the actual deployment image, with no production volume or external network.
 CI first builds from the same private archive extraction used by the SSH receiver, then checks
@@ -87,16 +91,24 @@ account startup as the unmodified non-root runtime user. Shipped source is reada
 image even when the host release directories are private; data and secret permissions are unchanged.
 This keeps LibreOffice/font behaviour aligned with production. The runtime uses Debian Trixie
 (LibreOffice 25.2); Bookworm's LibreOffice 7.4 cannot evaluate the accepted XLOOKUP sample.
-Only successful main runs
-can use the `production` environment. Its branch policy permits `main` only.
+Only a successful push or dispatch run on `dev` of `WeGreen-AI/Synwevo` deploys; it alone can use the
+`production` environment, whose branch policy must admit `dev` only. Pushes to `main` run nothing:
+`main` is the public mirror of `dev`, updated by sync pull requests (`main-sync-guard.yml` checks their
+source). Deploying runs share one concurrency group, in push order. Before anything reaches the host,
+the deploy job refuses a commit older than (or unrelated to) the newest successful production
+deployment, and a re-run whose commit is no longer `dev`'s head; to deploy `dev`'s head again, dispatch
+the workflow on `dev`. A deploy through the receiver outside Actions (only ever a commit already on
+`dev`) leaves no deployment record for that check. The receiver's build output stays on the runner:
+the public log shows the receipt, or the last 30 lines when the receiver fails.
 
 Environment secrets: `SYNWEVO_DEPLOY_KEY`, `SYNWEVO_KNOWN_HOSTS`; environment variable:
 `SYNWEVO_DEPLOY_HOST`. The key belongs to a separate `synwevo-deploy` host user with no Docker group,
 no password, no general sudo. Its authorized_keys entry uses `restrict` and a forced command. Sudo
 permits only the fixed receiver and passes `SSH_ORIGINAL_COMMAND`. The receiver accepts only
 `deploy <40 hex SHA>`, rejects path traversal/links/devices/runtime files and archive bombs, builds
-an image tagged by the commit, and serializes upgrades with a host lock. Main code can of course
-change the application that handles production data: protect repository write access accordingly.
+an image tagged by the commit, and serializes upgrades with a host lock. Code merged into `dev` can of
+course change the application that handles production data: `dev` accepts changes only through pull
+requests with the required `verify` check, and repository write access must stay protected accordingly.
 Never place a general SSH/root key, server root secret, database, or tunnel token in GitHub.
 
 The host receiver and Compose are intentionally not overwritten by incoming releases. Infrastructure

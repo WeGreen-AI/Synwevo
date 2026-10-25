@@ -81,6 +81,27 @@ npm run typecheck && npm run build         # 三个前端外壳
 一个测试如果需要另一个模块的路由才能通过，它就属于 `tests/integration/`——不要为了让它留在原地
 而把另一个模块挂进来。
 
+## 分支与发布
+
+* **`dev`** 承接全部开发，也是生产部署的唯一来源。改动一律走 PR 进 `dev`，必需检查 `verify` 通过后以
+  **merge commit** 合入（`gh pr merge --merge`），记录里引用的 SHA 因此一直有效。不直接推送、不强推、
+  不删除分支，规则对任何人都不放行（不用 `--admin`，不改规则集或环境）。
+* **合入 `dev` 就是部署。** 推送到 `dev` 的运行先 verify 再部署；只改 `docs/` 记录的合入既不验证也不部署
+  （`docs/integration/` 与 `docs/operations.md` 有测试读取，按代码处理）。合入代码改动前，先确认本轮已获部署授权。
+* **`main`** 是公开的开源分支、`dev` 的合并镜像：只接受 `dev`→`main` 的同步 PR
+  （`gh pr create --base main --head dev`），必需检查 `verify` 与 `sync-source`，以 merge commit 合入；
+  `main` 上没有部署。同步后 `main` 显示"领先 N 个提交"（都是合并提交）是正常的，不要为此反向合并。
+* **推送一律写明目标**：`git push origin HEAD:refs/heads/<工作分支>`。全局 `push.default=upstream` 会把
+  `git push origin <分支>` 推到该分支的上游，跟踪 `origin/main` 的分支就这样推上了 `main`。不用 `--all`、`--mirror`。
+* **外部贡献**指向 `dev`（[CONTRIBUTING.md](CONTRIBUTING.md)）；误指向 `main` 的，维护者把基础分支改为 `dev`，
+  关闭再重开以触发 verify。
+* **重新部署与回滚**：不要重跑旧的运行。部署作业拒绝比生产更旧的提交，重跑的提交也必须仍是 `dev` 的头部；
+  要重新部署 `dev` 头部，在 `dev` 上手动触发工作流。回滚见 `infra/production/README.md`。
+* **紧急情况**：受限 SSH 接收器的后备部署只发 `dev` 上已有的提交；只有仓库所有者能临时停用规则集。没经过
+  `dev` 就进入 `main` 的改动，事后用 `main`→`dev` 的 PR（merge commit）补回 `dev`。
+* **安全修复**先私下准备（安全公告或私有分支），提交与 PR 文字不写利用步骤，准备好立即部署时才合入 `dev`，
+  部署后再披露（[SECURITY.md](SECURITY.md)）。被跟踪的文件里不写"生产仍有漏洞 X"。
+
 ## 数据与安全
 
 * 用户数据在仓库根目录的 `data/`，由 `SYNWEVO_DATA_DIR` 指向；解析不依赖进程 cwd。
