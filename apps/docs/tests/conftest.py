@@ -1,6 +1,7 @@
 import io
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -74,6 +75,84 @@ from .helpers import Api  # noqa: F401  (re-exported for the fixtures below)
 @pytest.fixture()
 def api(client):
     return Api(client)
+
+
+PORTAL_THREAD = "asyncio-portal-"        # anyio names a blocking portal's thread f"{backend}-portal-{id(portal):x}"
+PORTAL_GRACE_S = 1.0                     # total wait for a portal that is still on its way out
+
+
+def _portals_started_since(before: set[threading.Thread]) -> list[threading.Thread]:
+    new = [t for t in threading.enumerate() if t not in before and t.name.startswith(PORTAL_THREAD)]
+    deadline = time.monotonic() + PORTAL_GRACE_S
+    for t in new:
+        t.join(max(0.0, deadline - time.monotonic()))
+    return [t for t in new if t.is_alive()]
+
+
+def _open_sockets_by_portal() -> dict[str, object]:
+    """Every WebSocket session that was entered, by the name of its portal's thread (only looked up
+    once something leaked: walking the heap is too slow for every test)."""
+    import gc
+
+    from starlette.testclient import WebSocketTestSession
+    out = {}
+    for obj in gc.get_objects():
+        if isinstance(obj, WebSocketTestSession) and getattr(obj, "portal", None) is not None:
+            out[f"{PORTAL_THREAD}{id(obj.portal):x}"] = obj
+    return out
+
+
+def _exit_within(sessions: list, budget: float) -> bool:
+    """Exit leaked sessions so their loops stop reading the test's database; bounded, because a
+    handler stuck in a fixture's wait must not hang the run. True when all of them ended."""
+    def run():
+        for s in sessions:
+            try:
+                s.__exit__(None, None, None)
+            except BaseException:  # noqa: BLE001 — the test already fails for the leak itself
+                pass
+    t = threading.Thread(target=run, name="exit-leaked-sockets", daemon=True)
+    t.start()
+    t.join(budget)
+    return not t.is_alive()
+
+
+@pytest.fixture(autouse=True)
+def _no_socket_outlives_its_test():
+    """A `websocket_connect(...)` session runs on a portal thread of its own that ends only when the
+    session is exited — also after the server closed the connection, and also when the test raised
+    after entering it. One left open keeps its connection's loop running after the test: a live room
+    re-reads the person's session every SYNWEVO_COLLAB_RECHECK_S on that test's database, and in a
+    full run that polluted a later test counting statements (CI run 40182684885).
+
+    Autouse fixtures are set up before, and torn down after, the fixtures a test asks for, so the
+    portals this finds were started by this test and outlived all of its own teardown (the
+    `with TestClient(app)` of a `world` fixture included). Portals alive before the test started are
+    not blamed on it. The leaked WebSocket sessions are exited here, so one failing test does not
+    pollute the ones after it."""
+    before = set(threading.enumerate())
+    yield
+    leaked = _portals_started_since(before)
+    if not leaked:
+        return
+    sockets = _open_sockets_by_portal()
+    named, exitable = [], []
+    for t in leaked:
+        s = sockets.get(t.name)
+        if s is None:
+            named.append(f"{t.name} (not a WebSocket session: a TestClient entered and never exited?)")
+        else:
+            exitable.append(s)
+            query = s.scope.get("query_string", b"").decode()
+            named.append(f"{t.name} (WebSocket {s.scope.get('path')}{'?' + query if query else ''})")
+    cleanup = ""
+    if exitable:
+        cleanup = (" The WebSocket sessions among them were exited now." if _exit_within(exitable, budget=5.0)
+                   else " Exiting the WebSocket sessions among them did not finish within 5 s; later tests may see their loops.")
+    pytest.fail(f"{len(leaked)} portal thread(s) outlived the test: " + "; ".join(named)
+                + ". Exit every websocket_connect session a test enters — also after the server closed it, and when"
+                  " something after entering it raised (the peer helpers close on failure; call .close() on the rest)."
+                + cleanup, pytrace=False)
 
 
 @pytest.fixture(autouse=True)

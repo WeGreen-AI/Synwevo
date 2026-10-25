@@ -85,14 +85,30 @@ class Peer:
         url = f"/api/collab/{path}/{tid}" + (f"?{'&'.join(q)}" if q else "")
         self.cm = client.websocket_connect(url, headers={"origin": origin})
         self.ws = self.cm.__enter__()
-        self.doc = doc if doc is not None else Doc()          # a browser reconnecting brings its own document along
-        self.updates: list[bytes] = []
-        self.meta: list[dict] = []
-        self.awareness: list[bytes] = []
-        self.synced = False
+        self.open = True
+        try:
+            self.doc = doc if doc is not None else Doc()      # a browser reconnecting brings its own document along
+            self.updates: list[bytes] = []
+            self.meta: list[dict] = []
+            self.awareness: list[bytes] = []
+            self.synced = False
+        except BaseException as failure:
+            self.close_after(failure)
+            raise
 
     def close(self):
-        self.cm.__exit__(None, None, None)
+        """Exit the socket session — also after the server closed the connection: until then its
+        portal thread keeps the connection's loop running against this test's database. Idempotent."""
+        if self.open:
+            self.open = False
+            self.cm.__exit__(None, None, None)
+
+    def close_after(self, failure: BaseException):
+        """Close because something after entering the socket raised; ``failure`` stays the error."""
+        try:
+            self.close()
+        except Exception as e:  # noqa: BLE001
+            failure.add_note(f"closing the socket after this failure failed too: {e!r}")
 
     def recv(self, *, want: str | None = None, tries: int = 12):
         """Read frames until one of ``want`` (meta/sync/update/awareness) arrives; frames of the
@@ -136,13 +152,18 @@ class Peer:
         raise AssertionError(f"no {kind} frame; meta so far: {self.meta}")
 
     def connect(self):
-        hello = self.recv(want="meta")
-        assert hello["type"] == "hello", hello
-        self.recv(want="sync")                                 # the server's step 1 (answered)
-        self.ws.send_bytes(create_sync_message(self.doc))     # ask for what we miss
-        while not self.synced:
-            self.recv(want="sync")
-        return hello
+        """The hello and the initial sync; a refusal or anything else raised here closes the socket."""
+        try:
+            hello = self.recv(want="meta")
+            assert hello["type"] == "hello", hello
+            self.recv(want="sync")                                 # the server's step 1 (answered)
+            self.ws.send_bytes(create_sync_message(self.doc))     # ask for what we miss
+            while not self.synced:
+                self.recv(want="sync")
+            return hello
+        except BaseException as failure:
+            self.close_after(failure)
+            raise
 
     def body(self) -> XmlFragment:
         return self.doc.get("body", type=XmlFragment)
@@ -643,6 +664,7 @@ def test_an_oversized_frame_closes_only_that_connection(world, monkeypatch):
     assert b.recv_meta("left")["user"]["name"] == "Editor"          # gone, cleanly
     b.append_text("其他人照常")
     assert b.texts() == ["客户：其他人照常"]
+    a.close()                                                        # closed by the server, still to be exited here
     b.close()
 
 

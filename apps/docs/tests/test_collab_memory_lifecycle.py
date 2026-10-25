@@ -35,14 +35,7 @@ class _TextPeer(Peer):
     """
 
     def __init__(self, client, tid):
-        self.cm = client.websocket_connect(
-            f"/api/collab/templates/{tid}", headers={"origin": "http://testserver"},
-        )
-        self.ws = self.cm.__enter__()
-        self.doc = Doc()
-        self.meta = []
-        self.awareness = []
-        self.synced = False
+        super().__init__(client, tid)            # a failed hello or sync closes the socket (Peer.connect)
         self.hello = self.connect()
 
     def edit(self, fn):

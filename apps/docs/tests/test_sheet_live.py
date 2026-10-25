@@ -39,17 +39,33 @@ class SheetPeer:
         q = ([f"client={client_id}"] if client_id else []) + ([f"epoch={epoch}"] if epoch else [])
         self.cm = client.websocket_connect(f"/api/collab/templates/{tid}" + (f"?{'&'.join(q)}" if q else ""), headers={"origin": origin})
         self.ws = self.cm.__enter__()
-        self.meta: list[dict] = []
-        self.sheet: list[dict] = []
-        self.inbox: list[tuple[str, dict]] = []              # frames read but not yet asked for
-        self.hello = self.wait(lambda k, p: k == "meta" and p["type"] == "hello")
-        self.content = self.hello.get("content")
-        self.seq = self.hello.get("seq")
-        self.next = self.hello.get("next")
-        self.epoch = self.hello.get("epoch")
+        self.open = True
+        try:                                                  # a refusal after the accept arrives here, as a close
+            self.meta: list[dict] = []
+            self.sheet: list[dict] = []
+            self.inbox: list[tuple[str, dict]] = []          # frames read but not yet asked for
+            self.hello = self.wait(lambda k, p: k == "meta" and p["type"] == "hello")
+            self.content = self.hello.get("content")
+            self.seq = self.hello.get("seq")
+            self.next = self.hello.get("next")
+            self.epoch = self.hello.get("epoch")
+        except BaseException as failure:
+            self.close_after(failure)
+            raise
 
     def close(self):
-        self.cm.__exit__(None, None, None)
+        """Exit the socket session — also after the server closed the connection: until then its
+        portal thread keeps the connection's loop running against this test's database. Idempotent."""
+        if self.open:
+            self.open = False
+            self.cm.__exit__(None, None, None)
+
+    def close_after(self, failure: BaseException):
+        """Close because something after entering the socket raised; ``failure`` stays the error."""
+        try:
+            self.close()
+        except Exception as e:  # noqa: BLE001
+            failure.add_note(f"closing the socket after this failure failed too: {e!r}")
 
     # -- receiving
     def recv(self):
@@ -1309,10 +1325,12 @@ def test_one_persons_tabs_opened_first_and_written_later_keep_their_share(world,
     assert len(owners) == cs.MAX_CLIENTS_PER_SCOPE
     r = e.do(op, n=n, expect=0)
     assert r["ok"] is True and r["duplicate"] is True, "the editor's lost answer is still recognised"
-    assert join(world, "viewer").hello["next"] == 1, "nobody else's numbers moved"
+    v = join(world, "viewer")
+    assert v.hello["next"] == 1, "nobody else's numbers moved"
     for o in tabs:
         o.close()
     e.close()
+    v.close()
 
 
 def test_a_message_number_far_ahead_cannot_push_everyone_s_numbers_past_a_browser(world):
@@ -1854,6 +1872,7 @@ def test_a_viewer_promoted_past_the_caps_is_told(world, monkeypatch):
         for _ in range(40):
             v.ws.receive_bytes()
     assert x.value.code == 4429
+    v.close()                                                    # closed by the server, still to be exited here
     e.close()
 
 
