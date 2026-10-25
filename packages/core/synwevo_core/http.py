@@ -313,6 +313,27 @@ def client_ip(request: Request) -> str:
     return (request.client.host if request.client else "") or ""
 
 
+def address_bucket(address: str) -> str:
+    """The key an address-based rate limit counts a client under: an IPv4 address as it is, an IPv6
+    address by its /64, and an IPv4-mapped IPv6 address as the IPv4 address it carries.
+
+    One IPv6 subscriber is routinely given a whole /64 (RFC 6177 recommends at least that) and
+    chooses the address inside it — privacy extensions rotate it on their own — so a bucket per
+    /128 limits nothing: 60 addresses of one /64 each got their own allowance. Anything that is
+    not an address (a test client's name, an empty string) is its own key.
+    """
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(address.strip().strip("[]").split("%", 1)[0])
+    except ValueError:
+        return address or "unknown"
+    if ip.version == 6:
+        if ip.ipv4_mapped is not None:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.IPv6Network((ip, 64), strict=False))
+    return str(ip)
+
+
 def routed_path(request: Request) -> str:
     """The path the router matches — the ASGI ``path``, already percent-decoded — exactly.
 

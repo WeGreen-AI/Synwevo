@@ -468,10 +468,24 @@ def _build_archive(listing: _Listing) -> Archive:
     return Archive(data, name, f'"{digest}"')
 
 
-#: Archive downloads per minute per client address. The offer is anonymous and the archive is tens
-#: of megabytes, so one address cannot turn it into a bandwidth pump; a person fetching the source
-#: is never near this.
+#: Archive downloads per minute per client — an IPv4 address, or an IPv6 /64
+#: (``synwevo_core.http.address_bucket``). The offer is anonymous and the archive is tens of
+#: megabytes, so one client cannot turn it into a bandwidth pump; a person fetching the source is
+#: never near this. A revalidation answered 304 is not a download and is not counted.
 DOWNLOADS_PER_MIN = 6
+#: The archive changes only with a deployment, so an edge cache may keep it — for ten minutes, after
+#: which it revalidates (a 304 while the ETag still matches). A deployment's new source is
+#: therefore served everywhere within ten minutes. Error responses stay ``no-store`` (the gate).
+ARCHIVE_CACHE_CONTROL = "public, max-age=600"
+
+
+def _etag_matches(header: str | None, etag: str) -> bool:
+    """If-None-Match, with the weak comparison RFC 9110 §13.1.2 prescribes for it."""
+    if not header:
+        return False
+    if header.strip() == "*":
+        return True
+    return any(tag.strip().removeprefix("W/") == etag for tag in header.split(","))
 
 
 def router():
@@ -488,7 +502,7 @@ def router():
     from fastapi import APIRouter
     from fastapi.responses import Response
     from synwevo_core.errors import ServiceError
-    from synwevo_core.http import RateBuckets, client_ip
+    from synwevo_core.http import RateBuckets, address_bucket, client_ip
 
     r = APIRouter()
     downloads = RateBuckets(DOWNLOADS_PER_MIN, name="source-code")
@@ -501,14 +515,17 @@ def router():
     def source_code(request: Request):
         if not source_offer_enabled():
             raise ServiceError(404, "source_offer_off", "本部署已关闭源代码下载（运营方以其他方式提供对应源代码，或运行未经修改、不含第三方 AGPL 组件的版本）")
-        allowed, _left, wait = downloads.take(client_ip(request) or "unknown")
-        if not allowed:
-            raise ServiceError(429, "too_many_attempts", "操作过于频繁，请稍后再试", {"retry_after": max(1, math.ceil(wait))})
         try:
             archive = current_archive()
         except SourceUnavailable as refused:
             raise ServiceError(503, "source_unavailable", str(refused)) from None
+        cache = {"ETag": archive.etag, "Cache-Control": ARCHIVE_CACHE_CONTROL}
+        if _etag_matches(request.headers.get("if-none-match"), archive.etag):
+            return Response(status_code=304, headers=cache)
+        allowed, _left, wait = downloads.take(address_bucket(client_ip(request) or "unknown"))
+        if not allowed:
+            raise ServiceError(429, "too_many_attempts", "操作过于频繁，请稍后再试", {"retry_after": max(1, math.ceil(wait))})
         return Response(archive.data, media_type="application/gzip",
-                        headers={"Content-Disposition": f"attachment; filename=\"{archive.name}\""})
+                        headers={**cache, "Content-Disposition": f"attachment; filename=\"{archive.name}\""})
 
     return r

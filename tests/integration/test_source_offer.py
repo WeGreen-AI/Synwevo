@@ -116,6 +116,47 @@ def test_an_encoded_query_mark_does_not_borrow_the_probe_exemption(tmp_path, mon
     assert c.get("/healthz").status_code == 200
 
 
+def test_repeats_are_answered_from_the_edge_and_the_etag(tmp_path, monkeypatch, small_tree):
+    """The archive is the same bytes until the next deployment, so the edge may keep it: public,
+    a bounded max-age and a strong ETag. A revalidation that still matches is a 304 with no body,
+    and it does not spend the address's downloads."""
+    from synwevo_docs import licensing
+    monkeypatch.setattr(licensing, "DOWNLOADS_PER_MIN", 1)
+    c = _client(tmp_path / "edge", monkeypatch, mode="session", role="accounts")
+    first = c.get("/api/source-code")
+    assert first.status_code == 200
+    etag, cache = first.headers["etag"], first.headers["cache-control"]
+    assert etag.startswith('"') and etag.endswith('"') and len(etag) > 20, etag      # strong, not W/
+    assert "public" in cache and "max-age=" in cache and "no-store" not in cache, cache
+    assert "set-cookie" not in first.headers, "带 Set-Cookie 的响应边缘不会缓存，也不该有"
+    for sent in (etag, f'"other", {etag}', f"W/{etag}", "*"):
+        again = c.get("/api/source-code", headers={"If-None-Match": sent})
+        assert again.status_code == 304 and again.content == b"", sent
+        assert again.headers["etag"] == etag and "public" in again.headers["cache-control"]
+    stale = c.get("/api/source-code", headers={"If-None-Match": '"not-this-one"'})
+    assert stale.status_code == 429, "不匹配的重新验证是一次真正的下载，照常计数"
+    assert "no-store" in stale.headers["cache-control"], "拒绝不能被边缘缓存"
+
+
+def test_the_limit_counts_an_ipv6_64_as_one_client(tmp_path, monkeypatch, small_tree):
+    """An IPv6 subscriber is routinely given a whole /64 and picks addresses inside it freely, so a
+    bucket per /128 limited nothing: 60 addresses of one /64 got 60 archives. IPv6 is counted per
+    /64, IPv4 per address, and an IPv4-mapped IPv6 address as the IPv4 address it is."""
+    from synwevo_docs import licensing
+    monkeypatch.setattr(licensing, "DOWNLOADS_PER_MIN", 2)
+    monkeypatch.setenv("SYNWEVO_TRUST_PROXY", "1")
+    c = _client(tmp_path / "v6", monkeypatch, mode="session", role="accounts")
+
+    def get(address):
+        return c.get("/api/source-code", headers={"X-Forwarded-For": address}).status_code
+
+    assert [get(f"2001:db8:1:2::{i:x}") for i in range(1, 4)] == [200, 200, 429]
+    assert get("2001:db8:1:2:ffff:ffff:ffff:ffff") == 429, "同一 /64 的另一个地址还是同一个客户端"
+    assert get("2001:db8:1:3::1") == 200, "另一个 /64 是另一个客户端"
+    assert [get("198.51.100.7"), get("::ffff:198.51.100.7"), get("198.51.100.7")] == [200, 200, 429]
+    assert get("198.51.100.8") == 200
+
+
 def test_without_a_release_list_the_archive_is_refused_not_walked(tmp_path, monkeypatch):
     """An installation with neither the image's manifest nor a Git checkout cannot tell its source
     from whatever else sits in the directory, so it serves nothing rather than everything."""
