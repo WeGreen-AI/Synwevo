@@ -70,6 +70,13 @@ COPY docs/ docs/
 # built from it carry the licence text, not only a reference to the repository.
 COPY LICENSE NOTICE TRADEMARKS.md README.md README.en.md pyproject.toml package.json package-lock.json requirements-dev.txt ./
 COPY infra/Dockerfile infra/docker-compose.yml infra/
+# The rest of what builds, installs and runs it — the production stack, the CI workflow that builds
+# and ships this image, the build-context rules, the configuration template and the test
+# configuration — so the Corresponding Source served from this image is complete
+# (synwevo_docs.licensing.INCLUDE; filled-in *.env files are excluded by .dockerignore and the archive).
+COPY infra/production/ infra/production/
+COPY .github/ .github/
+COPY .dockerignore .env.example conftest.py ./
 COPY --from=ui /ui/apps/docs/web/dist apps/docs/web/dist
 COPY --from=ui /ui/services/identity/web/dist services/identity/web/dist
 COPY --from=ui /ui/apps/portal/web/dist apps/portal/web/dist

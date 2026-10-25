@@ -35,16 +35,33 @@ ROOT = repo_root() or Path(__file__).resolve().parents[3]
 # were copied into the image and installed with `pip install -e` while this list left them out,
 # because only INCLUDE ⊆ COPY was tested. Both directions are tested now
 # (apps/docs/tests/test_licensing.py).
+#
+# "What the Dockerfile copies" is not by itself a definition of complete — it is the same list
+# twice. The reference outside both is the repository: every tracked top-level entry is either here
+# or in NOT_OFFERED with its reason (tested against `git ls-files`). Corresponding Source includes
+# the scripts that build, install and run the program (GPLv3 §1), so the production stack
+# (infra/production: compose, nginx, the deploy receiver), the CI workflow that builds and ships
+# the image (.github), the image's build-context rules (.dockerignore), the documented
+# configuration (.env.example) and the test configuration (conftest.py) are offered too.
 INCLUDE = (
     # the applications
     "apps/docs", "apps/portal", "apps/messages", "apps/suite",
     # the platform they run on
     "packages", "services/identity", "infra/server",
-    # how it is built, run and documented
-    "infra/Dockerfile", "infra/docker-compose.yml", "scripts", "tests", "docs",
+    # how it is built, installed, run, tested and documented
+    "infra/Dockerfile", "infra/docker-compose.yml", "infra/production", ".github", ".dockerignore",
+    ".env.example", "conftest.py", "scripts", "tests", "docs",
     "package.json", "package-lock.json", "pyproject.toml", "requirements-dev.txt",
     "README.md", "README.en.md", "LICENSE", "NOTICE", "TRADEMARKS.md",
 )
+#: Tracked top-level entries that are not part of the program's Corresponding Source, and why.
+#: Nothing here is needed to build, install, run or modify the program.
+NOT_OFFERED = {
+    "AGENTS.md": "the working rules for people and coding agents who change this repository",
+    "CLAUDE.md": "the same rules, loaded by one coding tool",
+    ".gitignore": "which local files version control ignores",
+    ".gitattributes": "which evidence files `git archive` leaves out of a release",
+}
 EXCLUDE_PARTS = {"__pycache__", "node_modules", ".venv", "dist", ".pytest_cache", "screenshots",
                  "data", "testdata", ".local"}
 # `.traineddata`: the tessdata_fast OCR models in apps/docs/tessdata are unmodified third-party data
@@ -188,6 +205,15 @@ def source_status() -> dict:
     return {"root": str(ROOT), "missing": missing, "complete": not missing}
 
 
+def _is_environment_file(name: str) -> bool:
+    """A filled-in configuration file (`.env`, `.env.production`, `runtime.env`, `smtp.env`) holds an
+    operator's secrets and is never source, wherever it sits — the archive is anonymous. Only the
+    tracked templates (`*.example`) are offered."""
+    if name.endswith(".example"):
+        return False
+    return name == ".env" or name.startswith(".env.") or name.endswith(".env")
+
+
 def _walk():
     """(path, archive-relative name) of every source file under INCLUDE, before the size limit."""
     for rel in INCLUDE:
@@ -201,7 +227,8 @@ def _walk():
             # so a set membership test never saw it and build metadata rode along.
             if (set(parts) & EXCLUDE_PARTS
                     or any(part.endswith(".egg-info") for part in parts)
-                    or f.suffix in EXCLUDE_SUFFIXES):
+                    or f.suffix in EXCLUDE_SUFFIXES
+                    or _is_environment_file(f.name)):
                 continue
             yield f, f.relative_to(ROOT).as_posix()
 
@@ -262,7 +289,9 @@ def _build_archive(files: list, stamp: str) -> tuple[bytes, str]:
         big = oversized()
         if status["complete"] and not big:
             lines += ["本包包含所列全部内容：Synwevo Docs、门户、Message、业务应用与个人 Agent（apps/suite）、平台共享包与前端包、"
-                      "账户服务、部署组装、构建与运行脚本、测试、文档、依赖版本清单，以及 LICENSE、NOTICE 与 TRADEMARKS.md。"]
+                      "账户服务、部署组装（infra/server）、镜像与生产部署的构建和运行文件（infra/Dockerfile、"
+                      "infra/docker-compose.yml、infra/production、.github/workflows、.dockerignore、.env.example）、"
+                      "脚本、测试与测试配置、文档、依赖版本清单，以及 LICENSE、NOTICE 与 TRADEMARKS.md。"]
         if not status["complete"]:
             lines += ["⚠ 本包并不完整。以下内容在运行本服务的目录中不存在，因此未能包含：", ""]
             lines += [f"  - {rel}" for rel in status["missing"]]
@@ -271,8 +300,10 @@ def _build_archive(files: list, stamp: str) -> tuple[bytes, str]:
         if big:
             lines += ["", "⚠ 以下文件单个超过 5 MB，未放入本包，请从项目仓库获取：", ""]
             lines += [f"  - {name}" for name in big]
-        lines += ["", "未包含：用户数据、虚拟环境与 node_modules、编译产物，以及 apps/docs/tessdata 中的第三方 OCR 模型文件"
-                      "（tessdata_fast，Apache-2.0，未经修改，来源见该目录的 README）。",
+        lines += ["", "未包含：用户数据、填写过的配置文件（.env、runtime.env 等，只含 *.example 模板）、虚拟环境与 node_modules、"
+                      "编译产物，以及 apps/docs/tessdata 中的第三方 OCR 模型文件（tessdata_fast，Apache-2.0，未经修改，"
+                      "来源见该目录的 README）。仓库中只供协作者与编码代理使用的工作规则（AGENTS.md、CLAUDE.md）"
+                      "与版本控制设置不属于对应源代码。",
                   "第三方组件的源代码可从其官方发布获取（版本见各模块的 requirements.txt、infra/server/requirements.lock "
                   "与仓库根目录的 package-lock.json）。", ""]
         readme = "\n".join(lines).encode("utf-8")

@@ -176,13 +176,57 @@ def test_every_path_the_image_copies_or_installs_is_in_the_offer():
     assert not missing, f"镜像复制或安装了这些路径，对应源代码包却不含它们：{missing}"
 
 
+def test_every_tracked_path_is_offered_or_excluded_with_a_reason():
+    """Completeness measured against the repository, not against the Dockerfile.
+
+    The two tests above compare INCLUDE with the image's COPY lines, which is the same list twice:
+    infra/production (the compose file, nginx and the deploy receiver production actually runs
+    from), .dockerignore, .env.example and conftest.py were in neither, while the offer said it
+    held the deployment's build and run scripts. Every tracked file must now fall under INCLUDE or
+    under NOT_OFFERED, which names its reason.
+    """
+    import shutil
+    import subprocess
+    if shutil.which("git") is None or not (ROOT / ".git").exists():
+        import pytest
+        pytest.skip("不是 Git 检出（镜像由 git archive 构建，没有 .git）：这一项在检出里核对")
+    tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], check=True,
+                             capture_output=True).stdout.decode("utf-8").split("\0")
+    tracked = [t for t in tracked if t]
+    assert len(tracked) > 1000, "git ls-files 没有列出仓库文件"
+    covered = list(licensing.INCLUDE) + list(licensing.NOT_OFFERED)
+    stray = sorted({t.split("/")[0] if "/" not in t else "/".join(t.split("/")[:2])
+                    for t in tracked if not _covered(t, covered)})
+    assert not stray, f"这些受版本控制的路径既不在对应源代码包里，也没有写明不提供的理由：{stray}"
+    assert all(reason.strip() for reason in licensing.NOT_OFFERED.values())
+    assert not set(licensing.INCLUDE) & set(licensing.NOT_OFFERED)
+
+
+def test_filled_in_configuration_never_enters_the_archive(monkeypatch, tmp_path):
+    """The archive is anonymous. An operator's runtime.env or .env beside the templates stays out."""
+    for rel in ("infra/production/runtime.env", "infra/production/smtp.env", ".env", ".env.local", "apps/docs/.env"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("SECRET=fixture\n", encoding="utf-8")
+    for rel in ("infra/production/runtime.env.example", ".env.example", "apps/docs/x.py"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("# template\n", encoding="utf-8")
+    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    offered = {name for _, name in licensing._archive_files()}
+    assert {"infra/production/runtime.env.example", ".env.example", "apps/docs/x.py"} <= offered
+    assert not {n for n in offered if n.endswith(".env") or n.split("/")[-1].startswith(".env.local")}
+    dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8").split()
+    assert "**/*.env" in dockerignore, "镜像构建上下文也要挡住填写过的环境文件"
+
+
 def test_the_offer_holds_every_mounted_application_and_the_licence_files():
     offered = {name for _, name in licensing._archive_files()}
     for must in ("apps/suite/synwevo_suite/app.py", "apps/suite/web/src/main.tsx",
                  "apps/messages/synwevo_messages/app.py", "apps/messages/web/src/main.tsx",
                  "apps/portal/web/src/main.tsx", "packages/ui/src/index.ts",
                  "LICENSE", "NOTICE", "TRADEMARKS.md", "apps/docs/sdk/LICENSE",
-                 "apps/docs/tessdata/LICENSE", "apps/docs/tessdata/README.md"):
+                 "apps/docs/tessdata/LICENSE", "apps/docs/tessdata/README.md",
+                 "infra/production/compose.yaml", "infra/production/nginx.conf", "infra/production/receive.py",
+                 ".github/workflows/production.yml", ".dockerignore", ".env.example", "conftest.py"):
         assert must in offered, f"对应源代码包缺少 {must}"
     assert not any(n.endswith(".traineddata") for n in offered), "第三方 OCR 模型不是源代码，不放进包里"
 

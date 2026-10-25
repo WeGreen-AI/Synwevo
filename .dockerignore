@@ -3,6 +3,9 @@ data/
 .local/
 .env
 **/smtp.env
+# Any filled-in environment file (runtime.env, smtp.env…) wherever an operator put it: infra/production/
+# is copied into the image and offered as source, so only its *.env.example templates may enter.
+**/*.env
 .env.*
 !.env.example
 .venv/
