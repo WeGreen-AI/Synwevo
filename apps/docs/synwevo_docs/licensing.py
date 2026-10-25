@@ -25,19 +25,18 @@ from synwevo_core.http import repo_root
 ROOT = repo_root() or Path(__file__).resolve().parents[3]
 # The Corresponding Source of the *running program*. After the platform restructure that is more
 # than Synwevo Docs' own directory: the process a network user reaches is composed from the shared
-# packages, the account service and the role composer, and an archive holding only `apps/docs`
-# would be a partial source shipped under a complete-source claim — which is the exact failure
-# AGPL-3.0 §13 is about.
+# packages, the account service, Synwevo Message, the business applications and the personal Agent
+# (apps/suite), and the role composer, and an archive holding only `apps/docs` would be a partial
+# source shipped under a complete-source claim — which is the exact failure AGPL-3.0 §13 is about.
+# Whole directories, matching the Dockerfile's COPY lines one for one: apps/suite and apps/messages
+# were copied into the image and installed with `pip install -e` for months while this list left
+# them out, because only INCLUDE ⊆ COPY was tested. Both directions are tested now
+# (apps/docs/tests/test_licensing.py).
 INCLUDE = (
-    # the business application
-    "apps/docs/synwevo_docs", "apps/docs/tests", "apps/docs/scripts",
-    "apps/docs/web/src", "apps/docs/web/index.html", "apps/docs/web/package.json",
-    "apps/docs/web/tsconfig.json", "apps/docs/web/vite.config.ts",
-    "apps/docs/pyproject.toml", "apps/docs/requirements.txt",
-    "apps/docs/requirements-pdfium.txt",
-    # the platform it runs on
-    "packages/core", "packages/auth-client", "packages/ui",
-    "services/identity", "apps/portal", "infra/server",
+    # the applications
+    "apps/docs", "apps/portal", "apps/messages", "apps/suite",
+    # the platform they run on
+    "packages", "services/identity", "infra/server",
     # how it is built, run and documented
     "infra/Dockerfile", "infra/docker-compose.yml", "scripts", "tests", "docs",
     "package.json", "package-lock.json", "pyproject.toml", "requirements-dev.txt",
@@ -45,6 +44,9 @@ INCLUDE = (
 )
 EXCLUDE_PARTS = {"__pycache__", "node_modules", ".venv", "dist", ".pytest_cache", "screenshots",
                  "data", "testdata", ".local"}
+# `.traineddata`: the tessdata_fast OCR models in apps/docs/tessdata are unmodified third-party data
+# (Apache-2.0, available upstream), not source; their README and LICENSE stay in the archive.
+EXCLUDE_SUFFIXES = (".pyc", ".log", ".traineddata")
 MAX_FILE = 5 * 1024 * 1024
 
 # The program's own licence (LICENSE); the SDKs under apps/docs/sdk/ are Apache-2.0 (their own LICENSE).
@@ -151,8 +153,8 @@ def source_status() -> dict:
     return {"root": str(ROOT), "missing": missing, "complete": not missing}
 
 
-def _archive_files():
-    """(path, archive-relative name) of every file the Corresponding Source contains."""
+def _walk():
+    """(path, archive-relative name) of every source file under INCLUDE, before the size limit."""
     for rel in INCLUDE:
         p = ROOT / rel
         if not p.exists():
@@ -164,9 +166,21 @@ def _archive_files():
             # so a set membership test never saw it and build metadata rode along.
             if (set(parts) & EXCLUDE_PARTS
                     or any(part.endswith(".egg-info") for part in parts)
-                    or f.suffix in (".pyc", ".log") or f.stat().st_size > MAX_FILE):
+                    or f.suffix in EXCLUDE_SUFFIXES):
                 continue
             yield f, f.relative_to(ROOT).as_posix()
+
+
+def oversized() -> list[str]:
+    """Source files left out of the archive for size. Named in SOURCE_OFFER.txt, never dropped quietly."""
+    return [name for f, name in _walk() if f.stat().st_size > MAX_FILE]
+
+
+def _archive_files():
+    """(path, archive-relative name) of every file the Corresponding Source contains."""
+    for f, name in _walk():
+        if f.stat().st_size <= MAX_FILE:
+            yield f, name
 
 
 # One archive per state of the installed files. It used to be rebuilt — the whole tree read, tarred
@@ -206,16 +220,26 @@ def _build_archive(files: list, stamp: str) -> tuple[bytes, str]:
             tar.add(f, arcname=f"{top}/{name}", recursive=False)
         # Where it was generated is described, not spelled out: the absolute path of the
         # installation is nobody's business outside the server and was handed to every user.
-        lines = ["Synwevo Docs 对应源代码（Corresponding Source）", "",
-                 "本压缩包由正在运行的服务按其安装目录中的文件生成。", ""]
-        if status["complete"]:
-            lines += ["本包包含所列全部内容：业务应用、平台共享包、账户服务、门户、构建与运行脚本、文档与依赖版本清单。"]
-        else:
+        lines = ["Synwevo 对应源代码（Corresponding Source）", "",
+                 "本压缩包由正在运行的服务按其安装目录中的文件生成。",
+                 "许可：Synwevo 以 AGPL-3.0-or-later 许可（见 LICENSE 与 NOTICE）；apps/docs/sdk/ 下的 SDK 为 Apache-2.0；"
+                 "Synwevo 名称、Logo 与图标不在许可之内（见 TRADEMARKS.md）。", ""]
+        big = oversized()
+        if status["complete"] and not big:
+            lines += ["本包包含所列全部内容：Synwevo Docs、门户、Message、业务应用与个人 Agent（apps/suite）、平台共享包与前端包、"
+                      "账户服务、部署组装、构建与运行脚本、测试、文档、依赖版本清单，以及 LICENSE、NOTICE 与 TRADEMARKS.md。"]
+        if not status["complete"]:
             lines += ["⚠ 本包并不完整。以下内容在运行本服务的目录中不存在，因此未能包含：", ""]
             lines += [f"  - {rel}" for rel in status["missing"]]
-            lines += ["", "这通常是因为容器镜像只复制了运行所需的代码与编译后的前端产物。完整源代码请见项目仓库，",
-                      "或用包含这些路径的镜像重新构建（见 Dockerfile 中的 COPY 行）。"]
-        lines += ["", "第三方组件的源代码可从其官方发布获取（版本见各模块的 requirements.txt 与仓库根目录的 package-lock.json）。", ""]
+            lines += ["", "这说明构建运行目录（容器镜像）时漏掉了它们。完整源代码请见项目仓库，",
+                      "或用包含这些路径的镜像重新构建（见 infra/Dockerfile 中的 COPY 行）。"]
+        if big:
+            lines += ["", "⚠ 以下文件单个超过 5 MB，未放入本包，请从项目仓库获取：", ""]
+            lines += [f"  - {name}" for name in big]
+        lines += ["", "未包含：用户数据、虚拟环境与 node_modules、编译产物，以及 apps/docs/tessdata 中的第三方 OCR 模型文件"
+                      "（tessdata_fast，Apache-2.0，未经修改，来源见该目录的 README）。",
+                  "第三方组件的源代码可从其官方发布获取（版本见各模块的 requirements.txt、infra/server/requirements.lock "
+                  "与仓库根目录的 package-lock.json）。", ""]
         readme = "\n".join(lines).encode("utf-8")
         info = tarfile.TarInfo(f"{top}/SOURCE_OFFER.txt")
         info.size = len(readme)
