@@ -19,7 +19,10 @@ one set of rules, not two:
   CLI/SDK/console share the existing service layer; ordinary Docs business APIs remain available.
 * **Do not push, publish packages or create releases** unless the user asks in the conversation.
   Local commits are fine; keep unrelated changes out of them.
-  `main` pushes trigger production deployment. Local-only rounds must not push or access the VPS.
+  Merging a pull request into `dev` triggers production deployment (a records-only change under
+  `docs/` does not); `main` is the public mirror of `dev`, updated only by dev→main sync pull requests
+  (AGENTS.md「分支与发布」). Never push to `dev` or `main` directly. Local-only rounds must not push or
+  access the VPS.
   Deploy only when explicitly authorized in the current conversation; preserve host data and keys.
   The latest deployment status is recorded in `docs/quality/deployment.md`.
 * **Previewing the product:** `.claude/launch.json` names the three origins (`docweave`, `accounts`,

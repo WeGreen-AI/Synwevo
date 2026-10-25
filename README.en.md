@@ -15,7 +15,7 @@ own machine or server. No file ever leaves it.
 
 [简体中文](README.md) · English
 
-[![Verify and deploy](https://github.com/WeGreen-AI/Synwevo/actions/workflows/production.yml/badge.svg)](https://github.com/WeGreen-AI/Synwevo/actions/workflows/production.yml)
+[![Verify and deploy](https://github.com/WeGreen-AI/Synwevo/actions/workflows/production.yml/badge.svg?branch=dev)](https://github.com/WeGreen-AI/Synwevo/actions/workflows/production.yml?query=branch%3Adev)
 ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![Node 22](https://img.shields.io/badge/Node-22-339933?logo=node.js&logoColor=white)
 ![React · Vite · TypeScript](https://img.shields.io/badge/React-Vite%20%C2%B7%20TypeScript-2563EB)
@@ -261,9 +261,12 @@ npm run typecheck && npm run build             # the three front-end shells
 ```
 
 CI ([.github/workflows/production.yml](.github/workflows/production.yml)) runs the same checks on every
-push and pull request and executes the full test suite against the production runtime in an isolated
-container. Only `main` is deployed, after verification, through a restricted SSH command, followed by
-`/readyz` checks on the three public origins. The latest deployment round (Python suite 1893 passed /
+pull request into `dev` or `main` and on every merge into `dev`, and executes the full test suite against the
+production runtime in an isolated container (a pull request that only changes records under `docs/` runs the
+repository-wide guards). Development and deployment happen on `dev`: only `dev` is deployed, after
+verification, through a restricted SSH command, followed by `/readyz` checks on the three public origins.
+`main` is the public open-source branch and is updated only by sync pull requests from `dev` (branch rules:
+[AGENTS.md](AGENTS.md#分支与发布)). The latest deployment round (Python suite 1893 passed /
 2 skipped, all front-end and guard checks passed) and the table-by-table, blob-by-blob data
 preservation comparison are recorded in [docs/quality/deployment.md](docs/quality/deployment.md).
 
@@ -322,6 +325,9 @@ Most documents are written in Chinese.
 
 ## Contributing
 
+* Open pull requests against the **`dev`** branch: workflow, DCO sign-off and local checks are in
+  [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately as described in [SECURITY.md](SECURITY.md),
+  never in a public issue.
 * Platform-level or cross-module changes start at the **repository root**; changes confined to Synwevo Docs start in `apps/docs/` and still follow the root `AGENTS.md`.
 * A test that needs another module's routes to pass belongs in `tests/integration/`.
 * No fake applications, empty services or placeholder dashboards. No mocks, fake sign-ins or fake data boards. Test fixtures are labelled as fixtures.

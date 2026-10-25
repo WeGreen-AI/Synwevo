@@ -81,6 +81,37 @@ npm run typecheck && npm run build         # 三个前端外壳
 一个测试如果需要另一个模块的路由才能通过，它就属于 `tests/integration/`——不要为了让它留在原地
 而把另一个模块挂进来。
 
+## 分支与发布
+
+* **`dev`** 承接全部开发，也是生产部署的唯一来源。改动一律走 PR 进 `dev`，必需检查 `verify` 通过后以
+  **merge commit** 合入（`gh pr merge --merge`），记录里引用的 SHA 因此一直有效。不直接推送、不强推、
+  不删除分支，规则对任何人都不放行（不用 `--admin`，不改规则集或环境）。
+* **合入 `dev` 就是部署。** 推送到 `dev` 的运行先 verify 再部署；只改 `docs/` 记录的合入既不验证也不部署
+  （`docs/integration/` 与 `docs/operations.md` 有测试读取，按代码处理）。合入代码改动前，先确认本轮已获部署授权。
+* **`main`** 是公开的开源分支、`dev` 的合并镜像：只接受 `dev`→`main` 的同步 PR
+  （`gh pr create --base main --head dev`），必需检查 `verify` 与 `sync-source`，以 merge commit 合入；
+  自第一次 `dev`→`main` 同步把新工作流带到 `main` 起，`main` 上没有部署，推送到 `main` 什么都不运行。在那之前
+  `main` 仍带着会部署的旧工作流，只有 `production` 环境（只放行 `dev`、管理员不能绕过）挡住它：所以环境改动是
+  合入切换 PR 的前提，第一次 `dev` 部署成功后紧接着做第一次同步（`infra/production/README.md`）。
+  同步后 `main` 显示"领先 N 个提交"（都是合并提交）是正常的，不要为此反向合并。
+* **推送一律写明目标**：`git push origin HEAD:refs/heads/<工作分支>`。全局 `push.default=upstream` 会把
+  `git push origin <分支>` 推到该分支的上游，跟踪 `origin/main` 的分支就这样推上了 `main`。不用 `--all`、`--mirror`。
+* **`verify` 证明不了改它自己的 PR。** PR 的 `verify` 运行的是这个 PR 自己那份 `production.yml`、守卫脚本和
+  测试配置；合入后，`dev` 的推送又按合入的那份工作流、带着 `production` 环境的密钥部署。改了这些文件的 PR
+  可以让 `verify` 什么都没查就变绿。所以凡是动到 `.github/**`、`infra/**`、守卫脚本（`scripts/check_*.py`、
+  `scripts/brand_assets.py`、`scripts/app_icon_assets.py`）、根目录 `conftest.py` 或 `pyproject.toml` 里测试设置的
+  PR，绿色的 `verify` 不算数：维护者逐行读完这些文件的差异才合入，**从不自动合并**（不用 `gh pr merge --auto`），
+  外部 PR 也一样。在有第二个身份、能用 CODEOWNERS 强制审阅之前，这一条只靠人遵守。
+* **外部贡献**指向 `dev`（[CONTRIBUTING.md](CONTRIBUTING.md)）；误指向 `main` 的，维护者把基础分支改为 `dev`，
+  关闭再重开以触发 verify，按上一条审阅后再合入。
+* **重新部署与回滚**：不要重跑旧的运行。部署作业拒绝比生产更旧的提交，重跑的提交也必须仍是 `dev` 的头部；
+  要重新部署 `dev` 头部，在 `dev` 上手动触发工作流。回滚见 `infra/production/README.md`。
+* **紧急情况**：受限 SSH 接收器的后备部署只发 `dev` 上已有的提交；只有仓库所有者能临时停用规则集。没经过
+  `dev` 就进入 `main` 的改动，事后用 `main`→`dev` 的 PR（merge commit）补回 `dev`。
+* **安全修复**在安全公告的临时私有 fork 里开发与审阅；那里不跑检查、分支规则不生效，所以不从安全公告里合并。
+  准备好立即部署时，作为普通 PR 提到 `dev`（`verify` 照常运行，merge commit 合入即部署），提交与 PR 文字
+  不写利用步骤；部署后再发布安全公告（[SECURITY.md](SECURITY.md)）。被跟踪的文件里不写"生产仍有漏洞 X"。
+
 ## 数据与安全
 
 * 用户数据在仓库根目录的 `data/`，由 `SYNWEVO_DATA_DIR` 指向；解析不依赖进程 cwd。
