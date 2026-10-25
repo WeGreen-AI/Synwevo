@@ -108,7 +108,8 @@ async function compiled(file: string, initialProps: any, overrides: Record<strin
 /** The actual AgentApp (index.tsx) over FIXTURE reads and writes. */
 /** `route: null` opens the page without a conversation (a new one is created by the send). */
 async function appFixture({ billing = true, setup: initialSetup = fixtureSetup() as any, status: initialStatus = fixtureStatus() as any,
-  route: initial = 'conv_fixture' as string | null, offer: initialOffer = fixtureOffer() as any, globals = {} as Record<string, unknown> } = {}) {
+  route: initial = 'conv_fixture' as string | null, offer: initialOffer = fixtureOffer() as any, globals = {} as Record<string, unknown>,
+  auth = { site_url: 'https://site.fixture.test' } as Record<string, unknown> } = {}) {
   const writes: any[] = [], reads: string[] = [], navigations: string[] = [];
   let failure: unknown, route: string | undefined = initial ?? undefined, status = initialStatus, offer = initialOffer, setup = initialSetup;
   /** The payer list GET /api/suite/agent/payers serves (an Error: the read fails), and the open conversation's messages. */
@@ -126,7 +127,7 @@ async function appFixture({ billing = true, setup: initialSetup = fixtureSetup()
     'react-router-dom': { ...router, useMatch: (path: string) => path === '/agent/c/:cid' && route && !onSettings ? { params: { cid: route } } : null,
       useLocation: () => ({ pathname: onSettings ? '/agent/settings' : route ? `/agent/c/${route}` : '/agent' }), useNavigate: () => (path: string) => navigations.push(path) },
     '@synwevo/ui': { ...ui, useI18n: () => ({ t: (key: string) => key, locale: 'en' }), useDialog: () => ({}) },
-    '@synwevo/auth-client': { ...client, useSession: () => ({ me: { id: 'usr_fixture', display_name: 'Fixture user' }, state: { site_url: 'https://site.fixture.test' } }),
+    '@synwevo/auth-client': { ...client, useSession: () => ({ me: { id: 'usr_fixture', display_name: 'Fixture user' }, state: auth }),
       get: async (path: string) => { reads.push(`GET ${path}`); if (payers instanceof Error) throw payers; return plain(payers); } },
     '../../shared/catalog': { useApp: () => ({ app: { id: 'agent' } }) },
     './useConversation': { useConversation: () => ({ value: route ? { ...conversation(), id: route, messages } : undefined, refresh: async () => {}, connection: 'connected' }) },
@@ -1047,6 +1048,27 @@ test('proof defect 2: the payer list is read again when the window regains focus
   assert.equal(h.money().payer.kind, 'organization', 'a failed re-read never switches the payer');
   assert.equal(h.money().payer.facts.available, '4990');
   h.unmount();
+});
+
+test('proof minor: the top-up and account links name Synwevo Agent as where the person came from, not the process\'s Docs app id', async () => {
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  // FIXTURE auth state as a combined process reports it: its OIDC application id is Synwevo Docs'.
+  const h = await appFixture({ auth: { site_url: 'https://site.fixture.test', account_url: 'https://accounts.fixture.test/account', app_id: 'docweave' } });
+  // The account page matches `from` against the applications the person may open (server
+  // return_targets); this page's registry id is "agent" (synwevo_suite.agent MANIFEST), so "back"
+  // leads to Synwevo Agent, and an unknown id would fall back to the workspace.
+  assert.equal(h.money().walletUrl, 'https://accounts.fixture.test/account/wallet?from=agent');
+  assert.equal(h.money().accountUrl, 'https://accounts.fixture.test/account?from=agent');
+  assert.equal(h.chat().walletUrl, 'https://accounts.fixture.test/account/wallet?from=agent');
+  // A funds refusal's top-up next step uses it.
+  const refusals = await server.ssrLoadModule('/src/apps/agent/refusals.ts');
+  const html = renderToStaticMarkup(React.createElement(parts.RefusalNotice, { refusal: refusals.refusalOf({ code: 'billing_insufficient_funds' }), walletUrl: h.chat().walletUrl }));
+  assert.match(html, /href="https:\/\/accounts\.fixture\.test\/account\/wallet\?from=agent"/);
+  h.unmount();
+  // Without an account URL (a single-host install) the same page of this origin.
+  const local = await appFixture({ auth: { app_id: 'platform' } });
+  assert.equal(local.money().walletUrl, '/account/wallet?from=agent');
+  local.unmount();
 });
 
 test('C1: the model panel beside the composer shows the unit prices, the price version and the per-answer maximum', async () => {

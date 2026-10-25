@@ -89,8 +89,8 @@ function AgentApp() {
   // on screen, never ones the page has since replaced (addendum AD-1).
   const shown = useRef({ status, offer, payer });
   shown.current = { status, offer, payer };
-  const walletUrl = walletHref(auth?.account_url, auth?.app_id);
-  const accountUrl = accountHref(auth?.account_url, auth?.app_id);
+  const walletUrl = walletHref(auth?.account_url, AGENT_APP_ID);
+  const accountUrl = accountHref(auth?.account_url, AGENT_APP_ID);
   const organizationName = (ref: { kind: "organization"; id: string }) => payers.find((p) => payerKey(p) === payerKey(ref))?.name;
   // The one-time setup state (agent.setup.get): undefined while loading, null when unreadable.
   // An unreadable state never blocks a send; the server's refusal then names the missing step.
@@ -459,6 +459,12 @@ function AgentApp() {
   </div>;
 }
 
+/** Where the person comes from, for the account pages' "back to <application>" link (`from=<id>`,
+ *  matched there against the applications the server lists for the person, never a URL): this page
+ *  is Synwevo Agent (its registry id, synwevo_suite.agent MANIFEST), not the serving process's OIDC
+ *  application (`auth.app_id`: "docweave" on a combined process, "platform" on the workplace origin),
+ *  which would send the person back to Synwevo Docs or to no listed application. */
+const AGENT_APP_ID = "agent";
 /** The waits before the automatic retries of an attempt that got no answer (W1): two, then the
  *  attempt ends with the connection error and the message stays in the composer (its key kept
  *  for the same request, fv-agent-1). */
