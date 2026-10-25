@@ -30,7 +30,7 @@ from typing import Callable
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -138,6 +138,72 @@ DIRECTORY_V1 = "/api/workspace/v1"
 #: unlike everything else there it never reads a session cookie.
 SUITE_V1 = "/api/suite/v1"
 MACHINE_PREFIXES = ("/api/v1", DIRECTORY_V1, SUITE_V1)
+#: The Synwevo MCP server (Model Context Protocol, Streamable HTTP) on the workplace origin, and
+#: its OAuth 2.0 Protected Resource Metadata (RFC 9728 §3: the well-known path with the resource
+#: path appended). The endpoint is a machine path like the rest of SUITE_V1 — same error
+#: envelope, rate gate and call record — but a token for it must name the MCP server itself.
+MCP_PATH = SUITE_V1 + "/mcp"
+MCP_METADATA_PATH = "/.well-known/oauth-protected-resource" + MCP_PATH
+#: The Agent's own OAuth Client ID Metadata Document, for the authorization servers of external
+#: MCP servers the Agent connects to (docs/platform/mcp.md §4.3).
+MCP_CLIENT_METADATA_PATH = "/.well-known/mcp-client/synwevo-agent.json"
+
+
+def mcp_metadata_url() -> str:
+    """Where the MCP server's Protected Resource Metadata is (RFC 9728 §3.1): the well-known path
+    inserted between the resource's origin and its path, less the slash a resource at the root is
+    written with (`https://mcp.example.com/` in canonical form, whose metadata is at
+    `https://mcp.example.com/.well-known/oauth-protected-resource`)."""
+    from urllib.parse import urlsplit, urlunsplit
+    from .oidc import mcp_resource
+    parts = urlsplit(mcp_resource())
+    if not parts.scheme.startswith("http"):
+        return mcp_resource()
+    return urlunsplit((parts.scheme, parts.netloc, "/.well-known/oauth-protected-resource" + parts.path.rstrip("/"), "", ""))
+
+
+def presents_bearer(header: str | None) -> bool:
+    """Whether an `Authorization` header offers a bearer token at all (RFC 6750 §2.1)."""
+    scheme, _, token = (header or "").strip().partition(" ")
+    return scheme.lower() == "bearer" and bool(token.strip())
+
+
+def mcp_challenge(err: ServiceError, *, presented: bool = True) -> str:
+    """The `WWW-Authenticate: Bearer …` value for a refused MCP request (RFC 6750 §3), always
+    naming where the metadata is (RFC 9728 §5.1). What else it says decides what a client does
+    next — the official SDK's client re-runs authorization on a 401 and steps up on a 403 with
+    `insufficient_scope` — so each error code is said only where that next step can help:
+
+    * no bearer token presented (`presented` false): no error code at all (RFC 6750 §3.1);
+    * 401: `invalid_token` — the token is expired, revoked, for another audience; a new
+      authorization can fix it;
+    * 403 whose hint names the scopes to ask for: `insufficient_scope` with `scope=` (RFC 6750
+      §3.1, MCP authorization "Runtime Insufficient Scope Errors") — the refuser's own judgement
+      that asking for them can succeed, so a bare `required_scope` in the detail is not enough;
+    * any other 403 — the server closed by policy, a registration that no longer has the scopes
+      (or never had them), a workspace the person left: no error code, because neither a new
+      token nor more scope changes the answer, and a client told `insufficient_scope` would send
+      the person through authorization again for nothing."""
+    detail = err.detail if isinstance(err.detail, dict) else {}
+    hint = detail.get("www_authenticate") if isinstance(detail.get("www_authenticate"), dict) else {}
+    scope = hint.get("scope")
+    error = None
+    if not presented:
+        pass
+    elif err.status == 403:
+        error = "insufficient_scope" if scope else None
+    elif err.status == 401:
+        error = hint.get("error") if hint.get("error") in ("invalid_token", "invalid_request") else "invalid_token"
+    parts = []
+    if error:
+        parts.append(f'error="{error}"')
+        description = (err.code or "").replace('"', "")
+        if description:
+            parts.append(f'error_description="{description}"')
+        if error == "insufficient_scope":
+            parts.append(f'scope="{scope}"')
+    parts.append(f'resource_metadata="{mcp_metadata_url()}"')
+    return "Bearer " + ", ".join(parts)
 
 
 def machine_path(path: str) -> bool:
@@ -318,7 +384,7 @@ def problem_body(request_id: str, status: int, code: str, message: str, detail: 
         errors.append({"detail": message, "pointer": json_pointer(detail["field"])})
     if errors:
         body["errors"] = errors
-    rest = {k: v for k, v in detail.items() if k not in ("field", "errors")}
+    rest = {k: v for k, v in detail.items() if k not in ("field", "errors", "www_authenticate")}
     if rest:
         body["details"] = rest
     return body
@@ -606,6 +672,11 @@ def data_dir(explicit: str | os.PathLike | None = None) -> Path:
 
 def build_platform(data_dir_arg: str | None = None) -> Platform:
     install_private_access_log()
+    # Every role names the issuer — in tokens, in the authorization server's metadata, in the MCP
+    # server's protected resource metadata — so none starts with one clients would read back
+    # differently from how it is written (`oidc.validate_issuer`).
+    from .oidc import validate_issuer
+    validate_issuer()
     store = Store(str(data_dir(data_dir_arg)))
     auth = Auth(store)
     identity = Identity(store)
@@ -685,7 +756,8 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             if isinstance(detail, dict) and detail.get("field"):
                 body["error"]["field"] = detail["field"]
             if detail:
-                body["error"]["details"] = {k: v for k, v in detail.items() if k != "field"} or None
+                # the bearer challenge hint is the header's to say (`mcp_challenge`), not the body's
+                body["error"]["details"] = {k: v for k, v in detail.items() if k not in ("field", "www_authenticate")} or None
                 if not body["error"]["details"]:
                     body["error"].pop("details")
             return body
@@ -1034,6 +1106,10 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         this_role = this_role_static
         if this_role in ("all", ""):
             return None
+        if path in (MCP_METADATA_PATH, MCP_CLIENT_METADATA_PATH):
+            # The MCP server is a resource server of the workplace origin: its metadata lives
+            # with it, not with the account service that issues the tokens.
+            return None if this_role == "portal" else "MCP 服务在工作空间源站上，不在本服务上"
         api_path = path.startswith("/api/") or path.startswith("/oidc/") \
             or path.startswith("/.well-known/") or path.startswith("/auth/") \
             or path in ("/healthz", "/readyz")
@@ -1154,6 +1230,14 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 # accounts-origin cookie reaching Synwevo Docs' data would defeat the whole point
                 # of giving them separate origins.
                 return await finish(_error_response(request, 404, "not_in_this_role", off, None))
+            if path == MCP_PATH + "/":
+                # The MCP endpoint written with a trailing slash is the same server, not an
+                # operations route: sent on to its one address before any token is read (308 keeps
+                # the method and the body; the SDK's client follows it within the origin), so a
+                # token for the MCP server is never judged as one for the operations API.
+                query = request.url.query
+                return await finish(Response(status_code=308, headers={
+                    "Location": MCP_PATH + (f"?{query}" if query else ""), "Cache-Control": "no-store"}))
             if path.startswith(DIRECTORY_V1):
                 # The workspace directory (API-5): only its own service accounts, only its own
                 # audience; the same rate gate and call record as the Docs API.
@@ -1170,8 +1254,11 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             elif path.startswith(SUITE_V1):
                 # The business applications' operations: a bearer token for their own audience and
                 # nothing else — no session cookie is read on this branch, so a signed-in browser
-                # is not a credential here and a credential is not a session anywhere else.
-                principal = await run_in_threadpool(machine.verify_suite, request.headers.get("Authorization"))
+                # is not a credential here and a credential is not a session anywhere else. The MCP
+                # endpoint takes a token for its own URL (RFC 8707): the same operations, a
+                # different audience, so neither door's token opens the other.
+                verify = machine.verify_mcp if path == MCP_PATH else machine.verify_suite
+                principal = await run_in_threadpool(verify, request.headers.get("Authorization"))
                 request.state.principal = principal
                 decision = await run_in_threadpool(rate_gate.take, principal)
                 request.state.ratelimit = decision
@@ -1243,7 +1330,13 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                 else:
                     token = set_tenant(UI_TENANT)
         except ServiceError as e:
-            return await finish(await _svc_err(request, e))
+            refused = await _svc_err(request, e)
+            if path == MCP_PATH and e.status in (401, 403):
+                # RFC 6750 §3 / MCP authorization: the challenge names the metadata document that
+                # leads an MCP client to the authorization server, and the scopes it still needs.
+                refused.headers["WWW-Authenticate"] = mcp_challenge(
+                    e, presented=presents_bearer(request.headers.get("Authorization")))
+            return await finish(refused)
         # Who acts, for attribution: the session's person, or the person a delegated machine
         # token acts for; None for service accounts and anonymous paths.
         from .authority import describe_request

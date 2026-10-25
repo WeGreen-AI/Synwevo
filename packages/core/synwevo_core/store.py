@@ -649,6 +649,15 @@ V19_COLUMNS = [("mail_outbox", "html", "TEXT")]
 # Delegated access tokens remember their last use (written at most once a minute, the api_keys
 # rule), so a person's connected-apps page can say when an application last acted for them (API-1).
 OAUTH_TOKEN_COLUMNS = [("oauth_tokens", "last_used_at", "REAL")]
+# How a client came to be registered: by an operator (CLI), or by presenting an OAuth Client ID
+# Metadata Document (its https URL is its client id; MCP clients). The document itself is kept so
+# the console shows what was accepted, and when, without fetching it again.
+OAUTH_CLIENT_REGISTRATION_COLUMNS = [
+    ("oauth_clients", "registration", "TEXT NOT NULL DEFAULT 'operator'"),
+    ("oauth_clients", "client_uri", "TEXT"),
+    ("oauth_clients", "metadata_json", "TEXT"),
+    ("oauth_clients", "metadata_fetched_at", "REAL"),
+]
 
 V6_COLUMNS = [
     ("rp_auth_requests", "workspace_id", "TEXT"),
@@ -962,7 +971,7 @@ class Store:
         # (`deleted_at` is set) and cannot be recovered until this release is back.
         from .workspace_lifecycle import COLUMNS as WORKSPACE_LIFECYCLE_COLUMNS
         with self.tx() as t:
-            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + OAUTH_TOKEN_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS + API_RATE_STATE_COLUMNS + PLATFORM_SETTINGS_DELIVERY_COLUMNS + WEBHOOK_SIGNING_COLUMNS + WORKSPACE_LIFECYCLE_COLUMNS:
+            for table, col, decl in V4_COLUMNS + V5_COLUMNS + V6_COLUMNS + V7_COLUMNS + V8_COLUMNS + ORGANIZATION_COLUMNS + V14_COLUMNS + V17_COLUMNS + V19_COLUMNS + OAUTH_TOKEN_COLUMNS + DOCS_COLLAB_COLUMNS + MESSAGING_V24_COLUMNS + MESSAGING_BRIDGE_COLUMNS + API_CALL_COLUMNS + API_RATE_STATE_COLUMNS + PLATFORM_SETTINGS_DELIVERY_COLUMNS + WEBHOOK_SIGNING_COLUMNS + WORKSPACE_LIFECYCLE_COLUMNS + OAUTH_CLIENT_REGISTRATION_COLUMNS:
                 have = {r["name"] for r in t.execute(f"PRAGMA table_info({table})").fetchall()}
                 if col not in have:
                     t.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")

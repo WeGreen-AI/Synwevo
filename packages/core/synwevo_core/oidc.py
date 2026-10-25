@@ -27,7 +27,9 @@ import json
 import os
 import secrets
 import time
+from urllib.parse import urlsplit, urlunsplit
 from authlib.jose import JsonWebKey, JsonWebToken, jwt
+from pydantic import AnyHttpUrl, ConfigDict, TypeAdapter
 
 from . import env
 from .errors import ServiceError
@@ -69,6 +71,18 @@ WORKSPACE_API_SCOPES = ("workspace.read", "workspace.members.write")
 SUITE_API_SCOPES = ("forms.read", "forms.write", "tables.read", "tables.write",
                     "dataprep.read", "dataprep.write", "extract.read", "extract.write",
                     "extract.decide", "approvals.read", "approvals.write", "approvals.decide")
+# The Synwevo MCP server (workplace origin, /api/suite/v1/mcp) exposes the same operations as the
+# business applications' operations API to MCP clients, so a token for it carries the same
+# scopes; only the audience differs (`mcp_resource`), because an MCP client names the server
+# by URL and the server must refuse a token minted for anything else.
+MCP_SCOPES = SUITE_API_SCOPES
+# What an MCP client is asked to hold when nothing names a scope: the metadata's `scopes_supported`
+# (MCP authorization, "Scope Selection Strategy": the minimal set for basic use) and a step-up from
+# a token with no business scope left. Reading and changing the applications' records; a decision
+# taken as the person (`*.decide`) is never asked for by default — a client that needs it names it,
+# and the person sees it named on the consent page.
+MCP_DEFAULT_SCOPES = tuple(s for s in MCP_SCOPES if not s.endswith(".decide"))
+MCP_PATH = "/api/suite/v1/mcp"
 ALL_API_SCOPES = API_SCOPES + WORKSPACE_API_SCOPES + SUITE_API_SCOPES
 SUPPORTED_SCOPES = IDENTITY_SCOPES + ALL_API_SCOPES
 
@@ -122,6 +136,62 @@ def suite_resource() -> str:
     return (env.get("SUITE_RESOURCE") or "urn:synwevo:platform:suite").strip()
 
 
+def canonical_resource_uri(value: str) -> str:
+    """An http(s) resource URI in canonical form (RFC 8707 §2; MCP authorization, "Canonical
+    Server URI"): lowercase scheme and host, no default port, no fragment, no trailing slash after
+    a path (an empty path is written `/`, as every parser writes it) — exactly what a client's URL
+    parser makes of the same address (the SDK and the metadata document go through pydantic's
+    `AnyHttpUrl`, a browser through `URL`), so the audience a token is minted for, the `resource`
+    the metadata advertises and the value a client sends back are one string. Anything that is not
+    an http(s) URL is returned as written, less surrounding space, a fragment and trailing slashes."""
+    raw = (value or "").strip().split("#", 1)[0].rstrip("/")
+    try:
+        return str(AnyHttpUrl(raw))
+    except ValueError:
+        return raw
+
+
+def mcp_resource() -> str:
+    """The canonical URI of the Synwevo MCP server (RFC 8707 `resource`, RFC 9728 `resource`).
+
+    MCP clients name the server they want a token for by its own URL, so unlike the other APIs
+    this audience is an https URL: the MCP endpoint on the workplace origin. Configured through
+    the workplace origin (`SYNWEVO_APP_URL`) or explicitly (`SYNWEVO_MCP_RESOURCE`), and always
+    canonicalised (`canonical_resource_uri`): an operator's `https://Workplace.Example.com:443`
+    must not become an audience no client can name. Without either setting there is no MCP server
+    to name, and a URN that no client would send stands in so the audience check cannot
+    accidentally pass.
+    """
+    explicit = (env.get("MCP_RESOURCE") or "").strip()
+    if explicit:
+        return canonical_resource_uri(explicit)
+    base = (env.get("APP_URL") or "").strip().rstrip("/")
+    return canonical_resource_uri(f"{base}{MCP_PATH}") if base else "urn:synwevo:platform:mcp:unconfigured"
+
+
+def registered_audiences(audiences: list[str]) -> list[str]:
+    """A client registration's audiences as they are kept and compared: an audience that names
+    this deployment's MCP server becomes `mcp_resource()` however the operator wrote it — the
+    documented `--audience {SYNWEVO_APP_URL}/api/suite/v1/mcp` with an APP_URL of
+    `HTTP://Workplace.Example.com:443` is the same server, and a client asks for it by the
+    metadata's canonical `resource` — and every other audience stays exactly as written: the other
+    resource servers compare their own setting verbatim, and a URN has no canonical form."""
+    mcp = mcp_resource()
+    return list(dict.fromkeys(mcp if canonical_resource_uri(a) == mcp else a for a in audiences))
+
+
+def mcp_grantable_scopes(client: dict | None) -> set[str]:
+    """The MCP scopes that authorizing `client` again can grant it for this deployment's MCP server:
+    what a step-up can reach, and so the only scopes an `insufficient_scope` challenge may name. The
+    account service narrows an MCP client's request to its registration (`Clients.allowed_scopes`;
+    the rest is dropped, not refused) and issues a token for the MCP server only to a client
+    registered for that resource, so for any other scope — or any other client, or a disabled one —
+    asking again ends with the same token. Empty when there is nothing to gain."""
+    if not client or mcp_resource() not in (client.get("audiences") or []):
+        return set()
+    return Clients.allowed_scopes(client) & set(MCP_SCOPES)
+
+
 def _docs_app_id() -> str:
     from .apps import DOCS_APP_ID               # lazy: apps imports identity, which is heavier
     return DOCS_APP_ID
@@ -134,6 +204,39 @@ def issuer() -> str:
     come from the real issuer, and clients validate `iss` against exactly this string.
     """
     return (env.get("ISSUER") or "http://accounts.localhost:8770").rstrip("/")
+
+
+# How a client's metadata parser renders an issuer URL (the MCP SDK's `OAuthMetadata` and
+# `ProtectedResourceMetadata`: pydantic's `AnyHttpUrl`, an empty path kept empty).
+_ISSUER_URL = TypeAdapter(AnyHttpUrl, config=ConfigDict(url_preserve_empty_path=True))
+
+
+def validate_issuer() -> str:
+    """The issuer, refused at startup unless it is written the way a client reads it back.
+
+    An issuer identifier is compared as a string — the `iss` of an id_token, the metadata's
+    `issuer` against the one it was discovered under (RFC 8414 §3.3), the `iss` of an authorization
+    response (RFC 9207 §2.4) — while a client that parses the metadata lowercases the scheme and host
+    and drops a default port. Written any other way (`https://Accounts.Example.com`, `…:443`), the
+    protected resource metadata and the authorization server name two strings, and the official
+    MCP SDK's client refuses every authorization response. Not rewritten here: the `iss` of tokens
+    already issued and every relying party's own setting carry the value as written, so the
+    operator changes them together."""
+    value = issuer()
+    try:
+        parsed = urlsplit(str(_ISSUER_URL.validate_python(value)))
+    except ValueError:
+        raise RuntimeError(
+            f"SYNWEVO_ISSUER={value!r} 不是 http(s) 地址。发行者是账户服务对外的地址，"
+            "例如 https://accounts.synwevo.com。") from None
+    canonical = urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+    if canonical != value:
+        raise RuntimeError(
+            f"SYNWEVO_ISSUER={value!r} 不是规范写法，应写成 {canonical!r}（协议与主机名小写、不写默认端口、"
+            "不带查询或片段）。发行者按字符串逐字比较，而客户端解析元数据时会改写成规范形式，于是受保护资源"
+            "元数据与授权服务器给出的发行者对不上，MCP 客户端的每一次授权都会被拒绝。这里不替你改写："
+            "已签发令牌里的 iss 和各依赖方配置的发行者都是原来的字符串，请把它们一并改成规范写法。")
+    return value
 
 
 def _sha(raw: str) -> str:
@@ -231,7 +334,8 @@ class Clients:
         if r:
             r["redirect_uris"] = json.loads(r["redirect_uris"])
             r["post_logout_redirect_uris"] = json.loads(r["post_logout_redirect_uris"] or "[]")
-            r["audiences"] = json.loads(r["audiences"] or "[]")
+            # a registration kept before audiences were canonicalised still names the MCP server
+            r["audiences"] = registered_audiences(json.loads(r["audiences"] or "[]"))
         return r
 
     def get(self, client_id: str) -> dict | None:
@@ -318,7 +422,7 @@ class Clients:
                                "机密客户端不能改登记为公共客户端；请停用它并换一个 client_id 登记")
         secret = secrets.token_urlsafe(40) if confidential and not was_confidential else None
 
-        auds = list(audiences or [])
+        auds = registered_audiences(list(audiences or []))
         has_api = bool(api_scopes.split()) or any(api_scope_app(s) for s in (scopes or "").split())
         if not auds and app_id == _docs_app_id() and has_api:
             # RFC 8707 / RFC 9700 §2.3: a token meant for an API names that API. With no explicit
@@ -337,7 +441,7 @@ class Clients:
             # scopes would hand whoever holds that secret more than anyone approved (admin defect
             # D5). The identity scopes are harmless on a client no person signs in to.
             had_scopes = set((existing["api_scopes"] or "").split())
-            had_auds = set(json.loads(existing["audiences"] or "[]"))
+            had_auds = set(registered_audiences(json.loads(existing["audiences"] or "[]")))
             had_redirects = set(json.loads(existing["redirect_uris"] or "[]"))
             had_delegation = set((existing["scopes"] or "").split())
             if (existing["kind"] != "service" or kind != "service" or existing["app_id"] != app_id
@@ -471,7 +575,7 @@ def _check_redirect(uri: str) -> None:
         raise ServiceError(400, "bad_redirect", f"回调地址必须是 http/https 绝对地址：{uri!r}")
     if u.fragment:
         raise ServiceError(400, "bad_redirect", "回调地址不能带片段（#…）")
-    if u.scheme == "http" and u.hostname not in ("localhost", "127.0.0.1") \
+    if u.scheme == "http" and u.hostname not in ("localhost", "127.0.0.1", "::1") \
             and not (u.hostname or "").endswith(".localhost"):
         raise ServiceError(400, "bad_redirect", "非本机地址必须使用 https")
 
@@ -889,10 +993,18 @@ def verify_logout_token(raw: str, *, jwks: dict, client_id: str, expected_issuer
     return dict(claims)
 
 
-def discovery() -> dict:
-    """Only the endpoints that actually exist. Advertising more would be a lie a client acts on."""
+def discovery(*, client_id_metadata_documents: bool = False) -> dict:
+    """Only the endpoints that actually exist. Advertising more would be a lie a client acts on.
+
+    Served both as OpenID Connect Discovery and as OAuth 2.0 Authorization Server Metadata
+    (RFC 8414): MCP clients try either. `client_id_metadata_documents` says whether a client may
+    present an https URL as its client id (the platform MCP policy decides); the `iss`
+    authorization-response parameter (RFC 9207) is always sent.
+    """
     iss = issuer()
     return {
+        "authorization_response_iss_parameter_supported": True,
+        "client_id_metadata_document_supported": bool(client_id_metadata_documents),
         "issuer": iss,
         "authorization_endpoint": f"{iss}/oidc/authorize",
         "token_endpoint": f"{iss}/oidc/token",

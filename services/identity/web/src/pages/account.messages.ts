@@ -812,4 +812,15 @@ registerMessages({
   "这个授权请求已经处理过了": { en: "This authorization request has already been answered.", "zh-Hant": "這個授權請求已經處理過了" },
   "该授权不存在或已撤回": { en: "This authorization does not exist or was already withdrawn.", "zh-Hant": "該授權不存在或已撤回" },
   "授权请求已过期，请回到原应用重新发起": { en: "The authorization request expired. Go back to the app and start again.", "zh-Hant": "授權請求已過期，請回到原應用重新發起" },
+  // The workspace choice an MCP client (one that follows only the OAuth protocol) cannot make itself,
+  // and the provenance of a client known only from its Client ID Metadata Document (provider_routes).
+  "请选择这个客户端可以使用的工作空间": { en: "Choose the workspace this client may use", "zh-Hant": "請選擇這個客戶端可以使用的工作空間" },
+  "它得到的令牌只在你选择的工作空间内有效；换一个工作空间需要再授权一次。": { en: "Its token works only in the workspace you choose; another workspace needs a separate authorization.", "zh-Hant": "它得到的權杖只在你選擇的工作空間內有效；換一個工作空間需要再授權一次。" },
+  "请先选择一个工作空间": { en: "Choose a workspace first", "zh-Hant": "請先選擇一個工作空間" },
+  "自描述客户端": { en: "Self-described client", "zh-Hant": "自描述客戶端" },
+  "这个客户端用它自己发布在 {host} 的文档描述自己。Synwevo 读取并检查了这份文档，但没有核实是谁在运营它。": { en: "This client describes itself with a document it publishes at {host}. Synwevo read and checked that document, but did not verify who operates it.", "zh-Hant": "這個客戶端用它自己發佈在 {host} 的文件描述自己。Synwevo 讀取並檢查了這份文件，但沒有核實是誰在營運它。" },
+  "这个客户端用它自己发布的文档描述自己。Synwevo 读取并检查了这份文档，但没有核实是谁在运营它。": { en: "This client describes itself with a document it publishes. Synwevo read and checked that document, but did not verify who operates it.", "zh-Hant": "這個客戶端用它自己發佈的文件描述自己。Synwevo 讀取並檢查了這份文件，但沒有核實是誰在營運它。" },
+  "请选择客户端可以使用的工作空间": { en: "Choose the workspace the client may use.", "zh-Hant": "請選擇客戶端可以使用的工作空間" },
+  "请选择一个有效的工作空间": { en: "Choose a valid workspace.", "zh-Hant": "請選擇一個有效的工作空間" },
+  "这个授权请求不接受更换工作空间": { en: "This authorization request does not allow changing the workspace.", "zh-Hant": "這個授權請求不接受更換工作空間" },
 });

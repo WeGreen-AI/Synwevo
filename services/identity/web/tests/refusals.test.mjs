@@ -82,6 +82,16 @@ const SERVER = [
   { file: ID + "admin_model_risk.py", surfaces: ["admin"] },
   { file: ID + "admin_runs.py", surfaces: ["admin"] },
   { file: ID + "admin_agent_safety.py", surfaces: ["admin"] },
+  // MCP (docs/platform/mcp.md §5): the policy's signed preview and publication, the masked connection
+  // overview and the platform-wide disabling of a connection (governance/McpTab.tsx); the policy's own
+  // refusals are met there too (the account service also reads it for discovery and authorize, where
+  // nothing is a page of this shell)
+  { file: ID + "admin_mcp.py", surfaces: ["admin"] },
+  { file: CORE + "mcp_policy.py", surfaces: ["admin"] },
+  // A Client ID Metadata Document is fetched and checked inside /oidc/authorize, before anything can be
+  // redirected: its refusals (`invalid_client`) answer the client's request, never a page of this shell
+  { file: CORE + "cimd.py", surfaces: [], why: "client metadata documents are resolved inside /oidc/authorize, an OIDC protocol endpoint; no page of this shell makes that request" },
+  { file: CORE + "webhook_delivery.py", surfaces: [], why: "webhook subscription addresses are validated in the business applications' API; the account service reaches this module only for the pinned fetch of a client metadata document, whose refusals cimd.py rewords" },
   // The personal Agent's content safety: what administrators govern is met on the admin page;
   // the consent gate, the person's reports and a suspension's refusal are met in the Agent.
   { file: CORE + "agent_safety.py", fns: ["validate_rules", "publish", "get", "resolve", "suspend", "lift"],

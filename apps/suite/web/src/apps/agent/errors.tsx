@@ -7,6 +7,8 @@ import { contextCopy } from "./context.messages";
 
 import { fileErrorKey } from './files';
 import { fileCopy } from './files.messages';
+import { integrationCopy } from './integrations/integrations.messages';
+import { mcpErrorText } from './integrations/model';
 
 const errors: Record<string, string> = {
   invalid_cursor: "会话列表位置无效，请重新加载列表。",
@@ -66,6 +68,9 @@ const errors: Record<string, string> = {
   step_limit: "已达到本次回答的步骤上限，请检查结果后继续。",
   interrupted: "服务重启中断了回答。已完成的操作保留。",
   outcome_unresolved: "部分操作的结果尚未确定，请先在对应应用核实。",
+  // An action card settled `unknown` after a restart (engine.recover): an application's operation or
+  // an external MCP tool may have run, so the sentence says to check rather than to retry.
+  outcome_unknown: integrationCopy.outcomeUnknown[0],
   model_configuration_changed: "模型配置已变化，请重新发起回答。",
   source_access_changed: "来源内容或权限已变化，请新建会话重新读取。",
   source_policy_changed: "来源空间已停止允许当前模型处理内容。",
@@ -129,6 +134,13 @@ export function agentErrorText(error: unknown, t: (key: string) => string): stri
   let code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
   if (error instanceof ApiError && code === "idempotent_failure") code = error.detail?.code ?? code;
   if (errors[code]) return t(errors[code]);
+  // An external MCP connection's refusal (agent/mcp): the integration centre's sentence for it, with
+  // what its detail adds (a refresh the authorization server failed, a step-up) — an ApiError's own
+  // detail (not a replay's), or the detail a recorded error carries beside its code.
+  const detail = error instanceof ApiError ? (code === error.code ? error.detail : null)
+    : error && typeof error === "object" && "detail" in error ? (error as { detail?: unknown }).detail : null;
+  const mcp = mcpErrorText(code, detail);
+  if (mcp) return t(mcp);
   if (code.startsWith("billing_cost_")) return t("平台模型服务暂不接纳新调用，当前调用尚未发送。请稍后重试或联系管理员。");
   if (code.startsWith("billing_")) return t("费用或授权状态暂不允许继续，请核对后重试。");
   if (error instanceof ApiError) return error.message;

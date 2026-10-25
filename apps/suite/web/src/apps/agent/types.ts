@@ -9,8 +9,16 @@ export interface MessageContext { title: string; workspace_name: string | null; 
 export interface SelectedContext extends MessageContext { reference: ContextReference }
 export interface ContextPage { items: ContextItem[]; next_offset: number | null; limited: boolean }
 
+/** What the chat needs to recognise a call of an external MCP tool (engine.call_json "mcp"). */
+export interface McpCallFacts {
+  connection: string; connection_name: string; tool: string; is_error: boolean | null; duration_ms: number | null;
+  truncated: boolean | null; call_id: string | null; external: boolean;
+}
 export interface ToolCall {
   id: string; tool: string; operation: string | null; operation_title: Record<string, string> | null;
+  side_effect?: string | null;
+  /** Present for an external MCP tool (operation ids of the form mcp:<alias>/<tool>); null otherwise. */
+  mcp?: McpCallFacts | null;
   app_name: string | null; workspace_id: string | null; workspace_name: string | null;
   target_workspace_id: string | null; target_workspace_name: string | null;
   /** Other workspaces whose content this write would carry into its target (synwevo_core.data_flow). */

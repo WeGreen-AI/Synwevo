@@ -8,6 +8,9 @@ Synwevo Forms、Tables、DataPrep、Extract、Approvals 的机器接口。它不
   `tests/integration/test_suite_machine_contract.py` 会比对文件、导出器与实际路由）。
 * 源站：工作空间源站（正式环境 `https://workplace.synwevo.com`）。令牌由账户服务签发（`https://accounts.synwevo.com`）。
 * 状态：本地实现并验证，**尚未部署**；正式环境是否开放以 [`../platform/api-coverage.md`](../platform/api-coverage.md) 为准。
+* **同一批操作也以 Model Context Protocol 提供**：`{SYNWEVO_APP_URL}/api/suite/v1/mcp`（Streamable HTTP），工具就是本文的操作，
+  调用同样是 `Capabilities.invoke(via="api")`，scope 同一批，只是令牌受众是 MCP 端点自己的地址而不是 `urn:synwevo:platform:suite`
+  （两扇门的令牌互不通用）。登记、授权流程与限制见 [`mcp.md`](mcp.md)；默认由平台策略关闭。
 
 ## 1. 谁可以调用
 

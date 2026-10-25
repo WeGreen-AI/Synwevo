@@ -57,7 +57,7 @@ def test_every_route_is_documented_and_every_documented_path_is_served(suite):
     assert not any("/ops/agent." in path for path in doc["paths"])
     assert not any(name.startswith("agent.") for name in doc["components"]["schemas"])
     assert {tag for item in doc["paths"].values() for op in item.values() for tag in op["tags"]} == {
-        "forms", "tables", "dataprep", "extract", "approvals", "credential"}
+        "forms", "tables", "dataprep", "extract", "approvals", "credential", "mcp"}
 
 
 def test_every_reference_resolves_and_requests_are_closed_objects(suite):

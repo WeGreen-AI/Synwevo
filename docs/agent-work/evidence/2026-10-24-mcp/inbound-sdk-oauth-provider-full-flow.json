@@ -1,0 +1,70 @@
+{
+  "base": "http://127.0.0.1:33890",
+  "steps": [
+    {
+      "step": "authorization request built by the SDK",
+      "endpoint": "http://127.0.0.1:33890/oidc/authorize",
+      "params": {
+        "response_type": "code",
+        "client_id": "mcp-inspector",
+        "redirect_uri": "http://127.0.0.1:6274/oauth/callback",
+        "state": "<present>",
+        "code_challenge": "<present>",
+        "code_challenge_method": "S256",
+        "resource": "http://127.0.0.1:33890/api/suite/v1/mcp",
+        "scope": "forms.read forms.write tables.read tables.write dataprep.read dataprep.write extract.read extract.write approvals.read approvals.write offline_access",
+        "prompt": "consent"
+      }
+    },
+    {
+      "step": "consent page",
+      "client": {
+        "id": "mcp-inspector",
+        "name": "MCP Inspector (local)",
+        "app_id": "platform",
+        "registration": "operator",
+        "client_uri": null
+      },
+      "scopes": [
+        "forms.read",
+        "forms.write",
+        "offline_access",
+        "tables.read",
+        "tables.write"
+      ],
+      "workspace": null,
+      "workspace_choices": [
+        "w_5f060b0f566d",
+        "w_f6c6ce263287"
+      ]
+    },
+    {
+      "step": "redirect back to the client",
+      "has_code": true,
+      "iss": "http://127.0.0.1:33890",
+      "state_matches": true
+    },
+    {
+      "step": "tools/call synwevo.whoami with the SDK-obtained token",
+      "is_error": false,
+      "workspace_id": "w_f6c6ce263287",
+      "client_id": "mcp-inspector",
+      "scopes": [
+        "forms.read",
+        "forms.write",
+        "tables.read",
+        "tables.write"
+      ]
+    },
+    {
+      "step": "tools/call forms.form.create",
+      "is_error": false,
+      "status": "succeeded"
+    }
+  ],
+  "protocol_version": "2026-07-28",
+  "token": {
+    "scope": "forms.read forms.write tables.read tables.write offline_access",
+    "has_refresh_token": true
+  }
+}

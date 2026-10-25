@@ -27,8 +27,11 @@ from synwevo_core.store import Store, new_id, now
 
 from synwevo_core import oidc
 from synwevo_core.apps import Apps
+from synwevo_core.apps import PLATFORM_APP_ID as PLATFORM_APP_ID_
 from synwevo_core.oauth_consent import Consents, needed as consent_needed
 from synwevo_core.machine import directory_workspace_live
+from synwevo_core.cimd import ClientMetadataDocuments, is_client_id_url, withdrawn_by_policy
+from synwevo_core.mcp_policy import McpPolicy
 
 
 def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliver=None) -> APIRouter:
@@ -45,15 +48,38 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
     consents = Consents(store)
 
     # ------------------------------------------------------------------ metadata
+    def _metadata():
+        cimd = McpPolicy(store).current().client_registration == "cimd_and_preregistered"
+        return oidc.discovery(client_id_metadata_documents=cimd)
+
     @r.get("/.well-known/openid-configuration")
     def discovery():
-        return oidc.discovery()
+        return _metadata()
+
+    @r.get("/.well-known/oauth-authorization-server")
+    def oauth_metadata():
+        """RFC 8414: the same facts as OpenID Connect Discovery, at the address OAuth-only clients
+        (MCP clients among them) try first."""
+        return _metadata()
 
     @r.get("/oidc/jwks.json")
     def jwks():
         return keys.jwks()
 
     # ------------------------------------------------------------------ authorize
+    def _sign_in_first(request: Request, locale: str | None) -> RedirectResponse:
+        """No central session: go and sign in, then come back to this exact request. The return
+        target is built here from our own URL, never from a client parameter."""
+        nxt = urllib.parse.quote(str(request.url.path) + "?" + str(request.url.query), safe="")
+        language = "&" + urllib.parse.urlencode({"lang": locale}) if locale is not None else ""
+        return RedirectResponse(f"/login?next={nxt}{language}", status_code=303)
+
+    def _signed_in_person(request: Request) -> str | None:
+        """The active person behind this browser request, if any — without extending the session."""
+        session = sessions.load(request.cookies.get(COOKIE_NAME), touch=False)
+        user = ident.get_user(session["user_id"]) if session else None
+        return user["id"] if user and user["status"] == "active" else None
+
     @r.get("/oidc/authorize")
     def authorize(request: Request):
         q = request.query_params
@@ -62,6 +88,24 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         state = q.get("state")
 
         client = clients.get(client_id)
+        if (client is None and is_client_id_url(client_id)) or (client is not None and client.get("registration") == "cimd"):
+            # An MCP client with no prior relationship: its client id is the https address of its
+            # metadata document (draft-ietf-oauth-client-id-metadata-document). Fetched, checked and
+            # kept as a public-client registration — only while the platform MCP policy allows it.
+            # A stored registration comes through here too, every time: the policy is asked again
+            # (a withdrawn mechanism or domain ends it) and a day-old document is fetched again (a
+            # callback it dropped stops working). Fetching, and the row it writes, wait for a
+            # signed-in person: an anonymous request is sent to sign in with nothing fetched.
+            person = _signed_in_person(request)
+            client, fetched = ClientMetadataDocuments(store).resolve(client_id, may_fetch=person is not None)
+            if client is None:
+                locale = q.get("ui_locales")
+                valid = locale in ("zh-Hans", "zh-Hant", "en") and len(q.getlist("ui_locales")) == 1
+                return _sign_in_first(request, locale if valid else None)
+            if fetched:
+                audit(request, "oidc.client_metadata_document", actor_kind="system", actor_id="oidc",
+                      object_kind="oauth_client", object_id=client_id, result="ok",
+                      meta={"name": client["name"], "redirect_uris": client["redirect_uris"], "requested_by": person})
         if not client:
             # Nothing validated yet, so nothing may be redirected to.
             raise ServiceError(400, "invalid_client", "未知的客户端")
@@ -74,6 +118,9 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
             params = {k: v for k, v in params.items() if v is not None}
             if state is not None:
                 params["state"] = state
+            # RFC 9207: the response names its issuer, so a client that talks to several
+            # authorization servers can tell a mixed-up or injected response from this one.
+            params["iss"] = oidc.issuer()
             sep = "&" if urllib.parse.urlparse(redirect_uri).query else "?"
             return RedirectResponse(f"{redirect_uri}{sep}{urllib.parse.urlencode(params)}", status_code=303)
 
@@ -101,17 +148,26 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         # docweave.write and offline_access, minting API credentials outside the CLI-only
         # registration that is supposed to decide who may hold them.
         unregistered = [s for s in scope.split() if s not in oidc.Clients.allowed_scopes(client)]
+        if unregistered and oidc.mcp_resource() in (client.get("audiences") or []):
+            # An MCP client chooses its scopes from the MCP server's protected resource metadata
+            # (MCP authorization, "Scope Selection Strategy"), which names what the server
+            # understands, not what this client was registered for. Refusing would leave a
+            # standard client unable to authorize at all; granting would widen the registration.
+            # So the request is narrowed to the registration (RFC 6749 §3.3: the server may
+            # ignore part of the requested scope; the token response names what was granted),
+            # and refused only when no business scope is left.
+            scope = " ".join(s for s in scope.split() if s not in unregistered)
+            if not consent_needed(scope) or not any(oidc.api_scope_app(s) for s in scope.split()):
+                return back(error="invalid_scope",
+                            error_description=f"scope not registered for this client: {' '.join(unregistered)}")
+            unregistered = []
         if unregistered:
             return back(error="invalid_scope",
                         error_description=f"scope not registered for this client: {' '.join(unregistered)}")
 
         session = sessions.load(request.cookies.get(COOKIE_NAME))
         if not session:
-            # No central session: go and sign in, then come back to this exact request. The
-            # return target is built here from our own URL, never from a client parameter.
-            nxt = urllib.parse.quote(str(request.url.path) + "?" + str(request.url.query), safe="")
-            language = "&" + urllib.parse.urlencode({"lang": locale}) if locale is not None else ""
-            return RedirectResponse(f"/login?next={nxt}{language}", status_code=303)
+            return _sign_in_first(request, locale)
 
         user = ident.get_user(session["user_id"])
         if not user or user["status"] != "active":
@@ -124,12 +180,28 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
             audit(request, "oidc.authorize", actor_id=user["id"], object_kind="app",
                   object_id=client["app_id"], result="denied", meta={"reason": reason})
             return back(error="access_denied", error_description=reason)
+        choose_workspace = False
+        if requested_workspace is None and consent_needed(scope) and client["app_id"] == PLATFORM_APP_ID_:
+            # A delegated token acts in one workspace, and a client that follows only the OAuth
+            # protocol (an MCP client) has no way to name it. The one workspace this person already
+            # consented to for this client decides; otherwise the person chooses on the consent page
+            # rather than silently getting whichever workspace happens to be listed first.
+            consented = [c["workspace_id"] for c in consents.list_for_user(user["id"])
+                         if c["client_id"] == client_id and c["workspace_id"]]
+            spaces = {w["id"] for w in ident.workspaces_for(user["id"]) if w["status"] == "active"}
+            live = [w for w in consented if w in spaces]
+            if len(live) == 1 and consents.covers(user["id"], client_id, live[0], scope):
+                workspace_id = live[0]
+            elif len(spaces) <= 1:
+                workspace_id = next(iter(spaces), None)
+            else:
+                workspace_id, choose_workspace = None, True
 
         # Signing in is not consenting: a request for API scopes or offline access needs this
         # person's stored consent for this client and workspace (API-4). Without it the request is
         # parked here — every parameter already validated — and the person decides on a page of
         # this origin. Nothing the client sends later can change what they are shown or approve.
-        if not consents.covers(user["id"], client_id, workspace_id, scope):
+        if choose_workspace or not consents.covers(user["id"], client_id, workspace_id, scope):
             rid = consents.park(user_id=user["id"], central_session_id=session["id"], client_id=client_id,
                                 redirect_uri=redirect_uri, state=state, scope=scope, nonce=q.get("nonce"),
                                 code_challenge=challenge, code_challenge_method=method or None,
@@ -164,6 +236,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         params = {k: v for k, v in params.items() if v is not None}
         if row.get("state") is not None:
             params["state"] = row["state"]
+        params["iss"] = oidc.issuer()
         sep = "&" if urllib.parse.urlparse(row["redirect_uri"]).query else "?"
         return f"{row['redirect_uri']}{sep}{urllib.parse.urlencode(params)}"
 
@@ -172,26 +245,39 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         session, user = _consent_actor(request)
         row = consents.pending(rid, user_id=user["id"], central_session_id=session["id"])
         client = clients.get(row["client_id"])
-        if not client:
+        if not client or withdrawn_by_policy(store, client):
             raise ServiceError(410, "consent_expired", "该应用已停用，授权请求不再有效")
         ws = ident.get_workspace(row["workspace_id"]) if row.get("workspace_id") else None
         existing = consents.active(user["id"], row["client_id"], row.get("workspace_id"))
         wanted = consent_needed(row["scope"])
-        return {"id": rid, "client": {"id": client["client_id"], "name": client["name"], "app_id": client["app_id"]},
+        choices = None
+        if ws is None and wanted and client["app_id"] == PLATFORM_APP_ID_:
+            # The person chooses which workspace the client may act in (one token, one workspace).
+            choices = [{"id": w["id"], "name": w["name"], "role": w.get("role"),
+                        "consented": bool(consents.active(user["id"], row["client_id"], w["id"]))}
+                       for w in ident.workspaces_for(user["id"]) if w["status"] == "active"]
+        return {"id": rid, "client": {"id": client["client_id"], "name": client["name"], "app_id": client["app_id"],
+                                      "registration": client.get("registration") or "operator",
+                                      "client_uri": client.get("client_uri")},
                 "scopes": wanted, "already_granted": sorted(set(wanted) & set((existing or {}).get("scopes") or [])),
                 "identity_scopes": sorted(set(row["scope"].split()) - set(wanted)),
                 "workspace": {"id": ws["id"], "name": ws["name"]} if ws else None,
+                "workspace_choices": choices,
                 "redirect_host": urllib.parse.urlparse(row["redirect_uri"]).netloc, "expires_at": row["expires_at"]}
 
     @r.post("/api/auth/oauth-consent/{rid}/{decision}")
-    def consent_decide(request: Request, rid: str, decision: str):
+    def consent_decide(request: Request, rid: str, decision: str, body: dict = Body(default=None)):
         if decision not in ("approve", "deny"):
             raise ServiceError(404, "not_found", "页面不存在")
         session, user = _consent_actor(request)
+        chosen = (body or {}).get("workspace_id") if isinstance(body, dict) else None
+        if chosen is not None and (not isinstance(chosen, str) or not chosen or len(chosen) > 200):
+            raise ServiceError(400, "invalid_request", "请选择一个有效的工作空间")
         with store.tx() as c:
             row = consents.pending(rid, user_id=user["id"], central_session_id=session["id"], c=c)
             client = clients.get(row["client_id"])
-            if not client:
+            if not client or withdrawn_by_policy(store, client):
+                # Disabled, or self-registered under a policy that no longer accepts it.
                 raise ServiceError(410, "consent_expired", "该应用已停用，授权请求不再有效")
             if not consents.decide(c, rid, decision):
                 raise ServiceError(409, "consent_decided", "这个授权请求已经处理过了")
@@ -199,9 +285,17 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
                 audit(request, "oidc.consent_denied", actor_id=user["id"], object_kind="app", object_id=client["app_id"],
                       result="ok", meta={"client_id": client["client_id"]})
                 return {"redirect": _redirect_to(row, error="access_denied", error_description="the person declined")}
+            wanted_workspace = row.get("workspace_id")
+            if wanted_workspace is None and consent_needed(row["scope"]) and client["app_id"] == PLATFORM_APP_ID_:
+                # The page offered a choice; the answer must be one of this person's live workspaces.
+                if not chosen:
+                    raise ServiceError(400, "workspace_required", "请选择客户端可以使用的工作空间")
+                wanted_workspace = chosen
+            elif chosen is not None and chosen != wanted_workspace:
+                raise ServiceError(400, "invalid_request", "这个授权请求不接受更换工作空间")
             # The entitlement may have changed while the page was open: ask again, now.
-            entitled, workspace_id, reason = apps.check_access(user["id"], client["app_id"], row.get("workspace_id"))
-            if not entitled or workspace_id != row.get("workspace_id"):
+            entitled, workspace_id, reason = apps.check_access(user["id"], client["app_id"], wanted_workspace)
+            if not entitled or workspace_id != wanted_workspace:
                 return {"redirect": _redirect_to(row, error="access_denied", error_description=reason or "workspace changed")}
             consents.grant(c, user["id"], client["client_id"], workspace_id, consent_needed(row["scope"]))
             code = grants.issue_code(client_id=client["client_id"], user_id=user["id"], redirect_uri=row["redirect_uri"],
@@ -239,8 +333,17 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         refused rather than folded into one token that several APIs would each accept, which is
         the cross-API replay the audience exists to stop (RFC 9700 §2.3; RFC 8707 §2 lets the
         server refuse a combination it will not issue).
+
+        A value that names this deployment's MCP server is read in its canonical form first (the
+        rule the registration is kept by, `oidc.registered_audiences`): MCP authorization,
+        "Canonical Server URI", says an uppercase scheme or host SHOULD be accepted, and a client
+        may send the URL it was configured with rather than the metadata's `resource`. The token's
+        audience is then that canonical URI, the one string the MCP server checks. A value with a
+        fragment is no resource indicator at all (RFC 8707 §2) and is compared as written.
         """
-        wanted = sorted({(v or "").strip() for v in (resources or []) if (v or "").strip()})
+        mcp = oidc.mcp_resource()
+        wanted = sorted({mcp if "#" not in v and oidc.canonical_resource_uri(v) == mcp else v
+                         for v in ((v or "").strip() for v in (resources or [])) if v})
         if not wanted:
             return None, None
         registered = set(client.get("audiences") or [])
@@ -306,6 +409,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         client, refused = _client_auth(request, client_id, client_secret)
         if refused:
             return refused
+        if withdrawn_by_policy(store, client):
+            # A self-registered client lives as long as the MCP policy accepts it: a code or refresh
+            # token it obtained earlier is not honoured once the mechanism or its domain is withdrawn.
+            return JSONResponse({"error": "invalid_client",
+                                 "error_description": "本平台已不再接受这个客户端的自描述登记"},
+                                status_code=401, headers={"WWW-Authenticate": 'Basic realm="synwevo-oidc"'})
         audience, bad_target = _target(client, resource)
         if bad_target:
             return bad_target
@@ -448,7 +557,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
             return JSONResponse({"error": "invalid_token"}, status_code=401,
                                 headers={"WWW-Authenticate": "Bearer"})
         tok = grants.load_access(auth.split(None, 1)[1].strip())
-        if not tok:
+        holder = clients.get_any(tok["client_id"]) if tok else None
+        if not tok or (holder and withdrawn_by_policy(store, holder)):
             return JSONResponse({"error": "invalid_token"}, status_code=401,
                                 headers={"WWW-Authenticate": "Bearer"})
         user = ident.get_user(tok["user_id"])

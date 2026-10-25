@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Modal, useI18n } from "@synwevo/ui";
 import { Loading, RunBadge } from "../../shared/states";
 import { withAiLabel } from "./aiLabel";
-import { AiLabel, RefusalNotice, ThinkingStatus, TurnCostLine, useChatText } from "./ChatParts";
+import { AiLabel, McpCallLine, RefusalNotice, ThinkingStatus, TurnCostLine, useChatText } from "./ChatParts";
 import { shouldSubmit } from "./composer";
 import FilePicker, { FileChips } from './FilePicker';
 import { addFile, createFileClient, fileReferences, type FileClient } from './files';
@@ -51,9 +51,10 @@ function ActionCard({ call, act, busy }: { call: ToolCall; act: Act; busy: boole
   const title = call.operation_title?.[locale] ?? call.operation_title?.en ?? toolTitles[call.tool] ?? t("应用操作");
   // A server-produced application link must remain on this origin.
   const safeLink = call.link?.startsWith("/") && !call.link.startsWith("//") ? call.link : null;
-  return <section className={`ag-action${pending ? " pending" : ""}`} aria-label={title}>
+  return <section className={`ag-action${pending ? " pending" : ""}${call.mcp ? " external" : ""}`} aria-label={title}>
     <div className="ag-action-heading"><strong>{title}</strong><Status status={call.status} /></div>
-    <p className="muted small">{call.app_name} {call.workspace_name ? `· ${call.workspace_name}` : `· ${t("个人 Agent")}`}</p>
+    {call.mcp ? <McpCallLine mcp={call.mcp} pending={pending} />
+      : <p className="muted small">{call.app_name} {call.workspace_name ? `· ${call.workspace_name}` : `· ${t("个人 Agent")}`}</p>}
     {call.target_workspace_name && call.target_workspace_id !== call.workspace_id &&
       <p className="small">{t("目标工作空间")} · <strong>{call.target_workspace_name}</strong></p>}
     {!call.hidden && !!call.transfer_from?.length && <div className="small ag-transfer">

@@ -58,7 +58,7 @@ def test_every_served_machine_route_is_documented(composed_suite):
     assert documented - served == set()
     # nothing of an adapter that has its own API, and nothing personal
     assert {tag for item in published["paths"].values() for op in item.values() for tag in op["tags"]} == {
-        "forms", "tables", "dataprep", "extract", "approvals", "credential"}
+        "forms", "tables", "dataprep", "extract", "approvals", "credential", "mcp"}
 
 
 def test_the_composition_operation_is_declared_as_it_behaves(composed_suite):

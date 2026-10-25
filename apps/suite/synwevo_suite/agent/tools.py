@@ -21,6 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from synwevo_core.capabilities import Capabilities, canonical
 from synwevo_core.errors import ServiceError
 
+from .mcp.tools import CARRIERS, MCP_PREFIX
+
 MAX_RESULT_CHARS = 24_000
 MAX_SCHEMA_CHARS = 20_000
 
@@ -199,13 +201,14 @@ def bounded(value: Any) -> tuple[Any, bool]:
 
 class ToolContext:
     def __init__(self, caps: Capabilities, user: dict, scope: list[str] | None, credential_kind: str,
-                 provider: str = "anthropic"):
+                 provider: str = "anthropic", mcp=None):
         self.caps = caps
         self.store = caps.store
         self.user = user
         self.scope = scope                  # None = every workspace the person can use
         self.credential_kind = credential_kind
         self.provider = provider
+        self.mcp = mcp                      # agent.mcp.tools.McpTools: the external tools this person enabled, or None
 
     # ------------------------------------------------------------------ catalogue
     def catalogue(self) -> dict:
@@ -223,14 +226,22 @@ class ToolContext:
 
     def operations_index(self) -> list[dict]:
         usable = {a["id"] for a in self.caps.catalogue(self.user["id"])}
-        return [{"id": op.id, "summary": op.summary, "changes_data": op.side_effect != "none"}
-                for op in sorted(self.caps.registry.operations(), key=lambda o: o.id)
-                if op.app in usable and op.agent != "never"]
+        # The MCP carriers are reached only through the mcp: operations below, never by their ids.
+        own = [{"id": op.id, "summary": op.summary, "changes_data": op.side_effect != "none"}
+               for op in sorted(self.caps.registry.operations(), key=lambda o: o.id)
+               if op.app in usable and op.agent != "never" and op.id not in CARRIERS]
+        return own + (self.mcp.index() if self.mcp is not None else [])
 
     def find(self, query: str | None, app: str | None, operation: str | None) -> dict:
         if operation:
+            if operation.startswith(MCP_PREFIX):
+                vop = self.mcp.get(operation) if self.mcp is not None else None
+                if vop is None:
+                    return {"error": {"code": "unknown_operation", "message": f"No operation {operation!r} is available."}}
+                return self.mcp.describe(vop)
             op = self.caps.registry.get(operation)
-            if op is None or op.agent == "never" or op.app not in {a["id"] for a in self.caps.catalogue(self.user["id"])}:
+            if (op is None or op.agent == "never" or op.id in CARRIERS
+                    or op.app not in {a["id"] for a in self.caps.catalogue(self.user["id"])}):
                 return {"error": {"code": "unknown_operation", "message": f"No operation {operation!r} is available."}}
             schema = op.input_schema()
             text = canonical(schema)
@@ -255,8 +266,17 @@ class ToolContext:
         """Check a run_operation request without running it. Returns ``(op, workspace_id, clean_input)``
         or an error dict for the model (and the card)."""
         name = args.get("operation")
+        if isinstance(name, str) and name.startswith(MCP_PREFIX):
+            vop = self.mcp.get(name) if self.mcp is not None else None
+            if vop is None:
+                return {"code": "unknown_operation", "message": f"No operation {name!r}. Use find_operations."}
+            if args.get("workspace_id"):
+                return {"code": "workspace_not_applicable", "message": "External MCP tools do not take a workspace."}
+            return self.mcp.prepare(vop, args.get("input"))
         op = self.caps.registry.get(name) if isinstance(name, str) else None
-        if op is None:
+        if op is None or op.id in CARRIERS:
+            # A carrier named directly would skip what its mcp: operation decides: the grant's mode
+            # (and so the confirmation card) and the data-flow check.
             return {"code": "unknown_operation", "message": f"No operation {name!r}. Use find_operations."}
         if op.agent == "never":
             return {"code": "not_for_agent", "message": "This operation must be done by the person in the application."}
@@ -329,14 +349,24 @@ class ToolContext:
                         named.add(step[key].get("workspace_id"))
         return named - {None}
 
+    def allows(self, *workspaces: str | None) -> bool:
+        """Whether every one of these workspaces lets its content be processed with this credential
+        by this provider, read now."""
+        return all(policy_allows(self.store, w, self.credential_kind, self.provider) for w in workspaces)
+
+    @staticmethod
+    def withheld() -> dict:
+        """What the model reads instead of a result a workspace keeps from it."""
+        return {"withheld": True,
+                "reason": ("This workspace does not allow its content to be processed by the assistant. "
+                           "The person can see the result in the conversation; do not guess its content.")}
+
     def for_model(self, op, workspace_id: str | None, result: Any, *, also=()) -> Any:
         """What the model may read of a result: all of it, or — when the workspace (or another one
         whose content the result reflects, ``also``) does not allow its content to be processed
         with this credential — a note that the person can see it."""
-        if not all(policy_allows(self.store, w, self.credential_kind, self.provider) for w in (workspace_id, *also)):
-            return {"withheld": True,
-                    "reason": ("This workspace does not allow its content to be processed by the assistant. "
-                               "The person can see the result in the conversation; do not guess its content.")}
+        if not self.allows(workspace_id, *also):
+            return self.withheld()
         value, cut = bounded(result)
         return {"source": {"app": op.app, "operation": op.id, "workspace_id": workspace_id},
                 "note": UNTRUSTED_NOTE, "truncated": cut, "result": value}

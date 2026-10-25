@@ -234,6 +234,7 @@ class MachineAuth:
         client = clients.get(row["client_id"])
         if not client:
             raise ServiceError(401, "client_unavailable", "签发该凭据的客户端已停用")
+        _refuse_withdrawn_client(self.store, client)
         if client.get("app_id") != PLATFORM_APP_ID:
             raise ServiceError(403, "wrong_audience",
                                f"该凭据由属于其它应用（{client.get('app_id')}）的客户端取得，不能调用业务应用操作接口")
@@ -254,6 +255,109 @@ class MachineAuth:
         user = self.ident.get_user(row["user_id"])
         if not user or user["status"] != "active":
             raise ServiceError(401, "unauthorized", "该凭据背后的账户不可用")
+        ws = row.get("workspace_id")
+        if not ws:
+            raise ServiceError(403, "no_workspace", "该凭据没有绑定工作空间，不能调用业务接口")
+        space = self.ident.get_workspace(ws)
+        if not space or space.get("deleted_at") or space["status"] != "active":
+            raise ServiceError(403, "forbidden", "该工作空间不可用")
+        why = workspace_access_failure(self.store, ws, user["id"])
+        if why:
+            raise ServiceError(403, "forbidden", "你已不是该组织的成员" if why == "not_an_organization_member"
+                               else "该组织当前不可用", {"reason": why})
+        member = self.ident.membership(ws, user["id"])
+        if not member:
+            raise ServiceError(403, "forbidden", "你已不是该工作空间的成员")
+        principal = {"kind": "delegated", "key_id": f"{client['client_id']}:{user['id']}",
+                     "tenant": ws, "scopes": scopes, "user_id": user["id"],
+                     "client_id": client["client_id"],
+                     "name": f"{client['name']}（代表 {user['email']}）",
+                     "lineage": None, "grant_family": row.get("family_id") or row["id"],
+                     "role": member["role"], "can_export": bool(member.get("can_export")),
+                     "expires_at": row.get("access_expires_at")}
+        return enforce_principal(self.store, principal)
+
+    def verify_mcp(self, header: str | None) -> dict:
+        """The Synwevo MCP server's caller: an MCP client a person authorised, with a token minted for
+        the MCP server's own URL (RFC 8707 / RFC 9728: the server names itself, and refuses a token
+        minted for anything else — the business API's token included, though the operations behind
+        both are the same).
+
+        Everything else is `verify_suite`'s answer: a delegation for a person in the workspace they
+        chose when they consented, with the scopes still standing, re-read now. The refusals carry
+        what an MCP client needs to recover (`detail["www_authenticate"]`: the bearer challenge of
+        RFC 6750 §3 the gate puts on the response), and the principal says it came through MCP so
+        the run records can tell the two doors apart.
+        """
+        from .mcp_policy import McpPolicy
+        from .oidc import Grants, mcp_resource
+        token = _bearer(header)
+        if not token:
+            raise ServiceError(401, "unauthorized", "缺少凭据（Authorization: Bearer <平台访问令牌>）",
+                               {"www_authenticate": {"error": "invalid_token"}})
+        if not McpPolicy(self.store).current().inbound_enabled:
+            # No token and no scope opens a server the policy keeps closed: a 403 with no error
+            # code in its challenge, which no client re-authorizes on (`http.mcp_challenge`).
+            raise ServiceError(403, "mcp_inbound_disabled", "本部署尚未开放 MCP 服务")
+        if token.startswith("dw_"):
+            raise ServiceError(401, "wrong_credential", "访问密钥只能调用 Synwevo Docs 接口；MCP 服务需要本人授权的访问令牌",
+                               {"www_authenticate": {"error": "invalid_token"}})
+        row = Grants(self.store).load_access(token)
+        if not row:
+            raise ServiceError(401, "unauthorized", "凭据无效、已过期或已撤销",
+                               {"www_authenticate": {"error": "invalid_token"}})
+        expected = mcp_resource()
+        if row.get("audience") != expected:
+            raise ServiceError(401, "invalid_audience",
+                               f"该访问令牌不是签发给 Synwevo MCP 服务的；请申请令牌时带 resource={expected}",
+                               {"audience": row.get("audience"), "expected": expected,
+                                "www_authenticate": {"error": "invalid_token"}})
+        principal = self._suite_delegation(row, api="mcp")
+        principal["transport"] = "mcp"
+        return principal
+
+    def _suite_delegation(self, row: dict, *, api: str) -> dict:
+        """The delegated principal behind a token for the business applications (the operations API
+        or the MCP server), with every live fact re-read: shared so the two doors cannot disagree."""
+        from .api_platform import enforce_principal
+        from .apps import PLATFORM_APP_ID
+        from .oidc import Clients, SUITE_API_SCOPES
+        from .organizations import workspace_access_failure
+        # For the MCP server a 401 says the token is no good — a new authorization can fix that
+        # (`invalid_token`). A 403 carries a challenge hint only where more scope can fix it; every
+        # other 403 here is answered with no error code (`http.mcp_challenge`).
+        challenge = {"www_authenticate": {"error": "invalid_token"}} if api == "mcp" else None
+        clients = Clients(self.store)
+        client = clients.get(row["client_id"])
+        if not client:
+            raise ServiceError(401, "client_unavailable", "签发该凭据的客户端已停用", challenge)
+        _refuse_withdrawn_client(self.store, client, challenge)
+        if client.get("app_id") != PLATFORM_APP_ID:
+            raise ServiceError(403, "wrong_audience",
+                               f"该凭据由属于其它应用（{client.get('app_id')}）的客户端取得，不能调用业务应用操作接口")
+        if not row["user_id"] or client.get("kind") == "service":
+            raise ServiceError(403, "wrong_credential",
+                               "业务应用操作接口目前只接受本人授权的访问令牌，服务账户尚未开放",
+                               {"reason": "service_account_not_supported"})
+        held = tuple(s for s in (row["scope"] or "").split() if s in SUITE_API_SCOPES)
+        registered = clients.allowed_scopes(client)
+        scopes = tuple(s for s in held if s in registered)
+        # No business scope this token may still use — it never had one, or the registration has
+        # withdrawn every one it had — is a scope refusal in RFC 6750 §3.1's sense. For the MCP
+        # server it challenges `insufficient_scope` with the scopes to ask for wherever authorizing
+        # again can grant some, and otherwise says nothing a client would re-authorize on.
+        step_up = _mcp_step_up(client) if api == "mcp" and not scopes else None
+        if not held:
+            raise ServiceError(403, "wrong_credential",
+                               "这是身份凭据，不能用于调用业务接口；请申请带业务应用权限（如 forms.read）的访问令牌",
+                               step_up)
+        if not scopes:
+            raise ServiceError(403, "forbidden",
+                               "签发该凭据的客户端已不再登记这些接口权限（" + " ".join(held) + "）",
+                               {"reason": "scope_withdrawn", **(step_up or {})})
+        user = self.ident.get_user(row["user_id"])
+        if not user or user["status"] != "active":
+            raise ServiceError(401, "unauthorized", "该凭据背后的账户不可用", challenge)
         ws = row.get("workspace_id")
         if not ws:
             raise ServiceError(403, "no_workspace", "该凭据没有绑定工作空间，不能调用业务接口")
@@ -472,6 +576,27 @@ class MachineAuth:
                 return
         raise ServiceError(403, "forbidden",
                            f"该凭据没有 {scope} 权限（当前：{'/'.join(sorted(have)) or '无'}）")
+
+
+def _refuse_withdrawn_client(store: Store, client: dict, challenge: dict | None = None) -> None:
+    """A self-registered MCP client (Client ID Metadata Document) is honoured only while the MCP
+    policy accepts it: turning the mechanism off or narrowing its domains ends the tokens it holds
+    at their next use, not at their expiry (`cimd.withdrawn_by_policy`)."""
+    from .cimd import withdrawn_by_policy
+    if withdrawn_by_policy(store, client):
+        raise ServiceError(401, "client_unavailable", "本平台已不再接受签发该凭据的客户端（自描述登记）",
+                           {"reason": "cimd_not_allowed", **(challenge or {})})
+
+
+def _mcp_step_up(client: dict) -> dict | None:
+    """The scope challenge for an MCP token with no business scope left to use: the scopes that
+    authorizing this client again grants it for basic use (`oidc.MCP_DEFAULT_SCOPES` its
+    registration lists — what a first authorization would have asked for), or None where there
+    are none, so the refusal is not an `insufficient_scope` that no authorization can satisfy."""
+    from .oidc import MCP_DEFAULT_SCOPES, mcp_grantable_scopes
+    grantable = mcp_grantable_scopes(client)
+    ask = [s for s in MCP_DEFAULT_SCOPES if s in grantable]
+    return {"www_authenticate": {"error": "insufficient_scope", "scope": " ".join(ask)}} if ask else None
 
 
 def _role_scopes(member: dict) -> set:

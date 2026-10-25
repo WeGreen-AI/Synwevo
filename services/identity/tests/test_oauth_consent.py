@@ -95,7 +95,8 @@ def test_api_scopes_wait_for_the_person_and_show_what_is_asked(env):
     assert "code" not in params(r.headers["location"])
     rid = params(r.headers["location"])["request"]
     shown = env["c"].get(f"/api/auth/oauth-consent/{rid}").json()
-    assert shown["client"] == {"id": "report-bot", "name": "Quarterly report bot", "app_id": "docweave"}
+    assert shown["client"] == {"id": "report-bot", "name": "Quarterly report bot", "app_id": "docweave",
+                               "registration": "operator", "client_uri": None}
     assert shown["scopes"] == ["docweave.read", "docweave.write"] and shown["identity_scopes"] == ["openid"]
     assert shown["workspace"]["id"] == env["ws"] and shown["redirect_host"] == "integration.example.test"
     out = decide(env["c"], rid, "approve").json()

@@ -52,7 +52,7 @@ test('model provider is a real config-governance page and preserves permission-f
   const read = new Set(['platform.config.view']);
   const groups = nav.adminGroups(read);
   assert.deepEqual(groups.find(group => group.label === '配置与治理').items.map(item => item.id),
-    ['registration', 'model-provider', 'model-prices', 'model-costs', 'model-risk']);
+    ['registration', 'model-provider', 'model-prices', 'model-costs', 'model-risk', 'mcp']);
   assert.equal(groups.flatMap(group => group.items).filter(item => item.id === 'model-provider').length, 1);
   // The paid-call risk page reads with the same config grant; without it the page is neither listed nor reachable.
   assert.equal(nav.resolveAdminPage('/admin', 'model-risk', read), 'model-risk');

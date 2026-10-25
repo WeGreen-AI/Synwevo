@@ -2,6 +2,7 @@ import { ModelCostsTab } from "./governance/ModelCostsTab";
 import { ModelProviderTab } from "./governance/ModelProviderTab";
 import { ModelRiskTab } from "./governance/ModelRiskTab";
 import { AgentSafetyTab } from "./governance/AgentSafetyTab";
+import { McpTab } from "./governance/McpTab";
 import { ModelPricesTab } from "./governance/ModelPricesTab";
 import { FinanceTab } from "./governance/FinanceTab";
 import { PaymentsTab } from "./governance/PaymentsTab";
@@ -120,6 +121,7 @@ function AdminViews({ held, tab }: { held: Held; tab: Tab }) {
     {tab === "finance" && <FinanceTab onDenied={onDenied} canManage={!permitted(held, "platform.billing.manage").disabled} />}
     {tab === "payments" && <PaymentsTab onDenied={onDenied} canManage={!permitted(held, "platform.billing.manage").disabled} />}
     {tab === "agent-safety" && <AgentSafetyTab onDenied={onDenied} held={held} />}
+    {tab === "mcp" && <McpTab onDenied={onDenied} held={held} />}
     {tab === "registration" && <SettingsTab onDenied={onDenied} held={held} />}
     {tab === "identity" && <IdentityProvidersTab onDenied={onDenied} />}
     {tab === "mail" && <MailTab onDenied={onDenied} held={held} />}

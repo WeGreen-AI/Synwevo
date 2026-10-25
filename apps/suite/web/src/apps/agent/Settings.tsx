@@ -11,6 +11,7 @@ import { PriceFacts, type ModelOffer } from "./ComposerStatus";
 import { formatMoney } from "./cost";
 import PayerBudget from "./PayerBudget";
 import ProviderConsent from "./ProviderConsent";
+import McpBindings from "./integrations/Bindings";
 import "./settings/messages";
 import "./messages";
 
@@ -711,6 +712,7 @@ export default function Settings({ onBillingChanged }: { onBillingChanged?: () =
     <ProviderConsent />
     <AccessSettings onBillingChanged={onBillingChanged} />
     <Memories />
+    <McpBindings />
     <WorkspacePolicies />
     <TransferPolicies />
   </div>;
