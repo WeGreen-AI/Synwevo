@@ -111,6 +111,8 @@ async function appFixture({ billing = true, setup: initialSetup = fixtureSetup()
   route: initial = 'conv_fixture' as string | null, offer: initialOffer = fixtureOffer() as any, globals = {} as Record<string, unknown> } = {}) {
   const writes: any[] = [], reads: string[] = [], navigations: string[] = [];
   let failure: unknown, route: string | undefined = initial ?? undefined, status = initialStatus, offer = initialOffer, setup = initialSetup;
+  /** The payer list GET /api/suite/agent/payers serves (an Error: the read fails), and the open conversation's messages. */
+  let payers: unknown = fixturePayers(), messages: unknown[] = [];
   /** Agent settings is a route inside the same AgentApp (no conversation is open there). */
   let onSettings = false;
   /** Errors the next requests meet, one each, before `failure` (e.g. a lost connection); a Promise
@@ -125,9 +127,9 @@ async function appFixture({ billing = true, setup: initialSetup = fixtureSetup()
       useLocation: () => ({ pathname: onSettings ? '/agent/settings' : route ? `/agent/c/${route}` : '/agent' }), useNavigate: () => (path: string) => navigations.push(path) },
     '@synwevo/ui': { ...ui, useI18n: () => ({ t: (key: string) => key, locale: 'en' }), useDialog: () => ({}) },
     '@synwevo/auth-client': { ...client, useSession: () => ({ me: { id: 'usr_fixture', display_name: 'Fixture user' }, state: { site_url: 'https://site.fixture.test' } }),
-      get: async () => fixturePayers() },
+      get: async (path: string) => { reads.push(`GET ${path}`); if (payers instanceof Error) throw payers; return plain(payers); } },
     '../../shared/catalog': { useApp: () => ({ app: { id: 'agent' } }) },
-    './useConversation': { useConversation: () => ({ value: route ? { ...conversation(), id: route } : undefined, refresh: async () => {}, connection: 'connected' }) },
+    './useConversation': { useConversation: () => ({ value: route ? { ...conversation(), id: route, messages } : undefined, refresh: async () => {}, connection: 'connected' }) },
     './useHistory': { useHistory: () => ({ rows: [], cursor: null }) },
     '../../shared/ops': { newKey: () => `fixture_key_${writes.length}`, read: async (operation: string) => {
       reads.push(operation);
@@ -154,8 +156,9 @@ async function appFixture({ billing = true, setup: initialSetup = fixtureSetup()
   const fixture = { ...h, writes, reads, navigations, fail: (value: any) => { failure = value; },
     failNext: (...errors: unknown[]) => { next.push(...errors); },
     /** The server's state moves on (an administrator adopted a new price): later reads return these. */
-    serve: (later: { status?: any; offer?: any; setup?: any }) => {
-      status = later.status !== undefined ? later.status : status; offer = later.offer ?? offer; setup = later.setup ?? setup; },
+    serve: (later: { status?: any; offer?: any; setup?: any; payers?: unknown; messages?: unknown[] }) => {
+      status = later.status !== undefined ? later.status : status; offer = later.offer ?? offer; setup = later.setup ?? setup;
+      payers = later.payers ?? payers; messages = later.messages ?? messages; },
     route: (id?: string) => { route = id; h.render(); },
     /** Open Agent settings (true) or go back to the conversation (false), then let the reads settle. */
     settings: async (open: boolean) => { onSettings = open; h.render(); for (let i = 0; i < 3; i++) { await settle(); h.render(); } },
@@ -959,6 +962,91 @@ test('proof defect 1: a message whose send completes while the person is in Agen
   assert.equal(h.chat().sentDraft, 1);
   assert.deepEqual(c.composer(), { text: '', contexts: [], files: [] }, 'it was sent: it is not put back');
   c.unmount(); h.unmount();
+});
+
+// ---------------------------------------------------------------- the money chips after an answer (browser proof, defect 2)
+
+/** The open conversation with one answer whose turn is in `status` (FIXTURE, design §3 shapes). */
+const answerIn = (status: string, turn = 'turn_fixture') => [
+  { id: 'msg_u', parent_id: null, role: 'user', status: 'done', body: 'Fixture question', hidden: false, error: null, turn: null, tool_calls: [], created_at: 1 },
+  { id: 'msg_a', parent_id: 'msg_u', role: 'assistant', status: status === 'running' ? 'streaming' : 'done', body: 'Fixture answer', hidden: false, error: null,
+    turn: { id: turn, status, model: 'fixture-model', credential: 'platform' }, tool_calls: [], created_at: 2 }];
+/** FIXTURE: the organization's wallet and this member's allowance after the ledger charged an answer. */
+const chargedPayers = () => { const list = fixturePayers();
+  list.payers[1] = { ...list.payers[1], available: '4990', spent_this_month: '10', remaining_this_month: '1990' }; return list; };
+
+test('proof defect 2: an answer that settles reads the payer list and the status again, once, so the organization chips are current', async () => {
+  const h = await appFixture();
+  const payerReads = () => h.reads.filter((r) => r === 'GET /api/suite/agent/payers').length;
+  const statusReads = () => h.reads.filter((r) => r === 'agent.billing.status').length;
+  const money = h.money(); money.setPayer(money.payers[1]); h.render();
+  const facts = () => h.money().payer.facts;
+  assert.deepEqual([facts().available, facts().monthly.remaining], ['5000', '2000']);
+  const payersBefore = payerReads();
+  assert.equal(await h.chat().send('Fixture paid by the organization'), true);
+  // The answer runs: the stream shows its turn. Nothing is charged yet, and nothing is polled.
+  h.serve({ messages: answerIn('running') }); h.render(); await settle(); h.render(); await settle(); h.render();
+  assert.equal(payerReads(), payersBefore, 'not while it runs');
+  const statusBefore = statusReads();
+  // The turn reaches a final state; the ledger has charged the organization.
+  h.serve({ messages: answerIn('succeeded'), payers: chargedPayers() }); h.render(); await settle(); h.render(); await settle(); h.render();
+  assert.equal(payerReads(), payersBefore + 1, 'the payer list is read again when the answer settles');
+  assert.equal(statusReads(), statusBefore + 1, 'and the status (the personal balance) once');
+  assert.deepEqual([facts().available, facts().monthly.remaining], ['4990', '1990'], 'the chips show the charged figures without a reload');
+  assert.equal(h.money().payer.kind, 'organization');
+  for (let i = 0; i < 3; i++) { h.render(); await settle(); }
+  assert.equal(payerReads(), payersBefore + 1, 'once per answer');
+  assert.equal(statusReads(), statusBefore + 1);
+  // Another conversation with finished answers is not a settlement.
+  h.serve({ messages: answerIn('succeeded', 'turn_elsewhere') }); h.route('conv_other'); await settle(); h.render(); await settle(); h.render();
+  assert.equal(payerReads(), payersBefore + 1);
+  h.unmount();
+  // A quick answer, already final the first time the page sees it (it was never seen running): one read.
+  const quick = await appFixture();
+  const quickReads = () => quick.reads.filter((r) => r === 'GET /api/suite/agent/payers').length;
+  const first = quickReads();
+  assert.equal(await quick.chat().send('Fixture quick'), true);
+  await settle(); quick.render(); await settle(); quick.render();
+  const quickStatus = quick.reads.filter((r) => r === 'agent.billing.status').length;
+  quick.serve({ messages: answerIn('succeeded'), payers: chargedPayers() }); quick.render(); await settle(); quick.render(); await settle(); quick.render();
+  assert.equal(quickReads(), first + 1);
+  assert.equal(quick.reads.filter((r) => r === 'agent.billing.status').length, quickStatus + 1, 'the status too');
+  assert.equal(quick.money().payers[1].facts.available, '4990');
+  quick.unmount();
+});
+
+test('proof defect 2: the payer list is read again when the window regains focus, not by the periodic status read, and a failed re-read keeps the payer', async () => {
+  const listeners: Record<string, (() => void)[]> = {}, timers: { fn: () => void; ms: number }[] = [];
+  let now = 1_000_000;
+  const fakeWindow = { addEventListener: (type: string, fn: () => void) => { (listeners[`window:${type}`] ||= []).push(fn); },
+    removeEventListener: (type: string, fn: () => void) => { listeners[`window:${type}`] = (listeners[`window:${type}`] || []).filter((f) => f !== fn); },
+    setInterval: (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length; }, clearInterval: (n: number) => { timers[n - 1] = { fn() {}, ms: 0 }; } };
+  const fakeDocument = { visibilityState: 'visible', getElementById: () => null,
+    addEventListener: (type: string, fn: () => void) => { (listeners[`document:${type}`] ||= []).push(fn); },
+    removeEventListener: (type: string, fn: () => void) => { listeners[`document:${type}`] = (listeners[`document:${type}`] || []).filter((f) => f !== fn); } };
+  const h = await appFixture({ globals: { window: fakeWindow, document: fakeDocument, Date: { now: () => now } } });
+  const payerReads = () => h.reads.filter((r) => r === 'GET /api/suite/agent/payers').length;
+  const fire = async (key: string) => { for (const fn of listeners[key] ?? []) fn(); await settle(); h.render(); await settle(); h.render(); };
+  const money = h.money(); money.setPayer(money.payers[1]); h.render();
+  const first = payerReads();
+  // FIXTURE: another member's answer was charged to the organization while this tab was in the background.
+  h.serve({ payers: chargedPayers() });
+  now += 60_000; await fire('window:focus');
+  assert.equal(payerReads(), first + 1, 'focus reads the payer list again');
+  assert.equal(h.money().payer.facts.available, '4990');
+  await fire('document:visibilitychange');
+  assert.equal(payerReads(), first + 1, 'focus and visibilitychange together: one read');
+  // The 5-minute status read is not a payer poll.
+  const tick = timers.find((t) => t.ms > 0)!;
+  now += 5 * 60_000; tick.fn(); await settle(); h.render(); await settle(); h.render();
+  assert.equal(payerReads(), first + 1, 'no polling of the payer list');
+  // A re-read that fails keeps what the page showed: the payer stays the organization.
+  h.serve({ payers: new client.ApiError(0, 'network', 'fixture') });
+  now += 60_000; await fire('window:focus');
+  assert.equal(payerReads(), first + 2);
+  assert.equal(h.money().payer.kind, 'organization', 'a failed re-read never switches the payer');
+  assert.equal(h.money().payer.facts.available, '4990');
+  h.unmount();
 });
 
 test('C1: the model panel beside the composer shows the unit prices, the price version and the per-answer maximum', async () => {

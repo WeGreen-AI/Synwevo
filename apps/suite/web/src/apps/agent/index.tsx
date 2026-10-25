@@ -110,12 +110,29 @@ function AgentApp() {
   // Focus for the refusal of the setup step's send: the step is gone, so focus moves to the notice (W10).
   const [refusalFocus, setRefusalFocus] = useState(0);
   const answering = !!conversation?.messages?.some(activeTurn);
+  // The answers this page started or saw running, and those of them it has since seen in a final
+  // state. A settled answer is when the ledger charged its payer, so the money facts beside the
+  // composer are read again then, once per answer and never polled: the payer list (an
+  // organization's balance and this member's allowance) and the status (the personal balance).
+  // An answer already final when the page first sees it (a quick one) counts as well.
+  const watchedTurns = useRef(new Set<string>());
+  const settledTurns = useRef(new Set<string>());
+  for (const m of conversation?.messages ?? []) {
+    const turn = m.turn?.id;
+    if (!turn) continue;
+    if (activeTurn(m)) watchedTurns.current.add(turn);
+    else if (watchedTurns.current.has(turn)) settledTurns.current.add(turn);
+  }
+  const settled = settledTurns.current.size;
   // Addendum AD-1: the price the composer shows is the price a send runs at. The status is read
   // again on demand (a refused stale price), when the window regains focus or becomes visible,
   // and at most every 5 minutes while the page is visible, so a long-open page rarely shows an
   // out-of-date price; a send that still carries one is refused by the server, never run.
   const [statusTick, setStatusTick] = useState(0);
   const statusRead = useRef(0);
+  // The payer list is read again when an answer settles and when the window regains focus.
+  const [payersTick, setPayersTick] = useState(0);
+  const payersRead = useRef(0);
   // The pricing the page was showing when a send was refused for a newer price (a notice, not a gate).
   const [shownBefore, setShownBefore] = useState<Pricing | null>(null);
   useEffect(() => {
@@ -133,7 +150,7 @@ function AgentApp() {
       setOffer(valid);
     });
     return () => abort.abort();
-  }, [billingRequired, tick, answering, statusTick]);
+  }, [billingRequired, tick, answering, statusTick, settled]);
   // Back from Agent settings, where the maximum (W2) and the setup facts (consent, limits: W4) may
   // have changed: both are read again.
   const wasSettings = useRef(settings);
@@ -146,7 +163,12 @@ function AgentApp() {
     const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
     // focus and visibilitychange usually arrive together: one read.
     const again = (after: number) => { if (visible() && Date.now() - statusRead.current >= after) setStatusTick((n) => n + 1); };
-    const onFocus = () => again(2000);
+    // Back to the page: the payer list too (another tab or member may have spent from it); only
+    // the status is read periodically.
+    const onFocus = () => {
+      again(2000);
+      if (visible() && Date.now() - payersRead.current >= 2000) setPayersTick((n) => n + 1);
+    };
     const timer = window.setInterval(() => again(5 * 60_000), 60_000);
     window.addEventListener("focus", onFocus);
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", onFocus);
@@ -165,16 +187,23 @@ function AgentApp() {
     }).catch(() => { if (!abort.signal.aborted) setSetup(null); });
     return () => abort.abort();
   }, [billingRequired, userId, setupTick]);
+  // Whose payer list the page shows, once one was read.
+  const payersOf = useRef<string | null>(null);
   useEffect(() => {
     if (!billingRequired || !userId) return;
+    payersRead.current = Date.now();
     const abort = new AbortController();
     // Organization payment (shared contract "Payer") lists who may pay; before it exists the
-    // endpoint is absent and only the personal wallet is offered.
+    // endpoint is absent and only the personal wallet is offered. A re-read that fails keeps the
+    // list the page shows, so the chosen payer never changes behind the person's back.
     get<unknown>("/api/suite/agent/payers", abort.signal)
-      .then((value) => { if (!abort.signal.aborted) { setPayerList(value); setPayersError(false); } })
-      .catch((e) => { if (!abort.signal.aborted) { setPayerList(undefined); setPayersError(!(e instanceof ApiError && e.status === 404)); } });
+      .then((value) => { if (!abort.signal.aborted) { setPayerList(value); setPayersError(false); payersOf.current = userId; } })
+      .catch((e) => {
+        if (abort.signal.aborted || payersOf.current === userId) return;
+        setPayerList(undefined); setPayersError(!(e instanceof ApiError && e.status === 404));
+      });
     return () => abort.abort();
-  }, [billingRequired, userId]);
+  }, [billingRequired, userId, settled, payersTick]);
   function choose(next: Payer) {
     setPayerRef({ kind: next.kind, id: next.id });
     if (userId) rememberPayer(userId, next);
@@ -252,6 +281,7 @@ function AgentApp() {
     try {
       const out = await write("agent.turn.start", body);
       setShownBefore(null);
+      if (typeof out?.turn_id === "string") watchedTurns.current.add(out.turn_id);   // its settlement re-reads the money facts
       return out;
     } catch (error) {
       if (errorCode(error) === "billing_price_changed") {
