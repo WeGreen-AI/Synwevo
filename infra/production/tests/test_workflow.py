@@ -54,7 +54,13 @@ def git_env(home):
     env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
     env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1', HOME=str(home),
                GIT_AUTHOR_NAME='Fixture', GIT_AUTHOR_EMAIL='fixture@example.test',
-               GIT_COMMITTER_NAME='Fixture', GIT_COMMITTER_EMAIL='fixture@example.test')
+               GIT_COMMITTER_NAME='Fixture', GIT_COMMITTER_EMAIL='fixture@example.test',
+               # No background housekeeping: after a 600-file commit the hosted runner's git started an
+               # automatic gc/maintenance that was still writing into .git while the fixture directory
+               # was removed ("Directory not empty", PR #2's first verify).
+               GIT_CONFIG_COUNT='3', GIT_CONFIG_KEY_0='gc.auto', GIT_CONFIG_VALUE_0='0',
+               GIT_CONFIG_KEY_1='maintenance.auto', GIT_CONFIG_VALUE_1='false',
+               GIT_CONFIG_KEY_2='gc.autoDetach', GIT_CONFIG_VALUE_2='false')
     return env
 
 
