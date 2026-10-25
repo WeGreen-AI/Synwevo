@@ -41,7 +41,8 @@ def test_no_agpl_claim_only_when_pymupdf_is_absent(monkeypatch):
     monkeypatch.setattr(licensing, "pymupdf_installed", lambda: False)
     a = licensing.about()
     assert a["agpl_component_active"] is False
-    assert "无 AGPL 依赖" in a["notice"] and "不含 MuPDF" in a["notice"]
+    assert "无第三方 AGPL 依赖" in a["notice"] and "不含 MuPDF" in a["notice"]
+    assert a["license"] == "AGPL-3.0-or-later", "程序自身的许可与第三方依赖分开说"
 
 
 def test_pymupdf_engine_keeps_the_section_13_offer(monkeypatch):

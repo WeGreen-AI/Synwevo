@@ -29,8 +29,8 @@ ROOT = repo_root() or Path(__file__).resolve().parents[3]
 # (apps/suite), and the role composer, and an archive holding only `apps/docs` would be a partial
 # source shipped under a complete-source claim — which is the exact failure AGPL-3.0 §13 is about.
 # Whole directories, matching the Dockerfile's COPY lines one for one: apps/suite and apps/messages
-# were copied into the image and installed with `pip install -e` for months while this list left
-# them out, because only INCLUDE ⊆ COPY was tested. Both directions are tested now
+# were copied into the image and installed with `pip install -e` while this list left them out,
+# because only INCLUDE ⊆ COPY was tested. Both directions are tested now
 # (apps/docs/tests/test_licensing.py).
 INCLUDE = (
     # the applications
@@ -151,7 +151,7 @@ def about() -> dict:
                   "因此 AGPL-3.0 第 13 条的源代码提供义务依然适用。要去掉这一 AGPL 依赖，镜像中就不能安装 pymupdf；"
                   "目前没有经过验证的这种平台构建（apps/docs/requirements-pdfium.txt 只覆盖 Synwevo Docs，且缺少 pycrdt）。")
     else:
-        notice = "本部署未安装 PyMuPDF，镜像中不含 MuPDF 二进制，无 AGPL 依赖；PDF / 图片模板的部分能力在此模式下受限。"
+        notice = "本部署未安装 PyMuPDF，镜像中不含 MuPDF 二进制，无第三方 AGPL 依赖；PDF / 图片模板的部分能力在此模式下受限。"
     notice = own + notice
     return {
         "license": PROGRAM_LICENSE,
