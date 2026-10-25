@@ -95,17 +95,27 @@ image even when the host release directories are private; data and secret permis
 This keeps LibreOffice/font behaviour aligned with production. The runtime uses Debian Trixie
 (LibreOffice 25.2); Bookworm's LibreOffice 7.4 cannot evaluate the accepted XLOOKUP sample.
 Only a successful push or dispatch run on `dev` of `WeGreen-AI/Synwevo` deploys; it alone can use the
-`production` environment, whose branch policy must admit `dev` only. Pushes to `main` run nothing:
-`main` is the public mirror of `dev`, updated by sync pull requests (`main-sync-guard.yml` checks their
-source). Deploy jobs share one concurrency group and run in push order (`dev`'s verify jobs share
+`production` environment, whose branch policy must admit `dev` only. Once the first `dev`→`main` sync has
+brought this workflow to `main`, pushes to `main` run nothing: `main` is the public mirror of `dev`,
+updated by sync pull requests (`main-sync-guard.yml` checks their source). Deploy jobs share one concurrency group and run in push order (`dev`'s verify jobs share
 another); a re-run (attempt 2 or later) gets groups of its own, so it can never cancel a newer pending
 run, and its first verify step refuses it within seconds unless its commit is still `dev`'s head.
 Before anything reaches the host, the deploy job refuses a commit older than (or unrelated to) the
 newest successful production deployment, read across every page of deployment records, and a
 re-run whose commit is no longer `dev`'s head; when no deployment has ever succeeded, only `dev`'s head
 deploys. To deploy `dev`'s head again, dispatch the workflow on `dev`. A deploy through the receiver
-outside Actions (only ever a commit already on `dev`) leaves no deployment record for that check. The receiver's build output stays on the runner:
-the public log shows the receipt, or the last 30 lines when the receiver fails.
+outside Actions (only ever a commit already on `dev`) leaves no deployment record for that check. The
+receiver's build output stays on the runner: the public log shows the receipt, or the last 30 lines
+when the receiver fails.
+
+Switching the deploy branch from `main` to `dev` (once). The switch pull request changes this workflow
+on `dev` only. Until the first `dev`→`main` sync merges, `main` keeps the previous workflow: a push to
+`main` or a dispatch on `main` still runs its deploy job, which has no old-commit guard, and its older
+runs stay re-runnable for 30 days. Only the `production` environment stops them. So, in this order:
+(1) the environment admits `dev` only (the `main` branch policy deleted, administrators cannot bypass),
+read back to confirm, before the switch pull request merges; (2) merge the switch pull request, and
+check the first `dev` deploy (`/readyz`); (3) right after it, the first `dev`→`main` sync pull request,
+merged with a merge commit. Only from then on does a push to `main` run nothing.
 
 Environment secrets: `SYNWEVO_DEPLOY_KEY`, `SYNWEVO_KNOWN_HOSTS`; environment variable:
 `SYNWEVO_DEPLOY_HOST`. The key belongs to a separate `synwevo-deploy` host user with no Docker group,

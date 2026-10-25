@@ -1,7 +1,11 @@
 name: Verify and deploy Synwevo
 # Branches (AGENTS.md「分支与发布」): every change reaches `dev` through a pull request, and `dev` is the
 # only source of production deploys. `main` is the public open-source branch, a merge-mirror of dev
-# that only receives dev→main sync pull requests (main-sync-guard.yml). A push to main runs nothing.
+# that only receives dev→main sync pull requests (main-sync-guard.yml). A push to main runs nothing
+# once the first dev→main sync has brought this file to main. Until then main keeps the previous
+# workflow, which deployed on a push or dispatch on main, and only the production environment
+# (dev admitted, no administrator bypass) stops it: that environment change precedes the switch
+# (infra/production/README.md).
 #
 # `verify` is the status check the branch rules require on dev and main, so it must report on every
 # pull request into either branch: the pull_request trigger has no path filter. Records under docs/

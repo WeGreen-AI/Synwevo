@@ -90,7 +90,10 @@ npm run typecheck && npm run build         # 三个前端外壳
   （`docs/integration/` 与 `docs/operations.md` 有测试读取，按代码处理）。合入代码改动前，先确认本轮已获部署授权。
 * **`main`** 是公开的开源分支、`dev` 的合并镜像：只接受 `dev`→`main` 的同步 PR
   （`gh pr create --base main --head dev`），必需检查 `verify` 与 `sync-source`，以 merge commit 合入；
-  `main` 上没有部署。同步后 `main` 显示"领先 N 个提交"（都是合并提交）是正常的，不要为此反向合并。
+  自第一次 `dev`→`main` 同步把新工作流带到 `main` 起，`main` 上没有部署，推送到 `main` 什么都不运行。在那之前
+  `main` 仍带着会部署的旧工作流，只有 `production` 环境（只放行 `dev`、管理员不能绕过）挡住它：所以环境改动是
+  合入切换 PR 的前提，第一次 `dev` 部署成功后紧接着做第一次同步（`infra/production/README.md`）。
+  同步后 `main` 显示"领先 N 个提交"（都是合并提交）是正常的，不要为此反向合并。
 * **推送一律写明目标**：`git push origin HEAD:refs/heads/<工作分支>`。全局 `push.default=upstream` 会把
   `git push origin <分支>` 推到该分支的上游，跟踪 `origin/main` 的分支就这样推上了 `main`。不用 `--all`、`--mirror`。
 * **`verify` 证明不了改它自己的 PR。** PR 的 `verify` 运行的是这个 PR 自己那份 `production.yml`、守卫脚本和
