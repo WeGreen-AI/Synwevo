@@ -102,10 +102,13 @@ def main() -> int:
                 or any(part.startswith(".env") and part != ".env.example"
                        for part in Path(f).parts)):
             continue
-        if p.suffix in SKIP_SUFFIX or "package-lock" in f:
-            continue
+        # A link is refused before the suffix skip: a `.pdf` or `.png` name does not make it a
+        # document, and the host receiver refuses a release archive with a link in it. (Tracked links
+        # under the runtime directories above are check_boundaries' Git-index check.)
         if p.is_symlink():
             errors.append(f"{f}: 符号链接不能作为源码检查")
+            continue
+        if p.suffix in SKIP_SUFFIX or "package-lock" in f:
             continue
         try:
             text = p.read_text(encoding="utf-8")

@@ -74,12 +74,15 @@ class BranchModelTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertIn('check_brand.py', records[0]['run'])
         self.assertIn('check_boundaries.py', records[0]['run'])
+        # Both paths check the archive a deploy sends against the receiver's own rules.
+        self.assertIn('python3 infra/production/check_release_archive.py', records[0]['run'])
         for item in steps[2:]:
             if item is records[0]:
                 continue
             # `!= 'false'`: an empty or missing output still means the full verify.
             self.assertIn("steps.changes.outputs.code != 'false'", item.get('if', ''), item)
         build = step(self.wf['jobs']['verify'], name='Verify and build')['run']
+        self.assertIn('python infra/production/check_release_archive.py', build)
         self.assertIn('python -m pytest apps/docs/tests/test_licensing.py', build)
         self.assertIn('python -m unittest discover -s infra/production/tests', build)
 
@@ -131,14 +134,17 @@ class RecordsOnlyClassifierTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding='utf-8')
 
-    def merge_commit(self, change):
+    def merge_commit(self, change, before=None):
         """Base commit, a topic commit made by `change`, then a no-ff merge of topic into base.
 
         (Not a branch called `head`: on a case-insensitive file system it shadows HEAD.)
         """
         self.repo.mkdir()
         self.git('init', '-q', '-b', 'base')
+        self.git('config', 'core.symlinks', 'true')
         self.write(self.BASE)
+        if before:
+            before()
         self.git('add', '-A')
         self.git('commit', '-q', '-m', 'base')
         self.git('checkout', '-q', '-b', 'topic')
@@ -213,6 +219,51 @@ class RecordsOnlyClassifierTests(unittest.TestCase):
     def test_deleting_code_counts_as_code(self):
         self.merge_commit(lambda: (self.repo / 'apps/x.py').unlink())
         self.assertEqual(self.classify(), 'true')
+
+    def test_links_and_submodules_under_docs_count_as_code(self):
+        # A link under docs/ is not a record: the release archive carries it and the receiver refuses
+        # it (docs/screenshots and any `dist` directory are pruned by the walking guards).
+        cases = {
+            'link to a file, with a skipped suffix': lambda: os.symlink('../../README.md', self.repo / 'docs/shots/readme.pdf'),
+            'absolute link named dist': lambda: os.symlink('/etc', self.repo / 'docs/quality/dist'),
+            'submodule': self.nested_repository,
+        }
+        for label, make in cases.items():
+            with self.subTest(label):
+                if self.repo.exists():
+                    shutil.rmtree(self.repo)
+
+                def change():
+                    (self.repo / 'docs/shots').mkdir(parents=True, exist_ok=True)
+                    (self.repo / 'docs/quality').mkdir(parents=True, exist_ok=True)
+                    make()
+                self.merge_commit(change)
+                self.assertEqual(self.classify(), 'true')
+
+    def nested_repository(self):
+        """An embedded repository, which `git add -A` records as a submodule entry (mode 160000)."""
+        sub = self.repo / 'docs/sub'
+        sub.mkdir(parents=True)
+        (sub / 'x.md').write_text('x\n', encoding='utf-8')
+        for args in (('init', '-q'), ('add', 'x.md'), ('commit', '-q', '-m', 'sub')):
+            subprocess.run(['git', '-c', 'commit.gpgsign=false', *args], cwd=sub, env=self.env, check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def test_removing_a_link_under_docs_counts_as_code(self):
+        def base_link():
+            os.symlink('a.md', self.repo / 'docs/link.md')
+        self.merge_commit(lambda: None, before=base_link)
+        self.git('checkout', '-q', '-b', 'unlink')
+        (self.repo / 'docs/link.md').unlink()
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'unlink')
+        self.git('checkout', '-q', 'base')
+        self.git('merge', '-q', '--no-ff', '-m', 'test merge', 'unlink')
+        self.assertEqual(self.classify(), 'true')
+
+    def test_executable_record_stays_a_record(self):
+        self.merge_commit(lambda: (self.repo / 'docs/a.md').chmod(0o755))
+        self.assertEqual(self.classify(), 'false')
 
     def test_non_ascii_record_names_stay_records_and_quoted_names_do_not(self):
         self.merge_commit(lambda: self.write({'docs/记录.md': 'r\n'}))
