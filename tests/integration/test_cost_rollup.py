@@ -567,6 +567,32 @@ def test_after_refusal_latches_a_read_path_inconsistency(funded):
     send(admission, ticket, amount=1)
 
 
+@pytest.mark.cost_rollup_unchecked
+@pytest.mark.parametrize("check,tamper", [
+    ("structure", "UPDATE model_cost_buckets SET rbound_lo=bound_lo+1 WHERE environment='test' AND dim='account'"),
+    ("stale", "INSERT INTO model_cost_inflight SELECT attempt_key,environment,provider,account_ref,expires_at+86400 "
+              "FROM model_cost_admissions WHERE attempt_key IN (SELECT attempt_key FROM billing_usage)"),
+    ("parity", "UPDATE model_cost_buckets SET n_adm=n_adm+1 WHERE environment='test' AND dim='account'"),
+    ("absorbed", "UPDATE model_cost_buckets SET bound_lo=bound_lo-7 WHERE environment='test' AND dim='account'"),
+])
+def test_each_read_path_check_refuses_with_its_name(funded, check, tamper):
+    store, ledger, _, _ = funded
+    admission = CostAdmission(ledger, current_policy=generous)
+    _, settled = prepare(funded, "checked-settled")
+    send(admission, settled, amount=7)
+    ledger.settle_trusted_usage(settled.attempt_key, evidence(settled))
+    _, open_ = prepare(funded, "checked-open")
+    send(admission, open_, amount=7)
+    with store.tx() as t:                               # FIXTURE: a derived row edited past the gate
+        t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
+        t.execute(tamper)
+        t.execute("DELETE FROM model_cost_rollup_deltas")
+    with pytest.raises(rollup().RollupInconsistent) as caught:
+        admission.snapshot()
+    assert caught.value.check == check and caught.value.code == "cost_rollup_inconsistent"
+    assert not rollup().CostRollup.check(store).ok
+
+
 # ---------------------------------------------------------------- schedule, prune, CLI
 @pytest.mark.cost_rollup_unchecked
 def test_the_risk_monitor_verifies_the_rollup_without_a_policy_and_latches_a_mismatch(funded):
