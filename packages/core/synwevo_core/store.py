@@ -802,9 +802,10 @@ def now() -> float:
 #: How long a statement waits for another connection's write lock before "database is locked".
 BUSY_TIMEOUT_MS = 30_000
 #: How long opening a Store keeps retrying its migration while another process holds the writer
-#: lock longer than BUSY_TIMEOUT_MS: the first process of a deploy may be replaying the cost rollup
-#: (about 48 s per million cost admissions, suite_schema/model_cost_rollup.py). Every migration step
-#: is idempotent, so a retry starts over safely.
+#: lock longer than BUSY_TIMEOUT_MS: that process may be replaying the cost rollup (about 48 s per
+#: million cost admissions, suite_schema/model_cost_rollup.py). Every migration step is idempotent,
+#: so a retry starts over safely. At deploy the first role replays alone and its health check, not
+#: this wait, is the budget (docs/billing-ledger.md, "Backfill and the writer lock").
 MIGRATION_WAIT_S = 900
 
 

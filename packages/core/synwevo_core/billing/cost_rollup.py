@@ -19,8 +19,11 @@ docs/billing-ledger.md ("Cost rollup") describes both. This module:
   never automatic; ``accept`` leaves named malformed or orphan admissions out), ``prune`` and ``latch``.
 
 Accepted admissions (``model_cost_rollup_accepted``) are outside the rollup, outside the read
-path's clock, parity and records counts and outside the oracle: facts cannot be edited, so an
-operator who has checked a broken admission accepts it in an audited rebuild instead of repairing it.
+path's clock, parity and records counts, outside the oracle and never the scope's newest admission
+M (``newest``: the velocity horizon, prune, the verifier): facts cannot be edited, so an operator who
+has checked a broken admission accepts it in an audited rebuild instead of repairing it. Only a
+closed one (its usage recorded, or its call no longer holding) can be accepted; usage that still
+arrives for it later latches the scope (``usage:<attempt_key>``, ``fact_accepted_usage``).
 
 Refusals: ``cost_rollup_inconsistent`` (an open fault, or a failed structure/stale/parity/absorbed
 check: ``RollupInconsistent``), ``cost_accounting_capacity`` (more than 10,000 open rows or
@@ -33,6 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from fractions import Fraction
+import hashlib
 import json
 import logging
 import re
@@ -115,6 +119,40 @@ def accepted_keys(t, scope) -> set:
     """Attempt keys of the admissions an operator accepted (left out of the rollup) in ``scope``."""
     return {r[0] for r in t.execute("SELECT attempt_key FROM model_cost_rollup_accepted INDEXED BY "
                                     "model_cost_rollup_accepted_scope WHERE " + _SCOPE, tuple(scope)).fetchall()}
+
+
+_NEWEST = ("SELECT a.admitted_at AS m,a.unit FROM model_cost_admissions a INDEXED BY model_cost_admissions_scope WHERE "
+           "a.environment=? AND a.provider=? AND a.account_ref=? AND typeof(a.admitted_at)='integer' AND "
+           + schema.NOT_ACCEPTED.format("a") + " ORDER BY a.admitted_at DESC LIMIT 1")
+
+
+def newest(t, scope):
+    """The scope's newest admission M (its admitted_at and unit), or None: the time the velocity
+    horizon (schema._HORIZON), prune and the verifier count from. An accepted admission is never M."""
+    return t.execute(_NEWEST, tuple(scope)).fetchone()
+
+
+#: A plain accept name is the key itself; anything else is named by this digest of its type and bytes.
+_DIGEST = "sha256:"
+
+
+def accept_name(key) -> str:
+    """How a faulted admission is named for ``accept=`` and ``--accept``: its key when that is a printable
+    text of 1-200 characters (not starting with ``sha256:``), else ``sha256:`` and the digest of its
+    SQLite type and bytes. A broken import can write any key (a BLOB, a long text, a NUL), and the
+    rebuild refuses until every faulted admission is accepted, so every one needs a name."""
+    if isinstance(key, str) and 0 < len(key) <= 200 and key.isprintable() and not key.startswith(_DIGEST):
+        return key
+    if isinstance(key, bytes):
+        raw = b"blob\x00" + key
+    else:
+        raw = b"text\x00" + str(key).encode("utf-8", "surrogatepass")
+    return _DIGEST + hashlib.sha256(raw).hexdigest()
+
+
+def _names(entry, key) -> bool:
+    """Whether an ``accept`` entry names ``key``: the key itself (same type), or its accept_name."""
+    return (type(entry) is type(key) and entry == key) or entry == accept_name(key)
 
 
 def _open_fault(t, scope) -> bool:
@@ -688,10 +726,8 @@ _YIELD_EVERY = 2_000
 
 def _check_scope(c, scope, *, since, now, mode) -> ScopeReport:
     env, provider, account = scope
-    newest = c.execute("SELECT admitted_at FROM model_cost_admissions INDEXED BY model_cost_admissions_scope WHERE "
-                       + _SCOPE + " AND typeof(admitted_at)='integer' ORDER BY admitted_at DESC LIMIT 1",
-                       scope).fetchone()
-    M = newest[0] if newest else None
+    last = newest(c, scope)
+    M = last["m"] if last else None
     H = M - HORIZON_S if M is not None else None
     at_now = max(now, M) if M is not None else now
     lo = None if since is None else since - since % DAY
@@ -755,7 +791,8 @@ def _check_scope(c, scope, *, since, now, mode) -> ScopeReport:
         expected.finish()
         for key in fact_faults:
             report.differ("fact_fault", attempt_key=key)
-            if c.execute("SELECT 1 FROM model_cost_rollup_faults WHERE id=?", ("fact:" + str(key),)).fetchone() is None:
+            # The id as the trigger wrote it ('fact:'||key: a BLOB or a NUL concatenates as SQLite does).
+            if c.execute("SELECT 1 FROM model_cost_rollup_faults WHERE id='fact:'||?", (key,)).fetchone() is None:
                 report.differ("fact_fault_missing", attempt_key=key)
         # Buckets, both directions: day rows from ``lo`` (all when None); velocity rows from H, or every
         # one when the scope has no admission (no fact can justify any).
@@ -809,10 +846,13 @@ def _check_scope(c, scope, *, since, now, mode) -> ScopeReport:
                   or row["call_status"] != "reserved" or row["call_deadline"] != row["own_deadline"]
                   or row["call_key"] != row["own_call"]):
                 report.differ("hold_stale", attempt_key=row["own_key"])
+    # Usage that arrived for an accepted admission: outside every window, latched until a rebuild.
+    for r in c.execute("SELECT id FROM model_cost_rollup_faults INDEXED BY model_cost_rollup_faults_open WHERE "
+                       + _SCOPE + " AND resolved_at IS NULL AND code='fact_accepted_usage' LIMIT 20", scope):
+        report.differ("accepted_usage", fault=r[0])
     # The read path against the uncapped oracle (not in the bounded hourly run).
     if mode != "recent" and M is not None and not report.open_faults and not fact_faults:
-        newest_unit = c.execute("SELECT unit FROM model_cost_admissions INDEXED BY model_cost_admissions_scope WHERE "
-                                + _SCOPE + " AND admitted_at=?", (*scope, M)).fetchone()[0]
+        newest_unit = last["unit"]
         scale = c.execute("SELECT scale FROM billing_units WHERE code=?", (newest_unit,)).fetchone()
         if scale is not None:
             unit = Unit(newest_unit, scale[0])
@@ -955,33 +995,55 @@ class CostRollup:
 
         Never automatic (platform.py cost-rollup rebuild). Refuses, changing nothing, when a fact is
         malformed or orphaned and not named in ``accept`` (``RebuildRefused.attempt_keys``), when
-        ``accept`` names a key that is no such fact (``accept_not_faulted``), or when the result
-        does not verify. Facts cannot be edited (immutable_cost_admission), so an operator who has
-        checked a broken admission accepts it: it is recorded in model_cost_rollup_accepted with the
-        actor and reason, and from then on it is left out of the rollup, the read path and the oracle."""
+        ``accept`` names a key that is no such fact (``accept_not_faulted``), when it names one that
+        may still cost what nobody has seen (``accept_still_open``: no usage yet and its call still
+        holds), or when the result does not verify. ``accept`` takes keys (str or bytes) or their
+        ``accept_name``. Facts cannot be edited (immutable_cost_admission), so an operator who has
+        checked a broken, closed admission accepts it: it is recorded in model_cost_rollup_accepted
+        with the actor and reason, and from then on it is left out of the rollup, the read path, the
+        oracle and the scope's newest admission. Usage that still arrives for it latches the scope
+        (``usage:<key>``); a rebuild after checking that cost resolves it."""
         from .risk import _reason, _system_audit
         scope = (identifier(environment), identifier(provider), identifier(account_ref))
         identifier(actor)
         reason = _reason(reason)
-        accept = list(dict.fromkeys(accept or ()))
-        if len(accept) > 1000 or any(not isinstance(k, str) or not k or len(k) > 200 for k in accept):
+        accept = list(accept or ())
+        if len(accept) > 1000 or any(not isinstance(k, (str, bytes)) for k in accept):
             raise BillingError("invalid_cost_rollup_accept")
         at = int((clock or time.time)())
         rebuild_id = _id("crb")
         with store.tx() as t:
             replayed = schema.replay(t, scope)
-            unknown = [k for k in accept if k not in replayed["faults"] and k not in replayed["accepted"]]
+            named, unknown = [], []
+            for entry in accept:
+                hits = [k for k in replayed["faults"] + replayed["accepted"] if _names(entry, k)]
+                if hits:
+                    named.extend(hits)
+                else:
+                    unknown.append(entry)
             if unknown:
-                raise RebuildRefused(differences=[{"check": "accept_not_faulted", "attempt_key": k} for k in unknown])
-            missing = [k for k in replayed["faults"] if k not in accept]
+                raise RebuildRefused(differences=[{"check": "accept_not_faulted", "attempt_key": k}
+                                                  for k in dict.fromkeys(unknown)])
+            missing = [k for k in replayed["faults"] if k not in named]
             if missing:
                 raise RebuildRefused(attempt_keys=missing)
-            newly = [k for k in replayed["faults"] if k in accept]
+            newly = [k for k in replayed["faults"] if k in named]
+            still_open = [k for k in newly if t.execute(
+                "SELECT 1 FROM model_cost_admissions a JOIN billing_attempts att ON att.id=a.attempt_key "
+                "JOIN billing_calls c ON c.id=att.call_key WHERE a.attempt_key=? AND c.status='reserved' AND c.deadline>? "
+                "AND NOT EXISTS(SELECT 1 FROM billing_usage u WHERE u.attempt_key=a.attempt_key)", (k, at)).fetchone()]
+            if still_open:
+                raise RebuildRefused(differences=[{"check": "accept_still_open", "attempt_key": k} for k in still_open])
             for key in newly:
-                code = t.execute("SELECT code FROM model_cost_rollup_faults WHERE id=?", ("fact:" + key,)).fetchone()
+                code = t.execute("SELECT code FROM model_cost_rollup_faults WHERE id='fact:'||?", (key,)).fetchone()
                 t.execute("INSERT INTO model_cost_rollup_accepted(attempt_key,environment,provider,account_ref,code,"
                           "rebuild_id,actor,reason,accepted_at) VALUES (?,?,?,?,?,?,?,?,?)",
                           (key, *scope, code[0] if code else "fact_invalid", rebuild_id, actor, reason, at))
+            if newly:
+                # Replayed again now that they are accepted: one of them may have been the scope's
+                # newest admission, which moves the velocity horizon of every other admission.
+                replayed = schema.replay(t, scope)
+            newly = [accept_name(k) for k in newly]
             resolved = t.execute("UPDATE model_cost_rollup_faults SET resolved_at=?,resolved_by=?,rebuild_id=? WHERE "
                                  + _SCOPE + " AND resolved_at IS NULL", (at, actor, rebuild_id, *scope)).rowcount
             report = _check(t, environment=environment, since=None, now=at, mode="rebuild", scopes=[scope])
@@ -1004,18 +1066,19 @@ class CostRollup:
     def prune(store, *, environment: str | None = None, batch: int = 5_000) -> dict:
         """Delete what can never be read again, per scope, in batches under the gate: velocity
         buckets older than (newest admission - 2 days), inflight rows expired by the newest
-        admission, hold rows past their deadline by it. Day buckets are never pruned."""
+        admission, hold rows past their deadline by it. Day buckets are never pruned. The newest
+        admission is never an accepted one (``newest``): a read path's ``now`` is at least M only
+        because the clock check holds every other admission at or before it."""
         integer(batch, positive=True, maximum=50_000)
         counts = {"buckets": 0, "inflight": 0, "hold": 0}
         with store.conn() as c:
             scopes = _scopes(c, environment)
         for scope in scopes:
-            newest = store.one("SELECT admitted_at AS m FROM model_cost_admissions INDEXED BY model_cost_admissions_scope "
-                               "WHERE " + _SCOPE + " AND typeof(admitted_at)='integer' ORDER BY admitted_at DESC LIMIT 1",
-                               scope)
-            if newest is None:
+            with store.conn() as c:
+                last = newest(c, scope)
+            if last is None:
                 continue
-            M = newest["m"]
+            M = last["m"]
             while True:
                 with store.tx() as t:
                     t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('gate')")
@@ -1109,6 +1172,7 @@ def main(argv=None) -> int:
     ``docker compose -f /opt/synwevo/config/compose.yaml exec -T portal python -m synwevo_core.billing.cost_rollup
     verify --all --no-record </dev/null``. Locally ``python scripts/platform.py cost-rollup …`` runs the same."""
     import argparse
+    import shlex
     import sys
     from pathlib import Path
 
@@ -1125,7 +1189,8 @@ def main(argv=None) -> int:
     ap.add_argument("--account-ref")
     ap.add_argument("--reason")
     ap.add_argument("--accept", action="append", default=[], metavar="ATTEMPT_KEY",
-                    help="rebuild: accept this malformed or orphan admission (left out of the rollup from then on)")
+                    help="rebuild: accept this malformed or orphan admission (left out of the rollup from then on); "
+                         "give it as the refusal prints it (--accept=<name>)")
     ap.add_argument("--actor", help="rebuild: who runs it, for the audit (default: operator:<system user>)")
     args = ap.parse_args(argv)
     if not args.data or not (Path(args.data) / "docweave.sqlite3").is_file():
@@ -1157,12 +1222,13 @@ def main(argv=None) -> int:
     except RebuildRefused as exc:
         if exc.attempt_keys:
             print("没有重建：这些成本准入本身有问题（时间无效、到期超过准入后一天或找不到调用/钱包）。事实不可修改；"
-                  "核实后（例如对照提供方的用量记录）在同一命令后逐条加上 --accept 接受它们，"
+                  "核实后（例如对照提供方的用量记录）在同一命令后逐条加上下面的 --accept 接受它们，"
                   "接受的准入从此不计入成本汇总、成本准入与速率刹车：", file=sys.stderr)
             for key in exc.attempt_keys:
-                print("  --accept " + str(key), file=sys.stderr)
+                print("  --accept=" + shlex.quote(accept_name(key)), file=sys.stderr)
         else:
-            print("没有重建：重放后仍与事实不一致（或 --accept 指的不是有问题的准入）：", file=sys.stderr)
+            print("没有重建：重放后仍与事实不一致，或 --accept 指的不是有问题的准入，或那条准入的调用还没结束"
+                  "（accept_still_open：还没有用量且调用仍在保留期内；等保留到期或用量记录后再接受）：", file=sys.stderr)
             print(json.dumps(exc.differences, ensure_ascii=False, indent=2, default=str), file=sys.stderr)
         return 1
     except Exception as exc:  # noqa: BLE001 - a refusal (reason, identifiers) is printed, not a traceback

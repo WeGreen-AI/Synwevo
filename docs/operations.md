@@ -139,6 +139,8 @@ blob 目录自行拼成备份。`verify-restore` 在隔离目录核验，并读�
 1. 备份（见上）。
 2. 更新代码与依赖，重新构建前端。
 3. 启动：迁移在进程启动时自动执行（`Store._migrate`，前进式、可重复执行）。实际版本以 `synwevo_core.store.SCHEMA_VERSION` 与 CLI 输出为准。
+   带成本汇总重放的版本（首次上线、触发器版本变化）在启动时按成本准入数重放（本机约每百万条 48 秒）；生产部署只给第一个角色约
+   2 分钟健康检查时间，约 200 万条以上须先停服务、用新镜像迁移再部署（`docs/billing-ledger.md` “Backfill and the writer lock”）。
 4. 用 `python -m synwevo_docs.cli info` 确认 schema 版本，`/readyz` 确认就绪。
 
 迁移测试用隔离夹具验证；生产升级前须用自己的受保护备份完成恢复演练。

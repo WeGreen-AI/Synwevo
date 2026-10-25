@@ -15,7 +15,7 @@
                                                      # 恢复并补上备份之后的撤销（安全日志）
     python scripts/platform.py cost-rollup verify [--all] [--environment test|live]
                                                      # 核对模型成本汇总与成本事实（不一致会锁定该账户）
-    python scripts/platform.py cost-rollup rebuild --environment E --provider P --account-ref A --reason "…" [--accept KEY]
+    python scripts/platform.py cost-rollup rebuild --environment E --provider P --account-ref A --reason "…" [--accept=NAME]
                                                      # 从事实重建一个提供方账户的成本汇总（审计、校验后才生效；
                                                      # 生产在角色容器里运行，见 docs/platform/model-risk.md §13）
 
@@ -584,7 +584,7 @@ def cost_rollup(args) -> int:
         if value:
             cmd += [flag, value]
     for key in args.accept:
-        cmd += ["--accept", key]
+        cmd.append("--accept=" + key)               # one word: a key may start with "-"
     cmd += [flag for flag, on in (("--all", args.all), ("--no-record", args.no_record)) if on]
     return subprocess.run(cmd, cwd=str(ROOT)).returncode
 

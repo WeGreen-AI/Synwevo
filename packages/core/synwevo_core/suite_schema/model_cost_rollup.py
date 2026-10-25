@@ -21,7 +21,9 @@ the fact that changed it and no Python ever runs on a fact write path:
   scope's paid dispatch until an audited rebuild (``platform.py cost-rollup rebuild``).
 * ``model_cost_rollup_accepted`` — malformed or orphan admissions an operator accepted in a rebuild
   (``--accept``): facts cannot be edited, so such an admission stays a fact but is left out of the
-  rollup, the read path's clock, parity and records counts and the verifier's oracle from then on.
+  rollup, the read path's clock, parity and records counts and the verifier's oracle from then on,
+  and out of the scope's newest admission M (the velocity horizon, prune and the verifier's horizon).
+  Usage that arrives for it after the accept latches the scope (fault ``usage:<attempt_key>``).
 
 The GATE: derived tables refuse every direct write (``cost_rollup_derived``) unless a row exists in
 the transient ``model_cost_rollup_deltas``, which is empty at rest; a fact trigger inserts its
@@ -32,7 +34,7 @@ so nothing here can make a fact INSERT raise. Each derived table holds a SENTINE
 
 Rollback: older code ignores these tables; the triggers keep them current under it, so a later
 roll-forward finds a consistent rollup and replays nothing. The producer triggers carry a version
-(meta ``model_cost_rollup_triggers``): a start that finds an older one recreates them and replays
+(meta ``model_cost_rollup_triggers``): a start that finds another one recreates them and replays
 the facts once, inside the migration's BEGIN IMMEDIATE (``migrate``).
 """
 from __future__ import annotations
@@ -47,9 +49,11 @@ DAY = 86_400
 HORIZON_S = 172_800        # velocity buckets older than (newest admission - this) are never read
 SPANS = (1, 60, 3600)
 MARKER = "model_cost_rollup_v1"
-#: Version of the producer triggers' SQL. 2 (2026-10-26): canonical() refuses an embedded NUL (SQLite's
-#: GLOB, length() and CAST stop at the first NUL, Python does not), and accepted admissions are left out.
-TRIGGERS_KEY, TRIGGERS_VERSION = "model_cost_rollup_triggers", "2"
+#: Version of the versioned triggers' SQL (VERSIONED). 2 (2026-10-26): canonical() refuses an embedded
+#: NUL (SQLite's GLOB, length() and CAST stop at the first NUL, Python does not), and accepted admissions
+#: are left out. 3 (2026-10-26): accepted admissions are left out of the velocity horizon too, and
+#: usage that arrives for an accepted admission latches its scope (``usage:<attempt_key>``).
+TRIGGERS_KEY, TRIGGERS_VERSION = "model_cost_rollup_triggers", "3"
 DERIVED = ("model_cost_buckets", "model_cost_inflight", "model_cost_hold", "model_cost_exceptions")
 INT64_MAX = "9223372036854775807"
 
@@ -98,24 +102,36 @@ _ORPHAN = "(att.id IS NULL OR c.id IS NULL OR acc.id IS NULL)"
 _ACCEPTED = "EXISTS(SELECT 1 FROM model_cost_rollup_accepted x WHERE x.attempt_key=a.attempt_key)"
 _MALFORMED = ("(typeof(a.admitted_at)<>'integer' OR typeof(a.expires_at)<>'integer' OR a.admitted_at<0"
               f" OR a.expires_at>a.admitted_at+{DAY})")
+#: The scope's newest admission M, minus HORIZON_S: the oldest velocity bucket a read can still use.
+#: An accepted admission is not M (its admitted_at may be garbage far ahead, which would put every
+#: real admission's velocity buckets before the horizon); billing/cost_rollup.py's prune and verifier
+#: take M the same way (``cost_rollup.newest``).
+NOT_ACCEPTED = "NOT EXISTS(SELECT 1 FROM model_cost_rollup_accepted x WHERE x.attempt_key={}.attempt_key)"
 _HORIZON = ("(SELECT h.admitted_at FROM model_cost_admissions h INDEXED BY model_cost_admissions_scope"
             " WHERE h.environment=a.environment AND h.provider=a.provider AND h.account_ref=a.account_ref"
-            f" AND typeof(h.admitted_at)='integer' ORDER BY h.admitted_at DESC LIMIT 1)-{HORIZON_S}")
+            f" AND typeof(h.admitted_at)='integer' AND {NOT_ACCEPTED.format('h')}"
+            f" ORDER BY h.admitted_at DESC LIMIT 1)-{HORIZON_S}")
 _JOINS = (" FROM model_cost_admissions a"
           " LEFT JOIN billing_attempts att ON att.id=a.attempt_key"
           " LEFT JOIN billing_calls c ON c.id=att.call_key"
           " LEFT JOIN billing_accounts acc ON acc.id=c.account_id")
 
 
-def produce(kind: str, where: str, *, order: str = "") -> str:
+def produce(kind: str, where: str, *, order: str = "", arriving: bool = False) -> str:
     """The one producer: admitted/resolved (or fault) deltas for the admissions matching ``where``.
 
     It reads the admission (by primary key in the triggers, in rowid order in a replay) and LEFT
     JOINs its attempt, call and wallet account; ``resolved`` also joins the usage fact. A malformed
     or orphan admission, or one an operator accepted as such, yields a ``fault`` delta instead,
-    never a bucket (the fault row it names already exists, resolved, for an accepted one)."""
+    never a bucket (the fault row it names already exists, resolved, for an accepted one).
+
+    ``arriving`` (only the usage trigger): the usage fact is being written now. For an accepted
+    admission that is cost the operator did not see when accepting it and that no window will
+    count, so its fault delta says ``accepted_usage``: the fault ``usage:<attempt_key>`` latches
+    the scope until a rebuild. A replay never passes it, so a rebuild or a start never re-latches."""
     bad = f"({_ORPHAN} OR {_MALFORMED} OR {_ACCEPTED})"
-    code = (f"CASE WHEN {_ORPHAN} THEN 'orphan_admission' WHEN {_MALFORMED} THEN 'malformed_admission'"
+    first = f"WHEN {_ACCEPTED} THEN 'accepted_usage' " if arriving else ""
+    code = (f"CASE {first}WHEN {_ORPHAN} THEN 'orphan_admission' WHEN {_MALFORMED} THEN 'malformed_admission'"
             f" WHEN {_ACCEPTED} THEN 'accepted_admission' END")
     if kind == "admitted":
         extra, usage = "NULL,0,0,0,0,0", ""
@@ -190,8 +206,9 @@ WHEN NOT EXISTS(SELECT 1 FROM model_cost_rollup_deltas)
 BEGIN SELECT RAISE(ABORT,'cost_rollup_derived'); END;""" for op in ("INSERT", "UPDATE", "DELETE"))
 
 
-#: The producer triggers whose SQL holds the cost classification; ``migrate`` recreates them when
-#: the database records an older TRIGGERS_VERSION (``CREATE ... IF NOT EXISTS`` never would).
+#: The producer triggers whose SQL holds the cost classification; ``migrate`` recreates them, with
+#: the rest of VERSIONED, when the database records another TRIGGERS_VERSION (``CREATE ... IF NOT
+#: EXISTS`` never would).
 PRODUCERS = {
     "model_cost_admissions_rollup": f"""
 CREATE TRIGGER IF NOT EXISTS model_cost_admissions_rollup AFTER INSERT ON model_cost_admissions BEGIN
@@ -202,10 +219,21 @@ END;""",
     "model_cost_usage_rollup": f"""
 CREATE TRIGGER IF NOT EXISTS model_cost_usage_rollup AFTER INSERT ON billing_usage
 WHEN EXISTS(SELECT 1 FROM model_cost_admissions WHERE attempt_key=NEW.attempt_key) BEGIN
- {produce('resolved', 'a.attempt_key=NEW.attempt_key')};
+ {produce('resolved', 'a.attempt_key=NEW.attempt_key', arriving=True)};
  DELETE FROM model_cost_rollup_deltas;
 END;""",
 }
+#: Every trigger whose SQL a TRIGGERS_VERSION covers: the producers and the fault mapping.
+VERSIONED = {**PRODUCERS, "model_cost_rollup_apply_fault": """
+CREATE TRIGGER IF NOT EXISTS model_cost_rollup_apply_fault AFTER INSERT ON model_cost_rollup_deltas
+WHEN NEW.kind='fault' BEGIN
+ INSERT INTO model_cost_rollup_faults(id,environment,provider,account_ref,code,detail,detected_at)
+  VALUES (CASE WHEN NEW.code='accepted_usage' THEN 'usage:' ELSE 'fact:' END||COALESCE(NEW.attempt_key,'(null)'),
+   COALESCE(NEW.environment,''),COALESCE(NEW.provider,''),
+   COALESCE(NEW.account_ref,''),'fact_'||COALESCE(NEW.code,'invalid'),COALESCE(NEW.code,'invalid'),
+   COALESCE(CAST(strftime('%s','now') AS INTEGER),0))
+  ON CONFLICT(id) DO NOTHING;
+END;"""}
 
 SCHEMA = f"""
 -- Transient: empty at rest; a row exists only while its apply triggers run (the GATE).
@@ -324,18 +352,11 @@ CREATE TRIGGER IF NOT EXISTS model_cost_rollup_apply_released AFTER INSERT ON mo
 WHEN NEW.kind='released' BEGIN
  DELETE FROM model_cost_hold WHERE call_key=NEW.call_key;
 END;
-CREATE TRIGGER IF NOT EXISTS model_cost_rollup_apply_fault AFTER INSERT ON model_cost_rollup_deltas
-WHEN NEW.kind='fault' BEGIN
- INSERT INTO model_cost_rollup_faults(id,environment,provider,account_ref,code,detail,detected_at)
-  VALUES ('fact:'||COALESCE(NEW.attempt_key,'(null)'),COALESCE(NEW.environment,''),COALESCE(NEW.provider,''),
-   COALESCE(NEW.account_ref,''),'fact_'||COALESCE(NEW.code,'invalid'),COALESCE(NEW.code,'invalid'),
-   COALESCE(CAST(strftime('%s','now') AS INTEGER),0))
-  ON CONFLICT(id) DO NOTHING;
-END;
 
 -- Producers: every fact INSERT (from admit, fixtures, old code or plain SQL) and the two
--- one-way changes that close a hold. The first two carry the cost classification (PRODUCERS).
-{''.join(PRODUCERS.values())}
+-- one-way changes that close a hold. The first two carry the cost classification (PRODUCERS);
+-- they and the fault mapping (apply_fault) are VERSIONED.
+{''.join(VERSIONED.values())}
 CREATE TRIGGER IF NOT EXISTS model_cost_endings_rollup AFTER INSERT ON model_cost_endings
 WHEN EXISTS(SELECT 1 FROM model_cost_hold WHERE attempt_key=NEW.attempt_key) BEGIN
  INSERT INTO model_cost_rollup_deltas(kind,attempt_key) VALUES ('ended',NEW.attempt_key);
@@ -402,17 +423,19 @@ def triggers_current(c) -> bool:
 def migrate(c) -> None:
     """Backfill once, inside apply()'s BEGIN IMMEDIATE; a routine start issues no fact query.
 
-    A database whose producer triggers are older than TRIGGERS_VERSION gets them recreated (DROP and
+    A database whose versioned triggers carry another TRIGGERS_VERSION gets them recreated (DROP and
     CREATE in this same transaction, so no fact is written between) and replays once, since its rows
-    were classified by the older SQL. Store open never refuses: a malformed or orphan admission
-    becomes a per-scope fault. The replay holds the writer lock for its whole length (about 48 s per
-    million admissions measured locally); other processes opening the Store meanwhile wait for it
-    (Store's migration wait), a running writer waits its busy_timeout (docs/billing-ledger.md)."""
+    were derived by other SQL. Store open never refuses: a malformed or orphan admission becomes a
+    per-scope fault. The replay holds the writer lock for its whole length (about 48 s per million
+    admissions measured locally); other processes opening the Store meanwhile wait for it (Store's
+    migration wait), a running writer waits its busy_timeout. A deploy gives the first role only its
+    health budget (about two minutes) for it: a store past about two million admissions is migrated
+    with the services stopped before such a release (docs/billing-ledger.md, "Backfill")."""
     current = triggers_current(c)
     if current and c.execute("SELECT 1 FROM meta WHERE key=?", (MARKER,)).fetchone() and sentinels_present(c):
         return
     if not current:
-        for name, sql in PRODUCERS.items():
+        for name, sql in VERSIONED.items():
             c.execute(f"DROP TRIGGER IF EXISTS {name}")
             c.execute(sql)
     result = replay(c)

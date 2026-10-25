@@ -269,19 +269,39 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   sentinel even when no scope exists. The velocity read also checks each bucket row it sums.
 * **Sentinels and marker.** Each derived table holds one sentinel row in the empty scope; meta
   `model_cost_rollup_v1` marks the backfill and `model_cost_rollup_triggers` the version of the
-  producer triggers' SQL (2 since the NUL rule and accepted admissions). A start that finds the
+  versioned triggers' SQL (the producers and the fault mapping; 3 since accepted admissions are
+  left out of the velocity horizon and late usage on one latches). A start that finds the
   marker, the current trigger version and all four sentinels issues no fact query. A dropped or
-  emptied derived table (sentinel gone), a missing marker or an older trigger version (whose
+  emptied derived table (sentinel gone), a missing marker or another trigger version (whose
   triggers it drops and recreates in the same transaction) replays all facts once, inside the
   migration's BEGIN IMMEDIATE (recorded as a global rebuild and a `backfill` audit row).
 * **Backfill and the writer lock.** That replay holds the writer lock for its whole length:
   about 48 s per million admissions on the local benchmark machine, with the WAL growing by about
   320 MB per million (reused afterwards, not returned). It happens on the first start of a release
-  that brings it (the deploy stops every role first) or after a derived table was lost. A role
-  process that opens the Store meanwhile does not fail at its 30 s busy_timeout: opening retries
-  its idempotent migration for up to 15 minutes (`Store`, `MIGRATION_WAIT_S`). A process already
-  running that writes meanwhile still gets `database is locked` after 30 s, which is why a backfill
-  or a large rebuild runs with the services stopped.
+  that brings it (the first rollup release, a new trigger version) or after a derived table was
+  lost. A second process that opens the Store meanwhile does not fail at its 30 s busy_timeout:
+  opening retries its idempotent migration for up to 15 minutes (`Store`, `MIGRATION_WAIT_S`). A
+  process already running that writes meanwhile still gets `database is locked` after 30 s, which
+  is why a backfill or a large rebuild runs with the services stopped.
+  **At deploy the budget is the health check, not that wait.** The receiver
+  (`infra/production/receive.py`) stops every role and starts them with `up --wait --wait-timeout
+  180`; `docs`, `portal` and `messages` wait for `accounts` to be healthy, so `accounts` replays
+  alone. The Store opens at import, so its `/readyz` answers only after the replay, and the image's
+  HEALTHCHECK (40 s start period, then 3 failed checks 30 s apart) marks it unhealthy about two
+  minutes in: a replay longer than that, past roughly 2 million admissions at the local rate (fewer
+  on the 1-CPU `accounts` container), fails the deploy and the receiver restores the pre-deploy
+  backup (nothing is lost: the replay is one transaction). Before a release that brings a replay,
+  compare `SELECT COUNT(*) FROM model_cost_admissions` with that ceiling. Above it, or after such a
+  failed deploy (its image `synwevo:<sha>` stays on the host), migrate with the services stopped
+  in a one-off container of the new image, then submit the same deploy again; its start finds the
+  marker, version and sentinels and replays nothing. The command opens (and so migrates) the
+  Store, then verifies read-only; its exit status reports the verification, not the migration.
+  Derived from receive.py, compose.yaml and the Dockerfile; not yet rehearsed on the host.
+
+  ```bash
+  docker compose -f /opt/synwevo/config/compose.yaml stop gateway accounts docs portal messages
+  IMAGE=synwevo:<sha> docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T portal python -m synwevo_core.billing.cost_rollup verify --all --no-record </dev/null
+  ```
 * **Faults, verify, rebuild, prune.** `model_cost_rollup_faults` latches one scope (resolved once,
   never deleted; its id names the scope as a JSON array, so scopes whose parts contain `:` never
   share one); the risk monitor verifies hourly (two days) and daily (from the previous month);
@@ -291,12 +311,21 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   expected buckets to a temporary table it joins against the live ones, so its memory does not grow
   with the facts it reads (it runs inside the portal process). A malformed or orphan admission
   cannot be repaired (facts are immutable): an operator who has checked it accepts it in a rebuild
-  (`--accept <attempt_key>`, recorded in the insert-only `model_cost_rollup_accepted` with actor and
-  reason); an accepted admission is left out of the rollup, the read path's clock, parity and
-  records counts and the verifier's oracle from then on.
+  (`--accept=<name>` as the refusal prints it: the key itself, or `sha256:…` for a key no command
+  line can carry, such as a BLOB, a NUL or a long text; recorded in the insert-only
+  `model_cost_rollup_accepted` with actor and reason). Only a closed admission can be accepted: one
+  without usage whose call still holds is refused (`accept_still_open`), since its provider cost
+  may not exist yet anywhere to check. An accepted admission is left out of the rollup, the read
+  path's clock, parity and records counts, the verifier's oracle and the scope's newest admission M
+  (the velocity horizon, prune and the verifier's horizon all take M without it, as the clock check
+  does) from then on. Usage that still arrives for it (late) would be cost no window counts, so it
+  latches the scope instead (`usage:<attempt_key>`, `fact_accepted_usage`, reported by the
+  verifier as `accepted_usage`); a rebuild after checking that cost resolves it, and no replay
+  raises it again.
   Rebuilds and verifier results are insert-only (`model_cost_rollup_rebuilds`,
   `model_cost_rollup_audits`). The daily prune deletes, under the gate, velocity buckets older than
-  the newest admission minus two days and open-set rows its time has passed; day buckets stay.
+  the newest (not accepted) admission minus two days and open-set rows its time has passed; day
+  buckets stay.
   A rebuild recreates every row a read can use exactly; it may differ from the live table only
   in rows the prune removes (so prune, rebuild, prune leaves the same rows as prune).
 

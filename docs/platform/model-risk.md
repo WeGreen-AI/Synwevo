@@ -228,8 +228,10 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 
    重建在一个事务里从事实重放、校验并解除该账户的故障；校验不通过时什么也不改。重建写入 `billing.cost.rollup_rebuilt` 审计。
 3. **成本准入本身有问题**（`fact_fault`：准入时间不是整数或为负、到期超过准入后一天、找不到调用或钱包）：第 2 步的重建拒绝，
-   并逐条列出 `--accept <attempt key>`。事实表不可修改（`immutable_cost_admission`），备份里的是同一行，恢复备份只会连同之后的
-   全部事实一起丢掉，所以不要“修复”它。先核实（对照提供方的用量记录、导入来源），确认后在同一条重建命令后逐条加上 `--accept`：
+   并逐条列出 `--accept=<名称>`（名称就是 attempt key；BLOB、超过 200 字或含 NUL 等不可打印字符的键给出 `sha256:…`，原样复制即可）。
+   事实表不可修改（`immutable_cost_admission`），备份里的是同一行，恢复备份只会连同之后的全部事实一起丢掉，所以不要“修复”它。
+   先核实（对照提供方的用量记录、导入来源），确认后在同一条重建命令后逐条加上 `--accept`。只能接受已结束的准入：还没有用量、
+   而它的调用仍在保留期内的，重建拒绝（`accept_still_open`）——那次调用的费用可能还没有出现在任何记录里，等保留到期或用量记录后再接受：
 
    ```bash
    docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T portal python -m synwevo_core.billing.cost_rollup rebuild --environment live --provider deepseek --account-ref <account_ref> --reason "<reason>" --accept <attempt_key> </dev/null
@@ -237,8 +239,10 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 
    接受写入 `model_cost_rollup_accepted`（不可修改、不可删除，含操作人、理由与重建编号）和审计 `billing.cost.rollup_rebuilt`
    （`accepted` 列出接受的准入）。被接受的准入从此不计入成本汇总、成本准入（窗口金额、时钟检查、当日待确认数与记录数）、速率刹车
-   和校验的对照计算，也不再锁定该账户；它若真实发生过费用，只出现在提供方账单与对账里。`--accept` 只接受第 2 步列出的准入，
-   别的键整条拒绝（`accept_not_faulted`）。准入到期等于准入时刻（违反 I1 的下界）不算有问题：汇总与对照计算对它一致，校验不报告。
+   和校验的对照计算，也不再算作该账户最新的准入（速率桶的时间范围、清理与校验都不以它为准），也不再锁定该账户；它若真实发生过
+   费用，只出现在提供方账单与对账里。接受之后它的用量若仍到达（迟到用量），这笔费用不进任何窗口，所以该账户重新锁定
+   （故障 `usage:<attempt key>`、`fact_accepted_usage`，校验差异 `accepted_usage`）：核对这笔费用后，再执行一次第 2 步的重建
+   （不需要 `--accept`）即解除。`--accept` 只接受第 2 步列出的准入，别的键整条拒绝（`accept_not_faulted`）。准入到期等于准入时刻（违反 I1 的下界）不算有问题：汇总与对照计算对它一致，校验不报告。
 4. **确认**（记录这次校验）：
 
    ```bash
