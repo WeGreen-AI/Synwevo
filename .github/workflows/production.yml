@@ -16,7 +16,7 @@ name: Verify and deploy Synwevo
 # success; whatever the classifier cannot prove to be records-only gets the full verify.
 # A push to dev that only changes records neither verifies nor deploys (same rule, as a path filter).
 # workflow_dispatch runs everything and deploys only when dispatched on dev.
-# Actions minutes are a budget. The complete runtime suite is kept in one bounded verify job.
+# The complete runtime suite is kept in one bounded verify job.
 #
 # `verify` is no boundary against the pull request it checks. A pull_request run executes that pull
 # request's own copy of this file, of the guards and of the test configuration, so a pull request
@@ -50,9 +50,12 @@ jobs:
     concurrency:
       group: ${{ (github.event_name != 'pull_request' && github.run_attempt != '1') && format('synwevo-rerun-{0}', github.run_id) || format('synwevo-verify-{0}', github.ref) }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-    # Run 36997527305: 2,922 tests took 39m37s at ~69% (before an SDK install failure).
-    # Allow the complete suite plus image build; retain every test and the 3 GiB / 2 CPU limits.
-    timeout-minutes: 75
+    # Run 36997527305: 2,922 tests took 39m37s at ~69% (before an SDK install failure). Run 40200899191
+    # (6,871 tests, the MCP merge) reached 98% with no failure when the former 75-minute limit cancelled
+    # it: the runtime suite alone took 68 minutes on the hosted runner, plus about 4 minutes of image build.
+    # Allow the complete suite plus image build with room to grow; retain every test and the 3 GiB / 2 CPU
+    # limits. Hosted-runner minutes are free for this public repository.
+    timeout-minutes: 120
     steps:
       - name: Refuse a re-run that is no longer dev's head
         # A re-run keeps its original commit. On dev it may verify (and then deploy) that commit only
