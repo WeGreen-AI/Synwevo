@@ -9,20 +9,22 @@ this service cannot establish that identity from a credential or a caller-suppli
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta, timezone
-from fractions import Fraction
 import json
 
+from . import cost_rollup
+from .cost_rollup import RollupInconsistent
 from .ledger import Ledger
 from .models import AttemptTicket, BillingError, Unit, identifier, integer
 from .risk import BrakeTripped, RiskControls, RiskPolicy
 from .traffic import TrafficLimits
 
-_MAX_RECORDS = 10_000
-_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+#: The open set's bound: max_inflight and max_unknown cannot exceed it, and admission enforces
+#: unknown_count+1 <= max_unknown, so more open rows than this exist only out of band.
+_MAX_OPEN = cost_rollup.MAX_OPEN
 #: The longest a customer hold can outlive its dispatch (Ledger.max_hold_seconds' ceiling), and so
-#: the longest an admission can stay an open unknown or in flight. Older ones are never scanned.
-_OPEN_S = 86_400
+#: the longest an admission can stay an open unknown or in flight.
+_OPEN_S = cost_rollup.OPEN_S
+_windows = cost_rollup.windows
 
 
 @dataclass(frozen=True)
@@ -53,7 +55,7 @@ class CostPolicy:
         for value in (self.daily_budget, self.weekly_budget, self.monthly_budget, self.unknown_budget):
             integer(value)
         for value in (self.max_inflight, self.max_unknown):
-            integer(value, positive=True, maximum=_MAX_RECORDS)
+            integer(value, positive=True, maximum=_MAX_OPEN)
         if self.traffic is not None and (not isinstance(self.traffic, TrafficLimits)
                                          or self.traffic.payer_inflight > self.max_inflight):
             raise BillingError("invalid_cost_policy")
@@ -61,17 +63,6 @@ class CostPolicy:
             integer(self.max_call_cost)
         if self.risk is not None and not isinstance(self.risk, RiskPolicy):
             raise BillingError("invalid_cost_policy")
-
-
-def _windows(now: int) -> dict[str, int]:
-    """Fixed UTC periods; epoch day zero is Thursday, weeks start on Monday."""
-    try:
-        date = _EPOCH + timedelta(seconds=now)
-    except OverflowError:
-        raise BillingError("invalid_cost_time") from None
-    day = now // 86400 * 86400
-    month = (date.replace(day=1, hour=0, minute=0, second=0) - _EPOCH).days * 86400
-    return {"daily": day, "weekly": day - ((now // 86400 + 3) % 7) * 86400, "monthly": month}
 
 
 class CostAdmission:
@@ -98,84 +89,13 @@ class CostAdmission:
         if transaction.execute("PRAGMA synchronous").fetchone()[0] != 2:
             raise BillingError("cost_admission_requires_full_durability")
 
-    def _counters(self, t, policy: CostPolicy, now: int, *, adding: int = 0) -> dict:
-        windows = _windows(now)
-        unit = t.execute("SELECT scale FROM billing_units WHERE code=?", (policy.unit.code,)).fetchone()
-        if unit is not None and unit[0] != policy.unit.scale:
-            raise BillingError("cost_unit_mismatch")
-        # Do not scope by namespace, policy revision, payer, key, or unit. A differing unit is a
-        # conflict, never permission to hide existing exposure.
-        # Two disjoint indexed ranges: admissions in the cost windows, and pending ones before
-        # them that can still be open (admitted within _OPEN_S). A join predicate 'usage IS NULL'
-        # over all admissions would scan all settled history; an unknown whose hold ended before
-        # the windows is final at its bound and never scanned again.
-        # Bound candidate lookup itself before joining immutable cost facts.
-        candidates = (
-            "SELECT attempt_key FROM model_cost_admissions INDEXED BY model_cost_admissions_scope"
-            " WHERE environment=? AND provider=? AND account_ref=? AND admitted_at>=?"
-            " UNION ALL SELECT attempt_key FROM model_cost_pending INDEXED BY model_cost_pending_scope"
-            " WHERE environment=? AND provider=? AND account_ref=? AND admitted_at<? AND admitted_at>=? LIMIT ?"
-        )
-        earliest = min(windows.values())
-        scope = (self.ledger.environment, policy.provider, policy.account_ref, earliest)
-        args = (*scope, *scope, now - _OPEN_S, _MAX_RECORDS + 1)
-        source = (" FROM (" + candidates + ") selected"
-                  " JOIN model_cost_admissions a ON a.attempt_key=selected.attempt_key"
-                  " JOIN billing_attempts att ON att.id=a.attempt_key JOIN billing_calls c ON c.id=att.call_key"
-                  " LEFT JOIN model_cost_endings e ON e.attempt_key=a.attempt_key"
-                  " LEFT JOIN billing_usage u ON u.attempt_key=a.attempt_key")
-        # A capped cardinality probe detects overflow BEFORE materializing/summing facts.
-        # At most 10,000 records enter Python; the extra SQL count is only an overflow sentinel.
-        # Both branches use scope indexes; historical unknowns come from the pending
-        # projection, so settled history is not scanned for this count.
-        count = t.execute("SELECT COUNT(*) FROM (" + candidates + ")", args).fetchone()[0]
-        if count + adding > _MAX_RECORDS:
-            raise BillingError("cost_accounting_capacity")
-        totals = {name: Fraction(0) for name in windows}
-        unknown = unknown_count = inflight = absorbed = absorbed_count = 0
-        rows = t.execute(
-            "SELECT a.unit,a.reserved_units,a.admitted_at,a.expires_at,c.status AS call_status,"
-            "c.deadline AS call_deadline,e.ending,"
-            "u.attempt_key AS usage_key,u.cost_n,u.cost_d,u.cost_unit" + source + " LIMIT ?",
-            (*args, _MAX_RECORDS),
-        )
-        for row in rows:
-            if row["unit"] != policy.unit.code:
-                raise BillingError("cost_unit_mismatch")
-            if row["admitted_at"] > now:
-                raise BillingError("cost_clock_regressed")
-            if row["usage_key"] is None:
-                cost = integer(row["reserved_units"])
-                # Unknown usage is open exposure while the upstream may still be working (its
-                # in-flight window) and, unless the platform stopped the stream itself, while the
-                # payer's hold is open and evidence could still settle it. After that it is final:
-                # its conservative bound stays in the cost windows below (and in the payer's and
-                # route's velocity windows, billing/risk.py), but no longer in the unknown limits.
-                in_flight = row["expires_at"] > now
-                hold_open = row["call_status"] == "reserved" and row["call_deadline"] > now
-                if in_flight or (hold_open and row["ending"] is None):
-                    unknown += cost
-                    unknown_count += 1
-                elif row["admitted_at"] >= earliest:
-                    absorbed += cost
-                    absorbed_count += 1
-                inflight += int(in_flight)
-            else:
-                if row["cost_unit"] != policy.unit.code:
-                    raise BillingError("cost_unit_mismatch")
-                try:
-                    numerator, denominator = int(row["cost_n"]), int(row["cost_d"])
-                    if numerator < 0 or denominator <= 0:
-                        raise ValueError
-                    cost = Fraction(numerator, denominator)
-                except (ValueError, TypeError):
-                    raise BillingError("invalid_cost_fact") from None
-            for name, start in windows.items():
-                if row["admitted_at"] >= start:
-                    totals[name] += cost
-        return {"windows": windows, "totals": totals, "unknown_reserved_units": unknown,
-                "unknown_count": unknown_count, "inflight": inflight, "records": count,
-                "absorbed_unknown_units": absorbed, "absorbed_unknown_count": absorbed_count}
+    def _counters(self, t, policy: CostPolicy, now: int, *, records: bool = False) -> dict:
+        """Exact counters of the policy's provider account, from the trigger-maintained rollup
+        (billing/cost_rollup.py). Not scoped by namespace, policy revision, payer, key or unit: a
+        differing unit is a conflict, never permission to hide existing exposure. No read grows
+        with settled history; the only row caps left are the open set and class-X facts."""
+        return cost_rollup.counters(t, environment=self.ledger.environment, provider=policy.provider,
+                                    account_ref=policy.account_ref, unit=policy.unit, now=now, records=records)
 
     def admit(self, transaction, ticket: AttemptTicket, *, amount: int, expires_at: int) -> None:
         """Reserve a conservative cost bound atomically with Ledger's one-shot send fence.
@@ -220,7 +140,7 @@ class CostAdmission:
             raise BillingError("cost_call_limit_exceeded")
         if t.execute("SELECT 1 FROM model_cost_admissions WHERE attempt_key=?", (ticket.attempt_key,)).fetchone():
             raise BillingError("cost_attempt_already_admitted")
-        counters = self._counters(t, policy, now, adding=1)
+        counters = self._counters(t, policy, now)
         for period, total in counters["totals"].items():
             if total + amount > getattr(policy, period + "_budget"):
                 raise BillingError("cost_" + period + "_budget_exceeded")
@@ -263,10 +183,18 @@ class CostAdmission:
         return True
 
     def after_refusal(self, exc: BaseException) -> None:
-        """After the refusing dispatch transaction rolled back: latch a velocity breach.
+        """After the refusing dispatch transaction rolled back: latch a velocity breach, or a
+        read-path rollup inconsistency as a fault of its scope (unless a newer rebuild exists).
 
         The gateway calls this with the refusal it re-raises. Anything else is ignored; a latch
         that fails is re-detected (the refusal is computed from facts) on the next attempt."""
+        if isinstance(exc, RollupInconsistent):
+            try:
+                cost_rollup.CostRollup.latch(self.ledger.store, exc)
+            except Exception as error:  # noqa: BLE001 - never mask the caller's refusal
+                import logging
+                logging.getLogger("synwevo.billing.cost_rollup").error("rollup latch failed: %s", type(error).__name__)
+            return
         if isinstance(exc, BrakeTripped):
             try:
                 RiskControls(self.ledger.store, environment=self.ledger.environment,
@@ -279,10 +207,11 @@ class CostAdmission:
         """Internal, consistent counters; neither a public projection nor send permission."""
         with self.ledger.store.tx() as t:
             policy, now = self._policy(), self.ledger._now()
-            counters = self._counters(t, policy, now)
+            counters = self._counters(t, policy, now, records=True)
             totals = counters.pop("totals")
+            rollup = cost_rollup.CostRollup.state(t, (self.ledger.environment, policy.provider, policy.account_ref))
             return {"environment": self.ledger.environment, "provider": policy.provider,
                     "account_ref": policy.account_ref, "policy_revision": policy.revision,
-                    "unit": asdict(policy.unit), "as_of": now, **counters,
+                    "unit": asdict(policy.unit), "as_of": now, **counters, "rollup": rollup,
                     **{name: {"numerator": value.numerator, "denominator": value.denominator}
                        for name, value in totals.items()}}
