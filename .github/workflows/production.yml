@@ -13,6 +13,13 @@ name: Verify and deploy Synwevo
 # A push to dev that only changes records neither verifies nor deploys (same rule, as a path filter).
 # workflow_dispatch runs everything and deploys only when dispatched on dev.
 # Actions minutes are a budget. The complete runtime suite is kept in one bounded verify job.
+#
+# `verify` is no boundary against the pull request it checks. A pull_request run executes that pull
+# request's own copy of this file, of the guards and of the test configuration, so a pull request
+# that edits them can turn `verify` green without checking anything; once it is merged, the push to
+# dev runs its version of the deploy job with the production environment's secrets. A pull request
+# that touches .github/**, infra/**, the guard scripts or the test configuration is merged only after
+# a maintainer has read it line by line, never automatically (AGENTS.md「分支与发布」).
 on:
   pull_request:
     branches: [dev, main]

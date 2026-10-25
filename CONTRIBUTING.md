@@ -11,6 +11,9 @@
   会被 `sync-source` 检查拒绝：把基础分支改成 `dev`，再推一个提交（或请维护者关闭后重开 PR），`verify` 才会运行。
 * 合并一律用 merge commit（不 squash、不 rebase），提交 SHA 在记录里会被引用。合入 `dev` 会部署到生产，
   所以每个 PR 都要通过必需检查 `verify` 并经维护者审阅。
+* `verify` 运行的是 PR 自己的工作流文件、守卫脚本和测试配置，所以它证明不了改动这些文件的 PR。动到
+  `.github/`、`infra/`、守卫脚本（`scripts/check_*.py`、`brand_assets.py`、`app_icon_assets.py`）、根目录
+  `conftest.py` 或测试设置的 PR，由维护者逐行审阅后手动合并，从不自动合并；请在 PR 描述里点明这些改动。
 
 ```bash
 git fetch origin dev
@@ -81,6 +84,11 @@ Synwevo 的名称、Logo 与应用图标不随代码许可授予。
 * Merges are always merge commits (no squash, no rebase), because records cite commit SHAs. A merge into
   `dev` deploys to production, so every pull request must pass the required `verify` check and a
   maintainer's review.
+* `verify` runs the pull request's own workflow file, guard scripts and test configuration, so it proves
+  nothing about a pull request that changes them. A pull request touching `.github/`, `infra/`, a guard
+  script (`scripts/check_*.py`, `brand_assets.py`, `app_icon_assets.py`), the root `conftest.py` or the test
+  settings is merged by hand after a maintainer has read it line by line, never automatically; please
+  point these changes out in the description.
 
 ```bash
 git fetch origin dev

@@ -21,6 +21,7 @@ passed / failed / skipped / not run 分开写，附命令。Report passed / fail
 ## 检查清单 · Checklist
 
 - [ ] 基础分支是 `dev` · The base branch is `dev`
+- [ ] 改了 `.github/`、`infra/`、守卫脚本、`conftest.py` 或测试设置的，已在上面点明（维护者逐行审阅后手动合并）· Changes to `.github/`, `infra/`, a guard script, `conftest.py` or the test settings are pointed out above (a maintainer reads them line by line and merges by hand)
 - [ ] 每个提交都有 `Signed-off-by:`（`git commit -s`，DCO）· Every commit is signed off (DCO)
 - [ ] 不含 `data/`、密钥、凭据或真实个人数据；测试夹具已标明是夹具 · No `data/`, keys, credentials or real personal data; fixtures are labelled
 - [ ] 遵守 AGENTS.md 的模块边界与"不要做的事" · Follows the module boundaries and "what not to do" in AGENTS.md

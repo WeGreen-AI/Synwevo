@@ -93,8 +93,14 @@ npm run typecheck && npm run build         # 三个前端外壳
   `main` 上没有部署。同步后 `main` 显示"领先 N 个提交"（都是合并提交）是正常的，不要为此反向合并。
 * **推送一律写明目标**：`git push origin HEAD:refs/heads/<工作分支>`。全局 `push.default=upstream` 会把
   `git push origin <分支>` 推到该分支的上游，跟踪 `origin/main` 的分支就这样推上了 `main`。不用 `--all`、`--mirror`。
+* **`verify` 证明不了改它自己的 PR。** PR 的 `verify` 运行的是这个 PR 自己那份 `production.yml`、守卫脚本和
+  测试配置；合入后，`dev` 的推送又按合入的那份工作流、带着 `production` 环境的密钥部署。改了这些文件的 PR
+  可以让 `verify` 什么都没查就变绿。所以凡是动到 `.github/**`、`infra/**`、守卫脚本（`scripts/check_*.py`、
+  `scripts/brand_assets.py`、`scripts/app_icon_assets.py`）、根目录 `conftest.py` 或 `pyproject.toml` 里测试设置的
+  PR，绿色的 `verify` 不算数：维护者逐行读完这些文件的差异才合入，**从不自动合并**（不用 `gh pr merge --auto`），
+  外部 PR 也一样。在有第二个身份、能用 CODEOWNERS 强制审阅之前，这一条只靠人遵守。
 * **外部贡献**指向 `dev`（[CONTRIBUTING.md](CONTRIBUTING.md)）；误指向 `main` 的，维护者把基础分支改为 `dev`，
-  关闭再重开以触发 verify。
+  关闭再重开以触发 verify，按上一条审阅后再合入。
 * **重新部署与回滚**：不要重跑旧的运行。部署作业拒绝比生产更旧的提交，重跑的提交也必须仍是 `dev` 的头部；
   要重新部署 `dev` 头部，在 `dev` 上手动触发工作流。回滚见 `infra/production/README.md`。
 * **紧急情况**：受限 SSH 接收器的后备部署只发 `dev` 上已有的提交；只有仓库所有者能临时停用规则集。没经过
