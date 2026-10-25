@@ -535,8 +535,15 @@ blob id 直取接口 · 临时文件 · 日志导出
 `/api/about` 与 `/api/source-code`（本程序的许可与 AGPL-3.0 第 13 条的对应源代码）同样是精确匹配的
 匿名路径（`SOURCE_OFFER_PATHS`），在每个角色、每种认证模式下都不要求登录：第 13 条要求向**所有**通过网络
 与程序交互的用户提供源代码，包括只用到登录页、公开站点或工作空间的人。两个处理函数都不读取任何工作空间
-数据；压缩包按客户端地址限速（每分钟 6 次）。相邻路径（`/api/about/`、`/api/source-code/x`）不因此匿名，
-见 `tests/integration/test_source_offer.py`。
+数据；压缩包按客户端限速（每分钟 6 次；IPv4 按地址，IPv6 按 /64），带匹配 ETag 的重新验证返回 304 且不计数。
+相邻路径（`/api/about/`、`/api/source-code/x`）不因此匿名。压缩包只含源代码发布清单上的文件（镜像构建时
+从 `git archive` 上下文写入的清单，或检出的 `git ls-files`），两者都没有时拒绝（503），不会遍历目录。
+
+网关的每个判断——角色拒绝、精确匿名路径（探针与上面两个）、各前缀——都基于路由实际匹配的路径
+（ASGI `scope["path"]`，`synwevo_core.http.routed_path`），不基于 `request.url.path`：后者由 Starlette 从
+scope 重新拼接再拆分，请求目标里百分号编码的 `?` 或 `#` 被解码进路径后会在那里截断，`/api/about%3F/x`
+读成 `/api/about`，而路由匹配的是 `/api/about?/x`，豁免就落到了另一条路由上。编码变体（`%3F`、`%3f`、`%23`，
+含探针在 `basic` 模式下）见 `tests/integration/test_source_offer.py`。
 
 ## 6. 任务快照与撤权
 
