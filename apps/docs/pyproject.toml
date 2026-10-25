@@ -8,6 +8,7 @@ version = "1.0.0"
 description = "Synwevo Docs：数据映射与批量文档生成"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]   # a copy of the root LICENSE: a wheel or sdist built from here carries the text
 # No dependency on platform-identity: Synwevo Docs is a relying party on the account service, it
 # does not contain one.
 dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "starlette", "pydantic", "python-multipart", "httpx",

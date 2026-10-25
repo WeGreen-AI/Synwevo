@@ -420,7 +420,14 @@ def test_every_platform_manifest_declares_the_program_licence():
     projects = [ROOT / path / "pyproject.toml" for path in installed]
     assert len(projects) >= 8, projects
     for project in projects:
-        assert tomllib.loads(project.read_text(encoding="utf-8"))["project"].get("license") == licensing.PROGRAM_LICENSE, project
+        meta = tomllib.loads(project.read_text(encoding="utf-8"))["project"]
+        assert meta.get("license") == licensing.PROGRAM_LICENSE, project
+        # A wheel or sdist built from the package states AGPL in its metadata, so it must also carry
+        # the text (AGPL §4). PEP 639 licence files cannot point outside the project directory, so
+        # each package holds an unmodified copy of the root LICENSE.
+        assert meta.get("license-files") == ["LICENSE"], project
+        copy = project.parent / "LICENSE"
+        assert copy.is_file() and _sha256(copy) in AGPL_3_0_SHA256, f"{copy} 必须是未经改动的 GNU AGPL 第 3 版原文"
 
 
 def test_the_sdks_carry_their_own_apache_license():

@@ -8,6 +8,7 @@ version = "1.0.0"
 description = "Synwevo 业务应用：Forms、Tables、DataPrep、Approvals、Extract 与个人 Agent，挂在工作空间源站上"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]   # a copy of the root LICENSE: a wheel or sdist built from here carries the text
 # Only the shared layer. Each application is a subpackage that never imports a sibling; they reach
 # one another — and Synwevo Docs and Message — through the capability registry in synwevo-core.
 #   anthropic — the personal Agent's model provider (official SDK)

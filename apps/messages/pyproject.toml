@@ -8,6 +8,7 @@ version = "1.0.0"
 description = "Synwevo Message：组织内的私聊与群聊，平台上的独立应用（自己的源站）"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]   # a copy of the root LICENSE: a wheel or sdist built from here carries the text
 # Only the shared layer. The messaging service layer and its tables are in synwevo-core; this
 # package is the HTTP surface and the shell. It never imports the account service or Docs.
 dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi"]

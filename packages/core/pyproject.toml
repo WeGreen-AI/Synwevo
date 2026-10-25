@@ -8,6 +8,7 @@ version = "1.0.0"
 description = "Synwevo 共享基础库：持久化入口、租户上下文、身份读写、会话、机器身份、配置兼容、HTTP 骨架"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]   # a copy of the root LICENSE: a wheel or sdist built from here carries the text
 # Versions are pinned in the repository's requirements files, which stay the single source of
 # truth for what gets installed; this list is the abstract dependency set, so an import that is
 # not declared here fails the boundary check (scripts/check_boundaries.py) rather than working

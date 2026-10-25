@@ -8,6 +8,7 @@ version = "1.0.0"
 description = "应用接入 Synwevo Account 的 OIDC 依赖方适配与共用会话路由"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]   # a copy of the root LICENSE: a wheel or sdist built from here carries the text
 dependencies = ["synwevo-core", "fastapi", "httpx", "authlib"]
 
 [tool.setuptools.packages.find]

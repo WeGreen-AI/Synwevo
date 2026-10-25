@@ -8,6 +8,7 @@ version = "1.0.0"
 description = "Synwevo Account：登录仪式、MFA、Passkey、邀请与找回、平台管理、OIDC 授权服务器"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]   # a copy of the root LICENSE: a wheel or sdist built from here carries the text
 # Note what is absent: nothing from Synwevo Docs. The account service must start with the document
 # engine uninstalled, and this list is where that stops being a claim.
 dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "pydantic", "authlib", "httpx",
