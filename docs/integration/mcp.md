@@ -96,12 +96,13 @@
    为什么元数据文档要求 `iss`：它的 `client_id` 是所有接受文档的授权服务器都接受的同一个公共 id。一个恶意的 MCP 服务可以让它
    自己的授权服务器把浏览器转给一个诚实的授权服务器，诚实服务器的授权码随后回到 Synwevo 的回调、被送到恶意的令牌端点
    （混淆攻击，RFC 9700 §4.4.1）；只有 RFC 9207 的 `iss` 能分辨回调来自哪台服务器，所以对方必须宣告会回传它，回调没有它或不符即
-   拒绝。这个 id 不论怎样出现都一样——对方登记端点把它当作自己签发的 id 交回、或有人把它填作预登记 `client_id`。对方不回传
+   拒绝。这个 id 不论怎样出现都一样——对方登记端点把它当作自己签发的 id 交回、或有人把它填作预登记 `client_id`；换一种写法（大小写、
+   写出默认端口、加查询）也还是它：本部署源站上的任何 URL 都按它对待。对方不回传
    `iss` 时：授权或令牌端点不在 issuer 源站上 → 502 `mcp_oauth_discovery_failed`（`reason: endpoint_origin_mismatch`，`endpoints`
    列出它们），否则 409 `mcp_oauth_registration_unavailable`（`reason: iss_unsupported`）。端点源站的检查只针对这个共用 id。
 
    **你预登记的客户端属于你登记它的那台授权服务器**（MCP 授权规范的 "Authorization Server Binding"）：第一次认证完成时，连接
-   记下那台授权服务器的 issuer（之前保存的连接按最近一次完成的认证）；之后 MCP 服务改指别的授权服务器 → 409
+   记下那台授权服务器的 issuer（之前保存的连接按最近一次完成的认证）；MCP 服务列出多台授权服务器时，用列表里你的那一台；之后 MCP 服务不再列出它 → 409
    `mcp_oauth_issuer_changed`（`detail.issuer`、`detail.registered_issuer`），认证没有开始，`client_id` 与密钥都不交出去；确属预期
    时，在新的授权服务器登记客户端并给连接新的 `client_id`。给新的客户端即重新绑定（改地址或改认证方式连客户端一起忘掉）；
    平台停用保留它。端点在

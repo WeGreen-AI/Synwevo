@@ -237,9 +237,11 @@ def test_a_platform_stop_forgets_every_credential_the_connection_holds(env):
             connections.store_tokens(cid, {"access_token": "late", "refresh_token": "late", "expires_at": t + 3600})
         assert late.value.code == "mcp_connection_changed"
         assert store.one("SELECT credential_sealed FROM mcp_connections WHERE id=?", (cid,))["credential_sealed"] is None
-    # The person's own client id at the other side is no secret and stays; the dynamic registration goes.
+    # The person's own client id at the other side is no secret and stays, still bound to the server it
+    # was authorized at (read from the completed authorization the stop deletes, so it is kept on the
+    # record); the dynamic registration goes.
     assert json.loads(store.one("SELECT oauth_client_json FROM mcp_connections WHERE id=?", (pre["id"],))["oauth_client_json"]) == {
-        "kind": "preregistered", "client_id": "fixture-client"}
+        "kind": "preregistered", "client_id": "fixture-client", "issuer": "https://weather.fixture.test/"}
     assert store.one("SELECT oauth_client_json FROM mcp_connections WHERE id=?", (dyn["id"],))["oauth_client_json"] is None
     # Nor can the owner start a new authorization while it is stopped.
     assert op(alice, "agent.mcp.connection.update", {"connection_id": pre["id"], "oauth_client": {"client_id": "other"}},

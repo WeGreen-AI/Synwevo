@@ -279,6 +279,13 @@ def build_router(store, audit):
             # A client id the person registered elsewhere is no secret and stays, so that the owner can
             # authorize again once the stop is lifted; a dynamic registration (and its secret) goes.
             keep_client = row["oauth_client_json"] if isinstance(client, dict) and client.get("kind") == "preregistered" else None
+            if keep_client and not client.get("issuer"):
+                # The server the client is bound to is otherwise read from its completed authorizations,
+                # which the stop deletes below: kept on the record, the binding outlives the stop.
+                last = store.one("SELECT issuer FROM mcp_oauth_flows WHERE connection_id=? AND outcome='ok' AND client_id=? "
+                                 "ORDER BY completed_at DESC LIMIT 1", (cid, client.get("client_id")))
+                if last and last["issuer"]:
+                    keep_client = json.dumps({**client, "issuer": last["issuer"]})
             t = now()
             store.execute("UPDATE mcp_connections SET status='disabled', platform_disabled_at=COALESCE(platform_disabled_at, ?), "
                           "platform_disabled_by=COALESCE(platform_disabled_by, ?), credential_sealed=NULL, credential_hint=NULL, "

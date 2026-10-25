@@ -92,6 +92,30 @@ def client_metadata_document() -> dict:
             "response_types": ["code"], "token_endpoint_auth_method": "none", "application_type": "web"}
 
 
+def _url_origin(url: str) -> tuple[str, str, int] | None:
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port
+    except ValueError:
+        return None
+    scheme = (parts.scheme or "").lower()
+    if scheme not in _DEFAULT_PORTS or not parts.hostname:
+        return None
+    return scheme, parts.hostname.lower().rstrip("."), port or _DEFAULT_PORTS[scheme]
+
+
+def is_deployment_client_id(client_id: str | None) -> bool:
+    """Whether `client_id` is this deployment's Client ID Metadata Document however it is spelled: any
+    http(s) URL on this deployment's own origin. An authorization server that fetches client ids resolves
+    a variant (another case, a default port written out, a query) to the same document, so the rules that
+    hold the document to servers sending `iss` compare by origin, never by the exact string — a
+    registration endpoint cannot hand the document back as "its own" client in another spelling."""
+    if not isinstance(client_id, str) or not client_id:
+        return False
+    own = _url_origin(app_url())
+    return own is not None and _url_origin(client_id) == own
+
+
 # How OAuthMetadata renders an issuer URL (host case, default port, an empty path kept empty), so the
 # origin of an MCP server compares with a metadata `issuer` as strings.
 _ISSUER_URL = TypeAdapter(AnyHttpUrl, config=ConfigDict(url_preserve_empty_path=True))
@@ -151,10 +175,14 @@ class OutboundOAuth:
         self.runtime = connections.runtime
 
     # ------------------------------------------------------------------ discovery
-    async def _discover(self, conn: dict) -> dict:
+    async def _discover(self, conn: dict, *, bound: str | None = None) -> dict:
         """The authorization server of the MCP server at `conn['url']` (its validated metadata, and its
         issuer exactly as published), the scope the server asks for, and the registration endpoint
-        that may be used. Network only: nothing here reads or writes the database."""
+        that may be used. `bound` is the issuer the person's own client belongs to (`_bound_issuer`):
+        when the resource metadata lists several authorization servers, that one is used if it is
+        listed — the choice among them is the client's (MCP authorization, "Authorization Server
+        Discovery"), and the person's client is only good at its own. Network only: nothing here reads
+        or writes the database."""
         owner = conn["owner_id"]
         async with self.runtime.http(conn["url"], owner, read_timeout=DISCOVERY_TIMEOUT_S) as http:
             probe = await http.send(_probe_request(conn["url"]))
@@ -186,7 +214,8 @@ class OutboundOAuth:
             # Exactly as published (RFC 8414 §3.3, RFC 9207 §2.4): the string the metadata's issuer is
             # compared with, not the model's rendering of it — which folds a host's case and drops a
             # default port, and would then refuse the server's own, correct `iss`.
-            auth_server = (prm_raw.get("authorization_servers") or [None])[0]
+            listed = [a for a in (prm_raw.get("authorization_servers") or []) if isinstance(a, str)]
+            auth_server = next((a for a in listed if bound is not None and issuers_match(a, bound)), listed[0] if listed else None)
             if not isinstance(auth_server, str):
                 raise ServiceError(502, "mcp_oauth_discovery_failed", "MCP 服务的资源元数据没有指明授权服务器")
             resource = str(prm.resource)
@@ -307,7 +336,7 @@ class OutboundOAuth:
 
         def usable(client_id: str) -> None:
             """Refuse this deployment's document id at a server that would not say who answered."""
-            if client_id != document["client_id"] or sends_iss:
+            if not is_deployment_client_id(client_id) or sends_iss:
                 return
             if found["off_origin"]:
                 raise ServiceError(502, "mcp_oauth_discovery_failed", "授权服务器的授权或令牌端点不在其 issuer 的源站上，且它没有声明会回传 iss，已拒绝",
@@ -429,7 +458,10 @@ class OutboundOAuth:
             raise ServiceError(409, "mcp_auth_kind_mismatch", "这个连接不使用 OAuth 认证")
         if not app_url():
             raise ServiceError(503, "mcp_oauth_unavailable", "本部署未配置工作空间地址，无法完成回调")
-        found = self.runtime.run(self._discover(conn), timeout=DISCOVERY_TIMEOUT_S * 3)
+        stored = _stored(conn)
+        bound = (self._bound_issuer(conn, stored) if stored and stored.get("kind") == "preregistered" and stored.get("client_id")
+                 else None)
+        found = self.runtime.run(self._discover(conn, bound=bound), timeout=DISCOVERY_TIMEOUT_S * 3)
         meta: OAuthMetadata = found["metadata"]
         issuer = found["issuer"]
         client = self._client(conn, found)
@@ -496,7 +528,7 @@ class OutboundOAuth:
         if iss is not None and iss != flow["issuer"]:
             self._close(flow, "issuer_mismatch")
             raise ServiceError(400, "mcp_oauth_issuer_mismatch", "回调的 iss 与授权服务器不一致，已拒绝")
-        if iss is None and (flow["iss_supported"] or flow["client_id"] == client_metadata_document()["client_id"]):
+        if iss is None and (flow["iss_supported"] or is_deployment_client_id(flow["client_id"])):
             self._close(flow, "issuer_missing")
             raise ServiceError(400, "mcp_oauth_issuer_mismatch", "回调缺少 iss，已拒绝")
         if error:
@@ -719,7 +751,7 @@ def record_scope_challenge(store, conn: dict, scope: str) -> str | None:
     if not (stored and stored.get("client_id")):
         # A Client ID Metadata Document is no registration, and nothing of it was stored: the step-up
         # is kept with a record of that client (which the connection's page names as such).
-        if not last or last["client_id"] != client_metadata_document()["client_id"]:
+        if not last or not is_deployment_client_id(last["client_id"]):
             return None
         stored = {"kind": "cimd", "client_id": last["client_id"], "issuer": last["issuer"]}
     step = stored.get("step_up") if isinstance(stored.get("step_up"), dict) else {}
