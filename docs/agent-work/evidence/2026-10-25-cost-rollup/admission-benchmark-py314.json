@@ -6,7 +6,7 @@
   "runs": [
     {
       "size": 200000,
-      "build_s": 18.03,
+      "build_s": 15.96,
       "counts": {
         "admissions": 200000,
         "usage": 190000,
@@ -18,13 +18,19 @@
         "hold": 300,
         "exceptions": 0
       },
+      "history": {
+        "first": 2030054408,
+        "last": 2031739197,
+        "in_month": 200000,
+        "admissions": 200000
+      },
       "counters_guard_ms": {
         "n": 200,
-        "p50": 1.719,
-        "p95": 1.825,
-        "max": 1.944
+        "p50": 1.697,
+        "p95": 1.77,
+        "max": 1.894
       },
-      "rows_read": 315,
+      "rows_read": 321,
       "velocity_bucket_rows": {
         "payer@3600": 28,
         "route@86400": 76
@@ -37,9 +43,11 @@
           ]
         },
         {
-          "sql": "SELECT 1 FROM model_cost_admissions INDEXED BY model_cost_admissions_scope WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND admitted_at>2031220800 LIMIT 1",
+          "sql": "SELECT 1 FROM model_cost_admissions a INDEXED BY model_cost_admissions_scope WHERE a.environment='test' AND a.provider='bench-provider' AND a.account_ref='bench-account' AND a.admitted_at>2031739200 AND NOT EXISTS(SELECT 1 FROM model_cost_r",
           "plan": [
-            "SEARCH model_cost_admissions USING COVERING INDEX model_cost_admissions_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)"
+            "SEARCH a USING INDEX model_cost_admissions_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "SEARCH x USING COVERING INDEX sqlite_autoindex_model_cost_rollup_accepted_1 (attempt_key=?)"
           ]
         },
         {
@@ -80,9 +88,14 @@
           ]
         },
         {
-          "sql": "SELECT COUNT(*) FROM model_cost_pending INDEXED BY model_cost_pending_scope WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND admitted_at>=2031177600",
+          "sql": "SELECT (SELECT COUNT(*) FROM model_cost_pending INDEXED BY model_cost_pending_scope WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND admitted_at>=2031696000)-(SELECT COUNT(*) FROM model_cost_rollup_",
           "plan": [
-            "SEARCH model_cost_pending USING COVERING INDEX model_cost_pending_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)"
+            "SCAN CONSTANT ROW",
+            "SCALAR SUBQUERY 1",
+            "SEARCH model_cost_pending USING COVERING INDEX model_cost_pending_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)",
+            "SCALAR SUBQUERY 2",
+            "SEARCH x USING INDEX model_cost_rollup_accepted_scope (environment=? AND provider=? AND account_ref=?)",
+            "SEARCH p USING INDEX sqlite_autoindex_model_cost_pending_1 (attempt_key=?)"
           ]
         },
         {
@@ -143,69 +156,119 @@
         }
       ],
       "counters": {
-        "totals": "{'daily': Fraction(80254395661009, 200000), 'weekly': Fraction(918956600620109, 250000), 'monthly': Fraction(7363373476813833, 1000000)}",
+        "totals": "{'daily': Fraction(80254395661009, 200000), 'weekly': Fraction(628709137584333, 200000), 'monthly': Fraction(10516708148841029, 1000000)}",
         "unknown_reserved_units": 30647510,
         "unknown_count": 300,
         "inflight": 300,
-        "absorbed_unknown_units": 739282984,
-        "absorbed_unknown_count": 7303,
-        "rows_read": 315
+        "absorbed_unknown_units": 974316182,
+        "absorbed_unknown_count": 9700,
+        "rows_read": 321
       },
       "dispatch_ms": {
         "n": 500,
-        "p50": 2.517,
-        "p95": 2.759,
-        "max": 7.54
+        "p50": 2.362,
+        "p95": 2.65,
+        "max": 5.035
       },
       "settle_ms": {
         "n": 500,
-        "p50": 0.854,
-        "p95": 3.064,
-        "max": 4.66
+        "p50": 0.672,
+        "p95": 2.228,
+        "max": 4.085
       },
-      "verify_40d": {
-        "s": 4.879,
+      "verify_daily": {
+        "s": 5.38,
         "ok": true,
-        "facts": 200500
+        "facts": 200500,
+        "rss_before_mb": 107.2,
+        "peak_rss_mb": 119.8
       },
       "verify_recent_2d": {
-        "s": 1.678,
+        "s": 1.98,
         "ok": true,
-        "facts": 28244
+        "facts": 28244,
+        "rss_before_mb": 107.3,
+        "peak_rss_mb": 117.4
       },
       "verify_all": {
-        "s": 4.861,
+        "s": 5.303,
         "ok": true,
         "facts": 200500
       },
-      "backfill_s": 6.793,
+      "backfill_s": 6.835,
       "backfill_facts": 200500,
+      "triggers_live": {
+        "pairs": 2000,
+        "per_transaction": true,
+        "synchronous": "FULL",
+        "with": {
+          "stmt": {
+            "p50": 328.0,
+            "p95": 451.5
+          },
+          "locked": {
+            "p50": 558.7,
+            "p95": 906.4
+          },
+          "admission": {
+            "p50": 166.0,
+            "p95": 248.6
+          },
+          "usage": {
+            "p50": 161.9,
+            "p95": 214.8
+          }
+        },
+        "without": {
+          "stmt": {
+            "p50": 13.1,
+            "p95": 15.9
+          },
+          "locked": {
+            "p50": 119.3,
+            "p95": 172.3
+          },
+          "admission": {
+            "p50": 7.3,
+            "p95": 9.6
+          },
+          "usage": {
+            "p50": 5.8,
+            "p95": 7.0
+          }
+        },
+        "extra_stmt_us_p50": 314.9,
+        "extra_stmt_us_p95": 435.6,
+        "extra_locked_us_p50": 439.4,
+        "extra_locked_us_p95": 734.1
+      },
       "triggers": {
         "pairs": 10000,
+        "bulk": true,
         "with_s": 0.736,
-        "without_s": 0.065,
-        "us_per_pair": 67.0
+        "without_s": 0.064,
+        "us_per_pair": 67.1
       },
       "settlement_overhead": {
         "with": {
           "n": 200,
-          "p50": 0.678,
-          "p95": 0.837,
-          "max": 3.904
+          "p50": 0.672,
+          "p95": 2.183,
+          "max": 3.767
         },
         "without": {
           "n": 200,
-          "p50": 0.337,
-          "p95": 0.403,
-          "max": 4.091
+          "p50": 0.33,
+          "p95": 0.373,
+          "max": 4.281
         },
-        "extra_ms_p50": 0.341
+        "extra_ms_p50": 0.342
       },
       "db_mb": 370.0
     },
     {
       "size": 1000000,
-      "build_s": 106.06,
+      "build_s": 101.6,
       "counts": {
         "admissions": 1000000,
         "usage": 950000,
@@ -217,13 +280,19 @@
         "hold": 300,
         "exceptions": 0
       },
+      "history": {
+        "first": 2030054401,
+        "last": 2031739199,
+        "in_month": 1000000,
+        "admissions": 1000000
+      },
       "counters_guard_ms": {
         "n": 200,
-        "p50": 1.241,
-        "p95": 1.291,
-        "max": 1.496
+        "p50": 1.295,
+        "p95": 1.339,
+        "max": 1.526
       },
-      "rows_read": 318,
+      "rows_read": 324,
       "velocity_bucket_rows": {
         "payer@3600": 55,
         "route@86400": 91
@@ -236,9 +305,11 @@
           ]
         },
         {
-          "sql": "SELECT 1 FROM model_cost_admissions INDEXED BY model_cost_admissions_scope WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND admitted_at>2031220800 LIMIT 1",
+          "sql": "SELECT 1 FROM model_cost_admissions a INDEXED BY model_cost_admissions_scope WHERE a.environment='test' AND a.provider='bench-provider' AND a.account_ref='bench-account' AND a.admitted_at>2031739200 AND NOT EXISTS(SELECT 1 FROM model_cost_r",
           "plan": [
-            "SEARCH model_cost_admissions USING COVERING INDEX model_cost_admissions_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)"
+            "SEARCH a USING INDEX model_cost_admissions_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)",
+            "CORRELATED SCALAR SUBQUERY 1",
+            "SEARCH x USING COVERING INDEX sqlite_autoindex_model_cost_rollup_accepted_1 (attempt_key=?)"
           ]
         },
         {
@@ -279,9 +350,14 @@
           ]
         },
         {
-          "sql": "SELECT COUNT(*) FROM model_cost_pending INDEXED BY model_cost_pending_scope WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND admitted_at>=2031177600",
+          "sql": "SELECT (SELECT COUNT(*) FROM model_cost_pending INDEXED BY model_cost_pending_scope WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND admitted_at>=2031696000)-(SELECT COUNT(*) FROM model_cost_rollup_",
           "plan": [
-            "SEARCH model_cost_pending USING COVERING INDEX model_cost_pending_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)"
+            "SCAN CONSTANT ROW",
+            "SCALAR SUBQUERY 1",
+            "SEARCH model_cost_pending USING COVERING INDEX model_cost_pending_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)",
+            "SCALAR SUBQUERY 2",
+            "SEARCH x USING INDEX model_cost_rollup_accepted_scope (environment=? AND provider=? AND account_ref=?)",
+            "SEARCH p USING INDEX sqlite_autoindex_model_cost_pending_1 (attempt_key=?)"
           ]
         },
         {
@@ -342,83 +418,133 @@
         }
       ],
       "counters": {
-        "totals": "{'daily': Fraction(1477713370116609, 1000000), 'weekly': Fraction(17672017595651133, 1000000), 'monthly': Fraction(36435812720336387, 1000000)}",
+        "totals": "{'daily': Fraction(1477713370116609, 1000000), 'weekly': Fraction(1872434039043639, 125000), 'monthly': Fraction(10502832724301121, 200000)}",
         "unknown_reserved_units": 30775781,
         "unknown_count": 303,
         "inflight": 303,
-        "absorbed_unknown_units": 3510968892,
-        "absorbed_unknown_count": 34927,
-        "rows_read": 318
+        "absorbed_unknown_units": 5004665844,
+        "absorbed_unknown_count": 49697,
+        "rows_read": 324
       },
       "dispatch_ms": {
         "n": 500,
-        "p50": 2.624,
-        "p95": 3.036,
-        "max": 4.877
+        "p50": 2.577,
+        "p95": 2.758,
+        "max": 6.514
       },
       "settle_ms": {
         "n": 500,
-        "p50": 0.703,
-        "p95": 0.929,
-        "max": 3.431
+        "p50": 0.659,
+        "p95": 0.885,
+        "max": 4.865
       },
-      "verify_40d": {
-        "s": 27.043,
+      "verify_daily": {
+        "s": 29.901,
         "ok": true,
-        "facts": 1000500
+        "facts": 1000500,
+        "rss_before_mb": 107.3,
+        "peak_rss_mb": 124.6
       },
       "verify_recent_2d": {
-        "s": 8.076,
+        "s": 9.154,
         "ok": true,
-        "facts": 131127
+        "facts": 131127,
+        "rss_before_mb": 107.3,
+        "peak_rss_mb": 122.2
       },
       "verify_all": {
-        "s": 28.531,
+        "s": 28.508,
         "ok": true,
         "facts": 1000500
       },
-      "backfill_s": 35.609,
+      "backfill_s": 34.327,
       "backfill_facts": 1000500,
+      "triggers_live": {
+        "pairs": 2000,
+        "per_transaction": true,
+        "synchronous": "FULL",
+        "with": {
+          "stmt": {
+            "p50": 373.1,
+            "p95": 528.5
+          },
+          "locked": {
+            "p50": 665.1,
+            "p95": 2776.7
+          },
+          "admission": {
+            "p50": 187.2,
+            "p95": 292.0
+          },
+          "usage": {
+            "p50": 186.5,
+            "p95": 252.5
+          }
+        },
+        "without": {
+          "stmt": {
+            "p50": 12.8,
+            "p95": 16.9
+          },
+          "locked": {
+            "p50": 129.8,
+            "p95": 186.0
+          },
+          "admission": {
+            "p50": 7.5,
+            "p95": 10.5
+          },
+          "usage": {
+            "p50": 4.8,
+            "p95": 7.2
+          }
+        },
+        "extra_stmt_us_p50": 360.3,
+        "extra_stmt_us_p95": 511.6,
+        "extra_locked_us_p50": 535.3,
+        "extra_locked_us_p95": 2590.7
+      },
       "triggers": {
         "pairs": 10000,
-        "with_s": 0.764,
+        "bulk": true,
+        "with_s": 0.767,
         "without_s": 0.068,
-        "us_per_pair": 69.6
+        "us_per_pair": 70.0
       },
       "settlement_overhead": {
         "with": {
           "n": 200,
-          "p50": 0.714,
-          "p95": 2.981,
-          "max": 4.366
+          "p50": 0.687,
+          "p95": 2.841,
+          "max": 4.143
         },
         "without": {
           "n": 200,
-          "p50": 0.336,
-          "p95": 1.17,
-          "max": 4.257
+          "p50": 0.333,
+          "p95": 0.384,
+          "max": 3.53
         },
-        "extra_ms_p50": 0.378
+        "extra_ms_p50": 0.354
       },
-      "db_mb": 1736.8
+      "db_mb": 1737.0
     }
   ],
   "targets_met": {
     "200000": {
       "counters_guard_p95_le_3ms": true,
       "dispatch_p95_lt_20ms": true,
-      "triggers_le_300us_per_pair": true,
+      "triggers_le_300us_per_pair": false,
       "settlement_extra_le_1ms": true,
       "backfill_le_15s": true,
-      "verify_40d_le_15s": true
+      "verify_daily_le_15s": true
     },
     "1000000": {
       "counters_guard_p95_le_3ms": true,
       "dispatch_p95_lt_20ms": true,
-      "triggers_le_300us_per_pair": true,
+      "triggers_le_300us_per_pair": false,
       "settlement_extra_le_1ms": true,
       "backfill_le_15s": false,
-      "verify_40d_le_15s": false,
+      "verify_daily_le_15s": false,
       "counters_guard_within_1_5x_of_200k": true
     }
   }

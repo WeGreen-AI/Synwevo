@@ -1003,4 +1003,12 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 基准（[py312](evidence/2026-10-25-cost-rollup/admission-benchmark-py312.json)，Python 3.12.6 / SQLite 3.54.0，Darwin-27.0.0-arm64）：200k：`_counters`+`guard` p95 1.784 ms、派发 p95 2.432 ms、触发器 66.4 µs/对、结算额外 0.385 ms、回填 6.748 s、40 天校验 4.141 s、两天校验 1.432 s；1M：`_counters`+`guard` p95 1.253 ms、派发 p95 2.885 ms、回填 36.713 s、40 天校验 24.411 s。
 基准（[py314](evidence/2026-10-25-cost-rollup/admission-benchmark-py314.json)，Python 3.14.5 / SQLite 3.54.0，Darwin-27.0.0-arm64）：200k：`_counters`+`guard` p95 1.825 ms、派发 p95 2.759 ms、触发器 67.0 µs/对、结算额外 0.341 ms、回填 6.793 s、40 天校验 4.879 s、两天校验 1.678 s；1M：`_counters`+`guard` p95 1.291 ms、派发 p95 3.036 ms、回填 35.609 s、40 天校验 27.043 s。
 
-200k 时契约 §12 目标全部达标；1M 时读路径达标且不变慢，回填与 40 天校验线性增长并超过 15 s（不在发送路径上）。旧的 2026-10-01 快照测量已删除并由此取代。说明见 [evidence/2026-10-25-cost-rollup/README.md](evidence/2026-10-25-cost-rollup/README.md)。没有触碰生产、`data/` 或任何密钥；没有推送。
+（2026-10-26 更正：以上两行的日历常量写错、触发器只量了批量摊销、校验只量了 40 天窗口，数字已由下一节的复核修订取代。）200k 时契约 §12 目标全部达标；1M 时读路径达标且不变慢，回填与 40 天校验线性增长并超过 15 s（不在发送路径上）。旧的 2026-10-01 快照测量已删除并由此取代。说明见 [evidence/2026-10-25-cost-rollup/README.md](evidence/2026-10-25-cost-rollup/README.md)。没有触碰生产、`data/` 或任何密钥；没有推送。
+
+## 2026-10-26 成本汇总复核修复（本地，worktree `auto-run-server`）
+
+修复复核的十项发现（提交 `fix(billing): close the cost-rollup review findings`），每项先写失败测试（在旧代码上全部失败，日志 `costfix/logs/failing-first-*.log`）：成本文本含 NUL 时触发器与校验分类一致（`instr(x,char(0))=0`，SQLite 3.54.0 与 3.46.1 实测），生产触发器带版本并在旧库上重建一次；事实不可修改，有问题的准入由运维在审计的重建里 `--accept`（不再计入汇总、读取路径与对照计算）；I1 下界不再算校验差异（原 xfail 去掉标记后通过，内容未改）；故障 id 用 JSON 数组命名范围；无准入范围的速率桶与无范围时的增量行会被校验发现；校验按时间流式读取（1M 每日校验峰值约 114 MB，修订前约 2.7 GB；同进程派发最大延迟 17 ms，修订前 930 ms）；打开 Store 时等待别的进程的迁移；运维手册与告警给出生产容器命令（测试逐条运行手册命令）；基准修正日历并在实时写入路径上测触发器。
+
+测试（Python 3.12.6 / SQLite 3.54.0）：全部五个套件退出码 0（integration、docs、identity、messages、suite）；等价性属性测试 300 个种子与容量、奇异编码用例通过；Python 3.14.5 下成本相关集成测试（含等价性测试）通过。四项守卫通过。
+
+基准（[py312](evidence/2026-10-25-cost-rollup/admission-benchmark-py312.json)、[py314](evidence/2026-10-25-cost-rollup/admission-benchmark-py314.json)，说明见 [README](evidence/2026-10-25-cost-rollup/README.md)）：`_counters`+`guard` p95 1.34–1.86 ms，派发 p95 2.61–2.83 ms，结算额外 0.34–0.37 ms，均达标；触发器在实时写入路径上每对 315–360 µs（p50，超过 300 µs 目标；批量摊销 66–70 µs 只是下限，原因与可选项见 README）；1M 时回填约 34 s、每日校验约 29–30 s（超过 15 s，不在发送路径上，校验内存不增长）。没有触碰生产、`data/` 或任何密钥；没有推送。
