@@ -78,7 +78,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-18 | 繁體残留检测（0 处）；整页目标测量；折叠头与页脚链接目标尺寸 | 已部署（首个提交 88dd279，含于 2026-09-28 生产 4bf699a） | 审计三种语言（默认 / `--locale=en` / `--locale=zh-Hant`）都纳入回归 |
 | CI-19 | 平台闭环浏览器回归 `services/identity/scripts/ui_e2e_onboarding.py`（注册→验证→登录→引导→邀请→接受→退出，Chromium + WebKit，手机视口） | 通过 | 每个里程碑复跑；需要一个 24 小时内邀请数未达 50 的团队空间（脚本参数），注册限 10 次 / IP / 15 分钟 |
 | CI-20 | 恶意上传防护：隔离优先的接纳链（clamd 扫描、`rejected`/`scan_failed` 状态、下载门、模板同步扫描、schema v8、readyz 组件、SDK 等待、三语言标签、compose 参考服务） | 已部署（首个提交 4061731，含于生产 4bf699a）；生产扫描自 2026-09-28 CI-87 起启用 | 生产：运维确认 VPS 内存余量 ≥2 GiB，合并 `clamav` 服务与两个环境变量到 `/opt/synwevo/config/compose.yaml`；`rescan` CLI 与加密文件流程未做（file-acceptance §9） |
-| CI-21 | 风险触发的人机验证（Turnstile 服务端校验：四个匿名邮件入口每次、口令登录同地址 3 次失败后；`challenge_required/failed/unavailable`；故障不放行；账户外壳组件三语言） | 代码已部署（首个提交 7727d87，含于生产 4bf699a）；生产人机验证仍待持有人创建 Turnstile Widget 与密钥 | 生产：账户持有人在 Cloudflare 创建 Widget（`accounts.wegreen.ltd`）并把两把密钥写入 `runtime.env`；测试密钥的令牌不带 action，浏览器完整通路要等真实 Widget |
+| CI-21 | 风险触发的人机验证（Turnstile 服务端校验：四个匿名邮件入口每次、口令登录同地址 3 次失败后；`challenge_required/failed/unavailable`；故障不放行；账户外壳组件三语言） | 代码已部署（首个提交 7727d87，含于生产 4bf699a）；启用方式见 human-verification.md §1 | 启用：账户持有人在 Cloudflare 创建 Widget 并把两把密钥写入 `runtime.env`；测试密钥的令牌不带 action，浏览器完整通路要用真实 Widget |
 | CI-22 | 平台通知中心（核心表 + 每角色接口 + 邮件 outbox 调度器 + 铃铛与偏好页；安全/邀请/角色/移出/退出事件接入） | 已部署（a02baf0） | Docs 侧发射点（文件被拒、任务完成）随下一批；Web Push 未做；`docs/platform/notifications.md` 是权威记录 |
 | CI-23 | 组织自定义角色（权限目录 + 角色表 + 委派不越权 + 有效权限视图 + 组织页 UI） | 已部署（07af1f0） | `org.members.import`/`org.approvals.decide`/`org.messaging.manage` 由 CI-24/26/25 消费；组织审计页未做；`docs/platform/organization-roles.md` 是权威记录 |
 | CI-24 | 机构邮箱注册（CUHK）：根因定位到收件网关（Trend Micro）之后；校验器不再 500、正文 QP、收件页发件人与网关提示、活跃账户再注册寄提示 | 已部署（544f607） | 真实 CUHK 收件、SMTP2GO Activity 记录、SPF/发件域验证/跟踪关闭/From 改域均为账户持有人或运营步骤（operations.md §6.1）；验证脚本 `ui_e2e_institutional_mail.py` |
@@ -170,7 +170,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-122 | XLSX 重复内容块（整行）与块内明细行：每组一份里按段复制、段小计与总计 | 已合并，待部署 | 多层嵌套、每组一张工作表、块内图片/批注复制未做 |
 | CI-123 | XLSX 单独明细行的公式/条件格式/数组公式、透视表与线程批注随行、末行上限、COUNTA 计空字符串 | 已合并，待部署 | 删除空明细行后分页符计数已修（合并于 3d5bf48 之后） |
 | CI-124 | 复制申请不再被第二个执行者或撤回误标为失败 | 已合并，待部署 | — |
-| CI-125 | 有密码保护或无法检查结构的上传在所有入口被拒（三语言），不再当作干净 | 已合并，待部署 | 压缩后嵌套在其他文件里的加密压缩包仍靠引擎；少数嵌入 PDF 片段的二进制按「无法检查」拒绝（已写明） |
+| CI-125 | 有密码保护或无法检查结构的上传在所有入口被拒（三语言），不再当作干净 | 已部署（2026-10-04，`aadcb9e..b8cb31a`） | 压缩后嵌套在其他文件里的加密压缩包由引擎的 `AlertEncryptedArchive` 判定（主机侧步骤，operations.md §8）；少数嵌入 PDF 片段的二进制按「无法检查」拒绝（已写明） |
 | Q7 ③④⑤ | 表格实时协同的浏览器同步与乐观模型、编辑器、两账户证明（开关仍关闭） | 已合并（302ab3e），开关关闭 | 开开关前等待同步引擎独立审查 |
 | Q7 同步审查修复 | 撤销不再删除他人改过的工作表且可恢复已删工作表；忙/限流后按序；冲突列出所有被改单元格；崩溃后已确认编辑保留或告知；真实房间客户端随机测试进 CI | 已合并（4678a44），开关关闭 | 开开关前等待复审结论 |
 | Q7 第二轮同步修复 | P1–P8、草稿写入最多 5 秒（文档与表格房间）、CI 崩溃模型与守卫生效；复审结论：可限定试用 | 已合并（bddbfa6，预推送 2762 通过、2 跳过；两账户证明 Chrome/WebKit 与开关关闭的四个协同证明通过），开关关闭 | 按工作空间的试用开关与 R3a/R3b/R3c2/R3h 在工作流中 |

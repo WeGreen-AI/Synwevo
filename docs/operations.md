@@ -370,7 +370,7 @@ VPS 上编辑 `/opt/synwevo/runtime.env` 追加上表变量，`docker compose re
 | 不做 | 不把用户文件送往 VirusTotal 等外部平台；不提供跳过扫描的按钮；不用测试密钥或关闭检查让流水线变绿 |
 | 加密文件（§8.7） | 开启扫描时，设有密码的压缩包、Office 文档和要密码才能打开的 PDF 一律不接纳（400/410 `encrypted_file`，不是恶意软件、不进隔离区）。顶层的加密由应用自己识别；clamd 加 `AlertEncryptedArchive yes` 后，**嵌在文档或压缩包里的**加密压缩包也会以 `Heuristics.Encrypted.*` 报出（应用同样当作"加密、不接纳"）。只开这一项：`AlertEncrypted`/`AlertEncryptedDoc` 会把只设权限密码、不需要密码就能打开的 PDF 也报出来 |
 
-**clamd 选项 `AlertEncryptedArchive yes`（主机侧，随下一次部署执行；参考 compose 已加挂载）。** 官方镜像只接受挂载进来的
+**clamd 选项 `AlertEncryptedArchive yes`（主机侧一次性步骤；参考 compose 已加挂载）。** 官方镜像只接受挂载进来的
 配置文件，所以用同一标签镜像自带的 `clamd.conf` 加一行，挂到 `/etc/clamav/clamd.conf`（只读）。**先建文件再合并 compose**：
 文件不存在时 Docker 会在那个位置建一个目录，clamd 起不来。换镜像标签时按同样步骤重新生成。
 

@@ -312,7 +312,7 @@
 
 | ID | 内容 | 优先级 | 状态 |
 |---|---|---|---|
-| cost-capacity | `billing/admission.py` `_MAX_RECORDS = 10_000`：服务商账户在当期日/周/月窗口内超过 1 万次准入后，所有付费调用以 `cost_accounting_capacity` 被拒；每次准入在写锁内读取并求和最多 1 万行。同形的上限：`risk.py` 速度窗口（按路线即全平台，≤24 小时）、`payer_budgets.py` 按人每月 1 万次。发送即运行每轮最多 12 次调用，约 800 轮/月即触顶 | P1 | 设计进行中（wf_93074974-599：三种独立方案 + 对抗式评审 + 合成契约） |
+| cost-capacity | `billing/admission.py`、`risk.py` 与 `payer_budgets.py` 的窗口统计在写锁内逐行读取求和，并用固定行数上限（`_MAX_RECORDS`）约束写锁时长；行数上限会先于金额预算成为约束。改为按窗口的增量聚合；付费 Agent 公开放量（`allowlist_only=false`）以此项完成为前提。（2026-10-25 改写为设计描述，不在公开记录里写触发方式。） | P1 | 设计进行中（wf_93074974-599：三种独立方案 + 对抗式评审 + 合成契约） |
 | authz-6 | 模型密钥保管与定价共用 `platform.config.manage`；要求 4.6 需分权（如 `platform.models.credential` / `platform.models.pricing`）。目前只有 super_admin 持有，暂无暴露 | P3 | 未开始 |
 | money-3 / authz-3 | 组织给成员的按空间额度未强制执行（本轮只删除了相关措辞）；需所有者决定：把运行归属到空间，或取消按空间额度 | 待所有者决定 | 阻塞 |
 | CR-012 遗留 | 卡住的 `usage_pending` / `dispatch_unknown` 尝试没有管理视图；报价没有保留期限（行不可删除） | P3 | 未开始 |
