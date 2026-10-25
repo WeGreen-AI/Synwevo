@@ -26,13 +26,16 @@ Synwevo 的代码以 AGPL-3.0-or-later 开源（`apps/docs/sdk/` 为 Apache-2.0�
 * **如实指称本项目**：例如「基于 Synwevo」「与 Synwevo 兼容」「Synwevo 的分支」「为 Synwevo 编写的插件」，
   只要不让人误以为你的产品就是 Synwevo，或得到了维护方的认可、赞助或合作。
 * **原样分发官方版本**：分发未经修改的官方源代码或发布版本时，保留其中的名称与图形。
+* **把未经修改的官方版本作为服务提供给他人**（例如托管服务商）：界面中的名称与图形可以保留，也可以说明你的服务
+  「运行 Synwevo」。不能让人以为你的服务由维护方运营，或得到其认可、赞助；你的服务本身的名称与域名也不能用
+  Synwevo（见下一节）。按文档调整配置（例如平台名称、地址、邮件发件人）不算修改。
 * **自己或本组织内部使用**：在内部运行（含修改过的）副本、不向组织以外的人提供时，界面中的名称与图形可以保留。
 * **报道、评论、教学与研究**中提到 Synwevo、展示其截图。
 
 ## 需要更名（或事先取得书面许可）的情况
 
 * **分发修改过的版本，或把修改过的版本作为网络服务提供给他人**：把面向用户的 Synwevo 名称、上表中的 Logo
-  与图标换成你自己的，并说明是「基于 Synwevo」。代码中的标识符（包名 `synwevo_*`、`@synwevo/*`、环境变量
+  与图标换成你自己的；你可以说明它「基于 Synwevo」，但这不是义务。代码中的标识符（包名 `synwevo_*`、`@synwevo/*`、环境变量
   `SYNWEVO_*`、数据库表名等）不是品牌用途，可以保留。
 * 把 Synwevo 或容易混淆的名称用于**你的**产品名、公司名、域名、应用商店名称或社交账号。
 * 修改 Logo 或图标、制作衍生图形，或把它们用在与本项目无关的地方。
@@ -64,6 +67,12 @@ they ship with the source only so that the official version builds and runs as p
   "a fork of Synwevo" or "a plugin for Synwevo", as long as nobody is led to believe that your
   product is Synwevo or is endorsed, sponsored or affiliated with the maintainers.
 * **Redistribute the official version unchanged**, keeping its name and artwork.
+* **Offer the unmodified official version to others as a service** (as a hosting provider, for
+  example): its interface may keep the name and artwork, and you may say that your service "runs
+  Synwevo". You must not suggest that the maintainers operate, endorse or sponsor your service, and
+  your service's own name and domain may not use Synwevo (see the next section). Adjusting the
+  documented configuration (the platform name, addresses, the mail sender and the like) is not a
+  modification.
 * **Use it yourself or inside your organization**: an internal deployment, modified or not, that
   is not offered to people outside your organization may keep the name and artwork in its interface.
 * **Mention Synwevo and show screenshots** in news, reviews, teaching and research.
@@ -72,7 +81,7 @@ they ship with the source only so that the official version builds and runs as p
 
 * **You distribute a modified version, or offer a modified version to others as a network
   service**: replace the user-facing Synwevo name and the logos and icons listed in that table with
-  your own, and say that it is "based on Synwevo". Identifiers in the code (package names `synwevo_*`
+  your own. You may say that it is "based on Synwevo"; you do not have to. Identifiers in the code (package names `synwevo_*`
   and `@synwevo/*`, `SYNWEVO_*` environment variables, table names and the like) are not brand use
   and may stay.
 * You want to use Synwevo, or a confusingly similar name, as **your** product name, company name,
