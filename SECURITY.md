@@ -21,8 +21,9 @@ fork 与自行部署的副本不单独发布修复，请更新到最新版本。
 
 ### 修复流程
 
-修复先私下准备（安全公告的临时私有 fork 或私有分支）；提交与 PR 文字只说明修了什么，不写利用方法。
-修复准备好、可以立即部署时才合入 `dev`，部署完成后再公开安全公告，随后同步到 `main`。
+修复在安全公告的临时私有 fork 里开发与审阅。那里不跑状态检查，分支规则也不生效，所以**不从安全公告里合并**。
+修复准备好、可以立即部署时，作为普通 PR 提到 `dev`：必需检查 `verify` 照常运行，以 merge commit 合入，合入即部署。
+提交与 PR 文字只说明修了什么，不写利用方法。部署完成后再公开安全公告，随后同步到 `main`。
 
 ## English
 
@@ -46,6 +47,8 @@ Only what `dev` currently deploys to production, i.e. the latest head of `dev`, 
 
 ### How fixes are handled
 
-Fixes are prepared privately (the security advisory's temporary private fork, or a private branch); commit
-and pull request text says what was fixed, never how to exploit it. A fix is merged into `dev` only when it
-can be deployed at once; the advisory is published after the deploy, and the fix then syncs to `main`.
+A fix is developed and reviewed in the security advisory's temporary private fork. Status checks do not run
+there and branch rules are not enforced, so a fix is **never merged from the advisory**. When it can be
+deployed at once, it goes to `dev` as an ordinary pull request: the required `verify` check runs as usual, it
+is merged with a merge commit, and the merge deploys. Commit and pull request text says what was fixed, never
+how to exploit it. The advisory is published after the deploy, and the fix then syncs to `main`.

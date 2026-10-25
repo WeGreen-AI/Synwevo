@@ -108,8 +108,9 @@ npm run typecheck && npm run build         # 三个前端外壳
   要重新部署 `dev` 头部，在 `dev` 上手动触发工作流。回滚见 `infra/production/README.md`。
 * **紧急情况**：受限 SSH 接收器的后备部署只发 `dev` 上已有的提交；只有仓库所有者能临时停用规则集。没经过
   `dev` 就进入 `main` 的改动，事后用 `main`→`dev` 的 PR（merge commit）补回 `dev`。
-* **安全修复**先私下准备（安全公告或私有分支），提交与 PR 文字不写利用步骤，准备好立即部署时才合入 `dev`，
-  部署后再披露（[SECURITY.md](SECURITY.md)）。被跟踪的文件里不写"生产仍有漏洞 X"。
+* **安全修复**在安全公告的临时私有 fork 里开发与审阅；那里不跑检查、分支规则不生效，所以不从安全公告里合并。
+  准备好立即部署时，作为普通 PR 提到 `dev`（`verify` 照常运行，merge commit 合入即部署），提交与 PR 文字
+  不写利用步骤；部署后再发布安全公告（[SECURITY.md](SECURITY.md)）。被跟踪的文件里不写"生产仍有漏洞 X"。
 
 ## 数据与安全
 
