@@ -338,6 +338,23 @@ def test_the_or_later_choice_and_the_exceptions_are_stated():
     assert "packages/ui/brand/" in trademarks and "packages/ui/app-icons/" in trademarks
 
 
+def test_every_platform_manifest_declares_the_program_licence():
+    """`pip show` / package metadata say AGPL-3.0-or-later for every platform package; only the SDKs differ."""
+    import json
+    import tomllib
+    root_package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    manifests = [ROOT / "package.json"] + [ROOT / w / "package.json" for w in root_package["workspaces"]]
+    for manifest in manifests:
+        assert json.loads(manifest.read_text(encoding="utf-8")).get("license") == licensing.PROGRAM_LICENSE, manifest
+    # the platform's Python packages are the ones the image installs (not a glob: a checkout can hold
+    # other worktrees under .claude/)
+    installed = _dockerfile_editable_installs((ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8"))
+    projects = [ROOT / path / "pyproject.toml" for path in installed]
+    assert len(projects) >= 8, projects
+    for project in projects:
+        assert tomllib.loads(project.read_text(encoding="utf-8"))["project"].get("license") == licensing.PROGRAM_LICENSE, project
+
+
 def test_the_sdks_carry_their_own_apache_license():
     """apps/docs/sdk/ is Apache-2.0: its files and both packages say so, and ship the text."""
     import json

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # PEP 639 licence expression
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,7 @@ name = "synwevo-suite"
 version = "1.0.0"
 description = "Synwevo 业务应用：Forms、Tables、DataPrep、Approvals、Extract 与个人 Agent，挂在工作空间源站上"
 requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
 # Only the shared layer. Each application is a subpackage that never imports a sibling; they reach
 # one another — and Synwevo Docs and Message — through the capability registry in synwevo-core.
 #   anthropic — the personal Agent's model provider (official SDK)

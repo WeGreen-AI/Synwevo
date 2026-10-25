@@ -2,6 +2,7 @@
   "name": "@synwevo/suite-web",
   "private": true,
   "version": "1.0.0",
+  "license": "AGPL-3.0-or-later",
   "description": "Synwevo 业务应用：Forms、Tables、DataPrep、Approvals、Extract 与个人 Agent（工作空间源站）",
   "type": "module",
   "scripts": {

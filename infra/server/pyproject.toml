@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # PEP 639 licence expression
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,7 @@ name = "synwevo-server"
 version = "1.0.0"
 description = "部署组装：按角色把 Synwevo Account、Workspace 与 Docs 拼成一个进程"
 requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
 # The one distribution that may depend on all of them, because it is the deployment and not an
 # application. Everything else is checked against this: no app may depend on another app.
 dependencies = ["synwevo-core", "synwevo-auth-client", "synwevo-identity",

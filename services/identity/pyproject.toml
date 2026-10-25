@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # PEP 639 licence expression
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,7 @@ name = "synwevo-identity"
 version = "1.0.0"
 description = "Synwevo Account：登录仪式、MFA、Passkey、邀请与找回、平台管理、OIDC 授权服务器"
 requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
 # Note what is absent: nothing from Synwevo Docs. The account service must start with the document
 # engine uninstalled, and this list is where that stops being a claim.
 dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "pydantic", "authlib", "httpx",

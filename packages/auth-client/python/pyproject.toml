@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # PEP 639 licence expression
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,7 @@ name = "synwevo-auth-client"
 version = "1.0.0"
 description = "应用接入 Synwevo Account 的 OIDC 依赖方适配与共用会话路由"
 requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
 dependencies = ["synwevo-core", "fastapi", "httpx", "authlib"]
 
 [tool.setuptools.packages.find]
