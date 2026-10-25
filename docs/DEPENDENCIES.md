@@ -130,4 +130,4 @@ curl -O http://<你的部署地址>/api/source-code      # 运行中的服务按
 ```
 
 实测（2026-09-23）：返回 479 296 字节的 tar.gz，153 个条目。2026-10-25 在本地检出上重测（`licensing.source_archive()`）：约 37 MB、2 206 个条目，含全部应用（Docs、门户、Message、`apps/suite` 的业务应用与个人 Agent）、平台共享包与前端包、账户服务、部署组装、脚本、测试、文档、依赖锁文件、`LICENSE` / `NOTICE` / `TRADEMARKS.md` 和 `SOURCE_OFFER.txt` 说明；**不包含** `data/`（用户文件）、`.venv/`、`node_modules/`、编译产物与 tessdata 模型文件。压缩包的路径清单与 `infra/Dockerfile` 的 COPY 行双向核对（`apps/docs/tests/test_licensing.py`）。
-产品界面「关于与许可」页展示第三方组件与许可证；源代码包由登录用户从 `/api/source-code` 下载。
+源代码包面向**所有**网络用户（第 13 条说的是与程序交互的全部用户，不只是登录成员）：部署的每个角色（账户、门户、Docs、消息）都挂载 `/api/about` 与 `/api/source-code`（`synwevo_docs.licensing.router`，由 `synwevo_server` 组装），请求网关在任何认证模式下都不要求登录（`synwevo_core.http` 的 `SOURCE_OFFER_PATHS`，精确路径）。公开站点与工作空间的页脚、每个登录 / 注册 / 找回页的页脚都链接到它；Docs 的「关于与许可」页显示本程序的许可、AGPL 组件说明和下载按钮，以及第三方组件与许可证。压缩包每个客户端地址每分钟最多下载 6 次。回归覆盖：`tests/integration/test_source_offer.py`（五个角色 × 两种认证模式，均匿名可达；相邻路径不因此匿名）。

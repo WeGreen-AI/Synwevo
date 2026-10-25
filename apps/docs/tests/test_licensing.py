@@ -304,6 +304,20 @@ def test_every_attribution_has_its_translation():
     assert not untranslated, f"Docs 外壳的目录缺少这些关于页文案的翻译：{untranslated}"
 
 
+def test_the_licence_and_component_notices_have_their_translations(monkeypatch):
+    """The About page shows `license_notice` and `notice` as they are, in three languages: each of
+    the three engine states has its sentence in the server catalogue, word for word."""
+    from synwevo_docs.engine import pdf_engine
+    catalogue = (ROOT / "apps" / "docs" / "web" / "src" / "messages.server.ts").read_text(encoding="utf-8")
+    for engine, installed in (("pymupdf", True), ("pdfium", True), ("pdfium", False)):
+        monkeypatch.setattr(pdf_engine, "ENGINE", engine)
+        monkeypatch.setattr(licensing, "pymupdf_installed", lambda installed=installed: installed)
+        a = licensing.about()
+        for text in (a["license_notice"], a["notice"]):
+            assert f'"{text}"' in catalogue, f"关于页的这句许可说明没有翻译：{text[:40]}…"
+            assert "**" not in text, "页面按纯文本显示，不能带 Markdown 标记"
+
+
 # SHA-256 of the licence texts exactly as their stewards publish them: the GNU AGPL version 3 from
 # https://www.gnu.org/licenses/agpl-3.0.txt and the Apache License 2.0 from
 # https://www.apache.org/licenses/LICENSE-2.0.txt. A licence file is copied, never edited: the

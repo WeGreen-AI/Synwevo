@@ -212,8 +212,10 @@ apps/docs/tests/test_licensing.py 保证两者一致。
 
 关于 AGPL-3.0：
   Synwevo 本身以 AGPL-3.0-or-later 许可。向网络用户提供修改过的 Synwevo 时，第 13 条要求
-  向他们提供对应源代码；本服务通过 /api/source-code 提供（由正在运行的文件生成，含 LICENSE、
-  NOTICE 与 TRADEMARKS.md）。
+  向他们提供对应源代码。部署的每个源站（账户、公开站点与工作空间、Docs、消息）都在
+  /api/source-code 提供它，无需登录：压缩包由正在运行的文件生成，含 LICENSE、NOTICE 与
+  TRADEMARKS.md。公开站点与工作空间的页脚、每个登录与注册页的页脚，以及 Docs 的「关于与许可」页
+  都链接到它；「关于与许可」页同时显示本程序的许可。
   PyMuPDF 以 AGPL-3.0（或 Artifex 商业许可）分发，其 wheel 中内含 MuPDF 原生二进制。
   只要镜像中安装了 pymupdf，无论 SYNWEVO_DOCS_PDF_ENGINE 选的是哪个引擎，它的 AGPL-3.0 义务都适用。
   默认构建（infra/Dockerfile、CI 与 scripts/platform.py setup）都安装 pymupdf。

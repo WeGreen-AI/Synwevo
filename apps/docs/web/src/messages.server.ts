@@ -508,6 +508,22 @@ export const serverMessages = {
     "en": "Chinese font for PDFs",
     "zh-Hant": "PDF 中文字體"
   },
+  "Synwevo 以 AGPL-3.0-or-later 许可（见 LICENSE 与 NOTICE；apps/docs/sdk/ 下的 SDK 为 Apache-2.0；Synwevo 名称、Logo 与图标不在许可之内，见 TRADEMARKS.md）。向网络用户提供修改过的 Synwevo 时，第 13 条要求向他们提供对应源代码。": {
+    "en": "Synwevo is licensed under AGPL-3.0-or-later (see LICENSE and NOTICE; the SDKs under apps/docs/sdk/ are Apache-2.0; the Synwevo name, logos and icons are not licensed, see TRADEMARKS.md). Whoever offers a modified Synwevo to users over a network must, under section 13, offer them its Corresponding Source.",
+    "zh-Hant": "Synwevo 以 AGPL-3.0-or-later 授權（見 LICENSE 與 NOTICE；apps/docs/sdk/ 下的 SDK 為 Apache-2.0；Synwevo 名稱、Logo 與圖示不在授權之內，見 TRADEMARKS.md）。向網路使用者提供修改過的 Synwevo 時，第 13 條要求向他們提供對應原始碼。"
+  },
+  "当前部署启用了 PyMuPDF（AGPL-3.0）。按 AGPL-3.0 第 13 条，通过网络向他人提供本服务时，应向其提供本程序完整的对应源代码；本服务在 /api/source-code 提供由正在运行的文件生成的源代码包，无需登录即可下载。关闭此下载（SYNWEVO_DOCS_SOURCE_OFFER=off）的前提是：PyMuPDF 已取得 Artifex 商业许可，或已改用 pdfium 引擎（SYNWEVO_DOCS_PDF_ENGINE=pdfium）并从镜像中移除 pymupdf；并且运行的是未经修改的 Synwevo，或已通过其他途径向用户提供对应源代码。": {
+    "en": "This deployment uses PyMuPDF (AGPL-3.0). Under section 13 of AGPL-3.0, offering this service to others over a network means offering them the complete Corresponding Source of the program; this service offers a source archive built from the running files at /api/source-code, with no sign-in needed. Turning this download off (SYNWEVO_DOCS_SOURCE_OFFER=off) requires that PyMuPDF is under an Artifex commercial license, or that the pdfium engine is selected (SYNWEVO_DOCS_PDF_ENGINE=pdfium) and pymupdf removed from the image; and that the deployment runs an unmodified Synwevo or offers the Corresponding Source to its users another way.",
+    "zh-Hant": "目前部署啟用了 PyMuPDF（AGPL-3.0）。按 AGPL-3.0 第 13 條，透過網路向他人提供本服務時，應向其提供本程式完整的對應原始碼；本服務在 /api/source-code 提供由正在執行的文件生成的原始碼包，無需登入即可下載。關閉此下載（SYNWEVO_DOCS_SOURCE_OFFER=off）的前提是：PyMuPDF 已取得 Artifex 商業授權，或已改用 pdfium 引擎（SYNWEVO_DOCS_PDF_ENGINE=pdfium）並從映像中移除 pymupdf；並且執行的是未經修改的 Synwevo，或已透過其他途徑向使用者提供對應原始碼。"
+  },
+  "当前 PDF 引擎是 pdfium（pypdfium2，Apache-2.0 / BSD-3-Clause），但本部署仍然安装了 PyMuPDF：AGPL-3.0 的 MuPDF 二进制仍随镜像分发，且图片模板包装页与中文后备字体两处仍会调用它。因此 AGPL-3.0 第 13 条的源代码提供义务依然适用。要去掉这一 AGPL 依赖，镜像中就不能安装 pymupdf；目前没有经过验证的这种平台构建（apps/docs/requirements-pdfium.txt 只覆盖 Synwevo Docs，且缺少 pycrdt）。": {
+    "en": "The PDF engine is pdfium (pypdfium2, Apache-2.0 / BSD-3-Clause), but this deployment still has PyMuPDF installed: the AGPL-3.0 MuPDF binary still ships in the image, and the image-template wrapper page and the Chinese fallback font still call it. The source obligation of AGPL-3.0 section 13 therefore still applies. Removing this AGPL dependency means not installing pymupdf in the image; no such platform build has been verified yet (apps/docs/requirements-pdfium.txt covers only Synwevo Docs and lacks pycrdt).",
+    "zh-Hant": "目前 PDF 引擎是 pdfium（pypdfium2，Apache-2.0 / BSD-3-Clause），但本部署仍然安裝了 PyMuPDF：AGPL-3.0 的 MuPDF 二進位檔仍隨映像分發，且圖片模板包裝頁與中文後備字體兩處仍會呼叫它。因此 AGPL-3.0 第 13 條的原始碼提供義務依然適用。要去掉這一 AGPL 相依，映像中就不能安裝 pymupdf；目前沒有經過驗證的這種平台建置（apps/docs/requirements-pdfium.txt 只涵蓋 Synwevo Docs，且缺少 pycrdt）。"
+  },
+  "本部署未安装 PyMuPDF，镜像中不含 MuPDF 二进制，无第三方 AGPL 依赖；PDF / 图片模板的部分能力在此模式下受限。": {
+    "en": "This deployment does not have PyMuPDF installed: the image holds no MuPDF binary and there is no third-party AGPL dependency. Some PDF and image-template features are limited in this mode.",
+    "zh-Hant": "本部署未安裝 PyMuPDF，映像中不含 MuPDF 二進位檔，無第三方 AGPL 相依；PDF / 圖片模板的部分能力在此模式下受限。"
+  },
   "Tesseract OCR（外部程序）+ tessdata_fast 模型（chi_sim / eng / osd）": {
     "en": "Tesseract OCR (external program) + tessdata_fast models (chi_sim / eng / osd)",
     "zh-Hant": "Tesseract OCR（外部程式）+ tessdata_fast 模型（chi_sim / eng / osd）"

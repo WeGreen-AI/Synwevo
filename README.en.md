@@ -10,8 +10,9 @@
 **Let workflows handle the repetitive work.**
 
 A workflow automation platform: one unified account, one workspace portal, and the first business
-application, **Synwevo Docs** (data mapping and batch document generation). Everything runs on your
-own machine or server. No file ever leaves it.
+application, **Synwevo Docs** (data mapping and batch document generation). Documents are parsed,
+converted, recognised and generated on your own machine or server; only the optional personal Agent
+sends the conversation and the files you choose to the configured model provider.
 
 [简体中文](README.md) · English
 
@@ -342,9 +343,10 @@ Most documents are written in Chinese.
   "based on Synwevo", but a modified version that you distribute or offer to others as a service
   must carry your own name and artwork.
 * **Offer the source when you serve users over a network.** If you offer a modified Synwevo to
-  users over a network, section 13 of AGPL-3.0 requires offering them its Corresponding Source;
-  `/api/source-code` builds that archive from the **files actually running** (including `LICENSE`,
-  `NOTICE` and `TRADEMARKS.md`).
+  users over a network, section 13 of AGPL-3.0 requires offering them its Corresponding Source.
+  `/api/source-code`, on every origin and without signing in, builds that archive from the **files
+  actually running** (including `LICENSE`, `NOTICE` and `TRADEMARKS.md`). The footers of the public
+  site, the workspace and the sign-in pages, and the Docs page about licences, link to it.
 * **The default build includes PyMuPDF (AGPL-3.0, or an Artifex commercial license).** The image,
   CI and `scripts/platform.py setup` all install it, and production uses the `pymupdf` engine. There
   is **no** verified platform build without AGPL components: `apps/docs/requirements-pdfium.txt`

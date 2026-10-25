@@ -1079,6 +1079,12 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     # These two are the only paths a load balancer or container runtime must reach without a
     # credential, and neither handler reads tenant-scoped data.
     PROBE_PATHS = frozenset({"/healthz", "/readyz"})
+    # The licence and the Corresponding Source offer (AGPL-3.0 §13). The offer is owed to every
+    # remote user of the program — the person on the sign-in page or the public site as much as a
+    # signed-in member — so these two are served by every role (the composer mounts them) and
+    # pass the gate without a session in every mode. Exact paths, like the probes above; neither
+    # handler reads tenant-scoped data.
+    SOURCE_OFFER_PATHS = frozenset({"/api/about", "/api/source-code"})
     # The account routes an application still needs about its *own* session: who is signed in,
     # which workspace is selected, and how to leave. Credentials, MFA enrolment, invitations and
     # device management stay on the account service, so there is one place to change a password
@@ -1104,7 +1110,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         for the same one.
         """
         this_role = this_role_static
-        if this_role in ("all", ""):
+        if this_role in ("all", "") or path in SOURCE_OFFER_PATHS:
             return None
         if path in (MCP_METADATA_PATH, MCP_CLIENT_METADATA_PATH):
             # The MCP server is a resource server of the workplace origin: its metadata lives
@@ -1307,6 +1313,10 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                     # depend on a shared password. The bodies are kept to the minimum that the
                     # contract promises; see the handlers.
                     token = set_tenant("__probe__")
+                elif path in SOURCE_OFFER_PATHS:
+                    # The licence and the source archive: anonymous in every mode and role, so the
+                    # §13 offer reaches people who are not (or cannot be) signed in.
+                    token = set_tenant("__public__")
                 elif any(path.startswith(p) for p in PLATFORM_PREFIXES + SSO_PREFIXES):
                     # Protocol endpoints authenticate themselves: /oidc/authorize reads the
                     # central session cookie and redirects to /login when there is none, and the

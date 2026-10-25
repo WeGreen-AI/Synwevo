@@ -144,7 +144,9 @@ export function AuthFrame({ title, description, children, wide = false }: {
         {children}
       </section>
     </div>
-    <footer className="flow-footer"><Logo version="wordmark" height={13} /></footer>
+    {/* AGPL-3.0 §13: the source of the running program, offered to everyone who reaches a
+        sign-in, sign-up or recovery page — no session needed (synwevo_docs.licensing.router). */}
+    <footer className="flow-footer"><Logo version="wordmark" height={13} /><a href="/api/source-code" download title={t("下载正在运行版本的对应源代码")}>{t("源代码（AGPL-3.0）")}</a></footer>
   </main>;
 }
 

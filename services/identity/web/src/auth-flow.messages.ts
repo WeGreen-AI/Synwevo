@@ -686,6 +686,8 @@ export const messages = {
   "登录一次，回到你的工作空间。": { en: "Sign in once and return to your workspace.", "zh-Hant": "登入一次，回到你的工作空間。" },
   "同一个账户进入你所属的组织与工作空间；登录方式、设备与通知都在这里管理。": { en: "One account for the organizations and workspaces you belong to; sign-in methods, devices and notifications are managed here.", "zh-Hant": "同一個帳戶進入你所屬的組織與工作空間；登入方式、裝置與通知都在這裡管理。" },
   "账户 · 工作空间 · 组织": { en: "Account · Workspace · Organization", "zh-Hant": "帳戶 · 工作空間 · 組織" },
+  "源代码（AGPL-3.0）": { en: "Source code (AGPL-3.0)", "zh-Hant": "原始碼（AGPL-3.0）" },
+  "下载正在运行版本的对应源代码": { en: "Download the Corresponding Source of the running version", "zh-Hant": "下載正在執行版本的對應原始碼" },
   "验证已超时，请重新登录。": { en: "Verification timed out. Sign in again.", "zh-Hant": "驗證已逾時，請重新登入。" },
   "这次登录无法验证，请重新开始。": { en: "This sign-in could not be verified. Please start again.", "zh-Hant": "這次登入無法驗證，請重新開始。" },
   "已取消，或此设备上没有可用于本站的安全密钥。平台域名已更换，在旧域名登记的安全密钥不能在这里使用：请先用口令或邮箱验证码登录，再在「账户与安全」重新登记。": { en: "Cancelled, or this device has no security key for this site. The platform moved to a new domain and keys registered on the old one cannot be used here: sign in with your password or an e-mail code, then register a new key under Account & security.", "zh-Hant": "已取消，或此裝置上沒有可用於本站的安全金鑰。平台網域已更換，在舊網域登記的安全金鑰不能在這裡使用：請先用密碼或電子郵件驗證碼登入，再到「帳戶與安全」重新登記。" },

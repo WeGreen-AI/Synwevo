@@ -78,6 +78,12 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
     # one implementation — the account service does not get its own copy and neither does an app.
     from synwevo_auth_client.session_routes import build_router as build_session_router
     api.include_router(build_session_router(plat.identity, plat.sessions, plat.audit))
+    if not wants_app:
+        # The licence and the Corresponding Source offer (AGPL-3.0 §13) belong to the whole
+        # program, not to one application: every role serves them, anonymously (the gate's
+        # SOURCE_OFFER_PATHS). Where Synwevo Docs is mounted its install brings the same router.
+        from synwevo_docs.licensing import router as source_offer_router
+        api.include_router(source_offer_router())
 
     if wants_app:
         from synwevo_docs.api import app as docs_app

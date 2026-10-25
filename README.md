@@ -10,7 +10,8 @@
 **把重复的工作，交给流程。**
 
 工作流程自动化平台：一套统一账户、一个工作空间门户，以及第一个业务应用 **Synwevo Docs**
-（数据映射与批量文档生成）。全部处理在本机或自有服务器完成，不向外部服务发送文件。
+（数据映射与批量文档生成）。文档的解析、转换、识别与生成都在本机或自有服务器完成；只有使用可选的个人 Agent 时，
+对话与你选择发送的文件内容才会发给所配置的模型提供方。
 
 简体中文 · [English](README.en.md)
 
@@ -311,7 +312,8 @@ python scripts/platform.py restore <归档> --into DIR  # 恢复并重放备份�
 * **名称、Logo 与图标不在许可之内。** 见 [TRADEMARKS.md](TRADEMARKS.md)：可以如实说「基于 Synwevo」；
   分发修改过的版本、或把它作为服务提供给他人时，要换成你自己的名称与图形。
 * **对外提供服务时提供源代码。** 向网络用户提供修改过的 Synwevo 时，AGPL-3.0 第 13 条要求向他们提供对应源代码；
-  `/api/source-code` 由**正在运行的文件**生成该压缩包（含 `LICENSE`、`NOTICE` 与 `TRADEMARKS.md`）。
+  每个源站的 `/api/source-code` 由**正在运行的文件**生成该压缩包（含 `LICENSE`、`NOTICE` 与 `TRADEMARKS.md`），
+  无需登录即可下载。公开站点、工作空间与登录页的页脚和 Docs 的「关于与许可」页都链接到它。
 * **默认构建包含 PyMuPDF（AGPL-3.0，或 Artifex 商业许可）。** 镜像、CI 与 `scripts/platform.py setup` 都安装它，
   生产使用 `pymupdf` 引擎。目前**没有**经过验证的不含 AGPL 组件的平台构建：`apps/docs/requirements-pdfium.txt`
   只覆盖 Synwevo Docs、缺少实时协同需要的 `pycrdt`，也没有任何构建从它安装；`SYNWEVO_DOCS_PDF_ENGINE=pdfium`

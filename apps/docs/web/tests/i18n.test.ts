@@ -88,9 +88,12 @@ test('all literal Docs translation calls have resources; saved font names and pa
         }
         if (n.kind === K.JsxAttribute && ['href', 'src'].includes(n.name.getText(sf))) {
           // Authenticated resource components handle API URLs; raw anchors/images cannot
-          // attach the tab workspace header and must not be reintroduced.
+          // attach the tab workspace header and must not be reintroduced. The one exception is the
+          // AGPL-3.0 §13 source archive: anonymous on every origin and about no workspace, so a
+          // plain download link is what it should be (synwevo_core.http SOURCE_OFFER_PATHS).
           const element = n.parent?.parent?.tagName?.getText(sf);
-          if (['a', 'img'].includes(element) && /\/api\//.test(n.getText(sf))) missing.push(`${path}: unbound API ${element}`);
+          const sourceOffer = n.initializer?.kind === K.StringLiteral && n.initializer.text === '/api/source-code';
+          if (['a', 'img'].includes(element) && /\/api\//.test(n.getText(sf)) && !sourceOffer) missing.push(`${path}: unbound API ${element}`);
         }
         n.forEachChild(visit);
       }

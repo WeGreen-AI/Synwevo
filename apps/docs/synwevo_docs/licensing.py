@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
 import os
 import tarfile
 import threading
 import time
 from pathlib import Path
+
+from fastapi import Request   # module level: the route below is annotated with it (postponed annotations)
 
 from synwevo_core import env
 from synwevo_core.http import repo_root
@@ -52,6 +55,9 @@ MAX_FILE = 5 * 1024 * 1024
 # The program's own licence (LICENSE); the SDKs under apps/docs/sdk/ are Apache-2.0 (their own LICENSE).
 PROGRAM_LICENSE = "AGPL-3.0-or-later"
 SDK_LICENSE = "Apache-2.0"
+LICENSE_NOTICE = ("Synwevo 以 AGPL-3.0-or-later 许可（见 LICENSE 与 NOTICE；apps/docs/sdk/ 下的 SDK 为 Apache-2.0；"
+                  "Synwevo 名称、Logo 与图标不在许可之内，见 TRADEMARKS.md）。"
+                  "向网络用户提供修改过的 Synwevo 时，第 13 条要求向他们提供对应源代码。")
 
 # Every component the running deployment uses or ships, grouped by what it does. "Every" is held by
 # apps/docs/tests/test_licensing.py: each runtime pin in infra/server/requirements.lock and each
@@ -138,24 +144,25 @@ def about() -> dict:
     from .engine import pdf_engine
     engine_uses = pdf_engine.ENGINE == "pymupdf"
     present = pymupdf_installed()
-    own = ("Synwevo 以 AGPL-3.0-or-later 许可（见 LICENSE 与 NOTICE；apps/docs/sdk/ 下的 SDK 为 Apache-2.0）。"
-           "向网络用户提供修改过的 Synwevo 时，第 13 条要求向他们提供对应源代码。")
     if engine_uses:
         notice = ("当前部署启用了 PyMuPDF（AGPL-3.0）。按 AGPL-3.0 第 13 条，通过网络向他人提供本服务时，应向其提供本程序完整的对应源代码；"
-                  "本页提供的源代码包即由正在运行的文件生成。关闭此下载（SYNWEVO_DOCS_SOURCE_OFFER=off）的前提是："
+                  "本服务在 /api/source-code 提供由正在运行的文件生成的源代码包，无需登录即可下载。关闭此下载（SYNWEVO_DOCS_SOURCE_OFFER=off）的前提是："
                   "PyMuPDF 已取得 Artifex 商业许可，或已改用 pdfium 引擎（SYNWEVO_DOCS_PDF_ENGINE=pdfium）并从镜像中移除 pymupdf；"
                   "并且运行的是未经修改的 Synwevo，或已通过其他途径向用户提供对应源代码。")
     elif present:
-        notice = ("当前 PDF 引擎是 pdfium（pypdfium2，Apache-2.0 / BSD-3-Clause），**但本部署仍然安装了 PyMuPDF**："
+        notice = ("当前 PDF 引擎是 pdfium（pypdfium2，Apache-2.0 / BSD-3-Clause），但本部署仍然安装了 PyMuPDF："
                   "AGPL-3.0 的 MuPDF 二进制仍随镜像分发，且图片模板包装页与中文后备字体两处仍会调用它。"
                   "因此 AGPL-3.0 第 13 条的源代码提供义务依然适用。要去掉这一 AGPL 依赖，镜像中就不能安装 pymupdf；"
                   "目前没有经过验证的这种平台构建（apps/docs/requirements-pdfium.txt 只覆盖 Synwevo Docs，且缺少 pycrdt）。")
     else:
         notice = "本部署未安装 PyMuPDF，镜像中不含 MuPDF 二进制，无第三方 AGPL 依赖；PDF / 图片模板的部分能力在此模式下受限。"
-    notice = own + notice
     return {
         "license": PROGRAM_LICENSE,
         "sdk_license": SDK_LICENSE,
+        # The program's own licence, said once; `notice` below is about the third-party AGPL
+        # component only. Two fields rather than one joined sentence, so a page can show and
+        # translate each as it is.
+        "license_notice": LICENSE_NOTICE,
         "pdf_engine": pdf_engine.ENGINE,
         # the three claims, kept apart on purpose
         "pymupdf_used_by_engine": engine_uses,
@@ -274,3 +281,46 @@ def _build_archive(files: list, stamp: str) -> tuple[bytes, str]:
         info.mtime = int(time.time())
         tar.addfile(info, io.BytesIO(readme))
     return buf.getvalue(), f"{top}.tar.gz"
+
+
+#: Archive downloads per minute per client address. The offer is anonymous and the archive is tens
+#: of megabytes, so one address cannot turn it into a bandwidth pump; a person fetching the source
+#: is never near this.
+DOWNLOADS_PER_MIN = 6
+
+
+def router():
+    """``GET /api/about`` and ``GET /api/source-code``, for every role of the deployment.
+
+    AGPL-3.0 §13 asks for the offer to be made to *all* users who interact with the program over a
+    network. Served only by Synwevo Docs and only to signed-in members, it reached nobody who used
+    just the sign-in page, the public site, the workspace or the conversations — the same process
+    and the same program. So the composer (synwevo_server) mounts this router on every role, the
+    request gate lets exactly these two paths through without a session
+    (``synwevo_core.http.SOURCE_OFFER_PATHS``), and the page footers link to the archive. Neither
+    handler reads anything a workspace owns.
+    """
+    from fastapi import APIRouter
+    from fastapi.responses import Response
+    from synwevo_core.errors import ServiceError
+    from synwevo_core.http import RateBuckets, client_ip
+
+    r = APIRouter()
+    downloads = RateBuckets(DOWNLOADS_PER_MIN, name="source-code")
+
+    @r.get("/api/about")
+    def about_route():
+        return about()
+
+    @r.get("/api/source-code")
+    def source_code(request: Request):
+        if not source_offer_enabled():
+            raise ServiceError(404, "source_offer_off", "本部署已关闭源代码下载（运营方以其他方式提供对应源代码，或运行未经修改、不含第三方 AGPL 组件的版本）")
+        allowed, _left, wait = downloads.take(client_ip(request) or "unknown")
+        if not allowed:
+            raise ServiceError(429, "too_many_attempts", "操作过于频繁，请稍后再试", {"retry_after": max(1, math.ceil(wait))})
+        data, name = source_archive()
+        return Response(data, media_type="application/gzip",
+                        headers={"Content-Disposition": f"attachment; filename=\"{name}\""})
+
+    return r
