@@ -2,16 +2,16 @@
 
 ## 当前状态：持续执行，不暂停
 
-- 所有者 2026-10-23：恢复 GitHub Actions 计费（2026-10-25 已确认恢复，见下）；Actions 不可用时改为“本机复刻 verify + 同一源码包交给主机 receive.py”部署；“继续之前没完成的任务”；**Agent 发送即运行，不再逐次确认计费**（D17）；本会话自设 /loop 按统一交付要求持续执行，检查通过即部署。
-- 实施树 `.claude/worktrees/agent-billing`，分支 `claude/agent-billing`（HEAD 311508fe = origin/main = 生产）；包工作树 auto-run-server / auto-run-web / auto-run-copy 已合入。主检出其他工作保留；MCP 工作在 `.claude/worktrees/mcp-platform`（另一会话，不取锁）。
-- 协调锁：主树 `docs/agent-work/.coordinator.lock`，2026-10-23T07:16Z 起由本会话 `80146fec-e8b8-43eb-aafb-6b062986dc5d` 持有（接自 13b6809f：心跳停在 10-13，记录最后写入 10-18，10-23 不在活动会话中且仓库自 10-14 无改动；所有者要求继续其未完成工作）。
+- 所有者 2026-10-25：仓库（已公开）开源；**main 为公开的开源分支（dev 的合并镜像），开发与 CI/CD 全部移到受保护的 dev**（必须 PR、必须 `verify` 通过、禁止直推/强推/删除，规则集无任何绕过；外部 PR 进 dev；dev 定期同步到 main）；许可证：平台 AGPL-3.0-or-later、SDK Apache-2.0、另附 TRADEMARKS.md；内部记录保留公开但脱敏；不改写历史（决定 D19）。此前 2026-10-23：Agent 发送即运行（D17）；本会话自设 /loop 按统一交付要求持续执行，检查通过即部署。
+- 工作方式：每项改动在自己的工作分支完成后 `git push origin refs/heads/<分支>:refs/heads/<分支>`（push.default=upstream 陷阱）→ `gh pr create --base dev` → verify 通过后以合并提交合入 → dev 推送即验证并部署；main 只收 dev→main 同步 PR（必须 `verify` 与 `sync-source`）。改动 `.github/**`、`infra/**`、守卫脚本的 PR 须逐行阅读后合并。
+- 协调锁：主树 `docs/agent-work/.coordinator.lock`，2026-10-23T07:16Z 起由本会话 `80146fec-e8b8-43eb-aafb-6b062986dc5d` 持有（接自 13b6809f）。MCP 工作在另一会话（`claude/mcp-platform`，已于 5db93f86 合入并随 8a3b679d 上线）。
 
 ## 实际发布与CI
 
-- **生产当前为 `311508fe2ba1a83f09f051030bf0cf032404491b`**（2026-10-25 09:47Z，D17 发送即运行 + B3，经主机 receive.py 部署；备份 `/opt/synwevo/backups/20261025T094644Z`；五域 /readyz 200、四角色同镜像且 healthy、无错误日志；`organization_apps` 与 `run_budget_cap` 已迁移，quick_check ok；记录 `docs/quality/deployment.md` 当前段）。本机 verify 镜像：Python 3.12、守卫、类型检查、构建、前端、SDK、infra、Docker 运行时镜像 3g/2cpu 全量 6519 通过 / 5 跳过 / 0 失败。
-- **GitHub Actions 已恢复**：运行 40181913056（311508fe）作业正常启动，verify 在 `services/identity/web` `npm test` 失败——10 个账户前端测试按 Node 23 ICU 的日期/时间文字断言，在流水线的 Node 22 下不一致（本机镜像跑的是 Node 23.6.1，所以没暴露）；deploy 跳过。生产代码不受影响（日期由浏览器格式化）。正在把这些测试改为与 ICU 版本无关（wf_17830410-6c4），之后推送并回到流水线。**不要重跑早于已部署版本的旧运行**（会把旧代码推到已迁移的数据库上）；40181913056 本身与生产同一 SHA，也无需重跑。
-- **main 暂停推送（2026-10-25 11:19Z 起）**：MCP 会话误把 `claude/mcp-platform` 推到了 origin/main（de4eff93，MCP 服务端与 Agent 的 MCP 客户端，104 个文件，新增表与 oauth_clients 列，均为追加式；分支跟踪设置所致），并已取消其运行 40188380863（未部署）。**由所有者决定保留还是撤销**；决定前协调者不向 main 推送。本地待推：5ea0cca8 之后的 de90192d（BACKLOG）、59721962（组织详情语句计数只数本库）、2853a66d（Docs 测试关闭所有实时编辑连接 + 守卫）、65508143（集成测试失败时也关闭连接；守卫说明）——均为测试/记录，不改产品代码。CI 40182684885 的失败即由 2853a66d 所修的跨测试连接泄漏引起。若保留 MCP：候选 16632b16（release-local，本地分离提交 = 2992a059 + claude/mcp-platform 7239d2f1，干净合并）已过：Node 22 前端（typecheck/build/npm test 0 失败，TS SDK 48）、主机侧镜像（守卫、实时表格客户端、infra；Python SDK 中断用例负载下超时一次，单独 2/2 通过）、运行时镜像 3g/2cpu 全量 6866 通过 / 5 跳过 / 0 失败。剩余：verify-restore 演练与主机 `SYNWEVO_ISSUER` 规范值核对；推送前改写候选合并提交说明。
-- 待所有者：① Admin 支付设置仍为 v3（card + wechat_pay + alipay，2026-10-08），10-23 所说的“只含银行卡”未形成新版本——请重新发布（重认证后版本号应为 4）；② DeepSeek 路线 revision 1 有效期 2026-10-15T11:00Z 已过，所有付费 Agent 调用被拒（公开状态如实显示“模型服务暂停”），请在 Admin 续期（材料 `evidence/2026-10-11-route-renewal/README.md`）；③ 2026-10-25 条款与定价文本建议法律顾问复核；④ DeepSeek 训练与保留的书面答复仍未取得。
+- **生产当前为 `8a3b679ddb7fa4d747054d067ec8ade6fe7a1d2e`**（2026-10-25 22:15Z，dev 的第一次部署：MCP 平台 + CI/CD 切换到 dev + 测试修复；流水线运行 40232805667 verify/deploy 均成功；备份 `/opt/synwevo/backups/20261025T221441Z`；五域 /readyz 200、四角色同镜像且 healthy、无错误日志；9 张 mcp_* 表与 oauth_clients 4 列已迁移，quick_check ok；记录 `docs/quality/deployment.md` 当前段）。
+- 流水线：仓库公开后 Actions 托管运行器免费；verify 上限 120 分钟（MCP 合入后全量运行时测试约 68 分钟）。不要重跑早于已部署版本的旧运行；部署守卫也会拒绝。
+- 进行中的 PR：#3 脱敏（进 dev）、#4 首次 dev→main 同步；许可证 PR 在合入前修复公开源码接口的安全问题（只发已跟踪文件、进程内缓存与按 /64 限流、按 scope 路径判定、归一化打包元数据）；成本核算上限（cost-capacity）实现完成、终审中。
+- 待所有者：① Admin 支付设置仍为 v3（card + wechat_pay + alipay），请重新发布仅含银行卡的版本；② DeepSeek 路线 2026-10-15 已过期，付费 Agent 调用被拒（公开状态如实显示“模型服务暂停”），请在 Admin 续期；③ 2026-10-25 条款与定价文本请法律顾问复核；④ DeepSeek 训练与保留书面答复未取得；⑤ 开源审计：把本机密钥文件移出检出目录，开启 secret scanning / push protection / 私密漏洞报告，按审计直接告知所有者的步骤加固管理员账户；成本核算上限上线前保持付费 Agent 放行名单模式。
 
 ## 当前工作包与下一条动作
 

@@ -14,7 +14,7 @@
 
 简体中文 · [English](README.en.md)
 
-[![Verify and deploy](https://github.com/WeGreen-AI/Synwevo/actions/workflows/production.yml/badge.svg)](https://github.com/WeGreen-AI/Synwevo/actions/workflows/production.yml)
+[![Verify and deploy](https://github.com/WeGreen-AI/Synwevo/actions/workflows/production.yml/badge.svg?branch=dev)](https://github.com/WeGreen-AI/Synwevo/actions/workflows/production.yml?query=branch%3Adev)
 ![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![Node 22](https://img.shields.io/badge/Node-22-339933?logo=node.js&logoColor=white)
 ![React · Vite · TypeScript](https://img.shields.io/badge/React-Vite%20%C2%B7%20TypeScript-2563EB)
@@ -241,8 +241,10 @@ with Client.from_env(timeout=30, max_retries=4) as client:
 npm run typecheck && npm run build             # 三个前端外壳
 ```
 
-CI（[.github/workflows/production.yml](.github/workflows/production.yml)）在每次 push 与 PR 上跑同一组检查，并在隔离容器里以生产运行时执行完整测试套件；
-只有 `main` 通过验证后才经受限 SSH 命令部署，随后核对三个公开域名的 `/readyz`。
+CI（[.github/workflows/production.yml](.github/workflows/production.yml)）在每个指向 `dev` 或 `main` 的 PR 和每次合入 `dev` 时跑同一组检查，
+并在隔离容器里以生产运行时执行完整测试套件（只改 `docs/` 记录的 PR 只跑全仓守卫）。开发与部署都在 `dev`：
+只有 `dev` 通过验证后才经受限 SSH 命令部署，随后核对三个公开域名的 `/readyz`；`main` 是公开的开源分支，
+只通过来自 `dev` 的同步 PR 更新（分支规则见 [AGENTS.md](AGENTS.md#分支与发布)）。
 最近一次部署轮的结果（Python 套件 1893 通过 / 2 跳过、前端与守卫全部通过）与逐表逐 blob 的数据保全比对记录在
 [docs/quality/deployment.md](docs/quality/deployment.md)。
 
@@ -295,6 +297,8 @@ python scripts/platform.py restore <归档> --into DIR  # 恢复并重放备份�
 
 ## 参与开发
 
+* PR 请指向 **`dev`** 分支：流程、DCO 签名与本地检查见 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题按
+  [SECURITY.md](SECURITY.md) 私下报告，不要开公开 issue。
 * 平台级或跨模块的改动从**仓库根目录**开始；只改 Synwevo Docs 从 `apps/docs/` 开始，仍遵守根目录 `AGENTS.md`。
 * 一个测试如果需要另一个模块的路由才能通过，它属于 `tests/integration/`。
 * 不建假应用、空服务、占位仪表盘；不 Mock、不假登录、不假数据看板；测试夹具要标明是夹具。

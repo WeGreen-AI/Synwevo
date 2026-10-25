@@ -83,7 +83,7 @@ CI/CD、备份和线上验证的当前状态统一记录在 [deployment.md](depl
 | 项 | 值 |
 |---|---|
 | 仓库根目录 | `/Users/lihiko/repo/wegreen/synwevo`（2026-09-23 由 `.../DocWeave` 改名为 `platform-workspace`，2026-09-24 再改名为 `synwevo`；Git 历史原样保留） |
-| 分支 | `main`，跟踪 `origin/main` |
+| 分支 | `main`，跟踪 `origin/main`（当时；现在开发与部署在 `dev`，`main` 是公开镜像，见 [AGENTS.md](../../AGENTS.md#分支与发布)） |
 | 基线提交 | `08f2e81`（升级前快照，可回滚到此） |
 | 最新提交 | 见 `git log -1` |
 | 远端 | `origin` → `git@github.com:WeGreen-AI/Synwevo.git`；开发修改和部署修复已经授权推送。旧记录“目标仓库为空 / 尚未提交”已失效 |
