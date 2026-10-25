@@ -102,7 +102,8 @@ function AgentApp() {
   const [draft, setDraft] = useState<Draft | null>(null);
   // The composer kept while the person is in Agent settings (a refusal's next step, the maximum's
   // or a limit's link), for the conversation it was written in, until that composer takes it back
-  // (addendum-2 W10). Chat hands it over as it goes away; only a move to Agent settings keeps it.
+  // (addendum-2 W10) or a send from that conversation completes. Chat hands it over as it goes
+  // away; only a move to Agent settings keeps it.
   const [kept, setKept] = useState<{ key: string; draft: ComposerDraft } | null>(null);
   const inSettings = useRef(settings);
   inSettings.current = settings;
@@ -223,10 +224,14 @@ function AgentApp() {
    *  words when something is missing. */
   async function start(next: Draft) {
     if (billingRequired) shownPrice(shown.current.status);   // held before a conversation is made for it
+    const from = id ?? "new";
     let cid = id ?? retryCreate.current;
     if (!cid) { cid = (await write("agent.conversation.create", {})).id; retryCreate.current = cid; }
     checkTurn(await startTurn({ conversation_id: cid, ...next }));
     retryCreate.current = undefined;
+    // Sent: a copy of this message kept while the person went to Agent settings meanwhile is not
+    // put back in the composer (the composer is cleared when a send completes).
+    setKept((kept) => (kept?.key === from ? null : kept));
     navigate(`/agent/c/${cid}`); setTick((n) => n + 1); await refresh();
   }
   /** The price the composer shows, as a paid send repeats it (AD-1). Without one (the status is

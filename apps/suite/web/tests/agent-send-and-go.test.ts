@@ -113,7 +113,8 @@ async function appFixture({ billing = true, setup: initialSetup = fixtureSetup()
   let failure: unknown, route: string | undefined = initial ?? undefined, status = initialStatus, offer = initialOffer, setup = initialSetup;
   /** Agent settings is a route inside the same AgentApp (no conversation is open there). */
   let onSettings = false;
-  /** Errors the next requests meet, one each, before `failure` (e.g. a lost connection). */
+  /** Errors the next requests meet, one each, before `failure` (e.g. a lost connection); a Promise
+   *  instead holds that request until it settles (the server still answering it), then answers it. */
   const next: unknown[] = [];
   /** FIXTURE of the server's idempotency record (capabilities `_prior` / `_replay`): a key the
    *  server answered with a refusal is answered again with 409 idempotent_failure carrying that
@@ -141,7 +142,8 @@ async function appFixture({ billing = true, setup: initialSetup = fixtureSetup()
       const replayed = options?.key && answered.get(`${operation}:${options.key}`);
       if (replayed) throw new client.ApiError(409, 'idempotent_failure', 'fixture', { run_id: 'run_fixture', code: (replayed as any).code });
       const error = next.length ? next.shift() : failure;
-      if (error) {
+      if (error instanceof Promise) await error;
+      else if (error) {
         if (options?.key && !((error as any).status === 0 || (error as any).upstream)) answered.set(`${operation}:${options.key}`, error);
         throw error;
       }
@@ -819,6 +821,144 @@ test('W10: when the setup step\'s send is refused, focus moves to the refusal no
   r.render({ focusTick: 2 });
   assert.equal(focused.length, 2, 'only when asked again');
   h.unmount();
+});
+
+// ---------------------------------------------------------------- the composer across a trip to Agent settings (browser proof, defect 1)
+
+const pendingSetup = () => fixtureSetup({ complete: false, terms: { complete: false, documents: fixtureSetup().terms.documents.map((d: any) => ({ ...d, accepted: false })) } });
+const CONTEXT = { reference: { kind: 'form', workspace_id: 'ws_a', resource_id: 'frm_fixture', snapshot: 'a'.repeat(64) },
+  title: 'Fixture form', workspace_name: 'Fixture a', open_path: null };
+const FILE = { title: 'fixture.txt', reference: { file_id: 'file_fixture', snapshot: 'b'.repeat(64) } };
+
+/** The page's Chat as React holds it: the compiled Chat.tsx mounted with the props the page renders
+ *  now, kept while the page renders the same one (same key), mounted afresh when it renders a new one
+ *  (back from Agent settings, another conversation), and unmounted (running its cleanups: it hands its
+ *  message to the page) when the page renders none. */
+async function liveChat(h: any) {
+  const reports = await server.ssrLoadModule('/src/apps/agent/ReportDialog.tsx');
+  const picker = await server.ssrLoadModule('/src/apps/agent/ContextPicker.tsx');
+  const overrides = { './ContextPicker': { ...picker, useContextText: () => (key: string) => key },
+    './ChatParts': { ...parts, useChatText: () => ({ c: (key: string) => key }) },
+    './ReportDialog': { ...reports, useReportText: () => (key: string) => key } };
+  let mounted: any = null, key: unknown, mounts = 0;
+  const live = {
+    mounts: () => mounts,
+    chat: () => mounted,
+    async sync() {
+      for (let pass = 0; pass < 4; pass++) {
+        await settle(); h.render();
+        const element = h.elements().find((el: any) => el.type === chat.default);
+        if (!element) { mounted?.unmount(); mounted = null; continue; }
+        if (mounted && element.key === key) { mounted.render(element.props); continue; }
+        mounted?.unmount();
+        key = element.key; mounts += 1;
+        mounted = await compiled('Chat.tsx', element.props, overrides);
+      }
+      h.render();
+    },
+    async type(text: string) { mounted.find((el: any) => el.type === 'textarea').props.onChange({ target: { value: text } }); mounted.render(); await live.sync(); },
+    async attach() {
+      mounted.find((el: any) => el.props?.spaces && el.props.onChoose).props.onChoose(CONTEXT); mounted.render();
+      mounted.find((el: any) => el.props?.client && el.props.onChoose).props.onChoose(FILE); mounted.render();
+      await live.sync();
+    },
+    async submit() { mounted.find((el: any) => el.type === 'form').props.onSubmit({ preventDefault() {} }); await live.sync(); await live.sync(); },
+    /** What the composer holds: the text, the source chips and the file chips. */
+    composer() {
+      const chips = (name: string) => mounted.elements().find((el: any) => el.type?.name === name)?.props.selected ?? [];
+      return plain({ text: mounted.find((el: any) => el.type === 'textarea').props.value, contexts: chips('ContextChips'), files: chips('FileChips') });
+    },
+    unmount() { mounted?.unmount(); mounted = null; },
+  };
+  await live.sync();
+  return live;
+}
+/** A new person: the setup step opens on Send and its button sends the message (the page's sentDraft). */
+async function afterSetupSend() {
+  const h = await appFixture({ setup: pendingSetup() });
+  const c = await liveChat(h);
+  await c.type('Fixture first question'); await c.submit();
+  assert.equal(h.card().length, 1, 'the setup step is open with the message kept');
+  h.serve({ setup: fixtureSetup() });   // FIXTURE: what the step records (its own writes are tested in agent-setup)
+  await h.card()[0].props.onComplete(); await c.sync();
+  assert.deepEqual(h.writes.map((w) => w.operation), ['agent.turn.start']);
+  assert.equal(h.chat().sentDraft, 1);
+  assert.deepEqual(c.composer(), { text: '', contexts: [], files: [] }, 'the sent message left the composer');
+  return { h, c };
+}
+const TYPED = { text: 'Fixture typed after the answer', contexts: plain([CONTEXT]), files: plain([FILE]) };
+
+test('proof defect 1: after the setup step\'s send, a message typed next survives trips to Agent settings with its sources and files', async () => {
+  const { h, c } = await afterSetupSend();
+  await c.type(TYPED.text); await c.attach();
+  assert.deepEqual(c.composer(), TYPED);
+  for (const trip of [1, 2]) {
+    await h.settings(true); await c.sync();
+    assert.equal(c.chat(), null, 'Agent settings replaces the conversation');
+    await h.settings(false); await c.sync();
+    assert.deepEqual(c.composer(), TYPED, `back from Agent settings (trip ${trip})`);
+  }
+  assert.equal(c.mounts(), 3, 'a new composer each time back (the case the old clearing on mount broke)');
+  // A send that completes still clears the composer.
+  await c.submit();
+  assert.deepEqual(plain(h.writes.at(-1).input), { conversation_id: 'conv_fixture', text: TYPED.text, context_refs: [CONTEXT.reference], file_refs: [FILE.reference], ...SEEN });
+  assert.deepEqual(c.composer(), { text: '', contexts: [], files: [] });
+  c.unmount(); h.unmount();
+});
+
+test('proof defect 1: after "send again", a refused message taken to Agent settings by its own link is back on return', async () => {
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const h = await appFixture({ setup: pendingSetup() });
+  const c = await liveChat(h);
+  await c.type('Fixture first question'); await c.submit();
+  h.serve({ setup: fixtureSetup() });
+  // The setup step's send is refused; "send again" (the page's notice) sends it.
+  h.fail(new client.ApiError(409, 'billing_price_changed', 'fixture', { current: { price_id: 'price_fixture_2' } }));
+  await h.card()[0].props.onComplete(); await c.sync();
+  h.fail(undefined);
+  h.find((el) => el.type === parts.RefusalNotice).props.onRetry(); await c.sync();
+  assert.equal(h.chat().sentDraft, 1);
+  assert.deepEqual(c.composer(), { text: '', contexts: [], files: [] });
+  // The next message is refused for the per-answer maximum: its next step is a link to Agent settings.
+  h.fail(new client.ApiError(409, 'billing_run_cap_below_call_hold', 'fixture', { per_call_hold: '39', cap: '30', unit: UNIT }));
+  await c.type(TYPED.text); await c.attach(); await c.submit();
+  h.fail(undefined);
+  const notice = c.chat().find((el: any) => el.type === parts.RefusalNotice);
+  assert.equal(notice.props.refusal.next, 'settings');
+  assert.match(renderToStaticMarkup(React.createElement(router.MemoryRouter, null, notice)), /href="\/agent\/settings"/);
+  assert.deepEqual(c.composer(), TYPED, 'refused: the message stays');
+  await h.settings(true); await c.sync(); await h.settings(false); await c.sync();
+  assert.deepEqual(c.composer(), TYPED, 'and comes back from Agent settings');
+  c.unmount(); h.unmount();
+});
+
+test('proof defect 1: a message kept in Agent settings comes back to its own conversation after a switch, never to another', async () => {
+  const { h, c } = await afterSetupSend();
+  await c.type(TYPED.text); await c.attach();
+  await h.settings(true); await c.sync();
+  // From Agent settings the person opens another conversation, then the one they wrote in.
+  h.route('conv_other'); await h.settings(false); await c.sync();
+  assert.deepEqual(c.composer(), { text: '', contexts: [], files: [] }, 'another conversation does not receive it');
+  h.route('conv_fixture'); await c.sync();
+  assert.deepEqual(c.composer(), TYPED, 'its own conversation does');
+  assert.equal(c.mounts(), 3);
+  c.unmount(); h.unmount();
+});
+
+test('proof defect 1: a message whose send completes while the person is in Agent settings does not come back', async () => {
+  const h = await appFixture({ setup: pendingSetup() });
+  const c = await liveChat(h);
+  await c.type('Fixture in flight'); await c.submit();
+  h.serve({ setup: fixtureSetup() });
+  let answer!: () => void;
+  h.failNext(new Promise<void>((resolve) => { answer = resolve; }));   // FIXTURE: the server is still answering
+  const sending = h.card()[0].props.onComplete(); await c.sync();
+  await h.settings(true); await c.sync();
+  answer(); await sending; await c.sync();
+  await h.settings(false); await c.sync();
+  assert.equal(h.chat().sentDraft, 1);
+  assert.deepEqual(c.composer(), { text: '', contexts: [], files: [] }, 'it was sent: it is not put back');
+  c.unmount(); h.unmount();
 });
 
 test('C1: the model panel beside the composer shows the unit prices, the price version and the per-answer maximum', async () => {
