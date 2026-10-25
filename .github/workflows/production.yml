@@ -22,22 +22,45 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  # Runs that can deploy (push or dispatch on dev) share one group and run in push order: an older
-  # commit never deploys after a newer one, and a newer pending run replaces an older pending one.
-  # Pull requests and runs on other refs each have their own group, so they never cancel or hold up
-  # a deploy; a new push to a pull request cancels that pull request's older verify.
-  group: ${{ (github.event_name != 'pull_request' && github.ref == 'refs/heads/dev') && 'synwevo-production' || format('synwevo-verify-{0}', github.ref) }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Concurrency is set per job, not per run. A run joins a group when it is queued, a group holds one
+# running and one pending member, and a newly pending member cancels the one already pending: a
+# re-run of an old dev run in a shared group would cancel a newer pending run and then be refused,
+# leaving the newer commit undeployed. So a re-run (attempt 2 or later) of a push or dispatch gets a
+# group of its own, and verify refuses it in its first step unless its commit is still dev's head.
 jobs:
   verify:
-    # The job id is the check name the branch rules require: keep it `verify`, without a `name:` or
-    # a matrix (either would change the reported name and leave the required check waiting).
+    # The job id is the check name the branch rules require: keep it `verify`, without a `name:`, a
+    # matrix (either would change the reported name and leave the required check waiting) or an `if`
+    # or `needs` (a skipped required check counts as passed).
     runs-on: ubuntu-24.04
+    # Pull requests: one verify per pull request, a new push cancels the older one. Push and dispatch:
+    # one verify per ref at a time in push order, a newer pending one replacing an older pending one
+    # (the newer commit contains the older). Deploy jobs queue in the same order (below).
+    concurrency:
+      group: ${{ (github.event_name != 'pull_request' && github.run_attempt != '1') && format('synwevo-rerun-{0}', github.run_id) || format('synwevo-verify-{0}', github.ref) }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # Run 36997527305: 2,922 tests took 39m37s at ~69% (before an SDK install failure).
     # Allow the complete suite plus image build; retain every test and the 3 GiB / 2 CPU limits.
     timeout-minutes: 75
     steps:
+      - name: Refuse a re-run that is no longer dev's head
+        # A re-run keeps its original commit. On dev it may verify (and then deploy) that commit only
+        # while it is still dev's head; checked here, before the long verify. Pull requests, first
+        # attempts and other refs pass without an API call. To deploy dev's head again, dispatch the
+        # workflow on dev. (The deploy job checks again: "Re-run failed jobs" skips this job when it
+        # passed before.)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] && [ "$GITHUB_REF" = refs/heads/dev ] && [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            head=$(gh api "repos/$GITHUB_REPOSITORY/branches/dev" --jq .commit.sha)
+            if [ "$head" != "$GITHUB_SHA" ]; then
+              echo "::error::This re-run would verify and deploy $GITHUB_SHA, but dev is at $head. Dispatch this workflow on dev instead."
+              exit 1
+            fi
+            echo "Re-run of dev's head $GITHUB_SHA."
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -191,6 +214,12 @@ jobs:
     needs: verify
     environment: production
     runs-on: ubuntu-24.04
+    # One deploy at a time, in push order (verify finishes in that order); a newer pending deploy
+    # replaces an older pending one. A re-run has a group of its own, as in verify: the guard below
+    # refuses it unless it is dev's head, and the receiver's host lock refuses an overlapping deploy.
+    concurrency:
+      group: ${{ github.run_attempt == '1' && 'synwevo-production' || format('synwevo-rerun-deploy-{0}', github.run_id) }}
+      cancel-in-progress: false
     timeout-minutes: 30
     permissions:
       contents: read
@@ -201,15 +230,18 @@ jobs:
         # re-run keeps its original commit. Production runs the commit of the newest production
         # deployment that succeeded (this job's own has not yet). The same commit is a redeploy and
         # passes — so does the first dev deploy of the commit main deployed last; a newer one passes;
-        # an older or unrelated one is refused. A re-run must also still be dev's head, because a
-        # deploy through the host receiver leaves no deployment record here. To deploy dev's head
-        # again, dispatch this workflow on dev; to roll back, see infra/production/README.md.
+        # an older or unrelated one is refused. Every page of deployments is read: refused, failed
+        # and billing-blocked deploy jobs leave records without a success, so the newest success can
+        # lie any number of records back. When no deployment ever succeeded (a new environment), only
+        # dev's head deploys. A re-run must also still be dev's head, because a deploy through the
+        # host receiver leaves no deployment record here. To deploy dev's head again, dispatch this
+        # workflow on dev; to roll back, see infra/production/README.md.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           api="repos/$GITHUB_REPOSITORY"
-          gh api "$api/deployments?environment=production&per_page=100" \
+          gh api --paginate "$api/deployments?environment=production&per_page=100" \
             --jq '.[] | "\(.id) \(.sha)"' > "$RUNNER_TEMP/deployments.txt"
           deployed=''
           while read -r id sha; do
@@ -217,15 +249,20 @@ jobs:
             if [ "$ok" = true ]; then deployed=$sha; break; fi
           done < "$RUNNER_TEMP/deployments.txt"
           if [ -z "$deployed" ]; then
-            echo "::error::No successful production deployment among the newest 100, so the commit production runs is unknown. Deploy through the host receiver (infra/production/README.md) instead."
-            exit 1
+            head=$(gh api "$api/branches/dev" --jq .commit.sha)
+            if [ "$head" != "$GITHUB_SHA" ]; then
+              echo "::error::No production deployment has ever succeeded here, and $GITHUB_SHA is not dev's head ($head): only dev's head deploys then. Dispatch this workflow on dev."
+              exit 1
+            fi
+            echo "::warning::No production deployment has ever succeeded here; $GITHUB_SHA is dev's head."
+          else
+            relation=$(gh api "$api/compare/$deployed...$GITHUB_SHA?per_page=1" --jq .status)
+            case "$relation" in
+              identical|ahead) echo "Production runs $deployed; $GITHUB_SHA is $relation." ;;
+              *) echo "::error::Production runs $deployed and $GITHUB_SHA is $relation relative to it: refusing to deploy an older or unrelated commit. Dispatch this workflow on dev to deploy dev's head."
+                 exit 1 ;;
+            esac
           fi
-          relation=$(gh api "$api/compare/$deployed...$GITHUB_SHA?per_page=1" --jq .status)
-          case "$relation" in
-            identical|ahead) echo "Production runs $deployed; $GITHUB_SHA is $relation." ;;
-            *) echo "::error::Production runs $deployed and $GITHUB_SHA is $relation relative to it: refusing to deploy an older or unrelated commit. Dispatch this workflow on dev to deploy dev's head."
-               exit 1 ;;
-          esac
           if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
             head=$(gh api "$api/branches/dev" --jq .commit.sha)
             if [ "$head" != "$GITHUB_SHA" ]; then

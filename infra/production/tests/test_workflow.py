@@ -9,6 +9,7 @@ a `gh` test double (a fixture that answers fixed API responses and applies the r
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,19 @@ def step(job, *, step_id=None, name=None):
         if (step_id and item.get('id') == step_id) or (name and item.get('name') == name):
             return item
     raise AssertionError(f'no step {step_id or name}')
+
+
+def evaluate(expression, github):
+    """Evaluate the small subset of the Actions expression language the concurrency settings use.
+
+    `a && b || c` returns operands like Python's `and`/`or`; string comparison, `format()` and
+    `github.<name>` are all these expressions need. Anything else fails the eval.
+    """
+    body = expression.strip()
+    assert body.startswith('${{') and body.endswith('}}'), expression
+    body = body[3:-2].replace('&&', ' and ').replace('||', ' or ')
+    body = re.sub(r'\bgithub\.(\w+)', lambda m: repr(github[m.group(1)]), body)
+    return eval(body, {'__builtins__': {}}, {'format': lambda text, *args: text.format(*args)})
 
 
 def git_env(home):
@@ -65,11 +79,16 @@ class BranchModelTests(unittest.TestCase):
         self.assertNotIn('name', verify)
         self.assertNotIn('strategy', verify)
         self.assertNotIn('if', verify, 'a skipped job would let any change through the required check')
+        self.assertNotIn('needs', verify, 'a failed dependency skips verify, which counts as passed')
 
     def test_heavy_steps_run_unless_the_classifier_said_records_only(self):
         steps = self.wf['jobs']['verify']['steps']
-        self.assertEqual(steps[0]['with']['fetch-depth'], 2)
-        self.assertEqual(steps[1]['id'], 'changes')
+        # The re-run guard comes first, before checkout and the long verify, on every event.
+        self.assertEqual(steps[0]['name'], "Refuse a re-run that is no longer dev's head")
+        self.assertNotIn('if', steps[0])
+        self.assertEqual(steps[1]['with']['fetch-depth'], 2)
+        self.assertEqual(steps[2]['id'], 'changes')
+        steps = steps[1:]
         records = [s for s in steps[2:] if s.get('if') == "steps.changes.outputs.code == 'false'"]
         self.assertEqual(len(records), 1)
         self.assertIn('check_brand.py', records[0]['run'])
@@ -101,10 +120,31 @@ class BranchModelTests(unittest.TestCase):
         self.assertIn('tail -n 30', deploy_step['run'])
         self.assertIn('> "$log" 2>&1', deploy_step['run'])
 
-    def test_only_deploying_runs_share_the_production_group(self):
-        group = self.wf['concurrency']['group']
-        self.assertIn("(github.event_name != 'pull_request' && github.ref == 'refs/heads/dev') && 'synwevo-production'", group)
-        self.assertIn("format('synwevo-verify-{0}', github.ref)", group)
+    def test_concurrency_groups(self):
+        # Per job: a re-run must never queue in a shared group, where it would cancel a newer
+        # pending member before its own guard refuses it.
+        self.assertNotIn('concurrency', self.wf)
+        verify = self.wf['jobs']['verify']['concurrency']
+        deploy = self.wf['jobs']['deploy']['concurrency']
+
+        self.assertIs(deploy['cancel-in-progress'], False, 'a newer deploy never cancels a running one')
+
+        def groups(event, ref, attempt):
+            github = {'event_name': event, 'ref': ref, 'run_attempt': attempt, 'run_id': '4242'}
+            return (evaluate(verify['group'], github), evaluate(verify['cancel-in-progress'], github),
+                    evaluate(deploy['group'], github))
+
+        dev = ('synwevo-verify-refs/heads/dev', False, 'synwevo-production')
+        rerun = ('synwevo-rerun-4242', False, 'synwevo-rerun-deploy-4242')
+        self.assertEqual(groups('push', 'refs/heads/dev', '1'), dev)
+        self.assertEqual(groups('workflow_dispatch', 'refs/heads/dev', '1'), dev)
+        self.assertEqual(groups('push', 'refs/heads/dev', '2'), rerun)
+        self.assertEqual(groups('workflow_dispatch', 'refs/heads/dev', '3'), rerun)
+        pull = groups('pull_request', 'refs/pull/7/merge', '1')
+        self.assertEqual(pull[:2], ('synwevo-verify-refs/pull/7/merge', True))
+        # A pull request's re-run stays in its pull request's group (it deploys nothing).
+        self.assertEqual(groups('pull_request', 'refs/pull/7/merge', '2')[:2], ('synwevo-verify-refs/pull/7/merge', True))
+        self.assertEqual(groups('workflow_dispatch', 'refs/heads/feature', '1')[:2], ('synwevo-verify-refs/heads/feature', False))
 
 
 class RecordsOnlyClassifierTests(unittest.TestCase):
@@ -291,12 +331,20 @@ class RecordsOnlyClassifierTests(unittest.TestCase):
 
 
 GH_DOUBLE = '''#!{python}
-"""Test double for `gh api ENDPOINT [--jq FILTER]`: fixed responses from GH_FIXTURES, real jq."""
+"""Test double for `gh api [--paginate] ENDPOINT [--jq FILTER]`: fixed responses from GH_FIXTURES, real jq.
+
+A fixture {{"pages": [...]}} is a paginated response: without --paginate only its first page is
+returned, as the real API returns one page per request; --paginate applies the filter to every page.
+"""
 import json, os, subprocess, sys
 args = sys.argv[1:]
 assert args[0] == 'api', args
-endpoint = args[1]
-jq = args[args.index('--jq') + 1] if '--jq' in args else '.'
+rest = args[1:]
+jq = rest[rest.index('--jq') + 1] if '--jq' in rest else '.'
+paginate = '--paginate' in rest
+positional = [a for i, a in enumerate(rest) if not a.startswith('--') and (i == 0 or rest[i - 1] != '--jq')]
+assert len(positional) == 1, args
+endpoint = positional[0]
 with open(os.environ['GH_FIXTURES']) as f:
     fixtures = json.load(f)
 with open(os.environ['GH_CALLS'], 'a') as f:
@@ -304,8 +352,12 @@ with open(os.environ['GH_CALLS'], 'a') as f:
 if fixtures.get(endpoint) is None:
     sys.stderr.write('gh: HTTP 502 (test double)\\n')
     sys.exit(1)
-done = subprocess.run(['jq', '-r', jq], input=json.dumps(fixtures[endpoint]), text=True)
-sys.exit(done.returncode)
+value = fixtures[endpoint]
+pages = value['pages'] if isinstance(value, dict) and 'pages' in value else [value]
+for page in (pages if paginate else pages[:1]):
+    done = subprocess.run(['jq', '-r', jq], input=json.dumps(page), text=True)
+    if done.returncode:
+        sys.exit(done.returncode)
 '''
 
 
@@ -375,12 +427,32 @@ class DeployGuardTests(unittest.TestCase):
                 self.assertEqual(code, 1, out)
                 self.assertIn('refusing to deploy', out)
 
-    def test_unknown_production_commit_is_refused(self):
-        code, out = self.guard(self.fixtures(statuses={3: [{'state': 'in_progress'}],
-                                                       2: [{'state': 'failure'}], 1: [{'state': 'error'}]}))
-        self.assertEqual(code, 1, out)
-        code, out = self.guard(self.fixtures(deployments=[]))
-        self.assertEqual(code, 1, out)
+    def test_success_beyond_the_first_page_is_found(self):
+        # 100 newer records without a success (refused, failed, billing-blocked deploy jobs) fill
+        # the first page; production's success is on the second.
+        failures = [{'id': 1000 + i, 'sha': 'e' * 40} for i in range(100)]
+        statuses = {1000 + i: [{'state': 'failure'}, {'state': 'queued'}, {'state': 'waiting'}] for i in range(100)}
+        statuses[2] = [{'state': 'success'}]
+        fixtures = self.fixtures(deployments={'pages': [failures, [{'id': 2, 'sha': self.PROD}]]},
+                                 statuses=statuses, head='d' * 40)
+        code, out = self.guard(fixtures)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f'Production runs {self.PROD}', out)
+
+    def test_no_success_on_record_deploys_only_dev_head(self):
+        never = {3: [{'state': 'in_progress'}], 2: [{'state': 'failure'}], 1: [{'state': 'error'}]}
+        for deployments in ('default', []):
+            with self.subTest(deployments=deployments):
+                code, out = self.guard(self.fixtures(deployments=deployments, statuses=never, head='d' * 40))
+                self.assertEqual(code, 1, out)
+                self.assertIn('only dev\'s head deploys', out)
+                code, out = self.guard(self.fixtures(deployments=deployments, statuses=never))
+                self.assertEqual(code, 0, out)
+                self.assertIn('No production deployment has ever succeeded', out)
+        fixtures = self.fixtures(statuses=never)
+        fixtures[f'repos/{REPO}/branches/dev'] = None
+        code, out = self.guard(fixtures)
+        self.assertNotEqual(code, 0, out)
 
     def test_api_failures_refuse(self):
         api = f'repos/{REPO}'
@@ -393,6 +465,12 @@ class DeployGuardTests(unittest.TestCase):
                 code, out = self.guard(fixtures)
                 self.assertNotEqual(code, 0, out)
 
+    def test_first_attempt_with_production_on_record_does_not_read_dev(self):
+        fixtures = self.fixtures()
+        fixtures[f'repos/{REPO}/branches/dev'] = None
+        code, out = self.guard(fixtures)
+        self.assertEqual(code, 0, out)
+
     def test_rerun_must_still_be_dev_head(self):
         code, out = self.guard(self.fixtures(head=self.NEW), attempt='2')
         self.assertEqual(code, 0, out)
@@ -402,6 +480,56 @@ class DeployGuardTests(unittest.TestCase):
         fixtures = self.fixtures()
         fixtures[f'repos/{REPO}/branches/dev'] = None
         code, out = self.guard(fixtures, attempt='3')
+        self.assertNotEqual(code, 0, out)
+
+
+@unittest.skipUnless(shutil.which('jq'), 'the re-run guard test needs jq, as gh --jq does')
+class VerifyRerunGuardTests(unittest.TestCase):
+    """The first verify step refuses a re-run on dev whose commit is no longer dev's head."""
+    SHA = 'c' * 40
+
+    @classmethod
+    def setUpClass(cls):
+        cls.script = step(load('production.yml')['jobs']['verify'], name="Refuse a re-run that is no longer dev's head")['run']
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix='synwevo-rerun-guard-fixture-')
+        self.addCleanup(temp.cleanup)
+        self.tmp = Path(temp.name)
+        bin_dir = self.tmp / 'bin'
+        bin_dir.mkdir()
+        gh = bin_dir / 'gh'
+        gh.write_text(GH_DOUBLE.format(python=sys.executable))
+        gh.chmod(0o755)
+        self.path = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+    def guard(self, *, event='push', ref='refs/heads/dev', attempt='1', head=None):
+        fixtures = self.tmp / 'fixtures.json'
+        fixtures.write_text(json.dumps({f'repos/{REPO}/branches/dev': None if head is None else {'commit': {'sha': head}}}))
+        calls = self.tmp / 'calls.txt'
+        calls.write_text('')
+        env = {'PATH': self.path, 'HOME': str(self.tmp), 'GH_FIXTURES': str(fixtures), 'GH_CALLS': str(calls),
+               'GITHUB_REPOSITORY': REPO, 'GITHUB_SHA': self.SHA, 'GITHUB_RUN_ATTEMPT': attempt,
+               'GITHUB_EVENT_NAME': event, 'GITHUB_REF': ref, 'GH_TOKEN': 'test-double-token'}
+        done = subprocess.run(['bash', '-e', '-c', self.script], env=env, capture_output=True, text=True)
+        return done.returncode, done.stdout + done.stderr, calls.read_text().split()
+
+    def test_first_attempts_pull_requests_and_other_refs_pass_without_a_call(self):
+        for case in ({'event': 'push'}, {'event': 'workflow_dispatch'},
+                     {'event': 'pull_request', 'ref': 'refs/pull/7/merge', 'attempt': '2'},
+                     {'event': 'workflow_dispatch', 'ref': 'refs/heads/feature', 'attempt': '2'}):
+            with self.subTest(**case):
+                code, out, calls = self.guard(**case)
+                self.assertEqual((code, calls), (0, []), out)
+
+    def test_rerun_on_dev_must_be_dev_head(self):
+        code, out, calls = self.guard(attempt='2', head=self.SHA)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(calls, [f'repos/{REPO}/branches/dev'])
+        code, out, _ = self.guard(event='workflow_dispatch', attempt='3', head='d' * 40)
+        self.assertEqual(code, 1, out)
+        self.assertIn('Dispatch this workflow on dev', out)
+        code, out, _ = self.guard(attempt='2', head=None)        # the API fails: refuse
         self.assertNotEqual(code, 0, out)
 
 

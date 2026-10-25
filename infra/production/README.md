@@ -97,11 +97,14 @@ This keeps LibreOffice/font behaviour aligned with production. The runtime uses 
 Only a successful push or dispatch run on `dev` of `WeGreen-AI/Synwevo` deploys; it alone can use the
 `production` environment, whose branch policy must admit `dev` only. Pushes to `main` run nothing:
 `main` is the public mirror of `dev`, updated by sync pull requests (`main-sync-guard.yml` checks their
-source). Deploying runs share one concurrency group, in push order. Before anything reaches the host,
-the deploy job refuses a commit older than (or unrelated to) the newest successful production
-deployment, and a re-run whose commit is no longer `dev`'s head; to deploy `dev`'s head again, dispatch
-the workflow on `dev`. A deploy through the receiver outside Actions (only ever a commit already on
-`dev`) leaves no deployment record for that check. The receiver's build output stays on the runner:
+source). Deploy jobs share one concurrency group and run in push order (`dev`'s verify jobs share
+another); a re-run (attempt 2 or later) gets groups of its own, so it can never cancel a newer pending
+run, and its first verify step refuses it within seconds unless its commit is still `dev`'s head.
+Before anything reaches the host, the deploy job refuses a commit older than (or unrelated to) the
+newest successful production deployment, read across every page of deployment records, and a
+re-run whose commit is no longer `dev`'s head; when no deployment has ever succeeded, only `dev`'s head
+deploys. To deploy `dev`'s head again, dispatch the workflow on `dev`. A deploy through the receiver
+outside Actions (only ever a commit already on `dev`) leaves no deployment record for that check. The receiver's build output stays on the runner:
 the public log shows the receipt, or the last 30 lines when the receiver fails.
 
 Environment secrets: `SYNWEVO_DEPLOY_KEY`, `SYNWEVO_KNOWN_HOSTS`; environment variable:
