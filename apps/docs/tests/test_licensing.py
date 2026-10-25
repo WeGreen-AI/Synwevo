@@ -362,11 +362,20 @@ def test_the_licence_and_component_notices_have_their_translations(monkeypatch):
             assert "**" not in text, "页面按纯文本显示，不能带 Markdown 标记"
 
 
-# SHA-256 of the licence texts exactly as their stewards publish them: the GNU AGPL version 3 from
-# https://www.gnu.org/licenses/agpl-3.0.txt and the Apache License 2.0 from
-# https://www.apache.org/licenses/LICENSE-2.0.txt. A licence file is copied, never edited: the
+# SHA-256 of the licence texts as they are published. A licence file is copied, never edited: the
 # copyright line and the "or later" choice live in NOTICE and the READMEs, not in the licence text.
-AGPL_3_0_SHA256 = "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef"
+#
+# The GNU AGPL version 3 is published in two byte forms. They differ only in where two lines of the
+# non-operative "How to Apply These Terms" appendix wrap (lines 636-637, "as published by / the
+# Free Software Foundation" against "as published / by the Free Software Foundation"), so they are
+# the same licence. LICENSE is GitHub's template (choosealicense.com `_licenses/agpl-3.0.txt`: the
+# body after its front matter, less the blank line that opens it); the FSF's own file would do as
+# well. Either passes; an edit fails.
+AGPL_3_0_SHA256 = {
+    "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef": "GitHub / choosealicense.com template",
+    "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0": "FSF, https://www.gnu.org/licenses/agpl-3.0.txt",
+}
+# The Apache License 2.0 exactly as https://www.apache.org/licenses/LICENSE-2.0.txt publishes it.
 APACHE_2_0_SHA256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
 
 
@@ -379,7 +388,7 @@ def test_license_file_is_shipped():
     """No skip: the root LICENSE is the unmodified GNU AGPL v3 text wherever the program runs."""
     lic = ROOT / "LICENSE"
     assert lic.is_file(), "LICENSE 不在运行目录里：镜像没有复制它，对应源代码包也会缺它"
-    assert _sha256(lic) == AGPL_3_0_SHA256, "LICENSE 必须是未经改动的 GNU AGPL 第 3 版原文"
+    assert _sha256(lic) in AGPL_3_0_SHA256, "LICENSE 必须是未经改动的 GNU AGPL 第 3 版原文"
 
 
 def test_the_or_later_choice_and_the_exceptions_are_stated():
