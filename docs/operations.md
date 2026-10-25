@@ -277,14 +277,14 @@ SMTP2GO 账户或收件人能看：
 
 排查时把地址的本地部分遮掉；不要导出正文或令牌。`docker logs` 只保留最近三份 10 MB，超过两周的记录要看 SMTP2GO。
 
-2026-09-26 核对的发信域状态（`hikosphere.com`）：SPF `v=spf1 ip4:149.28.18.222 include:_spf.mx.cloudflare.net ~all`
-**没有** SMTP2GO 出口；DKIM `mailcow2026._domainkey` 已发布且与 rspamd 持有的公钥一致；DMARC `p=none`。
-`wegreen.ltd` 也已有 mailcow 签发并发布的 `mailcow2026` DKIM。要提高机构网关的接受率，按顺序做（都是 DNS/供应商侧，不改代码）：
+核对发信域时看三项（都是公开 DNS，用 `dig TXT` 即可）：SPF 是否包含实际的出口（本链路是 SMTP2GO 中继）、
+DKIM 选择器（本部署是 `mailcow2026._domainkey`）是否发布且与 rspamd 持有的公钥一致、DMARC 的策略与 `rua`。
+某一天的记录快照不写在这里，查询结果以 DNS 为准（2026-10-25 删去 2026-09-26 的快照）。要提高机构网关的接受率，按顺序做（都是 DNS/供应商侧，不改代码）：
 
 1. SMTP2GO 后台验证发件域 `hikosphere.com`（按其给出的 CNAME 记录发布），这样回信地址（Return-Path）与 DKIM 都与 From 对齐，
    退信也会回到可查的地方；同时给事务邮件关闭「链接跟踪 / 打开跟踪」，否则 SMTP2GO 重写正文会破坏 mailcow 的签名，机构网关还会再重写一次链接。
 2. SPF 加 `include:spf.smtp2go.com`（若 SMTP2GO 使用自己的回信域，这一条不影响 DMARC，但让 From 域的 SPF 记录与实际出口一致）。
-3. DMARC 先保持 `p=none` 并把 `rua` 指向能看到的报表；对齐验证一周无失败后再考虑 `quarantine`。
+3. DMARC 从 `p=none` 起步并把 `rua` 指向能看到的报表；对齐验证一周无失败后升到 `quarantine`，再到 `reject`。
 4. 评估把 From 改到产品域 `wegreen.ltd`（链接域与发件域一致是常见评分项）：需要 mailcow 里该域的信箱或 send-as 授权，
    再改 `smtp.env` 的 `SYNWEVO_MAIL_FROM` 并重启 `accounts`。
 

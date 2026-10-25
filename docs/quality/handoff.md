@@ -196,7 +196,7 @@ Docs 单独列为应用。`main` 源码 `1a48359` 已通过完整 CI 并部署�
 | CI-29 | Docs 编辑安全与结果通知（设置修订冲突、任务/拒绝收件箱事件、副本来源行） | 已部署（cd90aa3） | 评论/提及与其它 Docs 事件另批；`docs/platform/docs-edit-safety.md` 是权威记录；脚本 `ui_e2e_docs_upgrades.py` |
 | CI-28 | 自有界面只写能力名（词表 + 守卫 + 例外表 + PDF 产物元数据） | 已部署（8ac8e55） | 人机验证 iframe 内的供应商品牌、基础模式 PDF 元数据、关于页归属表按记录不改；`docs/platform/component-names.md` 是权威记录；脚本 `ui_e2e_component_names.py` |
 候选队列（按风险与价值，2026-09-26 更新；第九节的批次顺序见 docs/platform/notifications.md §7 与 handoff 本表）：
-- 运营/账户持有人（CI-24 接续）：SMTP2GO Activity 查 `1xA8Ua-AIkwcC8lNJx-F8I8` 的最终投递；`hikosphere.com` SPF 加 `include:spf.smtp2go.com`；在 SMTP2GO 验证发件域（对齐回信地址与 DKIM）并关闭事务邮件链接/打开跟踪；评估把 From 改到 `wegreen.ltd`（mailcow 已发布其 DKIM）。
+- 运营/账户持有人（CI-24 接续）：SMTP2GO Activity 查那封验证邮件（中继编号 `1xA8Ua-…`，全文在 SMTP2GO 账户里）的最终投递；`hikosphere.com` SPF 加 `include:spf.smtp2go.com`；在 SMTP2GO 验证发件域（对齐回信地址与 DKIM）并关闭事务邮件链接/打开跟踪；评估把 From 改到 `wegreen.ltd`（mailcow 已发布其 DKIM）。
 第九节余下批次——多格式成员导入（CI-25，已部署）、私聊/群聊（CI-26）、个人项目复制审批（CI-27）均已交付；第三方组件名清理（CI-28）与 Docs 升级（§9.8）待做；
 恶意上传防护的后续——`rescan` CLI 与管理端补扫入口、加密压缩包/Office 文件的用户流程（file-acceptance §9）、生产 `clamav`
 服务上线后的真实引擎复核；登出落点差异——CI-19 中 Chromium 登出后到 `/login`、WebKit 到 `/logged-out`（两者 `/api/auth/me`
