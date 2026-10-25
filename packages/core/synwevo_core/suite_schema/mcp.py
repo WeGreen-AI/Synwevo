@@ -9,8 +9,41 @@ server. Discovered tools are recorded with a hash of their schema: a grant names
 made for, so a server that changes a tool's shape does not keep the old permission (the grant
 becomes stale and the tool is unavailable until someone looks at it again).
 
-Everything is additive (``CREATE … IF NOT EXISTS``); older code ignores these tables.
+Everything is additive (``CREATE … IF NOT EXISTS``, guarded ``ADD COLUMN``); older code ignores
+these tables and columns.
+
+`settle_interrupted_calls` is here, beside the tables, because two readers of the call log must
+agree on when a 'running' record can no longer be in flight: the connection service
+(`synwevo_suite.agent.mcp`) and the platform administration's masked view
+(`synwevo_identity.admin_mcp`), which cannot import an application.
 """
+from __future__ import annotations
+
+import time
+
+#: A call record still 'running' this long after it started cannot still be in flight: no exchange
+#: outlives the longest deadline the policy allows (``call_timeout_s`` ≤ 600 s, plus the runtime's
+#: 5 s of slack and a token refresh before it, ≤ 40 s, and the wait for another caller's refresh).
+#: Whatever process wrote it stopped before it could write the end (a crash, a restart).
+STALE_RUNNING_S = 900
+INTERRUPTED_CODE = "mcp_call_interrupted"
+INTERRUPTED_MESSAGE = "调用进行中时服务停止或重启，结果未知"
+
+
+def settle_interrupted_calls(store, *, connection_id: str | None = None, at: float | None = None) -> int:
+    """Mark the call records left 'running' by a stopped process as 'unknown' — never as success or
+    failure, since nobody knows whether the external server acted. `store` is a `Store` (or anything
+    with its ``execute(sql, args)``); returns how many records were settled."""
+    t = time.time() if at is None else at
+    sql = ("UPDATE mcp_calls SET status='unknown', error_code=?, error_message=?, finished_at=? "
+           "WHERE status='running' AND started_at<?")
+    args: tuple = (INTERRUPTED_CODE, INTERRUPTED_MESSAGE, t, t - STALE_RUNNING_S)
+    if connection_id is not None:
+        sql += " AND connection_id=?"
+        args += (connection_id,)
+    n = store.execute(sql, args)
+    return n if isinstance(n, int) else getattr(n, "rowcount", 0)
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS mcp_connections (
@@ -146,6 +179,8 @@ CREATE TABLE IF NOT EXISTS mcp_calls (
 CREATE INDEX IF NOT EXISTS mcp_calls_connection ON mcp_calls(connection_id, started_at);
 CREATE INDEX IF NOT EXISTS mcp_calls_user ON mcp_calls(user_id, started_at);
 CREATE INDEX IF NOT EXISTS mcp_calls_tool_call ON mcp_calls(tool_call_id);
+-- The records still in flight, for settle_interrupted_calls.
+CREATE INDEX IF NOT EXISTS mcp_calls_running ON mcp_calls(started_at) WHERE status='running';
 
 -- An authorization-code flow in progress with an external MCP server's authorization server.
 CREATE TABLE IF NOT EXISTS mcp_oauth_flows (
@@ -178,3 +213,24 @@ CREATE TABLE IF NOT EXISTS mcp_policy_versions (
     created_at REAL NOT NULL
 );
 """
+
+
+COLUMNS = (
+    # A platform administrator's stop (synwevo_identity.admin_mcp): set, the connection is unusable
+    # and its owner cannot resume it; only the platform administration lifts it.
+    ("mcp_connections", "platform_disabled_at", "REAL"),
+    ("mcp_connections", "platform_disabled_by", "TEXT"),
+    # What the circuit breaker decides on (JSON: {"since": the streak at the last opening, "by": {user id:
+    # failures since}}): one member alone cannot open a shared connection's circuit for everyone, nor
+    # re-open it each time the window ends (Connections._health).
+    ("mcp_connections", "failure_users_json", "TEXT"),
+    # A lease on refreshing the connection's OAuth token, so that concurrent callers in any process
+    # do not spend the same refresh token twice (Connections.credential); a change that voids the
+    # authorization clears it, which fences off the result of a refresh under way (store_tokens).
+    ("mcp_connections", "refresh_claim_until", "REAL"),
+    # Why a discovered tool cannot be granted (a stable code, e.g. 'mcp_schema_too_large'), NULL when
+    # it can: its schema was too large to keep or to give a model, or the connection's offer had no
+    # more room for it ('mcp_offer_too_large'), so the row holds a placeholder in its place and the
+    # tool reaches no Agent (Connections._record_discovery).
+    ("mcp_connection_tools", "unusable_code", "TEXT"),
+)

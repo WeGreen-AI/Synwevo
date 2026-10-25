@@ -18,6 +18,9 @@ export interface ConnectionSummary {
   id: string; owner_kind: 'user' | 'workspace'; owner_id: string; owner_name: string | null; slug: string; name: string;
   description: string; url: string; host: string | null; auth_kind: AuthKind; credential_hint: string | null;
   has_credential: boolean; oauth_client: OAuthClient | null; status: 'active' | 'disabled'; health: Health;
+  /** A platform administrator stopped the connection (synwevo_identity.admin_mcp): only the
+   *  platform lifts it; its managers may still rename, disable or delete it. */
+  platform_disabled?: boolean; platform_disabled_at?: number | null;
   health_checked_at: number | null; last_ok_at: number | null; last_error: { code: string; message: string } | null;
   circuit_open_until: number | null; protocol_version: string | null;
   server_info: { name?: string; version?: string; title?: string } | null; capabilities: Record<string, unknown>;
@@ -28,6 +31,9 @@ export interface ToolAnnotations { readOnlyHint?: boolean; destructiveHint?: boo
 export interface Tool {
   name: string; title: string | null; description: string | null; input_schema: unknown; output_schema: unknown;
   annotations: ToolAnnotations; schema_hash: string; removed: boolean;
+  /** Why the tool cannot be granted (its schema was not kept: `mcp_schema_too_large`, `mcp_schema_invalid`,
+   *  or the server's whole offer did not fit, `mcp_offer_too_large`). */
+  unusable?: { code: string; max_chars?: number; max_bytes?: number } | null;
   grant: { mode: GrantMode; stale: boolean; granted_by: string | null; granted_at: number | null };
   personal_mode: PersonalMode | null; first_seen_at: number; last_seen_at: number;
 }
@@ -79,6 +85,8 @@ export function callStatusView(status: string): { key: IntegrationText; tone: st
     case 'failed': return { key: 'callFailed', tone: 'err' };
     case 'timeout': return { key: 'callTimeout', tone: 'warn' };
     case 'cancelled': return { key: 'callCancelled', tone: '' };
+    // Settled after the process that made it stopped (suite_schema.mcp.settle_interrupted_calls).
+    case 'unknown': return { key: 'callUnknown', tone: 'warn' };
     default: return { key: 'callFailed', tone: '' };
   }
 }
@@ -100,6 +108,54 @@ export function toolHints(annotations: ToolAnnotations | null | undefined): Inte
   return out;
 }
 export const isReadOnly = (tool: Pick<Tool, 'annotations'>) => tool.annotations?.readOnlyHint === true;
+
+/** How a tool's grant is shown, and whether it can be granted again in its previous mode.
+ *  A grant whose tool changed shape (`stale`) is suspended: the Agent treats the tool as off until
+ *  a manager grants it again, and `agent.mcp.grant.set` with the same mode pins the new
+ *  definition (connections.set_grant). The select therefore shows no mode while suspended (a
+ *  choice of any mode is a change), and the previous mode is offered as one explicit action;
+ *  `auto` only while the server still declares the tool read-only. A stale `off` suspends nothing. */
+export interface GrantView { value: GrantMode | ''; suspended: GrantMode | null; reconfirm: boolean }
+export function grantView(tool: Pick<Tool, 'grant' | 'removed' | 'annotations'> & Partial<Pick<Tool, 'unusable'>>): GrantView {
+  const suspended = tool.grant.stale && !tool.removed && tool.grant.mode !== 'off' ? tool.grant.mode : null;
+  // An unusable tool (its schema was not kept) can only be turned off (connections.set_grant).
+  const reconfirm = suspended !== null && !tool.unusable && (suspended !== 'auto' || isReadOnly(tool));
+  return { value: suspended ? '' : tool.grant.mode, suspended, reconfirm };
+}
+
+/** A platform administrator's stop, as the summary reports it. While it holds, enabling, testing,
+ *  authenticating, calling, reading, rendering and changing the address or credential are refused
+ *  (`mcp_platform_disabled`); renaming, disabling, deleting, grants and bindings are not. */
+export const platformStopped = (summary: Pick<ConnectionSummary, 'platform_disabled'>) => summary.platform_disabled === true;
+
+/** A bearer connection without its token (revoked, or forgotten with an old address). */
+export const needsToken = (summary: Pick<ConnectionSummary, 'auth_kind' | 'has_credential'>) =>
+  summary.auth_kind === 'bearer' && !summary.has_credential;
+
+/** A connection pointed at another address and not yet discovered there (connections.update): a new
+ *  address is the only change that clears `discovered_at`, and it marks every tool of the old server
+ *  removed. (An old server that offered no tools leaves no such trace; the page then reads as a
+ *  connection not yet tested.) */
+export function pointedElsewhere(detail: Pick<ConnectionDetail, 'discovered_at' | 'tools'>): boolean {
+  return detail.discovered_at == null && detail.tools.some((tool) => tool.removed);
+}
+
+/** What has to happen, and by whom, before an Agent uses a connection pointed elsewhere again: the
+ *  credential, grants and every binding of the old server were dropped with its address. The first
+ *  discovery of a personal connection there sets every usable tool to `confirm`
+ *  (connections._record_discovery); a workspace's tools wait for a manager's grant. */
+export function repointSteps(detail: Pick<ConnectionDetail, 'manage' | 'auth_kind' | 'has_credential' | 'binding'> & Partial<Pick<ConnectionDetail, 'owner_kind'>>): IntegrationText[] {
+  const steps: IntegrationText[] = [];
+  if (detail.manage) {
+    if (detail.auth_kind === 'oauth' && !detail.has_credential) steps.push('nextAuthenticate');
+    if (needsToken(detail)) steps.push('nextToken');
+    steps.push('nextTest', detail.owner_kind === 'user' ? 'nextGrantPersonal' : 'nextGrant');
+  } else {
+    steps.push('nextManagers');
+  }
+  if (detail.binding.bound && !detail.binding.enabled) steps.push('nextBind');
+  return steps;
+}
 
 /** Workspaces the person may add a workspace connection for: the roles connections.py accepts
  *  (owner, admin), on a workspace that is still active. */

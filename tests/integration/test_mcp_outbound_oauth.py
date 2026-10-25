@@ -49,9 +49,12 @@ def env(tmp_path, monkeypatch):
     ws = ident.workspaces_for(alice["id"])[0]["id"]
     with store.tx():
         # a loopback deployment: plain http and the loopback address are allowed by the policy, as an
-        # operator would allow them for a private deployment (the default is https and public only)
+        # operator would allow them for a private deployment (the default is https and public only).
+        # The external server here is this deployment's own endpoint, which the Agent refuses as a
+        # destination (mcp_destination_is_self) unless the operator lists that host explicitly.
         McpPolicy(store).append({**McpPolicy.default().model_dump(), "inbound_enabled": True, "outbound_enabled": True,
-                                 "allow_http": True, "allow_private_networks": ["localhost", "127.0.0.1"]},
+                                 "allow_http": True, "allow_private_networks": ["localhost", "127.0.0.1"],
+                                 "allowed_hosts": [urllib.parse.urlsplit(BASE).hostname]},
                                 expected_revision=0, actor_id=alice["id"], reason="fixture: open both directions")
     # The client id the person enters in the connection: registered at the authorization server for
     # the Agent's callback and the MCP server's audience, as an operator would.
@@ -155,3 +158,17 @@ def test_a_callback_that_does_not_match_the_flow_is_refused(env):
     reused = c.get("/api/suite/agent/mcp/oauth/callback?" + urllib.parse.urlencode({"state": state, "code": "x", "iss": BASE}),
                    follow_redirects=False)
     assert "code=mcp_oauth_flow_decided" in reused.headers["location"]
+
+
+def test_the_deployments_own_endpoint_is_an_external_server_only_when_the_operator_lists_it(env):
+    c, store = env["browser"], env["store"]
+    body = {"owner_kind": "user", "name": "Synwevo itself", "url": oidc.mcp_resource(), "auth_kind": "oauth",
+            "oauth_client": {"client_id": "agent-outbound"}}
+    listed = op(c, "agent.mcp.connection.create", body)                      # the fixture policy names the host
+    with store.tx():
+        state = McpPolicy(store).read()
+        McpPolicy(store).append({**state["spec"], "allowed_hosts": None}, expected_revision=state["revision"],
+                                actor_id=env["alice"]["id"], reason="fixture: any public host, nothing named")
+    # Saving refuses it now, and so does every use of the connection saved before.
+    assert op(c, "agent.mcp.connection.create", {**body, "name": "Synwevo again"}, expect=403)["error"] == "mcp_destination_is_self"
+    assert op(c, "agent.mcp.oauth.start", {"connection_id": listed["id"]}, expect=403)["error"] == "mcp_destination_is_self"

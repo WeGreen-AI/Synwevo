@@ -177,6 +177,12 @@ class Operation:
     #: result. Called with the freshly authorized caller and the original run; must never
     #: repeat the mutation. Without this guard, old mutation payloads remain private.
     result_guard: Callable[["Call", dict], None] | None = None
+    #: Whether a stored result of this read may be checked by running the read again
+    #: (:meth:`Capabilities.inspect`). False for a read whose handler reaches outside the process
+    #: (an external MCP server): running it again would be another request out, made by nobody's
+    #: tool call, just to look at history. ``inspect`` refuses such a read, and its stored result
+    #: is checked by ``result_guard`` alone, which it must therefore have.
+    rereadable: bool = True
     #: For an operation whose side effect is ``external`` in one direction only (switching a public
     #: link on, not off): given the call's input as written, whether this call reaches people
     #: outside the workspace — the outward send of docs/platform/data-flow.md rule 8. A value a
@@ -208,6 +214,8 @@ class Operation:
             raise ValueError(f"operation {self.id}: mode must be sync or async")
         if self.outward_when is not None and self.side_effect != "external":
             raise ValueError(f"operation {self.id}: only an external operation can reach outside in one direction")
+        if not self.rereadable and self.result_guard is None:
+            raise ValueError(f"operation {self.id}: a read that is never run again needs a result_guard for its stored result")
 
     def outward(self, payload: Any) -> bool:
         """Whether this call, with this input, reaches people outside the workspace it runs in,
@@ -821,7 +829,7 @@ class Capabilities:
         This is an internal entry point, not a way to execute writes without an audit.
         """
         op = self.registry.get(op_id)
-        if not op or op.side_effect != "none" or op.mode != "sync":
+        if not op or op.side_effect != "none" or op.mode != "sync" or not op.rereadable:
             raise ServiceError(409, "source_unverifiable", "无法重新核实来源权限")
         user, role = self.authorize(op, user_id, workspace_id)
         if len(canonical(payload).encode("utf-8")) > MAX_INPUT_BYTES:
@@ -844,7 +852,7 @@ class Capabilities:
         if op is None:
             raise ServiceError(404, "app_unavailable", "该应用未启用或已停用")
         user, role = self.authorize(op, row["user_id"], row["workspace_id"])
-        if op.side_effect == "none" and op.mode == "sync":
+        if op.side_effect == "none" and op.mode == "sync" and op.rereadable:
             current = self.inspect(op.id, _j(row["input"]), user_id=row["user_id"],
                                    workspace_id=row["workspace_id"])
             if fingerprint(current) != fingerprint(_j(row["output"])):

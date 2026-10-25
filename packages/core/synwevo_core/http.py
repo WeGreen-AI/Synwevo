@@ -151,29 +151,57 @@ MCP_CLIENT_METADATA_PATH = "/.well-known/mcp-client/synwevo-agent.json"
 
 def mcp_metadata_url() -> str:
     """Where the MCP server's Protected Resource Metadata is (RFC 9728 §3.1): the well-known path
-    inserted between the resource's origin and its path."""
+    inserted between the resource's origin and its path, less the slash a resource at the root is
+    written with (`https://mcp.example.com/` in canonical form, whose metadata is at
+    `https://mcp.example.com/.well-known/oauth-protected-resource`)."""
     from urllib.parse import urlsplit, urlunsplit
     from .oidc import mcp_resource
     parts = urlsplit(mcp_resource())
     if not parts.scheme.startswith("http"):
         return mcp_resource()
-    return urlunsplit((parts.scheme, parts.netloc, "/.well-known/oauth-protected-resource" + parts.path, "", ""))
+    return urlunsplit((parts.scheme, parts.netloc, "/.well-known/oauth-protected-resource" + parts.path.rstrip("/"), "", ""))
 
 
-def mcp_challenge(err: ServiceError) -> str:
-    """The `WWW-Authenticate: Bearer …` value for a refused MCP request (RFC 6750 §3): what went
-    wrong in the protocol's vocabulary, where the metadata is, and — for a scope refusal — the
-    scopes the operation needs, so a client can step up instead of guessing."""
+def presents_bearer(header: str | None) -> bool:
+    """Whether an `Authorization` header offers a bearer token at all (RFC 6750 §2.1)."""
+    scheme, _, token = (header or "").strip().partition(" ")
+    return scheme.lower() == "bearer" and bool(token.strip())
+
+
+def mcp_challenge(err: ServiceError, *, presented: bool = True) -> str:
+    """The `WWW-Authenticate: Bearer …` value for a refused MCP request (RFC 6750 §3), always
+    naming where the metadata is (RFC 9728 §5.1). What else it says decides what a client does
+    next — the official SDK's client re-runs authorization on a 401 and steps up on a 403 with
+    `insufficient_scope` — so each error code is said only where that next step can help:
+
+    * no bearer token presented (`presented` false): no error code at all (RFC 6750 §3.1);
+    * 401: `invalid_token` — the token is expired, revoked, for another audience; a new
+      authorization can fix it;
+    * 403 whose hint names the scopes to ask for: `insufficient_scope` with `scope=` (RFC 6750
+      §3.1, MCP authorization "Runtime Insufficient Scope Errors") — the refuser's own judgement
+      that asking for them can succeed, so a bare `required_scope` in the detail is not enough;
+    * any other 403 — the server closed by policy, a registration that no longer has the scopes
+      (or never had them), a workspace the person left: no error code, because neither a new
+      token nor more scope changes the answer, and a client told `insufficient_scope` would send
+      the person through authorization again for nothing."""
     detail = err.detail if isinstance(err.detail, dict) else {}
     hint = detail.get("www_authenticate") if isinstance(detail.get("www_authenticate"), dict) else {}
-    error = hint.get("error") or ("insufficient_scope" if err.status == 403 else "invalid_token")
-    parts = [f'error="{error}"']
-    description = (err.code or "").replace('"', "")
-    if description:
-        parts.append(f'error_description="{description}"')
-    scope = detail.get("required_scope") or hint.get("scope")
-    if scope:
-        parts.append(f'scope="{scope}"')
+    scope = hint.get("scope")
+    error = None
+    if not presented:
+        pass
+    elif err.status == 403:
+        error = "insufficient_scope" if scope else None
+    elif err.status == 401:
+        error = hint.get("error") if hint.get("error") in ("invalid_token", "invalid_request") else "invalid_token"
+    parts = []
+    if error:
+        parts.append(f'error="{error}"')
+        description = (err.code or "").replace('"', "")
+        if description:
+            parts.append(f'error_description="{description}"')
+        if error == "insufficient_scope":
+            parts.append(f'scope="{scope}"')
     parts.append(f'resource_metadata="{mcp_metadata_url()}"')
     return "Bearer " + ", ".join(parts)
 
@@ -356,7 +384,7 @@ def problem_body(request_id: str, status: int, code: str, message: str, detail: 
         errors.append({"detail": message, "pointer": json_pointer(detail["field"])})
     if errors:
         body["errors"] = errors
-    rest = {k: v for k, v in detail.items() if k not in ("field", "errors")}
+    rest = {k: v for k, v in detail.items() if k not in ("field", "errors", "www_authenticate")}
     if rest:
         body["details"] = rest
     return body
@@ -723,7 +751,8 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             if isinstance(detail, dict) and detail.get("field"):
                 body["error"]["field"] = detail["field"]
             if detail:
-                body["error"]["details"] = {k: v for k, v in detail.items() if k != "field"} or None
+                # the bearer challenge hint is the header's to say (`mcp_challenge`), not the body's
+                body["error"]["details"] = {k: v for k, v in detail.items() if k not in ("field", "www_authenticate")} or None
                 if not body["error"]["details"]:
                     body["error"].pop("details")
             return body
@@ -1292,7 +1321,8 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
             if path == MCP_PATH and e.status in (401, 403):
                 # RFC 6750 §3 / MCP authorization: the challenge names the metadata document that
                 # leads an MCP client to the authorization server, and the scopes it still needs.
-                refused.headers["WWW-Authenticate"] = mcp_challenge(e)
+                refused.headers["WWW-Authenticate"] = mcp_challenge(
+                    e, presented=presents_bearer(request.headers.get("Authorization")))
             return await finish(refused)
         # Who acts, for attribution: the session's person, or the person a delegated machine
         # token acts for; None for service accounts and anonymous paths.

@@ -12,7 +12,9 @@ export type WorkspaceChoice = { id: string; name: string; role: string | null; c
 export type Request = {
   id: string;
   /** `registration` is how the account service knows this client: registered by an operator, or
-   *  self-described by a Client ID Metadata Document (`cimd`) whose address is its id. */
+   *  self-described by a Client ID Metadata Document (`cimd`) whose address is its id. `client_uri` is
+   *  the document's own claim (kept only on the id's origin, cimd.validate_document); nobody verified
+   *  it, so it never names where the client comes from. */
   client: { id: string; name: string; app_id: string; registration?: 'operator' | 'cimd'; client_uri?: string | null };
   scopes: string[]; already_granted: string[]; identity_scopes: string[];
   workspace: { id: string; name: string } | null;
@@ -26,6 +28,28 @@ export type Request = {
 export function hostOf(url: string | null | undefined): string | null {
   if (!url) return null;
   try { return new URL(url).hostname || null; } catch { return null; }
+}
+
+/** Where a self-described client's document is published: the host of its client id, the address
+ *  Synwevo fetched the document from — the one fact about its origin that was checked. Never the
+ *  document's `client_uri`, which is whatever the document says: a document at evil.example naming
+ *  https://claude.ai would otherwise be shown as published at claude.ai. */
+export function publishedAt(client: Request['client']): string | null {
+  return client.registration === 'cimd' ? hostOf(client.id) : null;
+}
+
+/** The provenance note of a client known only from its own metadata document; nothing for a client
+ *  an operator registered. */
+export function SelfDescribedNotice({ client }: { client: Request['client'] }) {
+  const { t } = useI18n();
+  if (client.registration !== 'cimd') return null;
+  const host = publishedAt(client);
+  return <div className="notice col gap4" role="note">
+    <b>{t('自描述客户端')}</b>
+    <span>{host
+      ? t('这个客户端用它自己发布在 {host} 的文档描述自己。Synwevo 读取并检查了这份文档，但没有核实是谁在运营它。', { host })
+      : t('这个客户端用它自己发布的文档描述自己。Synwevo 读取并检查了这份文档，但没有核实是谁在运营它。')}</span>
+  </div>;
 }
 
 /** The consent step of an authorization (API-4): who is asking, for what, in which workspace, and
@@ -63,19 +87,12 @@ export default function OAuthConsent() {
   if (error && !req) return <PageState as="main"><h1>{t('无法继续授权')}</h1><p role="alert">{error}</p><a href="/account">{t('账户与安全')}</a></PageState>;
   if (!req) return <PageState as="main"><p role="status">{t('加载中…')}</p></PageState>;
   const fresh = req.scopes.filter(scope => !req.already_granted.includes(scope));
-  const selfDescribed = req.client.registration === 'cimd';
-  const clientHost = selfDescribed ? hostOf(req.client.client_uri) ?? hostOf(req.client.id) : null;
   const approveBlocked = !!choices && !selected;
   return <main className="consent-page col gap16">
     <Brand />
     <section className="card card-b col gap16" aria-labelledby="consent-title">
       <h1 id="consent-title">{t('「{name}」请求代表你访问 Synwevo', { name: req.client.name })}</h1>
-      {selfDescribed && <div className="notice col gap4" role="note">
-        <b>{t('自描述客户端')}</b>
-        <span>{clientHost
-          ? t('这个客户端用它自己发布在 {host} 的文档描述自己。Synwevo 读取并检查了这份文档，但没有核实是谁在运营它。', { host: clientHost })
-          : t('这个客户端用它自己发布的文档描述自己。Synwevo 读取并检查了这份文档，但没有核实是谁在运营它。')}</span>
-      </div>}
+      <SelfDescribedNotice client={req.client} />
       {choices ? <fieldset className="col gap8" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
         <legend className="secttl">{t('请选择这个客户端可以使用的工作空间')}</legend>
         <p className="tiny muted">{t('它得到的令牌只在你选择的工作空间内有效；换一个工作空间需要再授权一次。')}</p>

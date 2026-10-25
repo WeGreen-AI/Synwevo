@@ -28,6 +28,7 @@ import os
 import secrets
 import time
 from authlib.jose import JsonWebKey, JsonWebToken, jwt
+from pydantic import AnyHttpUrl
 
 from . import env
 from .errors import ServiceError
@@ -74,6 +75,12 @@ SUITE_API_SCOPES = ("forms.read", "forms.write", "tables.read", "tables.write",
 # scopes; only the audience differs (`mcp_resource`), because an MCP client names the server
 # by URL and the server must refuse a token minted for anything else.
 MCP_SCOPES = SUITE_API_SCOPES
+# What an MCP client is asked to hold when nothing names a scope: the metadata's `scopes_supported`
+# (MCP authorization, "Scope Selection Strategy": the minimal set for basic use) and a step-up from
+# a token with no business scope left. Reading and changing the applications' records; a decision
+# taken as the person (`*.decide`) is never asked for by default — a client that needs it names it,
+# and the person sees it named on the consent page.
+MCP_DEFAULT_SCOPES = tuple(s for s in MCP_SCOPES if not s.endswith(".decide"))
 MCP_PATH = "/api/suite/v1/mcp"
 ALL_API_SCOPES = API_SCOPES + WORKSPACE_API_SCOPES + SUITE_API_SCOPES
 SUPPORTED_SCOPES = IDENTITY_SCOPES + ALL_API_SCOPES
@@ -128,20 +135,60 @@ def suite_resource() -> str:
     return (env.get("SUITE_RESOURCE") or "urn:synwevo:platform:suite").strip()
 
 
+def canonical_resource_uri(value: str) -> str:
+    """An http(s) resource URI in canonical form (RFC 8707 §2; MCP authorization, "Canonical
+    Server URI"): lowercase scheme and host, no default port, no fragment, no trailing slash after
+    a path (an empty path is written `/`, as every parser writes it) — exactly what a client's URL
+    parser makes of the same address (the SDK and the metadata document go through pydantic's
+    `AnyHttpUrl`, a browser through `URL`), so the audience a token is minted for, the `resource`
+    the metadata advertises and the value a client sends back are one string. Anything that is not
+    an http(s) URL is returned as written, less surrounding space, a fragment and trailing slashes."""
+    raw = (value or "").strip().split("#", 1)[0].rstrip("/")
+    try:
+        return str(AnyHttpUrl(raw))
+    except ValueError:
+        return raw
+
+
 def mcp_resource() -> str:
     """The canonical URI of the Synwevo MCP server (RFC 8707 `resource`, RFC 9728 `resource`).
 
     MCP clients name the server they want a token for by its own URL, so unlike the other APIs
     this audience is an https URL: the MCP endpoint on the workplace origin. Configured through
-    the workplace origin (`SYNWEVO_APP_URL`) or explicitly (`SYNWEVO_MCP_RESOURCE`); without
-    either there is no MCP server to name, and a URN that no client would send stands in so the
-    audience check cannot accidentally pass.
+    the workplace origin (`SYNWEVO_APP_URL`) or explicitly (`SYNWEVO_MCP_RESOURCE`), and always
+    canonicalised (`canonical_resource_uri`): an operator's `https://Workplace.Example.com:443`
+    must not become an audience no client can name. Without either setting there is no MCP server
+    to name, and a URN that no client would send stands in so the audience check cannot
+    accidentally pass.
     """
     explicit = (env.get("MCP_RESOURCE") or "").strip()
     if explicit:
-        return explicit.rstrip("/")
+        return canonical_resource_uri(explicit)
     base = (env.get("APP_URL") or "").strip().rstrip("/")
-    return f"{base}{MCP_PATH}" if base else "urn:synwevo:platform:mcp:unconfigured"
+    return canonical_resource_uri(f"{base}{MCP_PATH}") if base else "urn:synwevo:platform:mcp:unconfigured"
+
+
+def registered_audiences(audiences: list[str]) -> list[str]:
+    """A client registration's audiences as they are kept and compared: an audience that names
+    this deployment's MCP server becomes `mcp_resource()` however the operator wrote it — the
+    documented `--audience {SYNWEVO_APP_URL}/api/suite/v1/mcp` with an APP_URL of
+    `HTTP://Workplace.Example.com:443` is the same server, and a client asks for it by the
+    metadata's canonical `resource` — and every other audience stays exactly as written: the other
+    resource servers compare their own setting verbatim, and a URN has no canonical form."""
+    mcp = mcp_resource()
+    return list(dict.fromkeys(mcp if canonical_resource_uri(a) == mcp else a for a in audiences))
+
+
+def mcp_grantable_scopes(client: dict | None) -> set[str]:
+    """The MCP scopes that authorizing `client` again can grant it for this deployment's MCP server:
+    what a step-up can reach, and so the only scopes an `insufficient_scope` challenge may name. The
+    account service narrows an MCP client's request to its registration (`Clients.allowed_scopes`;
+    the rest is dropped, not refused) and issues a token for the MCP server only to a client
+    registered for that resource, so for any other scope — or any other client, or a disabled one —
+    asking again ends with the same token. Empty when there is nothing to gain."""
+    if not client or mcp_resource() not in (client.get("audiences") or []):
+        return set()
+    return Clients.allowed_scopes(client) & set(MCP_SCOPES)
 
 
 def _docs_app_id() -> str:
@@ -253,7 +300,8 @@ class Clients:
         if r:
             r["redirect_uris"] = json.loads(r["redirect_uris"])
             r["post_logout_redirect_uris"] = json.loads(r["post_logout_redirect_uris"] or "[]")
-            r["audiences"] = json.loads(r["audiences"] or "[]")
+            # a registration kept before audiences were canonicalised still names the MCP server
+            r["audiences"] = registered_audiences(json.loads(r["audiences"] or "[]"))
         return r
 
     def get(self, client_id: str) -> dict | None:
@@ -340,7 +388,7 @@ class Clients:
                                "机密客户端不能改登记为公共客户端；请停用它并换一个 client_id 登记")
         secret = secrets.token_urlsafe(40) if confidential and not was_confidential else None
 
-        auds = list(audiences or [])
+        auds = registered_audiences(list(audiences or []))
         has_api = bool(api_scopes.split()) or any(api_scope_app(s) for s in (scopes or "").split())
         if not auds and app_id == _docs_app_id() and has_api:
             # RFC 8707 / RFC 9700 §2.3: a token meant for an API names that API. With no explicit
@@ -359,7 +407,7 @@ class Clients:
             # scopes would hand whoever holds that secret more than anyone approved (admin defect
             # D5). The identity scopes are harmless on a client no person signs in to.
             had_scopes = set((existing["api_scopes"] or "").split())
-            had_auds = set(json.loads(existing["audiences"] or "[]"))
+            had_auds = set(registered_audiences(json.loads(existing["audiences"] or "[]")))
             had_redirects = set(json.loads(existing["redirect_uris"] or "[]"))
             had_delegation = set((existing["scopes"] or "").split())
             if (existing["kind"] != "service" or kind != "service" or existing["app_id"] != app_id

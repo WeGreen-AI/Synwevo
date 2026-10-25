@@ -89,9 +89,16 @@ async def test_metadata_and_challenge_lead_a_client_to_the_authorization_server(
                                         "Mcp-Method": "tools/list"})
         assert refused.status_code == 401
         challenge = refused.headers["www-authenticate"]
-        assert challenge.startswith("Bearer ") and 'error="invalid_token"' in challenge
+        # no credential at all: the challenge names no error (RFC 6750 §3.1), only where to go
+        assert challenge.startswith("Bearer ") and "error=" not in challenge
         assert f'resource_metadata="{METADATA_URL}"' in challenge
         assert refused.json()["error"]["code"] == "unauthorized"
+    async with http(world, "not-a-token-the-server-issued") as h:
+        bad = await h.post(MCP_URL, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                           headers={"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2026-07-28",
+                                    "Mcp-Method": "tools/list"})
+        assert bad.status_code == 401 and 'error="invalid_token"' in bad.headers["www-authenticate"]
+        assert f'resource_metadata="{METADATA_URL}"' in bad.headers["www-authenticate"]
 
 
 async def test_a_token_for_the_operations_api_does_not_open_the_mcp_server(world):
@@ -148,11 +155,14 @@ async def test_tools_follow_the_granted_scopes_and_calls_are_the_operations(worl
             bad = await client.call_tool("forms.form.create", {"nonsense": 1, "idempotency_key": "x"})
             assert bad.is_error is True and bad.structured_content["error"]["code"] == "invalid_input"
             assert bad.structured_content["error"]["request_id"]
-            # an operation the token's scopes do not cover: refused by name, with the scope to step up to
-            ungranted = await client.call_tool("tables.table.create", {"name": "x"})
-            assert ungranted.is_error is True
-            assert ungranted.structured_content["error"]["code"] == "insufficient_scope"
-            assert ungranted.structured_content["error"]["details"]["required_scope"] == "tables.write"
+            # an operation the token's scopes do not cover: refused by name, with the scope to step up
+            # to — as HTTP 403 with the insufficient_scope challenge (test_mcp_server_conformance.py),
+            # whose JSON-RPC error body the SDK's client raises
+            with pytest.raises(MCPError) as ungranted:
+                await client.call_tool("tables.table.create", {"name": "x"})
+            assert ungranted.value.data["code"] == "insufficient_scope"
+            assert ungranted.value.data["required_scope"] == "tables.write"
+            assert world["store"].one("SELECT COUNT(*) AS n FROM op_runs WHERE op='tables.table.create'")["n"] == 0
             # no such tool at all: a JSON-RPC error (-32602), which the SDK's client raises
             with pytest.raises(MCPError) as unknown:
                 await client.call_tool("nothing.like.this", {})

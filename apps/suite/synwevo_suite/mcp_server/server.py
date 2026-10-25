@@ -31,7 +31,7 @@ from synwevo_core.apps import Apps
 from synwevo_core.capabilities import (Operation, TERMINAL_STATES, caller_correlation, canonical, machine_credential,
                                        machine_scope, public_run)
 from synwevo_core.errors import ServiceError
-from synwevo_core.oidc import mcp_resource
+from synwevo_core.oidc import Clients, mcp_grantable_scopes, mcp_resource
 
 from ..common.machine import MAX_CALLER_KEY, caller_key, contract, idempotency_rule, machine_operations
 
@@ -45,6 +45,13 @@ SERVER_VERSION = "1"
 #: The most of a result that is returned to the client (characters of canonical JSON); the rest
 #: is said to have been cut, never silently dropped.
 MAX_RESULT_CHARS = 400_000
+TRUNCATED_NOTE = "result too large; narrow the query"
+#: What a cut operation result has in place of its output. The envelope around it stays whole
+#: (the run id above all: a write that ran must still be identifiable), so the tool's declared
+#: outputSchema allows this shape for `output` next to the operation's own.
+TRUNCATED_OUTPUT = {"type": "object", "required": ["preview", "note"], "additionalProperties": False,
+                    "description": "The output was too large to return (truncated is true): the start of its JSON text.",
+                    "properties": {"preview": {"type": "string"}, "note": {"type": "string"}}}
 #: Platform tools that are not operations of a business application.
 WHOAMI = "synwevo.whoami"
 RUN_GET = "synwevo.run.get"
@@ -74,17 +81,36 @@ def principal() -> dict:
     return p
 
 
-def _require_scope(p: dict, scope: str) -> None:
-    if scope not in (p.get("scopes") or ()):
-        raise ServiceError(403, "insufficient_scope", f"该凭据没有 {scope} 权限",
-                           {"required_scope": scope, "scopes": sorted(p.get("scopes") or ())})
+def _fit(text: str, wrap) -> dict:
+    """`wrap(prefix)` with the longest prefix of `text` whose canonical JSON stays within
+    MAX_RESULT_CHARS. The encoded length only grows with the prefix (escaping never shortens it),
+    so a binary search finds it. Taking off the overshoot once does not: where nearly every
+    character is escaped — a quote or a newline is two characters encoded, and the JSON text of
+    an output is full of quotes — it cut the preview to nothing."""
+    lo, hi = 0, min(len(text), MAX_RESULT_CHARS)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if len(canonical(wrap(text[:mid]))) <= MAX_RESULT_CHARS:
+            lo = mid
+        else:
+            hi = mid - 1
+    return wrap(text[:lo])
 
 
 def _bounded(value: Any) -> tuple[Any, bool]:
+    """The result as returned: whole, or cut to MAX_RESULT_CHARS and marked `truncated`. A result
+    with an `output` (an operation's run envelope, a run read back) keeps everything else and has
+    only its output replaced by a preview, so it still matches the tool's outputSchema and still
+    names the run; anything else becomes a preview of itself."""
     text = canonical(value)
     if len(text) <= MAX_RESULT_CHARS:
         return value, False
-    return {"preview": text[:MAX_RESULT_CHARS], "note": "result too large; narrow the query"}, True
+    if isinstance(value, dict) and "output" in value:
+        rest = {k: v for k, v in value.items() if k not in ("output", "truncated")}
+        if len(canonical(rest)) <= MAX_RESULT_CHARS // 2:
+            return _fit(canonical(value["output"]), lambda prefix: {
+                **rest, "output": {"preview": prefix, "note": TRUNCATED_NOTE}, "truncated": True}), True
+    return _fit(text, lambda prefix: {"preview": prefix, "note": TRUNCATED_NOTE, "truncated": True}), True
 
 
 def _text(value: Any) -> str:
@@ -112,9 +138,7 @@ def _error_result(err: ServiceError) -> types.CallToolResult:
 
 
 def _ok_result(payload: Any) -> types.CallToolResult:
-    value, cut = _bounded(payload)
-    if cut and isinstance(value, dict):
-        value["truncated"] = True
+    value, _ = _bounded(payload)
     return types.CallToolResult(content=[types.TextContent(type="text", text=_text(value))],
                                 structured_content=value if isinstance(value, (dict, list)) else {"value": value},
                                 is_error=False, meta=_meta() or None)
@@ -189,20 +213,26 @@ class McpTools:
         defs = output.pop("$defs", None) if isinstance(output, dict) else None
         envelope = {"type": "object", "required": ["run_id", "operation", "status", "output", "replayed", "workspace_id"],
                     "properties": {"run_id": {"type": "string"}, "operation": {"const": op.id},
-                                   "status": {"type": "string"}, "output": output or {},
+                                   "status": {"type": "string"},
+                                   # a result too large to return keeps this envelope; only `output` is cut (`_bounded`)
+                                   "output": {"anyOf": [output, TRUNCATED_OUTPUT]} if output else {},
                                    "replayed": {"type": "boolean"}, "workspace_id": {"type": ["string", "null"]},
                                    "truncated": {"type": "boolean"}}}
         if defs:
             envelope["$defs"] = defs
         destructive = op.side_effect != "none" and any(
             op.id.endswith(suffix) for suffix in (".delete", ".archive", ".cancel", ".withdraw", ".revoke", ".close"))
+        # MCP: idempotent means the same arguments again have no further effect, and clients retry
+        # on that word. A read is; a write is only where the key is part of every call — an
+        # optional key leaves the keyless call, retried, to run twice.
+        idempotent = op.side_effect == "none" or rule == "required"
         return types.Tool(
             name=op.id, title=op.title.get("en") or op.id, description=" ".join(notes),
             input_schema=schema, output_schema=envelope,
             annotations=types.ToolAnnotations(title=op.title.get("en") or op.id,
                                               read_only_hint=op.side_effect == "none",
                                               destructive_hint=destructive,
-                                              idempotent_hint=op.side_effect == "none" or rule != "none",
+                                              idempotent_hint=idempotent,
                                               open_world_hint=op.side_effect == "external"),
             meta={"com.synwevo/scope": scope, "com.synwevo/app": op.app, "com.synwevo/side_effect": op.side_effect,
                   "com.synwevo/mode": op.mode, "com.synwevo/version": op.version})
@@ -225,6 +255,57 @@ class McpTools:
         ]
 
     # ------------------------------------------------------------------ calls
+    def scope_refusal(self, p: dict, name: str, arguments: dict | None = None) -> ServiceError | None:
+        """Why this credential may not make the call `name(arguments)` for want of scope, or None
+        (also None for a call refused for another reason first, which the call itself answers). An
+        operation tool needs its scope and the ones it reaches into; synwevo.run.get needs the
+        scope of the operation whose run it reads — asked only of a run the caller may see at all,
+        so the refusal never tells anyone that another client's run exists.
+
+        The endpoint answers it before the call is dispatched, as HTTP 403 (`asgi.McpEndpoint`);
+        `call` refuses it again, as a tool error, for a request that reached it another way."""
+        if name == RUN_GET:
+            try:
+                _, _, scope = self._visible_run(p, (arguments or {}).get("run_id"))
+            except ServiceError:
+                return None
+            return self._lacking(p, {scope})
+        pair = self.ops.get(name)
+        if pair is None:
+            return None
+        op, scope = pair
+        return self._lacking(p, {scope, *op.reaches})
+
+    def _lacking(self, p: dict, needed: set[str]) -> ServiceError | None:
+        """The refusal for scopes `needed` that the token does not hold. Where authorizing this
+        client again can grant them, it carries what RFC 6750 §3.1 and the MCP authorization spec's
+        runtime scope challenge want: `insufficient_scope` with `scope=` every scope the operation
+        needs, in one challenge, plus the ones already held — revision 2026-07-28 leaves keeping
+        them to the client but allows naming them, and a client that does not union the two would
+        otherwise trade one operation's scope for another's on every step-up. Where it cannot
+        (`_grantable`), no challenge: a client told `insufficient_scope` sends the person through
+        an authorization that ends with the same token, once per call."""
+        held = set(p.get("scopes") or ())
+        missing = sorted(needed - held)
+        if not missing:
+            return None
+        detail = {"required_scope": " ".join(missing), "scopes": sorted(held)}
+        if self._grantable(p, set(missing)):
+            return ServiceError(403, "insufficient_scope", f"该凭据没有 {' '.join(missing)} 权限",
+                                {**detail, "www_authenticate": {"error": "insufficient_scope",
+                                                                "scope": " ".join(sorted(held | needed))}})
+        return ServiceError(403, "insufficient_scope",
+                            f"该凭据没有 {' '.join(missing)} 权限，这个客户端的登记也不包含它，重新授权不能取得",
+                            {**detail, "reason": "scope_not_registered"})
+
+    def _grantable(self, p: dict, scopes: set[str]) -> bool:
+        """Whether authorizing this client again can grant `scopes` for this server
+        (`oidc.mcp_grantable_scopes`: what its registration lists, for a client registered for this
+        server). A delegated principal holds the scopes its token was granted that the registration
+        still lists, so a scope missing here was either never asked for — grantable when registered —
+        or taken away by the registration since, which asking again does not undo."""
+        return scopes <= mcp_grantable_scopes(Clients(self.store).get(p["client_id"]))
+
     def call(self, p: dict, name: str, arguments: dict) -> types.CallToolResult:
         if name == WHOAMI:
             return _ok_result(self.whoami(p))
@@ -238,8 +319,9 @@ class McpTools:
         key = args.pop("idempotency_key", None)
         corr = args.pop("correlation_id", None)
         try:
-            for needed in (scope, *op.reaches):
-                _require_scope(p, needed)
+            refused = self.scope_refusal(p, name)
+            if refused is not None:
+                raise refused
             if op.app not in self.usable_apps(p):
                 raise ServiceError(404, "app_unavailable", "该应用未启用或你不能使用它")
             if key is not None and not isinstance(key, str):
@@ -261,23 +343,31 @@ class McpTools:
             return _error_result(err)
         return _ok_result(result)
 
-    def _run_get(self, p: dict, arguments: dict) -> types.CallToolResult:
-        run_id = (arguments or {}).get("run_id")
+    def _visible_run(self, p: dict, run_id: Any) -> tuple[dict, Operation, str]:
+        """The run `run_id` as this caller may read it — one this client started here, for this
+        person, in this workspace — with its operation and the scope that operation needs. Any
+        other run is the same 404 as no run at all."""
         missing = ServiceError(404, "run_not_found", "运行记录不存在")
+        if not isinstance(run_id, str) or not run_id:
+            raise ServiceError(400, "invalid_input", "run_id 必须是字符串")
+        row = self.store.one("SELECT * FROM op_runs WHERE id=?", (run_id,))
+        if not row or row["user_id"] != p["user_id"] or row["via"] != "api" or row["workspace_id"] != p["tenant"]:
+            raise missing
+        started_by = public_run(row)["delegation"] or {}
+        if started_by.get("kind") != "oauth_client" or started_by.get("client_id") != p["client_id"]:
+            raise missing
+        op = self.caps.registry.get(row["op"])
+        scope = machine_scope(op, self.caps.registry.app(op.app)) if op is not None else None
+        if scope is None:
+            raise missing
+        return row, op, scope
+
+    def _run_get(self, p: dict, arguments: dict) -> types.CallToolResult:
         try:
-            if not isinstance(run_id, str) or not run_id:
-                raise ServiceError(400, "invalid_input", "run_id 必须是字符串")
-            row = self.store.one("SELECT * FROM op_runs WHERE id=?", (run_id,))
-            if not row or row["user_id"] != p["user_id"] or row["via"] != "api" or row["workspace_id"] != p["tenant"]:
-                raise missing
-            started_by = public_run(row)["delegation"] or {}
-            if started_by.get("kind") != "oauth_client" or started_by.get("client_id") != p["client_id"]:
-                raise missing
-            op = self.caps.registry.get(row["op"])
-            scope = machine_scope(op, self.caps.registry.app(op.app)) if op is not None else None
-            if scope is None:
-                raise missing
-            _require_scope(p, scope)
+            row, op, scope = self._visible_run(p, (arguments or {}).get("run_id"))
+            refused = self._lacking(p, {scope})
+            if refused is not None:
+                raise refused
             with machine_credential(p["scopes"], op.app):
                 return _ok_result(self.caps.present_run(row, user_id=p["user_id"]))
         except ServiceError as err:
@@ -292,8 +382,8 @@ class McpTools:
                                for op, scope in sorted(self.ops.values(), key=lambda pair: pair[0].id) if op.app in usable]}
 
 
-def build_server(ctx) -> Server:
-    tools = McpTools(ctx)
+def build_server(ctx, tools: McpTools | None = None) -> Server:
+    tools = tools or McpTools(ctx)
 
     async def list_tools(rc: ServerRequestContext, params) -> types.ListToolsResult:
         p = principal()

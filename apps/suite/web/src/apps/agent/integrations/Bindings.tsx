@@ -4,19 +4,22 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Empty, Loading } from '../../../shared/states';
-import { slugifyAlias, type Binding, type BindingList, type ConnectionSummary } from './model';
-import { ErrorNotice, HealthBadge, OwnerText, useRead, useText, useWrite, WriteFeedback } from './shared';
+import { platformStopped, slugifyAlias, type Binding, type BindingList, type ConnectionSummary } from './model';
+import { ConnectionStatusBadge, ErrorNotice, HealthBadge, OwnerText, useRead, useText, useWrite, WriteFeedback } from './shared';
 import './integrations.css';
 
-export function BindingRow({ item, toolCount, onChanged }: { item: ConnectionSummary; toolCount: number; onChanged: (binding: Binding) => void }) {
+export function BindingRow({ item, toolCount, onChanged, onStale }: { item: ConnectionSummary; toolCount: number; onChanged: (binding: Binding) => void;
+  /** The server executed a change but cannot return it: the section re-reads the bindings. */
+  onStale?: () => void }) {
   const { m } = useText();
   const write = useWrite();
   const binding = item.binding;
   const [alias, setAlias] = useState(binding.alias ?? item.slug);
   const slug = slugifyAlias(alias);
+  const stopped = platformStopped(item);
   const ref = { connection_id: item.id };
   function save(input: Record<string, unknown>) {
-    write.start<Binding>('agent.mcp.binding.set', { ...ref, ...input }, onChanged);
+    write.start<Binding>('agent.mcp.binding.set', { ...ref, ...input }, onChanged, onStale);
   }
   function saveAlias(e: FormEvent) {
     e.preventDefault();
@@ -27,9 +30,10 @@ export function BindingRow({ item, toolCount, onChanged }: { item: ConnectionSum
     <div className="col grow gap4">
       <div className="row wrap"><Link className="title" to={`/agent/integrations/${item.id}`}>{item.name}</Link>
         <HealthBadge health={item.health} />
-        {item.status === 'disabled' && <span className="badge warn">{m('statusDisabled')}</span>}
+        {(item.status === 'disabled' || stopped) && <ConnectionStatusBadge status={item.status} stopped={stopped} />}
         {binding.enabled ? <span className="badge info">{m('bound')}</span> : <span className="badge">{m('boundDisabled')}</span>}</div>
       <div className="sub"><OwnerText summary={item} /> · {item.host ?? item.url} · {m('effectiveTools', { n: toolCount })}</div>
+      {stopped && <p className="notice warn small" role="status">{m('platformStoppedAgent')}</p>}
       <div className="row wrap">
         <label className="check"><input type="checkbox" checked={!!binding.enabled} disabled={write.locked} onChange={(e) => save({ enabled: e.target.checked })} /><span>{m('enabled')}</span></label>
         <label className="check"><input type="checkbox" checked={!!binding.resources_enabled} disabled={write.locked} onChange={(e) => save({ resources_enabled: e.target.checked })} /><span>{m('resourcesEnabled')}</span></label>
@@ -58,7 +62,7 @@ export default function McpBindings() {
       {resource.loading && !items ? <Loading /> : resource.error != null ? <ErrorNotice error={resource.error} retry={resource.reload} />
         : items && (items.length === 0 ? <Empty title={m('bindingsEmpty')} action={<Link className="btn" to="/agent/integrations">{m('openCentre')}</Link>} />
           : <div className="suite-list">{items.map((item) => <BindingRow key={item.id} item={item}
-            toolCount={tools.filter((tool) => tool.alias === item.binding.alias).length}
+            toolCount={tools.filter((tool) => tool.alias === item.binding.alias).length} onStale={resource.reload}
             onChanged={(binding) => resource.setData((old) => old && ({ ...old, items: old.items.map((c) => c.id === item.id ? { ...c, binding } : c) }))} />)}</div>)}
     </div>
   </section>;

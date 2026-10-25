@@ -404,6 +404,27 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
         return {"200": {"description": "OK", "headers": _headers("200"),
                         "content": {"application/json": {"schema": schema}}}}
 
+    # The MCP endpoint's refusals of who is asking are bearer challenges (RFC 6750 §3, RFC 9728 §5.1):
+    # what the header says decides whether an MCP client authorizes again, so it is part of the contract.
+    challenge = {"WWW-Authenticate": {"schema": {"type": "string"}, "description": (
+        "Bearer resource_metadata=\"{the metadata URL}\", plus error=\"…\" where acting on it can help: "
+        "invalid_token at 401 when a bearer token was presented (none when no token was), "
+        "insufficient_scope with scope=\"…\" at 403 only where authorizing this client again can grant "
+        "those scopes, and no error code on any other 403.")}}
+    refused = {"application/json": {"schema": _ref("SuiteError")},
+               "application/problem+json": {"schema": _ref("SuiteProblem")}}
+    # a tools/call refused for scope before it runs: the JSON-RPC error of the request it answers
+    scope_refusal = {"type": "object", "required": ["jsonrpc", "id", "error"], "properties": {
+        "jsonrpc": {"const": "2.0"}, "id": {"type": ["string", "integer"]},
+        "error": {"type": "object", "required": ["code", "message", "data"], "properties": {
+            "code": {"const": -32602}, "message": {"type": "string"},
+            "data": {"type": "object", "required": ["code", "required_scope"], "properties": {
+                "code": {"const": "insufficient_scope"},
+                "required_scope": {"type": "string", "description": "The scopes the call needs that the token lacks."},
+                "scopes": {"type": "array", "items": {"type": "string"}, "description": "The scopes the token holds."},
+                "reason": {"const": "scope_not_registered",
+                           "description": "Present when authorizing again cannot grant them: not challenged."},
+                "request_id": {"type": "string"}}}}}}}
     paths[f"{SUITE_V1}/mcp"] = {"post": {**_common({
         "operationId": "mcp", "tags": ["mcp"],
         "summary": "The same operations as the Model Context Protocol (Streamable HTTP, JSON-RPC 2.0)",
@@ -412,8 +433,9 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
                        "operations listed in this document that the token's scopes allow, plus synwevo.whoami and "
                        "synwevo.run.get; resources synwevo://whoami and synwevo://operations. The token must be "
                        "minted for this endpoint's own URL (RFC 8707 resource); its metadata is at "
-                       "/.well-known/oauth-protected-resource/api/suite/v1/mcp (RFC 9728). See "
-                       "docs/integration/mcp.md.",
+                       "/.well-known/oauth-protected-resource/api/suite/v1/mcp (RFC 9728). Every other method is "
+                       "answered 405 with Allow: POST: there is no GET stream, and the server keeps no session "
+                       "for a DELETE to end. See docs/integration/mcp.md.",
         "requestBody": {"required": True, "content": {"application/json": {"schema": {
             "type": "object", "required": ["jsonrpc", "method"],
             "properties": {"jsonrpc": {"const": "2.0"}, "id": {"type": ["string", "integer"]},
@@ -424,7 +446,23 @@ def contract(registry, *, server: str = SERVER, issuer: str = ISSUER) -> dict:
                               "content": {"application/json": {"schema": {"type": "object"}},
                                           "text/event-stream": {"schema": {"type": "string"}}}},
                       "202": {"description": "A notification was accepted"},
-                      **_errors({"400", "401", "403", "404", "429", "500"})}}, scopes=[]),
+                      **_errors({"400"}),
+                      "401": {"description": "Unauthorized: no bearer token, or one that is not valid for this "
+                                             "server (expired, revoked, minted for another resource)",
+                              "headers": {**_headers("401"), **challenge}, "content": refused},
+                      "403": {"description": "Forbidden. A tools/call (or synwevo.run.get) whose operation needs a "
+                                             "scope the token lacks is refused before it runs, with that request's "
+                                             "JSON-RPC error as the body (code -32602; data.code insufficient_scope, "
+                                             "data.required_scope) and, where a new authorization can grant the "
+                                             "scope, the insufficient_scope challenge naming it. A token with no "
+                                             "business scope left gets that challenge for the scopes its client can "
+                                             "still be granted. Other refusals (the server closed by policy, the "
+                                             "workspace or the registration no longer allowing it) carry the error "
+                                             "envelope and no challenge error code.",
+                              "headers": {**_headers("403"), **challenge},
+                              "content": {**refused, "application/json": {"schema": {
+                                  "anyOf": [_ref("SuiteError"), scope_refusal]}}}},
+                      **_errors({"404", "429", "500"})}}, scopes=[]),
         "x-synwevo-resource": "{workplace origin}/api/suite/v1/mcp"}}
     paths[f"{SUITE_V1}/whoami"] = {"get": _common({
         "operationId": "whoami", "summary": "Who this credential is, for whom, where, and what it may ask for",

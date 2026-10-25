@@ -1,9 +1,12 @@
-"""The Agent's MCP operations (all personal, none for the model except the two call carriers) and
-the two HTTP routes the OAuth flow needs: the Agent's Client ID Metadata Document and the callback."""
+"""The Agent's MCP operations (all personal, none for the model) and the two HTTP routes the OAuth
+flow needs: the Agent's Client ID Metadata Document and the callback. The four carriers run only
+for the engine executing a model's mcp: operation (`tools.CARRIERS`); they are not the model's to
+name and not a page's or a script's to call."""
 from __future__ import annotations
 
+import json
 import urllib.parse
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -17,7 +20,7 @@ from synwevo_core.oidc import MCP_SCOPES, issuer, mcp_resource
 from .connections import Connections
 from .oauth import CALLBACK_PATH, OutboundOAuth, client_metadata_document
 from .tools import (AGENT_CALL, CANCEL_CHECK, REGISTERED_CALL, REGISTERED_READ, REGISTERED_RESOURCE_LIST,
-                    REGISTERED_RESOURCE_READ)
+                    REGISTERED_RESOURCE_READ, McpTools, result_connection)
 
 CID = r"^mcpc_[a-f0-9]{12}$"
 WS = r"^[A-Za-z0-9_-]{1,100}$"
@@ -25,6 +28,17 @@ WS = r"^[A-Za-z0-9_-]{1,100}$"
 
 def T(zh, hant, en):
     return {"zh-Hans": zh, "zh-Hant": hant, "en": en}
+
+
+def _stored(value: Any) -> Any:
+    """A JSON column of a run record as the store hands it back: some (``output``) already
+    decoded, others (``input``) still text."""
+    if isinstance(value, (str, bytes)):
+        try:
+            return json.loads(value) if value else None
+        except ValueError:
+            return None
+    return value
 
 
 class _In(BaseModel):
@@ -146,47 +160,79 @@ def register(ctx, agent, connections: Connections) -> None:
         registry.register(Operation(app="agent", **kw))
 
     def guard(c, row):
-        # A stored result of a call stays readable only while the person may still use the connection.
-        from .connections import _j
-        inp = _j(row.get("input"), {}) or {}
-        alias = inp.get("connection")
-        cid = inp.get("connection_id")
-        if alias and not cid:
-            b = store.one("SELECT connection_id FROM mcp_agent_bindings WHERE user_id=? AND alias=?", (c.user_id, alias))
-            cid = b["connection_id"] if b else None
-        conn = store.one("SELECT * FROM mcp_connections WHERE id=? AND deleted_at IS NULL", (cid,)) if cid else None
+        # A stored result of a carrier stays readable only while the person may still use the
+        # connection it came through (the one its call record or, for a resource list, it names).
+        inp = _stored(row.get("input"))
+        conn = result_connection(store, c.user_id, inp.get("connection") if isinstance(inp, dict) else None,
+                                 _stored(row.get("output")))
+        if not conn or conn["deleted_at"] is not None or not connections.may_use(c.user_id, conn):
+            raise ServiceError(409, "result_access_changed", "连接已不可用")
+
+    def written(c, row):
+        # A page's retry of adding or changing a connection with the same key gets its receipt (the
+        # summary as written then; nothing is written again) while the person may still use it.
+        out = _stored(row.get("output"))
+        cid = out.get("id") if isinstance(out, dict) else None
+        conn = store.one("SELECT * FROM mcp_connections WHERE id=? AND deleted_at IS NULL", (cid,)) if isinstance(cid, str) else None
         if not conn or not connections.may_use(c.user_id, conn):
             raise ServiceError(409, "result_access_changed", "连接已不可用")
 
-    # ------------------------------------------------------------------ what the model calls
-    def agent_call(c, i):
+    # ------------------------------------------------------------------ what the engine runs for the model
+    def engine_call(c) -> dict:
+        """The tool call of the Agent's engine this carrier runs for (`engine._execute` names it
+        around `Capabilities.invoke`), checked again here rather than trusted from the caller: the
+        data-flow outbound question is asked at the moment the request would leave."""
         ids = AGENT_CALL.get() or {}
+        t = store.one("SELECT * FROM agent_turns WHERE id=? AND user_id=? AND conversation_id=?",
+                      (ids.get("turn_id"), c.user_id, ids.get("conversation_id"))) if c.via == "agent" else None
+        if t is None or ids.get("carrier") != c.op.id:
+            raise ServiceError(403, "mcp_agent_only", "这个操作只在 Agent 调用外部 MCP 工具时使用，不能直接调用")
+        McpTools(connections, c.user).require_outbound(agent.mcp_sources(t))
+        return ids
+
+    def agent_call(c, i, *, require_mode=None):
+        ids = engine_call(c)
         return connections.call_tool(c.user, i.connection, i.tool, i.arguments, origin="agent",
                                      conversation_id=ids.get("conversation_id"), turn_id=ids.get("turn_id"),
-                                     tool_call_id=ids.get("tool_call_id"), should_stop=CANCEL_CHECK.get())
+                                     tool_call_id=ids.get("tool_call_id"), should_stop=CANCEL_CHECK.get(),
+                                     require_mode=require_mode)
 
+    def agent_read_resource(c, i):
+        ids = engine_call(c)
+        return connections.read_resource(c.user, i.connection, i.uri, origin="agent",
+                                         **{k: ids.get(k) for k in ("conversation_id", "turn_id", "tool_call_id")})
+
+    def agent_list_resources(c, i):
+        engine_call(c)
+        entry = _agent_resource_connection(c.user, i.connection)
+        # The list makes no request, so no call record names its connection: the result does.
+        return {"connection": i.connection, "connection_id": entry["connection_id"],
+                "resources": connections.list_resources(c.user, entry["connection_id"])}
+
+    # Each reaches an external server (or answers for one): a stored result is never rebuilt by
+    # running the carrier again (rereadable=False), only checked against the connection (guard).
+    carrier = dict(need="personal", agent="auto", transactional=False, result_guard=guard, rereadable=False)
     op(id=REGISTERED_CALL, title=T("调用外部 MCP 工具", "呼叫外部 MCP 工具", "Call an external MCP tool"),
        summary="Run one tool of an external MCP server the person connected and enabled for their Agent; confirmed first.",
-       input=ToolCallIn, side_effect="external", agent="confirm", transactional=False, result_guard=guard,
-       handler=agent_call)
+       input=ToolCallIn, side_effect="external", **{**carrier, "agent": "confirm"}, handler=agent_call)
     op(id=REGISTERED_READ, title=T("读取外部 MCP 工具", "讀取外部 MCP 工具", "Read through an external MCP tool"),
        summary="Run one read-only tool of an external MCP server the person allowed to run without asking.",
-       input=ToolCallIn, side_effect="none", agent="auto", transactional=False, handler=agent_call)
+       input=ToolCallIn, side_effect="none", **carrier,
+       # Only a tool whose effective grant is auto and that the server marks read-only, checked by
+       # the service when the call is made, not when the model's call was prepared.
+       handler=lambda c, i: agent_call(c, i, require_mode="auto"))
     op(id=REGISTERED_RESOURCE_READ, title=T("读取外部 MCP 资源", "讀取外部 MCP 資源", "Read an external MCP resource"),
        summary="Read one resource of an external MCP server whose resources the person opened to their Agent.",
-       input=ResourceReadAgentIn, side_effect="none", agent="auto", transactional=False,
-       handler=lambda c, i: connections.read_resource(c.user, i.connection, i.uri, origin="agent",
-                                                      **{k: (AGENT_CALL.get() or {}).get(k) for k in ("conversation_id", "turn_id", "tool_call_id")}))
+       input=ResourceReadAgentIn, side_effect="none", **carrier, handler=agent_read_resource)
     op(id=REGISTERED_RESOURCE_LIST, title=T("列出外部 MCP 资源", "列出外部 MCP 資源", "List external MCP resources"),
        summary="List the resources of an external MCP server whose resources the person opened to their Agent.",
-       input=ResourceListAgentIn, side_effect="none", agent="auto", transactional=False,
-       handler=lambda c, i: {"connection": i.connection, "resources": _agent_resources(c.user, i.connection)})
+       input=ResourceListAgentIn, side_effect="none", **carrier, handler=agent_list_resources)
 
-    def _agent_resources(user, alias):
+    def _agent_resource_connection(user, alias):
         entry = next((e for e in connections.resource_connections(user["id"]) if e["alias"] == alias), None)
         if entry is None:
             raise ServiceError(404, "mcp_resources_unavailable", "这个连接的资源没有开放给 Agent")
-        return connections.list_resources(user, entry["connection_id"])
+        return entry
 
     # ------------------------------------------------------------------ the pages
     op(id="agent.mcp.policy.get", title=T("查看 MCP 开放情况", "查看 MCP 開放情況", "MCP availability"),
@@ -200,7 +246,7 @@ def register(ctx, agent, connections: Connections) -> None:
        handler=lambda c, i: {"items": connections.list(c.user, q=i.q or "", workspace_id=i.workspace_id)})
     op(id="agent.mcp.connection.create", title=T("添加 MCP 连接", "新增 MCP 連線", "Add an MCP connection"),
        summary="Add a connection to an external MCP server, for the person or for a workspace they administer.",
-       input=CreateConnection, side_effect="write", transactional=False,
+       input=CreateConnection, side_effect="write", transactional=False, result_guard=written,
        handler=lambda c, i: connections.create(c.user, owner_kind=i.owner_kind, owner_id=i.workspace_id, name=i.name, url=i.url,
                                                description=i.description, auth_kind=i.auth_kind, credential=_secret(i.credential),
                                                oauth_client=_oauth_client(i.oauth_client)))
@@ -209,7 +255,7 @@ def register(ctx, agent, connections: Connections) -> None:
        handler=lambda c, i: connections.detail(c.user, i.connection_id))
     op(id="agent.mcp.connection.update", title=T("修改 MCP 连接", "修改 MCP 連線", "Update an MCP connection"),
        summary="Change a connection's name, address, description or credential.", input=UpdateConnection, side_effect="write",
-       transactional=False,
+       transactional=False, result_guard=written,
        handler=lambda c, i: connections.update(c.user, i.connection_id, name=i.name, description=i.description, url=i.url,
                                                auth_kind=i.auth_kind, credential=_secret(i.credential), oauth_client=_oauth_client(i.oauth_client)))
     op(id="agent.mcp.connection.delete", title=T("删除 MCP 连接", "刪除 MCP 連線", "Delete an MCP connection"),

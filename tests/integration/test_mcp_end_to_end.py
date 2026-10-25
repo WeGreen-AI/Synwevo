@@ -3,7 +3,13 @@
 A. An MCP client (the official SDK's `Client`) authorises at the account service — sign-in, the
    consent page with its workspace choice, the token endpoint with the MCP server's URL as the
    RFC 8707 resource — and then lists and calls a real business operation on the Synwevo MCP server
-   over Streamable HTTP, through the one gate the deployment runs.
+   over Streamable HTTP, through the one gate the deployment runs. A tool its token lacks the
+   scope for is a 403 `insufficient_scope` challenge, and the SDK's OAuthClientProvider steps up to
+   the scope it names and repeats the call — where the client's registration lists that scope;
+   where it does not, nobody is sent to authorize for nothing. A token for identity alone is
+   stepped up the same way to the scopes the server needs, where the registration lists some. A
+   client registered the documented way on a non-canonical APP_URL still gets its token for the
+   advertised resource.
 B. The Agent connects to an external MCP server (a FIXTURE server built with the SDK, served in
    process), and a scripted model (TEST DOUBLE) makes it call a tool after the person confirms.
 
@@ -22,9 +28,12 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 from mcp import Client
+from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from mcp.shared.exceptions import MCPError
 from mcp_types import ToolAnnotations
 
 from synwevo_core import oidc
@@ -107,25 +116,31 @@ class _LazyApp:
         await self.app(scope, receive, send)
 
 
-def _authorize_with_browser(env) -> str:
+def _authorize_with_browser(env, scope: str = "openid offline_access forms.read forms.write", *, consent: bool = True) -> str:
     """What the MCP client's browser step does: sign in, consent (choosing the workspace), get a code
-    back on the client's redirect URI; then the client exchanges it for a token for the MCP server."""
+    back on the client's redirect URI; then the client exchanges it for a token for the MCP server.
+    Identity scopes alone need no consent (`consent=False`): the code comes straight back."""
     browser = TestClient(env["api"])
     assert browser.post("/api/auth/login", json={"email": "alice@example.com", "password": PW}).status_code == 200
     verifier = base64.urlsafe_b64encode(b"verifier" * 6).rstrip(b"=").decode()
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    q = {"client_id": "mcp-desk", "redirect_uri": REDIRECT, "response_type": "code", "scope": "openid offline_access forms.read forms.write",
+    q = {"client_id": "mcp-desk", "redirect_uri": REDIRECT, "response_type": "code", "scope": scope,
          "state": "xyz", "code_challenge": challenge, "code_challenge_method": "S256", "resource": oidc.mcp_resource()}
     parked = browser.get("/oidc/authorize?" + urllib.parse.urlencode(q), follow_redirects=False)
-    assert parked.status_code == 303 and parked.headers["location"].startswith("/oauth/consent"), parked.text
-    rid = urllib.parse.parse_qs(urllib.parse.urlparse(parked.headers["location"]).query)["request"][0]
-    shown = browser.get(f"/api/auth/oauth-consent/{rid}").json()
-    assert shown["scopes"] == ["forms.read", "forms.write", "offline_access"] or set(shown["scopes"]) == {"forms.read", "forms.write", "offline_access"}
-    body = {"workspace_id": env["ws"]} if shown["workspace_choices"] else {}
-    decided = browser.post(f"/api/auth/oauth-consent/{rid}/approve", json=body,
-                           headers={CSRF_HEADER: browser.cookies.get(CSRF_COOKIE) or ""})
-    assert decided.status_code == 200, decided.text
-    back = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(decided.json()["redirect"]).query))
+    if consent:
+        assert parked.status_code == 303 and parked.headers["location"].startswith("/oauth/consent"), parked.text
+        rid = urllib.parse.parse_qs(urllib.parse.urlparse(parked.headers["location"]).query)["request"][0]
+        shown = browser.get(f"/api/auth/oauth-consent/{rid}").json()
+        assert set(shown["scopes"]) == set(scope.split()) - {"openid"}
+        body = {"workspace_id": env["ws"]} if shown["workspace_choices"] else {}
+        decided = browser.post(f"/api/auth/oauth-consent/{rid}/approve", json=body,
+                               headers={CSRF_HEADER: browser.cookies.get(CSRF_COOKIE) or ""})
+        assert decided.status_code == 200, decided.text
+        location = decided.json()["redirect"]
+    else:
+        assert parked.status_code == 303 and parked.headers["location"].startswith(REDIRECT), parked.text
+        location = parked.headers["location"]
+    back = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(location).query))
     assert back["state"] == "xyz" and back["iss"] == BASE
     machine = TestClient(env["api"])                                       # the client itself: no cookie
     issued = machine.post("/oidc/token", data={"grant_type": "authorization_code", "code": back["code"], "redirect_uri": REDIRECT,
@@ -166,6 +181,184 @@ async def test_an_mcp_client_authorises_at_the_account_service_and_uses_a_busine
                                   headers={"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2026-07-28",
                                            "Mcp-Method": "tools/list"})
         assert refused.status_code == 401 and "resource_metadata" in refused.headers["www-authenticate"]
+
+
+class _MemoryTokens:
+    """The SDK client's token storage, in memory: the client pre-registered as `mcp-desk`."""
+
+    def __init__(self):
+        self.tokens = None
+        self.client = OAuthClientInformationFull(client_id="mcp-desk", redirect_uris=[REDIRECT],
+                                                 token_endpoint_auth_method="none")
+
+    async def get_tokens(self):
+        return self.tokens
+
+    async def set_tokens(self, tokens):
+        self.tokens = tokens
+
+    async def get_client_info(self):
+        return self.client
+
+    async def set_client_info(self, info):
+        self.client = info
+
+
+def _sdk_client_auth(env, storage: "_MemoryTokens", scope: str) -> tuple[OAuthClientProvider, list[set[str]]]:
+    """The official SDK's OAuthClientProvider for `mcp-desk`, and the list of the scopes of every
+    authorization it sends the person through. The person's browser is the stand-in: it signs in
+    and approves the consent page it is shown."""
+    asked: list[set[str]] = []
+    pending: dict = {}
+    browser = TestClient(env["api"])
+    assert browser.post("/api/auth/login", json={"email": "alice@example.com", "password": PW}).status_code == 200
+
+    async def open_browser(url: str) -> None:
+        asked.append(set(dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))["scope"].split()))
+        parked = browser.get(url, follow_redirects=False)
+        assert parked.status_code == 303, parked.text
+        location = parked.headers["location"]
+        if location.startswith("/oauth/consent"):
+            rid = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)["request"][0]
+            shown = browser.get(f"/api/auth/oauth-consent/{rid}").json()
+            body = {"workspace_id": env["ws"]} if shown["workspace_choices"] else {}
+            decided = browser.post(f"/api/auth/oauth-consent/{rid}/approve", json=body,
+                                   headers={CSRF_HEADER: browser.cookies.get(CSRF_COOKIE) or ""})
+            assert decided.status_code == 200, decided.text
+            location = decided.json()["redirect"]
+        pending.clear()
+        pending.update(urllib.parse.parse_qsl(urllib.parse.urlparse(location).query))
+
+    async def callback() -> AuthorizationCodeResult:
+        return AuthorizationCodeResult(code=pending["code"], state=pending.get("state"), iss=pending.get("iss"))
+
+    auth = OAuthClientProvider(
+        server_url=BASE + "/api/suite/v1/mcp",
+        client_metadata=OAuthClientMetadata(client_name="Fixture MCP desktop client", redirect_uris=[REDIRECT],
+                                            grant_types=["authorization_code"], response_types=["code"],
+                                            token_endpoint_auth_method="none", scope=scope),
+        storage=storage, redirect_handler=open_browser, callback_handler=callback)
+    return auth, asked
+
+
+async def test_a_scope_challenge_steps_the_sdk_client_up_to_the_scope_it_names(env):
+    """The official SDK's OAuthClientProvider does what an MCP client does: discovery from the 401,
+    authorization with PKCE and the RFC 8707 resource, and — when a tool needs a scope the token
+    lacks — the step-up the 403 `insufficient_scope` challenge asks for, then the same call again."""
+    # The client holds a token from an earlier, narrower authorization (the SDK's tokens loaded from
+    # storage): it reads forms, and has never been granted forms.write.
+    storage = _MemoryTokens()
+    storage.tokens = OAuthToken(access_token=_authorize_with_browser(env, scope="openid forms.read"),
+                                token_type="Bearer", scope="forms.read")
+    auth, asked = _sdk_client_auth(env, storage, "forms.read")
+    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=env["api"]), base_url=BASE, auth=auth,
+                                  timeout=httpx2.Timeout(30.0, read=60.0)) as http:
+        async with Client(streamable_http_client(BASE + "/api/suite/v1/mcp", http_client=http)) as client:
+            listed = (await client.call_tool("forms.form.list", {})).structured_content
+            assert listed["status"] == "succeeded" and asked == []
+            made = await client.call_tool("forms.form.create", {"title": "Stepped up", "idempotency_key": "step-up-1"})
+    assert made.is_error is False and made.structured_content["status"] == "succeeded"
+    # one authorization, the step-up, asking for what the challenge named: the scope held and the one missing
+    assert len(asked) == 1 and {"forms.read", "forms.write"} <= asked[0]
+    assert {"forms.read", "forms.write"} <= set(storage.tokens.scope.split())
+    assert env["store"].one("SELECT COUNT(*) AS n FROM forms WHERE title='Stepped up'")["n"] == 1
+
+
+async def test_a_scope_the_registration_does_not_list_sends_nobody_to_authorize(env):
+    """`mcp-desk` is registered for forms.* only (FIXTURE registration), and the account service
+    grants an MCP client nothing else. A tool that needs tables.write is refused without the
+    `insufficient_scope` challenge: the SDK's client raises the request's JSON-RPC error and never
+    sends the person through an authorization that would end with the same token — once per call."""
+    storage = _MemoryTokens()
+    first = _authorize_with_browser(env, scope="openid forms.read forms.write")
+    storage.tokens = OAuthToken(access_token=first, token_type="Bearer", scope="forms.read forms.write")
+    auth, asked = _sdk_client_auth(env, storage, "forms.read forms.write")
+    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=env["api"]), base_url=BASE, auth=auth,
+                                  timeout=httpx2.Timeout(30.0, read=60.0)) as http:
+        async with Client(streamable_http_client(BASE + "/api/suite/v1/mcp", http_client=http)) as client:
+            for _ in range(2):
+                with pytest.raises(MCPError) as refused:
+                    await client.call_tool("tables.table.create", {"name": "Not mine to make"})
+                assert refused.value.data["code"] == "insufficient_scope"
+                assert refused.value.data["required_scope"] == "tables.write"
+                assert refused.value.data["reason"] == "scope_not_registered"
+            # the token is still good for what it was granted
+            assert (await client.call_tool("forms.form.list", {})).is_error is False
+    assert asked == [] and storage.tokens.access_token == first
+    assert env["store"].one("SELECT COUNT(*) AS n FROM op_runs WHERE op='tables.table.create'")["n"] == 0
+
+
+async def test_an_identity_only_token_steps_the_sdk_client_up_to_the_scopes_the_server_needs(env):
+    """A token authorized for identity alone opens nothing on this server: the gate refuses it before
+    any JSON-RPC. `mcp-desk`'s registration lists forms.read and forms.write, so that 403 is the
+    scope challenge for them — and the SDK's OAuthClientProvider steps up once, with the person's
+    consent, and is through."""
+    storage = _MemoryTokens()
+    storage.tokens = OAuthToken(access_token=_authorize_with_browser(env, scope="openid", consent=False),
+                                token_type="Bearer", scope="openid")
+    auth, asked = _sdk_client_auth(env, storage, "openid")
+    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=env["api"]), base_url=BASE, auth=auth,
+                                  timeout=httpx2.Timeout(30.0, read=60.0)) as http:
+        async with Client(streamable_http_client(BASE + "/api/suite/v1/mcp", http_client=http)) as client:
+            tools = {t.name for t in (await client.list_tools()).tools}
+            made = await client.call_tool("forms.form.create", {"title": "After the step-up", "idempotency_key": "id-only-1"})
+    assert {"forms.form.create", "forms.form.list"} <= tools and made.is_error is False
+    assert len(asked) == 1 and {"forms.read", "forms.write"} <= asked[0]
+    assert {"forms.read", "forms.write"} <= set(storage.tokens.scope.split())
+    refused = env["store"].one("SELECT error_code FROM api_platform_calls WHERE route='/api/suite/v1/mcp' AND status=403")
+    assert refused["error_code"] == "wrong_credential"
+
+
+def _leaves(err: BaseException) -> list[BaseException]:
+    return [leaf for inner in err.exceptions for leaf in _leaves(inner)] if isinstance(err, BaseExceptionGroup) else [err]
+
+
+async def test_an_identity_only_token_with_nothing_here_to_grant_sends_nobody_to_authorize(env):
+    """The same token, after the operator narrowed `mcp-desk` to identity scopes: authorizing again
+    cannot give it a scope this server understands, so the refusal carries no `insufficient_scope`
+    and the SDK's client reports it instead of sending the person through an authorization that ends
+    with the same token."""
+    first = _authorize_with_browser(env, scope="openid", consent=False)
+    oidc.Clients(env["store"]).register(client_id="mcp-desk", app_id="platform", name="Fixture MCP desktop client",
+                                        redirect_uris=[REDIRECT], scopes="openid offline_access",
+                                        audiences=[oidc.mcp_resource()])
+    storage = _MemoryTokens()
+    storage.tokens = OAuthToken(access_token=first, token_type="Bearer", scope="openid")
+    auth, asked = _sdk_client_auth(env, storage, "openid")
+    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=env["api"]), base_url=BASE, auth=auth,
+                                  timeout=httpx2.Timeout(30.0, read=60.0)) as http:
+        for _ in range(2):
+            # the SDK's transport reports the refused POST as an error response (inside its task groups)
+            with pytest.raises(BaseExceptionGroup) as refused:
+                async with Client(streamable_http_client(BASE + "/api/suite/v1/mcp", http_client=http)) as client:
+                    await client.list_tools()
+            leaves = _leaves(refused.value)
+            assert any(isinstance(e, MCPError) and "error response" in str(e) for e in leaves), repr(refused.value)
+    assert asked == [] and storage.tokens.access_token == first
+    refusals = env["store"].all("SELECT status, error_code FROM api_platform_calls WHERE route='/api/suite/v1/mcp'")
+    assert refusals and all((r["status"], r["error_code"]) == (403, "wrong_credential") for r in refusals)
+
+
+async def test_a_client_preregistered_by_the_documented_formula_gets_a_token_for_the_advertised_resource(env):
+    """docs/integration/mcp.md has the operator register `--audience {SYNWEVO_APP_URL}/api/suite/v1/mcp`.
+    With the APP_URL written as an operator may configure it — uppercase, the default port — that
+    is the same server, and the client asks for it by the metadata's canonical `resource`: the
+    registration keeps that, so the token endpoint issues the token (RFC 8707) and the server
+    accepts it."""
+    configured = "HTTP://TestServer:80"                 # the same origin as BASE, as an operator may write it
+    assert oidc.canonical_resource_uri(configured + "/api/suite/v1/mcp") == oidc.mcp_resource()
+    oidc.Clients(env["store"]).register(client_id="mcp-desk", app_id="platform", name="Fixture MCP desktop client",
+                                        redirect_uris=[REDIRECT], scopes="openid offline_access forms.read forms.write",
+                                        audiences=[configured + "/api/suite/v1/mcp"])
+    metadata = TestClient(env["api"]).get("/.well-known/oauth-protected-resource/api/suite/v1/mcp").json()
+    assert metadata["resource"] == oidc.mcp_resource()
+    token = _authorize_with_browser(env, scope="openid forms.read")     # resource = the metadata's
+    assert oidc.Clients(env["store"]).get("mcp-desk")["audiences"] == [metadata["resource"]]
+    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=env["api"]), base_url=BASE,
+                                  headers={"Authorization": f"Bearer {token}"}, timeout=httpx2.Timeout(30.0, read=60.0)) as http:
+        async with Client(streamable_http_client(BASE + "/api/suite/v1/mcp", http_client=http)) as client:
+            who = (await client.call_tool("synwevo.whoami", {})).structured_content
+    assert who["client_id"] == "mcp-desk" and who["resource"] == metadata["resource"]
 
 
 def _signed_in(env) -> TestClient:

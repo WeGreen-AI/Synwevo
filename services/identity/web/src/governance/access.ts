@@ -22,7 +22,8 @@ export const TAB_PERMISSION: Record<Tab, string> = {
   invitations: "platform.workspaces.view", organizations: "platform.orgs.view", registration: "platform.config.view",
   "model-provider": "platform.config.view", "model-costs": "platform.config.view", "model-risk": "platform.config.view", "model-prices": "platform.config.view", identity: "platform.config.view", mail: "platform.mail.view",
   // MCP: the policy, the masked connection overview and the inbound card read with the configuration view;
-  // publishing the policy and disabling a connection are platform.config.manage (admin_mcp).
+  // publishing the policy, stopping a connection platform-wide and lifting that stop are
+  // platform.config.manage (admin_mcp).
   mcp: "platform.config.view",
   // B1/B2: the application catalogue; switching applications and their policy is platform.apps.manage.
   apps: "platform.apps.view",

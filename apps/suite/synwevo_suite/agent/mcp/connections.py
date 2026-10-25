@@ -6,17 +6,26 @@ workspace's owners and administrators manage the workspace's, and its members ma
 connection in the Agent is a second, personal decision (`mcp_agent_bindings`): nobody's Agent
 gains tools because a workspace they belong to added a server. Each tool has a grant on the
 connection (`off`, `confirm`, `auto`) pinned to the schema it was made for; a binding may narrow a
-grant for one person, never widen it.
+grant for one person, never widen it. What a server says of itself and its tools is stored bounded,
+item by item and as a whole; a tool whose schema is too large to keep or to give a model, or that
+the offer has no more room for, is recorded as unusable, with the reason, and cannot be granted.
+What is recorded is the answer of the server the connection still points at.
 
 Credentials are sealed with the platform's root key and only ever unsealed into an HTTP header
-for one exchange. Previews kept with calls are bounded JSON of the arguments and the result text;
-the sealed values never enter them.
+for one exchange, and only to the server they were given for: a new address forgets them. Previews
+kept with calls are bounded JSON of the arguments and the result text; the sealed values never
+enter them.
+
+A platform administrator may stop a connection (`platform_disabled_at`, synwevo_identity.admin_mcp):
+its owner can then neither resume it nor give it a credential; only the platform administration
+lifts the stop.
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
+import threading
 import time
 from typing import Any
 from urllib.parse import urlsplit
@@ -28,6 +37,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.machine import MANAGE_ROLES
 from synwevo_core.mcp_policy import McpPolicy
 from synwevo_core.store import new_id, now
+from synwevo_core.suite_schema.mcp import settle_interrupted_calls
 
 from .runtime import Discovery, McpRuntime, ToolOutcome
 
@@ -41,6 +51,87 @@ MAX_PREVIEW = 4_000
 MAX_ALIAS = 24
 MODES = ("off", "confirm", "auto")
 _SLUG = re.compile(r"[^a-z0-9]+")
+
+#: What one discovered item may store (`_record_discovery`). The whole discovery is bounded on the
+#: wire (runtime.MAX_DISCOVERY_BYTES); these keep one tool, resource or prompt from filling the
+#: database, the pages or the model's context. A tool's input or output schema longer than
+#: MAX_SCHEMA_CHARS as stored JSON — more than the Agent shows the model of a schema
+#: (tools.McpTools.describe) — is not kept: the tool is recorded as unusable and cannot be granted.
+MAX_SCHEMA_CHARS = 20_000
+MAX_TITLE = 200
+MAX_TOOL_DESCRIPTION = 4_000
+MAX_ITEM_DESCRIPTION = 2_000
+MAX_MIME_TYPE = 200
+MAX_PROMPT_ARGUMENTS = 50
+MAX_ARGUMENT_DESCRIPTION = 500
+MAX_CAPABILITY_CHARS = 1_000
+#: What one connection's whole offer may store, in UTF-8 bytes of the kept text: its tools first,
+#: then its resources, then its prompts, each in the server's order and each kept whole while it
+#: still fits. The page that shows a connection is one operation's answer (capabilities.
+#: MAX_OUTPUT_BYTES, 1 MiB) and carries grants, calls and the connection itself beside the offer.
+#: What no longer fits keeps only what naming and using it needs: a tool its name and hints, and it
+#: is recorded as unusable (`mcp_offer_too_large`); a resource its address and name; a prompt its
+#: name and its arguments' names.
+MAX_OFFER_BYTES = 512 * 1024
+#: The largest resource size kept (SQLite's INTEGER); a size beyond it, or not a count, is not kept.
+MAX_SIZE = 2 ** 63 - 1
+#: The tool annotations kept (MCP ToolAnnotations): the hints grants, pages and the Agent read.
+ANNOTATION_HINTS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
+#: The server capabilities kept; anything else a server announces (experimental, extensions…) is not.
+KNOWN_CAPABILITIES = ("tools", "resources", "prompts", "logging", "completions")
+#: Why a tool is unusable (`mcp_connection_tools.unusable_code`), as the page and a refused grant say it.
+UNUSABLE = {
+    "mcp_schema_too_large": f"服务发布的工具输入或输出结构超过 {MAX_SCHEMA_CHARS} 个字符，无法安全地交给 Agent，这个工具不能授权",
+    "mcp_schema_invalid": "服务发布的工具输入或输出结构不是 JSON 对象，无法检查，这个工具不能授权",
+    "mcp_offer_too_large": f"服务发布的工具、资源和提示词合计超过 {MAX_OFFER_BYTES // 1024} KB，这个工具的定义没有保存，不能授权",
+}
+#: The bound each reason names (the page and a refused grant give it beside the reason).
+UNUSABLE_LIMIT = {"mcp_schema_too_large": {"max_chars": MAX_SCHEMA_CHARS}, "mcp_schema_invalid": {"max_chars": MAX_SCHEMA_CHARS},
+                  "mcp_offer_too_large": {"max_bytes": MAX_OFFER_BYTES}}
+#: Stored in place of the input schema of an unusable tool: a schema no validator accepts, so that a
+#: reader which ignored `unusable_code` still could not run the tool on unchecked input — the Agent
+#: answers it as `mcp_schema_invalid` (tools.McpTools.prepare).
+UNUSABLE_SCHEMA = {"type": "unusable"}
+
+#: Failures the server, or the network on the way to it, answers for (docs/platform/mcp.md §4.7):
+#: they mark the connection 'failed' and count toward its circuit breaker. A refused credential
+#: (`mcp_auth_required`) marks it 'auth_required' and counts toward nothing; every other refusal —
+#: the caller's own input, local admission and policy, a cancellation — leaves both alone.
+SERVER_FAILURES = frozenset({"mcp_unreachable", "mcp_unresolvable", "mcp_timeout", "mcp_protocol_error",
+                             "mcp_server_error", "mcp_not_found", "mcp_internal"})
+#: How many of the people behind one failure count are remembered (Connections._health): no fewer
+#: than the policy's largest threshold (McpPolicySpec.breaker_failures ≤ 100) can need.
+MAX_FAILURE_USERS = 100
+#: An OAuth access token this close to expiry is refreshed before use.
+REFRESH_EARLY_S = 30
+#: The lease one caller holds on refreshing a connection's token — longer than one refresh
+#: exchange may take (oauth.DISCOVERY_TIMEOUT_S * 2) — and how often a waiting caller looks again.
+REFRESH_CLAIM_S = 120
+REFRESH_POLL_S = 0.2
+
+_refresh_locks: dict[str, threading.Lock] = {}
+_refresh_locks_guard = threading.Lock()
+
+
+def _refresh_lock(cid: str) -> threading.Lock:
+    with _refresh_locks_guard:
+        return _refresh_locks.setdefault(cid, threading.Lock())
+
+
+class _UnderLease:
+    """The connection service as one token refresh sees it (oauth.OutboundOAuth.refresh): the token
+    set the refresh stores is fenced by the lease this caller holds, which every change that voids the
+    authorization clears — a new address or authentication, a revoked credential, a platform stop —
+    so a refresh such a change overtook cannot seal its result."""
+
+    def __init__(self, connections: "Connections", lease: float):
+        self._connections, self._lease = connections, lease
+
+    def __getattr__(self, name):
+        return getattr(self._connections, name)
+
+    def store_tokens(self, cid: str, tokens: dict, **kw) -> None:
+        self._connections.store_tokens(cid, tokens, lease=self._lease, **kw)
 
 
 def slugify(name: str) -> str:
@@ -62,11 +153,147 @@ def preview(value: Any) -> str:
     return text if len(text) <= MAX_PREVIEW else text[:MAX_PREVIEW] + "…"
 
 
+def _text(value: Any, limit: int) -> str | None:
+    """Server-provided text as stored: a string cut to `limit`; anything else is not kept."""
+    return value[:limit] if isinstance(value, str) else None
+
+
+def _json(value: Any) -> str | None:
+    """`value` as stored JSON (UTF-8 text, so that Chinese is not counted six times over), or None
+    when it cannot be written."""
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError, RecursionError):
+        return None
+
+
+def _schema(value: Any) -> tuple[str | None, str | None]:
+    """A tool's schema as stored, or why it cannot be: (JSON, None) or (None, unusable code)."""
+    text = _json(value) if isinstance(value, dict) else None
+    if text is None:
+        return None, "mcp_schema_invalid"
+    return (text, None) if len(text) <= MAX_SCHEMA_CHARS else (None, "mcp_schema_too_large")
+
+
+def _unusable(code: str | None) -> dict | None:
+    """Why a tool is unusable, as the page and a refused grant say it: the reason, its words and its bound."""
+    if not code:
+        return None
+    return {"code": code, "message": UNUSABLE.get(code, UNUSABLE["mcp_schema_invalid"]),
+            **UNUSABLE_LIMIT.get(code, UNUSABLE_LIMIT["mcp_schema_invalid"])}
+
+
+class _Budget:
+    """What is left of MAX_OFFER_BYTES while one discovery is recorded (`_record_discovery`)."""
+
+    def __init__(self, total: int):
+        self.left = total
+
+    def take(self, *texts: str | None) -> bool:
+        """Spend the stored size of `texts` if it still fits; False (nothing spent) if it does not."""
+        cost = sum(len(t.encode("utf-8", "surrogatepass")) for t in texts if t)
+        if cost > self.left:
+            return False
+        self.left -= cost
+        return True
+
+
+def _size(value: Any) -> int | None:
+    """A resource's announced size as stored: a count SQLite can hold, else nothing."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= MAX_SIZE else None
+
+
+def _tool_row(tool: dict, budget: _Budget) -> dict:
+    """What is stored of one discovered tool: bounded text, the known hints, and its schemas — or,
+    when either schema cannot be kept, the reason and UNUSABLE_SCHEMA in place of both. A tool the
+    connection's offer has no more room for (MAX_OFFER_BYTES) keeps only its name and hints and is
+    unusable for that reason, unless it already is for its own."""
+    input_json, bad_input = _schema(tool.get("inputSchema") or {"type": "object"})
+    output = tool.get("outputSchema")
+    output_json, bad_output = _schema(output) if output is not None else (None, None)
+    unusable = bad_input or bad_output
+    ann = tool.get("annotations") if isinstance(tool.get("annotations"), dict) else {}
+    hints = {k: ann[k] for k in ANNOTATION_HINTS if isinstance(ann.get(k), bool)}
+    kept = dict(hints)
+    shown_as = _text(ann.get("title"), MAX_TITLE)
+    if shown_as:
+        kept["title"] = shown_as
+    row = {"title": _text(tool.get("title"), MAX_TITLE), "description": _text(tool.get("description"), MAX_TOOL_DESCRIPTION) or "",
+           "input": json.dumps(UNUSABLE_SCHEMA) if unusable else input_json, "output": None if unusable else output_json,
+           "annotations": json.dumps(kept, ensure_ascii=False) if kept else None, "unusable": unusable}
+    if budget.take(tool.get("name"), row["title"], row["description"], row["input"], row["output"], row["annotations"]):
+        return row
+    return {"title": None, "description": "", "input": json.dumps(UNUSABLE_SCHEMA), "output": None,
+            "annotations": json.dumps(hints) if hints else None, "unusable": unusable or "mcp_offer_too_large"}
+
+
+def _resource_row(res: dict, budget: _Budget) -> dict:
+    """What is stored of one discovered resource: bounded text — or, past the offer's room, its
+    address and name only (reading it needs no more)."""
+    row = {"name": _text(res.get("name"), MAX_TITLE), "title": _text(res.get("title"), MAX_TITLE),
+           "description": _text(res.get("description"), MAX_ITEM_DESCRIPTION) or "",
+           "mime_type": _text(res.get("mimeType"), MAX_MIME_TYPE), "size": _size(res.get("size"))}
+    if budget.take(res.get("uri"), row["name"], row["title"], row["description"], row["mime_type"]):
+        return row
+    return {**row, "title": None, "description": "", "mime_type": None}
+
+
+def _prompt_row(pr: dict, budget: _Budget) -> dict:
+    """What is stored of one discovered prompt: bounded text and arguments — or, past the offer's
+    room, its name and its arguments' names and whether they are required (rendering it needs no more)."""
+    arguments = _prompt_arguments(pr.get("arguments"))
+    row = {"title": _text(pr.get("title"), MAX_TITLE), "description": _text(pr.get("description"), MAX_ITEM_DESCRIPTION) or "",
+           "arguments": json.dumps(arguments, ensure_ascii=False)}
+    if budget.take(pr.get("name"), row["title"], row["description"], row["arguments"]):
+        return row
+    return {"title": None, "description": "",
+            "arguments": json.dumps([{"name": a["name"], "required": a["required"]} for a in arguments], ensure_ascii=False)}
+
+
+def _prompt_arguments(value: Any) -> list[dict]:
+    """A prompt's arguments as stored: named ones, at most MAX_PROMPT_ARGUMENTS, with bounded text."""
+    out = []
+    for arg in value if isinstance(value, list) else []:
+        name = arg.get("name") if isinstance(arg, dict) else None
+        if not isinstance(name, str) or not name or len(name) > 128:
+            continue
+        kept = {"name": name, "required": arg.get("required") is True}
+        for key, limit in (("title", MAX_TITLE), ("description", MAX_ARGUMENT_DESCRIPTION)):
+            text = _text(arg.get(key), limit)
+            if text is not None:
+                kept[key] = text
+        out.append(kept)
+        if len(out) >= MAX_PROMPT_ARGUMENTS:
+            break
+    return out
+
+
+def _server_info(value: Any) -> dict | None:
+    """Who the server says it is, as stored: the fields the pages show, bounded (no icons)."""
+    if not isinstance(value, dict):
+        return None
+    kept = {k: _text(value.get(k), limit) for k, limit in (("name", MAX_TITLE), ("title", MAX_TITLE), ("version", MAX_TITLE),
+                                                         ("description", MAX_ITEM_DESCRIPTION), ("websiteUrl", MAX_URL))}
+    return {k: v for k, v in kept.items() if v is not None} or None
+
+
+def _capabilities(value: Any) -> dict:
+    """The capabilities a server announced, as stored: the known ones, each with its options when
+    they are small (a capability whose options are not is kept as present, without them)."""
+    caps = value if isinstance(value, dict) else {}
+    out = {}
+    for k in KNOWN_CAPABILITIES:
+        if isinstance(caps.get(k), dict):
+            text = _json(caps[k])
+            out[k] = caps[k] if text is not None and len(text) <= MAX_CAPABILITY_CHARS else {}
+    return out
+
+
 def tool_hash(tool: dict) -> str:
     """What a grant is pinned to: the tool's name, input and output schemas, and the two hints a
     grant's mode depends on. A new description does not void a grant (it is untrusted text
     anyway); a new shape or a flipped read-only hint does."""
-    ann = tool.get("annotations") or {}
+    ann = tool.get("annotations") if isinstance(tool.get("annotations"), dict) else {}
     return fingerprint({"name": tool.get("name"), "input": tool.get("inputSchema"), "output": tool.get("outputSchema"),
                         "readOnly": ann.get("readOnlyHint"), "destructive": ann.get("destructiveHint")})
 
@@ -77,6 +304,8 @@ class Connections:
         self.identity = identity
         self.runtime = runtime
         self.policy = McpPolicy(store)
+        # Records a stopped process left 'running' (a crash, a restart) are settled as 'unknown'.
+        settle_interrupted_calls(store)
 
     # ------------------------------------------------------------------ policy and rights
     def _spec(self):
@@ -105,12 +334,22 @@ class Connections:
         return bool(ws and ws["status"] == "active" and self.identity.membership(conn["owner_id"], user_id))
 
     def _manage(self, user_id: str, conn: dict) -> None:
+        # Someone who may not even use the connection learns nothing of it — the same 404 as for an
+        # id that does not exist; only a user of it who may not manage it is told why (403).
+        self._use(user_id, conn)
         if not self.manages(user_id, conn["owner_kind"], conn["owner_id"]):
             raise ServiceError(403, "mcp_manage_forbidden", "只有连接的所有者（个人）或工作空间的所有者、管理员可以管理这个连接")
 
     def _use(self, user_id: str, conn: dict) -> None:
         if not self.may_use(user_id, conn):
             raise ServiceError(404, "mcp_connection_not_found", "连接不存在")
+
+    @staticmethod
+    def _platform_stop(conn: dict) -> None:
+        """Refuse what would resume, re-authorize or re-point a connection a platform administrator
+        stopped (synwevo_identity.admin_mcp): only the platform administration lifts that stop."""
+        if conn.get("platform_disabled_at"):
+            raise ServiceError(409, "mcp_platform_disabled", "平台管理员已停用这个连接，只有平台管理员可以解除")
 
     # ------------------------------------------------------------------ CRUD
     def _validate_url(self, url: str) -> str:
@@ -127,7 +366,18 @@ class Connections:
         refusal = self.policy.destination_refusal(parts.hostname)
         if refusal:
             raise ServiceError(403, refusal, "平台策略不允许连接这个地址", {"host": parts.hostname, "field": "url"})
+        if self._is_self(parts.hostname):
+            # The same rule as every later use (runtime._destination): this deployment's own origins
+            # are not an external server — the Agent would act on Synwevo with a token for Synwevo —
+            # unless the operator listed the host explicitly.
+            raise ServiceError(403, "mcp_destination_is_self",
+                               "不能把本部署自己的地址当作外部 MCP 服务（平台管理员可在策略的允许主机中明确列出它）",
+                               {"host": parts.hostname, "field": "url"})
         return url
+
+    def _is_self(self, host: str) -> bool:
+        from .runtime import is_own_origin, listed_explicitly
+        return is_own_origin(host, store=self.store) and not listed_explicitly(host, self._spec())
 
     def _count_limit(self, owner_kind: str, owner_id: str) -> None:
         spec = self._spec()
@@ -213,29 +463,48 @@ class Connections:
             if len(description) > MAX_DESCRIPTION:
                 raise ServiceError(400, "invalid_input", "说明最多 500 字", {"field": "description"})
             sets += ["description=?"]; args += [description.strip()]; changed.append("description")
-        if url is not None and url.strip() != conn["url"]:
+        new_url = url is not None and url.strip() != conn["url"]
+        touches_auth = auth_kind is not None or credential is not None or oauth_client is not None
+        if new_url or touches_auth:
+            self._platform_stop(conn)
+        kind = auth_kind or conn["auth_kind"]
+        if kind not in ("none", "bearer", "oauth"):
+            raise ServiceError(400, "invalid_input", "未知的认证方式", {"field": "auth_kind"})
+        given = (credential or "").strip()
+        forget_flows = False
+        if new_url:
             self.require_outbound()
             url = self._validate_url(url)
-            # A new address is a new server: what was discovered and granted for the old one is void.
-            sets += ["url=?", "health='unknown'", "discovered_at=NULL", "discovery_hash=NULL", "server_info_json=NULL",
-                     "capabilities_json=NULL", "protocol_version=NULL", "failure_streak=0", "open_until=NULL"]
-            args += [url]; changed.append("url")
-        if auth_kind is not None or credential is not None or oauth_client is not None:
-            kind = auth_kind or conn["auth_kind"]
-            if kind not in ("none", "bearer", "oauth"):
-                raise ServiceError(400, "invalid_input", "未知的认证方式", {"field": "auth_kind"})
+            # A new address is a new server. Nothing discovered, granted, bound or authorized for the
+            # old one carries over, and nothing the old one was given may reach the new one: the
+            # bearer token, the OAuth token set, the OAuth client (its secret and registration belong
+            # to the old server's authorization server) and the flows in progress are all forgotten,
+            # and the connection says it needs authentication again — unless this same change gives
+            # the new server its own credential (below).
+            sets += ["url=?", "discovered_at=NULL", "discovery_hash=NULL", "server_info_json=NULL",
+                     "capabilities_json=NULL", "protocol_version=NULL", "instructions=NULL", "failure_streak=0",
+                     "failure_users_json=NULL", "open_until=NULL", "credential_sealed=NULL", "credential_hint=NULL",
+                     "oauth_client_json=NULL", "oauth_client_secret_sealed=NULL",
+                     "health=?", "last_error_code=NULL", "last_error_message=NULL"]
+            args += [url, "unknown" if kind == "none" else "auth_required"]
+            changed.append("url")
+            forget_flows = True
+        if touches_auth:
             sets += ["auth_kind=?"]; args += [kind]; changed.append("auth")
+            if kind != conn["auth_kind"]:
+                forget_flows = True
             if kind == "bearer":
-                if credential is None or not credential.strip():
-                    if conn["auth_kind"] != "bearer":
-                        raise ServiceError(400, "invalid_input", "请提供访问令牌", {"field": "credential"})
-                else:
-                    sets += ["credential_sealed=?", "credential_hint=?", "health='unknown'", "failure_streak=0", "open_until=NULL"]
-                    args += [sealed.seal(self.store, SEAL, credential.strip()),
-                             ("…" + credential.strip()[-4:]) if len(credential.strip()) >= 8 else None]
+                if given:
+                    sets += ["credential_sealed=?", "credential_hint=?", "oauth_client_json=NULL", "oauth_client_secret_sealed=NULL",
+                             "health='unknown'", "failure_streak=0", "failure_users_json=NULL", "open_until=NULL"]
+                    args += [sealed.seal(self.store, SEAL, given), ("…" + given[-4:]) if len(given) >= 8 else None]
+                elif conn["auth_kind"] != "bearer":
+                    raise ServiceError(400, "invalid_input", "请提供访问令牌", {"field": "credential"})
             elif kind == "none":
                 sets += ["credential_sealed=NULL", "credential_hint=NULL", "oauth_client_json=NULL",
                          "oauth_client_secret_sealed=NULL"]
+                if not new_url:
+                    sets += ["health=CASE WHEN health='auth_required' THEN 'unknown' ELSE health END"]
             else:
                 if oauth_client is not None:
                     client_id = (oauth_client.get("client_id") or "").strip()
@@ -244,19 +513,44 @@ class Connections:
                     secret = (oauth_client.get("client_secret") or "").strip()
                     args += [json.dumps({"kind": "preregistered", "client_id": client_id}) if client_id else None,
                              sealed.seal(self.store, SEAL, secret) if secret else None]
+                    forget_flows = True
                 elif conn["auth_kind"] != "oauth":
                     sets += ["credential_sealed=NULL", "credential_hint=NULL", "health='auth_required'"]
+        if forget_flows:
+            # A token refresh under way spends an authorization this change voids: clearing its lease
+            # keeps it from sealing the result (store_tokens).
+            sets += ["refresh_claim_until=NULL"]
         if not sets:
             return self.summary(conn, uid)
+        t = now()
         with self.store.tx():
-            self.store.execute(f"UPDATE mcp_connections SET {', '.join(sets)}, updated_at=? WHERE id=?", (*args, now(), cid))
+            # A re-pointing or re-authorizing write is conditional, so that a platform stop landing after
+            # the check above still holds.
+            guard = " AND platform_disabled_at IS NULL" if (new_url or touches_auth) else ""
+            if not self.store.execute(f"UPDATE mcp_connections SET {', '.join(sets)}, updated_at=? WHERE id=?{guard}",
+                                      (*args, t, cid)):
+                self._platform_stop(self._row(cid))
             if "url" in changed:
-                self.store.execute("UPDATE mcp_connection_tools SET removed_at=COALESCE(removed_at, ?) WHERE connection_id=?", (now(), cid))
-                self.store.execute("UPDATE mcp_connection_resources SET removed_at=COALESCE(removed_at, ?) WHERE connection_id=?", (now(), cid))
-                self.store.execute("UPDATE mcp_connection_prompts SET removed_at=COALESCE(removed_at, ?) WHERE connection_id=?", (now(), cid))
+                self.store.execute("UPDATE mcp_connection_tools SET removed_at=COALESCE(removed_at, ?) WHERE connection_id=?", (t, cid))
+                self.store.execute("UPDATE mcp_connection_resources SET removed_at=COALESCE(removed_at, ?) WHERE connection_id=?", (t, cid))
+                self.store.execute("UPDATE mcp_connection_prompts SET removed_at=COALESCE(removed_at, ?) WHERE connection_id=?", (t, cid))
+                # Grants were decisions about the old server's tools: a same-named tool of the new one
+                # is not covered by them.
+                self.store.execute("DELETE FROM mcp_tool_grants WHERE connection_id=?", (cid,))
+                # Each person decided to let their Agent use the old server; the new one enters nobody's
+                # Agent until its person turns the binding on again (alias and narrowing are kept).
+                self.store.execute("UPDATE mcp_agent_bindings SET enabled=0, resources_enabled=0, updated_at=? WHERE connection_id=?",
+                                   (t, cid))
+            if forget_flows:
+                self.store.execute("DELETE FROM mcp_oauth_flows WHERE connection_id=?", (cid,))
+            meta = {"changed": changed}
+            if "url" in changed:
+                meta["host"] = urlsplit(url).hostname
+                meta["credential_forgotten"] = bool(conn.get("credential_sealed") or conn.get("oauth_client_json")
+                                                    or conn.get("oauth_client_secret_sealed"))
             audit_event(self.store, "suite.agent.mcp.connection.update", actor_kind="user", actor_id=uid,
                         workspace_id=conn["owner_id"] if conn["owner_kind"] == "workspace" else None,
-                        object_kind="mcp_connection", object_id=cid, meta={"changed": changed})
+                        object_kind="mcp_connection", object_id=cid, meta=meta)
         return self.summary(self._row(cid), uid)
 
     def set_status(self, user: dict, cid: str, status: str) -> dict:
@@ -264,8 +558,14 @@ class Connections:
             raise ServiceError(400, "invalid_input", "状态只能是 active 或 disabled")
         conn = self._row(cid)
         self._manage(user["id"], conn)
+        if status == "active":
+            self._platform_stop(conn)
         with self.store.tx():
-            self.store.execute("UPDATE mcp_connections SET status=?, updated_at=? WHERE id=?", (status, now(), cid))
+            # Conditional, so that a platform stop landing between the check and the write still holds.
+            n = self.store.execute("UPDATE mcp_connections SET status=?, updated_at=? WHERE id=? "
+                                   "AND (? = 'disabled' OR platform_disabled_at IS NULL)", (status, now(), cid, status))
+            if not n:
+                raise ServiceError(409, "mcp_platform_disabled", "平台管理员已停用这个连接，只有平台管理员可以解除")
             audit_event(self.store, "suite.agent.mcp.connection.disable" if status == "disabled" else "suite.agent.mcp.connection.enable",
                         actor_kind="user", actor_id=user["id"],
                         workspace_id=conn["owner_id"] if conn["owner_kind"] == "workspace" else None,
@@ -292,7 +592,9 @@ class Connections:
         conn = self._row(cid)
         self._manage(user["id"], conn)
         with self.store.tx():
-            self.store.execute("UPDATE mcp_connections SET credential_sealed=NULL, credential_hint=NULL, "
+            # The refresh lease goes too, so that a refresh under way cannot seal a new token set over
+            # the revocation (store_tokens).
+            self.store.execute("UPDATE mcp_connections SET credential_sealed=NULL, credential_hint=NULL, refresh_claim_until=NULL, "
                                "health=CASE WHEN auth_kind='none' THEN health ELSE 'auth_required' END, updated_at=? WHERE id=?",
                                (now(), cid))
             audit_event(self.store, "suite.agent.mcp.credential.revoke", actor_kind="user", actor_id=user["id"],
@@ -301,50 +603,186 @@ class Connections:
         return self.summary(self._row(cid), user["id"])
 
     # ------------------------------------------------------------------ credentials
-    def credential(self, conn: dict) -> str | None:
+    def _unsealed(self, conn: dict) -> str | None:
         if conn["auth_kind"] == "none" or not conn.get("credential_sealed"):
             return None
         try:
-            raw = sealed.unseal(self.store, SEAL, conn["credential_sealed"])
+            return sealed.unseal(self.store, SEAL, conn["credential_sealed"])
         except Exception:  # noqa: BLE001 — a credential that no longer opens is as good as none
             log.warning("mcp credential of connection %s could not be unsealed", conn["id"])
+            return None
+
+    def _tokens(self, conn: dict) -> dict | None:
+        tokens = _j(self._unsealed(conn), {})
+        return tokens if isinstance(tokens, dict) and tokens else None
+
+    @staticmethod
+    def _due(tokens: dict) -> bool:
+        return bool(tokens.get("expires_at") and tokens["expires_at"] <= now() + REFRESH_EARLY_S and tokens.get("refresh_token"))
+
+    def credential(self, conn: dict) -> str | None:
+        """The secret for one exchange with the connection's server: the bearer token, or the OAuth
+        access token — refreshed first when it is about to expire (`mcp_auth_required` when that
+        fails: the request is not sent without a credential)."""
+        raw = self._unsealed(conn)
+        if raw is None:
             return None
         if conn["auth_kind"] == "bearer":
             return raw
         tokens = _j(raw, {})
         if not isinstance(tokens, dict):
             return None
-        if tokens.get("expires_at") and tokens["expires_at"] <= now() + 30 and tokens.get("refresh_token"):
-            from .oauth import OutboundOAuth
-            try:
-                tokens = OutboundOAuth(self).refresh(conn, tokens)
-            except ServiceError as err:
-                self._health(conn["id"], "auth_required", err.code, err.message)
-                return None
+        if self._due(tokens):
+            return self._refreshed(conn["id"])
         return tokens.get("access_token")
 
-    def store_tokens(self, cid: str, tokens: dict) -> None:
+    def _refreshed(self, cid: str) -> str | None:
+        """Refresh the connection's OAuth token once for everyone who needs it now. One caller per
+        process (a lock per connection) and per deployment (a lease on the row, `refresh_claim_until`)
+        spends the refresh token; the others wait and use what it stored. With refresh-token rotation
+        a second exchange of the same refresh token is refused, and a server that detects the reuse
+        revokes the whole token family."""
+        with _refresh_lock(cid):
+            give_up = time.monotonic() + REFRESH_CLAIM_S
+            while True:
+                tokens = self._stored_tokens(cid)[1]
+                if not self._due(tokens):
+                    return tokens.get("access_token")          # refreshed meanwhile, here or elsewhere
+                t = now()
+                lease = t + REFRESH_CLAIM_S
+                if self.store.execute("UPDATE mcp_connections SET refresh_claim_until=? WHERE id=? "
+                                      "AND (refresh_claim_until IS NULL OR refresh_claim_until<?)", (lease, cid, t)):
+                    break
+                if tokens["expires_at"] > t:
+                    return tokens.get("access_token")          # another process is refreshing; this one still serves
+                if time.monotonic() >= give_up:
+                    raise ServiceError(429, "mcp_connection_busy", "这个连接正在刷新令牌，请稍后再试",
+                                       {"retry_after": 2, "retryable": True})
+                time.sleep(REFRESH_POLL_S)
+            try:
+                # Read again under the lease: another process may have refreshed and let go between the
+                # read above and the claim. Then its token serves, and the refresh token read above —
+                # which it spent — is not sent again.
+                conn, tokens = self._stored_tokens(cid)
+                if not self._due(tokens):
+                    return tokens.get("access_token")
+                from .oauth import OutboundOAuth
+                try:
+                    fresh = OutboundOAuth(_UnderLease(self, lease)).refresh(conn, tokens)
+                except ServiceError as err:
+                    log.info("mcp token refresh of connection %s failed: %s", cid, err.code)
+                    raise ServiceError(401, "mcp_auth_required", "连接的令牌无法刷新，需要重新认证", {"cause": err.code}) from None
+            finally:
+                # Only this caller's own lease: one that a change cleared, or that expired and another
+                # caller took, is not this caller's to end.
+                self.store.execute("UPDATE mcp_connections SET refresh_claim_until=NULL WHERE id=? AND refresh_claim_until=?",
+                                   (cid, lease))
+            return fresh.get("access_token")
+
+    def _stored_tokens(self, cid: str) -> tuple[dict, dict]:
+        conn = self.store.one("SELECT * FROM mcp_connections WHERE id=? AND deleted_at IS NULL", (cid,))
+        tokens = self._tokens(conn) if conn and conn["auth_kind"] == "oauth" else None
+        if not tokens:
+            raise ServiceError(401, "mcp_auth_required", "需要重新认证这个连接")
+        return conn, tokens
+
+    def store_tokens(self, cid: str, tokens: dict, *, flow_id: str | None = None, lease: float | None = None) -> None:
+        """Seal a token set on the connection — only while it is still the OAuth connection the
+        authorization was made for: not once its address or authentication changed (which forgets its
+        flows and clears the refresh lease) or its credential was revoked, not under a platform stop,
+        not after deletion.
+
+        `flow_id` names the authorization whose code was exchanged (oauth callback): that flow must
+        still exist, since a newer flow — for the server the connection now points at — does not vouch
+        for tokens of the old one. `lease` is the refresh lease the caller holds (`_refreshed`): it must
+        still be the connection's. Without `flow_id`, some flow of the connection must exist."""
         keep = {k: tokens.get(k) for k in ("access_token", "refresh_token", "expires_at", "scope", "token_type")}
-        self.store.execute("UPDATE mcp_connections SET credential_sealed=?, credential_hint=?, health='unknown', "
-                           "failure_streak=0, open_until=NULL, updated_at=? WHERE id=?",
-                           (sealed.seal(self.store, SEAL, json.dumps(keep)), "oauth", now(), cid))
+        if flow_id is not None:
+            cond, extra = " AND EXISTS (SELECT 1 FROM mcp_oauth_flows WHERE id=? AND connection_id=?)", (flow_id, cid)
+        else:
+            cond, extra = " AND EXISTS (SELECT 1 FROM mcp_oauth_flows WHERE connection_id=?)", (cid,)
+        if lease is not None:
+            cond, extra = cond + " AND refresh_claim_until=?", extra + (lease,)
+        n = self.store.execute("UPDATE mcp_connections SET credential_sealed=?, credential_hint=?, health='unknown', "
+                               "failure_streak=0, failure_users_json=NULL, open_until=NULL, updated_at=? WHERE id=? "
+                               "AND deleted_at IS NULL AND auth_kind='oauth' AND platform_disabled_at IS NULL" + cond,
+                               (sealed.seal(self.store, SEAL, json.dumps(keep)), "oauth", now(), cid, *extra))
+        if not n:
+            raise ServiceError(409, "mcp_connection_changed", "连接在认证期间被修改、停用或删除，请重新认证")
 
     # ------------------------------------------------------------------ health and breaker
-    def _health(self, cid: str, state: str, code: str | None = None, message: str | None = None) -> None:
+    def _failed(self, cid: str, uid: str | None, err: ServiceError, *, url: str | None = None) -> None:
+        """What one failed exchange with the server at `url` says about the connection (SERVER_FAILURES)."""
+        if err.code == "mcp_auth_required":
+            self._health(cid, "auth_required", err.code, err.message, url=url)
+        elif err.code in SERVER_FAILURES:
+            self._health(cid, "failed", err.code, err.message, user_id=uid, url=url)
+
+    def _health(self, cid: str, state: str, code: str | None = None, message: str | None = None, *,
+                user_id: str | None = None, url: str | None = None) -> None:
+        """Record what an exchange said of the connection's server. With `url` (the address the
+        exchange went to), only while the connection still points there: a verdict on the old server
+        is not one on the server a new address names (update)."""
         t = now()
+        same = (" AND url=?", (url,)) if url is not None else ("", ())
         if state == "ok":
             self.store.execute("UPDATE mcp_connections SET health='ok', health_checked_at=?, last_ok_at=?, last_error_code=NULL, "
-                               "last_error_message=NULL, failure_streak=0, open_until=NULL, updated_at=? WHERE id=?", (t, t, t, cid))
+                               "last_error_message=NULL, failure_streak=0, failure_users_json=NULL, open_until=NULL, updated_at=? "
+                               "WHERE id=?" + same[0], (t, t, t, cid, *same[1]))
+            return
+        if state == "auth_required":
+            # The server refused the credential: a person has to authenticate again, and nothing says
+            # the server is failing — no streak, no breaker.
+            self.store.execute("UPDATE mcp_connections SET health='auth_required', health_checked_at=?, last_error_code=?, "
+                               "last_error_message=?, updated_at=? WHERE id=?" + same[0],
+                               (t, code, (message or "")[:500], t, cid, *same[1]))
             return
         spec = self._spec()
-        self.store.execute("UPDATE mcp_connections SET health=?, health_checked_at=?, last_error_code=?, last_error_message=?, "
-                           "failure_streak=failure_streak+1, updated_at=? WHERE id=?",
-                           (state, t, code, (message or "")[:500], t, cid))
-        row = self.store.one("SELECT failure_streak FROM mcp_connections WHERE id=?", (cid,))
-        if row and row["failure_streak"] >= spec.breaker_failures:
-            self.store.execute("UPDATE mcp_connections SET open_until=? WHERE id=?", (t + spec.breaker_open_s, cid))
+        with self.store.tx():
+            row = self.store.one("SELECT owner_kind, owner_id, failure_streak, failure_users_json FROM mcp_connections WHERE id=?"
+                                 + same[0], (cid, *same[1]))
+            if not row:
+                return
+            # `failure_streak` counts every failure since the last success (what the pages show);
+            # `failure_users_json` holds what the circuit decides on: the streak at its last opening
+            # ("since") and, since then, how many failures each person met ("by").
+            evidence = _j(row["failure_users_json"], {})
+            evidence = evidence if isinstance(evidence, dict) else {}
+            since = evidence.get("since") if isinstance(evidence.get("since"), int) else 0
+            by = {u: n for u, n in (evidence.get("by") or {}).items() if isinstance(u, str) and isinstance(n, int) and n > 0}
+            key = user_id or ""
+            if key in by or len(by) < MAX_FAILURE_USERS:
+                by[key] = by.get(key, 0) + 1
+            streak = (row["failure_streak"] or 0) + 1
+            opens = self._opens(row, max(0, streak - since), by, spec.breaker_failures)
+            # An opening starts the count again: once the window ends, stopping the connection again
+            # takes the same evidence anew, not one more failure of whoever is still trying.
+            evidence = {"since": streak, "by": {}} if opens else {"since": since, "by": by}
+            self.store.execute("UPDATE mcp_connections SET health='failed', health_checked_at=?, last_error_code=?, "
+                               "last_error_message=?, failure_streak=?, failure_users_json=?, "
+                               "open_until=CASE WHEN ? THEN ? ELSE open_until END, updated_at=? WHERE id=?",
+                               (t, code, (message or "")[:500], streak, json.dumps(evidence), int(opens),
+                                t + spec.breaker_open_s, t, cid))
+
+    def _opens(self, row: dict, counted: int, by: dict[str, int], threshold: int) -> bool:
+        """Whether `counted` failures in a row — `by[person]` of them each person's — stop the
+        connection for everyone who uses it.
+
+        A person who manages the connection (its owner, or an owner or administrator of its
+        workspace) counts in full: they could disable it anyway. Anyone else counts for at most half
+        the threshold, rounded up, so a member — a viewer included — can neither stop a shared
+        connection by themselves nor do it on the back of someone else's stray failure: the others
+        must have met a real share of the failures too. Failures with nobody on record count in full.
+        Opening takes the threshold and either two people or one who manages the connection."""
+        share = (threshold + 1) // 2
+        managers = {u for u in by if u and self.manages(u, row["owner_kind"], row["owner_id"])}
+        excess = sum(max(0, n - share) for u, n in by.items() if u not in managers)
+        unattributed = max(0, counted - sum(by.values()))
+        people = len(by) + (1 if unattributed else 0)
+        return counted - excess >= threshold and (people >= 2 or bool(managers))
 
     def _ready(self, conn: dict, *, for_use: bool = True) -> None:
+        self._platform_stop(conn)
         if conn["status"] != "active":
             raise ServiceError(409, "mcp_connection_disabled", "这个连接已停用")
         if for_use and conn.get("open_until") and conn["open_until"] > now():
@@ -366,47 +804,64 @@ class Connections:
             found = self.runtime.discover(conn, self.credential(conn), user_id=user["id"], timeout=spec.discover_timeout_s)
         except ServiceError as err:
             self._finish_call(call_id, "failed" if err.code != "mcp_timeout" else "timeout", error=err)
-            self._health(cid, "auth_required" if err.code == "mcp_auth_required" else "failed", err.code, err.message)
+            self._failed(cid, user["id"], err, url=conn["url"])
             raise
-        first = conn["discovered_at"] is None and conn["owner_kind"] == "user"
-        with self.store.tx():
-            self._record_discovery(conn, found, grant_new=first, granted_by=user["id"])
-            self._health(cid, "ok")
-            self._finish_call(call_id, "succeeded", result={"tools": len(found.tools), "resources": len(found.resources),
-                                                            "prompts": len(found.prompts), "protocol": found.protocol_version})
+        try:
+            with self.store.tx():
+                # The answer came from the server at the address read above. Pointed elsewhere since, the
+                # connection is a new server (update): this answer is neither its offer nor its health,
+                # and does not use up the first look its person gets at it. Read under the write lock.
+                current = self.store.one("SELECT url, discovered_at FROM mcp_connections WHERE id=? AND deleted_at IS NULL", (cid,))
+                if current is None:
+                    raise ServiceError(404, "mcp_connection_not_found", "连接不存在")
+                if current["url"] != conn["url"]:
+                    raise ServiceError(409, "mcp_address_changed", "测试期间连接改了地址，这次发现的结果没有记录，请重新测试")
+                first = current["discovered_at"] is None and conn["owner_kind"] == "user"
+                self._record_discovery(conn, found, grant_new=first, granted_by=user["id"])
+                self._health(cid, "ok")
+                self._finish_call(call_id, "succeeded", result={"tools": len(found.tools), "resources": len(found.resources),
+                                                                "prompts": len(found.prompts), "protocol": found.protocol_version})
+        except ServiceError as err:
+            self._finish_call(call_id, "failed", error=err)
+            raise
+        except Exception:
+            # The exchange succeeded but recording what it found did not (and rolled back): the call
+            # record still ends, as this side's failure, not the server's.
+            self._finish_call(call_id, "failed", error=ServiceError(500, "mcp_record_failed", "无法记录这次发现的结果"))
+            raise
         return self.detail(user, cid)
 
     def _record_discovery(self, conn: dict, found: Discovery, *, grant_new: bool, granted_by: str) -> None:
         cid, t = conn["id"], now()
+        budget = _Budget(MAX_OFFER_BYTES)
         seen_tools = set()
         for i, tool in enumerate(found.tools):
             name = tool.get("name")
             if not isinstance(name, str) or not name or len(name) > 128:
                 continue
             seen_tools.add(name)
+            # The hash covers the tool as the server published it, so an unusable schema that shrinks
+            # back, or grows, is a new shape for every grant — while room in the offer is not: a tool
+            # that had none and finds some again is the same tool, under the grant it had.
             h = tool_hash(tool)
-            ann = tool.get("annotations") or {}
+            kept = _tool_row(tool, budget)
+            values = (kept["title"], kept["description"], kept["input"], kept["output"], kept["annotations"], kept["unusable"], h, i)
             row = self.store.one("SELECT schema_hash FROM mcp_connection_tools WHERE connection_id=? AND name=?", (cid, name))
             if row:
                 self.store.execute("UPDATE mcp_connection_tools SET title=?, description=?, input_schema_json=?, output_schema_json=?, "
-                                   "annotations_json=?, schema_hash=?, position=?, last_seen_at=?, removed_at=NULL "
-                                   "WHERE connection_id=? AND name=?",
-                                   (tool.get("title"), (tool.get("description") or "")[:4000], json.dumps(tool.get("inputSchema") or {"type": "object"}),
-                                    json.dumps(tool.get("outputSchema")) if tool.get("outputSchema") is not None else None,
-                                    json.dumps(ann) if ann else None, h, i, t, cid, name))
+                                   "annotations_json=?, unusable_code=?, schema_hash=?, position=?, last_seen_at=?, removed_at=NULL "
+                                   "WHERE connection_id=? AND name=?", (*values, t, cid, name))
             else:
                 self.store.execute("INSERT INTO mcp_connection_tools (connection_id, name, title, description, input_schema_json, "
-                                   "output_schema_json, annotations_json, schema_hash, position, first_seen_at, last_seen_at) "
-                                   "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                                   (cid, name, tool.get("title"), (tool.get("description") or "")[:4000],
-                                    json.dumps(tool.get("inputSchema") or {"type": "object"}),
-                                    json.dumps(tool.get("outputSchema")) if tool.get("outputSchema") is not None else None,
-                                    json.dumps(ann) if ann else None, h, i, t, t))
-                if grant_new:
-                    # A person's own first look at their own server: every tool usable, each one
-                    # asking before it runs. Tools that arrive later are not enabled by their arrival.
-                    self.store.execute("INSERT OR IGNORE INTO mcp_tool_grants (connection_id, tool, mode, schema_hash, granted_by, "
-                                       "granted_at, updated_at) VALUES (?,?,?,?,?,?,?)", (cid, name, "confirm", h, granted_by, t, t))
+                                   "output_schema_json, annotations_json, unusable_code, schema_hash, position, first_seen_at, "
+                                   "last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (cid, name, *values, t, t))
+            if grant_new and not kept["unusable"]:
+                # A person's own first look at their own server — a new connection, or one pointed at a
+                # new address, which forgot every grant: every usable tool usable, each one asking before
+                # it runs, whether or not the old server had a tool of that name. Tools that arrive later
+                # are not enabled by their arrival.
+                self.store.execute("INSERT OR IGNORE INTO mcp_tool_grants (connection_id, tool, mode, schema_hash, granted_by, "
+                                   "granted_at, updated_at) VALUES (?,?,?,?,?,?,?)", (cid, name, "confirm", h, granted_by, t, t))
         gone = self.store.all("SELECT name FROM mcp_connection_tools WHERE connection_id=? AND removed_at IS NULL", (cid,))
         for g in gone:
             if g["name"] not in seen_tools:
@@ -417,12 +872,12 @@ class Connections:
             if not isinstance(uri, str) or not uri or len(uri) > 2048:
                 continue
             seen_res.add(uri)
+            kept = _resource_row(res, budget)
             self.store.execute("INSERT INTO mcp_connection_resources (connection_id, uri, name, title, description, mime_type, size, "
                                "first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_id, uri) DO UPDATE SET "
                                "name=excluded.name, title=excluded.title, description=excluded.description, mime_type=excluded.mime_type, "
                                "size=excluded.size, last_seen_at=excluded.last_seen_at, removed_at=NULL",
-                               (cid, uri, res.get("name"), res.get("title"), (res.get("description") or "")[:2000], res.get("mimeType"),
-                                res.get("size") if isinstance(res.get("size"), int) else None, t, t))
+                               (cid, uri, kept["name"], kept["title"], kept["description"], kept["mime_type"], kept["size"], t, t))
         for g in self.store.all("SELECT uri FROM mcp_connection_resources WHERE connection_id=? AND removed_at IS NULL", (cid,)):
             if g["uri"] not in seen_res:
                 self.store.execute("UPDATE mcp_connection_resources SET removed_at=? WHERE connection_id=? AND uri=?", (t, cid, g["uri"]))
@@ -432,19 +887,20 @@ class Connections:
             if not isinstance(name, str) or not name or len(name) > 128:
                 continue
             seen_prompts.add(name)
+            kept = _prompt_row(pr, budget)
             self.store.execute("INSERT INTO mcp_connection_prompts (connection_id, name, title, description, arguments_json, "
                                "first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(connection_id, name) DO UPDATE SET "
                                "title=excluded.title, description=excluded.description, arguments_json=excluded.arguments_json, "
                                "last_seen_at=excluded.last_seen_at, removed_at=NULL",
-                               (cid, name, pr.get("title"), (pr.get("description") or "")[:2000],
-                                json.dumps(pr.get("arguments") or []), t, t))
+                               (cid, name, kept["title"], kept["description"], kept["arguments"], t, t))
         for g in self.store.all("SELECT name FROM mcp_connection_prompts WHERE connection_id=? AND removed_at IS NULL", (cid,)):
             if g["name"] not in seen_prompts:
                 self.store.execute("UPDATE mcp_connection_prompts SET removed_at=? WHERE connection_id=? AND name=?", (t, cid, g["name"]))
+        info = _server_info(found.server_info)
         self.store.execute("UPDATE mcp_connections SET protocol_version=?, server_info_json=?, capabilities_json=?, instructions=?, "
                            "discovered_at=?, discovery_hash=?, updated_at=? WHERE id=?",
-                           (found.protocol_version, json.dumps(found.server_info) if found.server_info else None,
-                            json.dumps(found.capabilities), (found.instructions or "")[:4000] or None, t,
+                           (_text(found.protocol_version, 64), json.dumps(info, ensure_ascii=False) if info else None,
+                            json.dumps(_capabilities(found.capabilities)), _text(found.instructions, 4000) or None, t,
                             fingerprint({"tools": sorted(seen_tools), "resources": sorted(seen_res), "prompts": sorted(seen_prompts)}),
                             t, cid))
 
@@ -457,6 +913,9 @@ class Connections:
         row = self.store.one("SELECT * FROM mcp_connection_tools WHERE connection_id=? AND name=? AND removed_at IS NULL", (cid, tool))
         if not row:
             raise ServiceError(404, "mcp_tool_not_found", "这个工具不存在或已被服务移除")
+        if row["unusable_code"] and mode != "off":
+            why = _unusable(row["unusable_code"])
+            raise ServiceError(409, "mcp_tool_unusable", why.pop("message"), {"reason": why.pop("code"), **why})
         ann = _j(row["annotations_json"], {}) or {}
         if mode == "auto" and ann.get("readOnlyHint") is not True:
             raise ServiceError(409, "mcp_auto_requires_read_only", "只有服务标记为只读的工具才可以不经确认执行")
@@ -533,21 +992,22 @@ class Connections:
     # ------------------------------------------------------------------ what the Agent sees
     def effective_tools(self, uid: str) -> list[dict]:
         """Every tool this person's Agent may use now: an enabled binding on a live connection, a
-        grant that is not off and still matches the tool's schema, narrowed by the person's own
-        modes. Deterministic order (alias, tool)."""
+        usable tool (UNUSABLE), a grant that is not off and still matches the tool's schema, narrowed
+        by the person's own modes. Deterministic order (alias, tool)."""
         if not self._spec().outbound_enabled:
             return []
         out = []
         rows = self.store.all("SELECT b.alias, b.enabled, b.resources_enabled, b.tool_modes_json, c.* FROM mcp_agent_bindings b "
                               "JOIN mcp_connections c ON c.id=b.connection_id WHERE b.user_id=? AND b.enabled=1 AND c.deleted_at IS NULL "
-                              "AND c.status='active' ORDER BY b.alias", (uid,))
+                              "AND c.status='active' AND c.platform_disabled_at IS NULL ORDER BY b.alias", (uid,))
         for r in rows:
             if not self.may_use(uid, r):
                 continue
             personal_modes = _j(r["tool_modes_json"], {}) or {}
             tools = self.store.all("SELECT t.*, g.mode AS grant_mode, g.schema_hash AS grant_hash FROM mcp_connection_tools t "
                                    "LEFT JOIN mcp_tool_grants g ON g.connection_id=t.connection_id AND g.tool=t.name "
-                                   "WHERE t.connection_id=? AND t.removed_at IS NULL ORDER BY t.position, t.name", (r["id"],))
+                                   "WHERE t.connection_id=? AND t.removed_at IS NULL AND t.unusable_code IS NULL "
+                                   "ORDER BY t.position, t.name", (r["id"],))
             for t in tools:
                 mode = t["grant_mode"] or "off"
                 stale = bool(t["grant_mode"]) and t["grant_hash"] != t["schema_hash"]
@@ -573,7 +1033,7 @@ class Connections:
             return []
         rows = self.store.all("SELECT b.alias, c.* FROM mcp_agent_bindings b JOIN mcp_connections c ON c.id=b.connection_id "
                               "WHERE b.user_id=? AND b.enabled=1 AND b.resources_enabled=1 AND c.deleted_at IS NULL AND c.status='active' "
-                              "ORDER BY b.alias", (uid,))
+                              "AND c.platform_disabled_at IS NULL ORDER BY b.alias", (uid,))
         return [{"alias": r["alias"], "connection_id": r["id"], "connection_name": r["name"]} for r in rows if self.may_use(uid, r)]
 
     # ------------------------------------------------------------------ calls
@@ -601,13 +1061,20 @@ class Connections:
 
     def call_tool(self, user: dict, alias: str, tool: str, arguments: dict, *, origin: str = "agent",
                   conversation_id: str | None = None, turn_id: str | None = None, tool_call_id: str | None = None,
-                  should_stop=None) -> dict:
-        """One tool call for this person through a bound connection, recorded whatever happens."""
+                  should_stop=None, require_mode: str | None = None) -> dict:
+        """One tool call for this person through a bound connection, recorded whatever happens.
+
+        `require_mode="auto"` is the carrier that runs without asking (`agent.mcp.tool.read`): the
+        tool must, now, be granted 'auto' and marked read-only by its server — a grant narrowed to
+        'confirm' or a tool no longer read-only since the model was shown it is refused before any
+        record or request."""
         self.require_outbound()
         uid = user["id"]
         entry = next((e for e in self.effective_tools(uid) if e["alias"] == alias and e["tool"] == tool), None)
         if entry is None:
             raise ServiceError(404, "mcp_tool_unavailable", "这个工具当前不可用：连接已停用、工具未授权，或服务更改了它的定义")
+        if require_mode == "auto" and not (entry["mode"] == "auto" and entry["read_only"]):
+            raise ServiceError(409, "mcp_confirmation_required", "这个工具现在需要先经你确认才能执行")
         conn = self._row(entry["connection_id"])
         self._ready(conn)
         spec = self._spec()
@@ -622,8 +1089,7 @@ class Connections:
         except ServiceError as err:
             status = {"mcp_timeout": "timeout", "mcp_cancelled": "cancelled"}.get(err.code, "failed")
             self._finish_call(call_id, status, error=err, duration_ms=int((time.perf_counter() - started) * 1000))
-            if err.code not in ("mcp_cancelled",):
-                self._health(conn["id"], "auth_required" if err.code == "mcp_auth_required" else "failed", err.code, err.message)
+            self._failed(conn["id"], uid, err, url=conn["url"])
             raise
         text, cut = outcome.text, False
         if len(text) > spec.max_result_chars:
@@ -636,7 +1102,7 @@ class Connections:
                   "content_kinds": sorted({b.get("type", "?") for b in outcome.content}), "call_id": call_id}
         self._finish_call(call_id, "succeeded", result={"is_error": outcome.is_error, "text": text[:MAX_PREVIEW]},
                           duration_ms=outcome.duration_ms)
-        self._health(conn["id"], "ok")
+        self._health(conn["id"], "ok", url=conn["url"])
         return result
 
     def read_resource(self, user: dict, alias: str, uri: str, *, origin: str = "agent", conversation_id=None, turn_id=None,
@@ -670,15 +1136,14 @@ class Connections:
                                              max_bytes=spec.max_resource_bytes)
         except ServiceError as err:
             self._finish_call(call_id, "timeout" if err.code == "mcp_timeout" else "failed", error=err)
-            if err.code != "mcp_resource_too_large":
-                self._health(conn["id"], "auth_required" if err.code == "mcp_auth_required" else "failed", err.code, err.message)
+            self._failed(conn["id"], uid, err, url=conn["url"])
             raise
         text = out.text
         cut = False
         if text is not None and len(text) > spec.max_result_chars:
             text, cut = text[:spec.max_result_chars], True
         self._finish_call(call_id, "succeeded", result={"bytes": out.bytes_total}, duration_ms=out.duration_ms)
-        self._health(conn["id"], "ok")
+        self._health(conn["id"], "ok", url=conn["url"])
         return {"connection": alias or conn["slug"], "connection_name": conn["name"], "uri": uri, "text": text, "truncated": cut,
                 "contents": [{k: v for k, v in c.items() if k != "text"} for c in out.contents], "bytes": out.bytes_total,
                 "duration_ms": out.duration_ms, "call_id": call_id}
@@ -716,11 +1181,11 @@ class Connections:
             out = self.runtime.get_prompt(conn, self.credential(conn), name, clean, user_id=user["id"], timeout=spec.call_timeout_s)
         except ServiceError as err:
             self._finish_call(call_id, "timeout" if err.code == "mcp_timeout" else "failed", error=err)
-            self._health(conn["id"], "auth_required" if err.code == "mcp_auth_required" else "failed", err.code, err.message)
+            self._failed(conn["id"], user["id"], err, url=conn["url"])
             raise
         text = out.text[:spec.max_result_chars]
         self._finish_call(call_id, "succeeded", result={"chars": len(out.text)}, duration_ms=out.duration_ms)
-        self._health(conn["id"], "ok")
+        self._health(conn["id"], "ok", url=conn["url"])
         return {"name": name, "description": out.description, "text": text, "truncated": len(out.text) > len(text),
                 "messages": out.messages, "duration_ms": out.duration_ms}
 
@@ -737,7 +1202,7 @@ class Connections:
                                 "(SELECT COUNT(*) FROM mcp_connection_prompts WHERE connection_id=? AND removed_at IS NULL) AS prompts, "
                                 "(SELECT COUNT(*) FROM mcp_tool_grants g JOIN mcp_connection_tools t ON t.connection_id=g.connection_id "
                                 " AND t.name=g.tool WHERE g.connection_id=? AND g.mode<>'off' AND t.removed_at IS NULL "
-                                " AND g.schema_hash=t.schema_hash) AS granted, "
+                                " AND t.unusable_code IS NULL AND g.schema_hash=t.schema_hash) AS granted, "
                                 "(SELECT MAX(started_at) FROM mcp_calls WHERE connection_id=? AND origin='agent') AS last_call_at",
                                 (conn["id"], conn["id"], conn["id"], conn["id"], conn["id"]))
         parts = urlsplit(conn["url"])
@@ -747,6 +1212,7 @@ class Connections:
                 "auth_kind": conn["auth_kind"], "credential_hint": conn.get("credential_hint"),
                 "has_credential": bool(conn.get("credential_sealed")),
                 "oauth_client": _j(conn.get("oauth_client_json")), "status": conn["status"],
+                "platform_disabled": bool(conn.get("platform_disabled_at")), "platform_disabled_at": conn.get("platform_disabled_at"),
                 "health": conn["health"], "health_checked_at": conn.get("health_checked_at"), "last_ok_at": conn.get("last_ok_at"),
                 "last_error": {"code": conn["last_error_code"], "message": conn["last_error_message"]} if conn.get("last_error_code") else None,
                 "circuit_open_until": conn.get("open_until") if (conn.get("open_until") or 0) > now() else None,
@@ -787,8 +1253,11 @@ class Connections:
                                "WHERE t.connection_id=? ORDER BY t.removed_at IS NOT NULL, t.position, t.name", (cid,))
         personal = base["binding"].get("tool_modes") or {}
         base["tools"] = [{
-            "name": t["name"], "title": t["title"], "description": t["description"], "input_schema": _j(t["input_schema_json"], {}),
-            "output_schema": _j(t["output_schema_json"]), "annotations": _j(t["annotations_json"], {}) or {},
+            "name": t["name"], "title": t["title"], "description": t["description"],
+            # An unusable tool's schema was not kept: the page shows why instead (`unusable`).
+            "input_schema": None if t["unusable_code"] else _j(t["input_schema_json"], {}),
+            "output_schema": None if t["unusable_code"] else _j(t["output_schema_json"]),
+            "annotations": _j(t["annotations_json"], {}) or {}, "unusable": _unusable(t["unusable_code"]),
             "schema_hash": t["schema_hash"], "removed": t["removed_at"] is not None,
             "grant": {"mode": t["grant_mode"] or "off", "stale": bool(t["grant_mode"]) and t["grant_hash"] != t["schema_hash"],
                       "granted_by": t["granted_by"], "granted_at": t["granted_at"]},
@@ -807,6 +1276,7 @@ class Connections:
         conn = self._row(cid)
         uid = user["id"]
         self._use(uid, conn)
+        settle_interrupted_calls(self.store, connection_id=cid)
         manage = self.manages(uid, conn["owner_kind"], conn["owner_id"])
         limit = max(1, min(int(limit), 200))
         if before is None:

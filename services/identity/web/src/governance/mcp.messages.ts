@@ -1,6 +1,7 @@
 /** The MCP page of platform administration (governance/McpTab.tsx): the versioned policy and its
- *  publication, the masked overview of every connection, the inbound card, and the refusals of
- *  `/api/admin/mcp/*` (synwevo_identity.admin_mcp, synwevo_core.mcp_policy) worded as sentences.
+ *  publication, the masked overview of every connection with its platform stop and the lifting of
+ *  it, the inbound card, and the refusals of `/api/admin/mcp/*` (synwevo_identity.admin_mcp,
+ *  synwevo_core.mcp_policy) worded as sentences.
  *  Labels other administration lists already have (状态, 操作, 名称, 理由, 刷新, 重试, 加载中…, the
  *  settings editor's version and conflict sentences) stay in their own catalogues. */
 import { registerMessages } from "@synwevo/ui";
@@ -123,15 +124,25 @@ export const mcpMessages = {
   "尚未成功过": { en: "No success yet", "zh-Hant": "尚未成功過" },
   "最近调用记录": { en: "Recent calls", "zh-Hant": "最近呼叫記錄" },
   "最近调用记录：{name}": { en: "Recent calls: {name}", "zh-Hant": "最近呼叫記錄：{name}" },
-  "停用连接": { en: "Disable connection", "zh-Hant": "停用連線" },
-  "停用连接：{name}": { en: "Disable connection: {name}", "zh-Hant": "停用連線：{name}" },
-  "将在全平台停用「{name}」（{host}）：它保存的凭据会被清除，绑定它的 {count} 个 Agent 不再得到它的工具，进行中的调用会失败。连接本身、授权设置与调用记录保留；重新启用需要连接的拥有者重新填写凭据。": {
-    en: "“{name}” ({host}) will be disabled platform-wide: its stored credential is cleared, the {count} Agents bound to it no longer get its tools, and running calls fail. The connection itself, its grants and its call records are kept; re-enabling it needs its owner to enter the credential again.",
-    "zh-Hant": "將在全平台停用「{name}」（{host}）：它儲存的憑證會被清除，綁定它的 {count} 個 Agent 不再得到它的工具，進行中的呼叫會失敗。連線本身、授權設定與呼叫記錄保留；重新啟用需要連線的擁有者重新填寫憑證。" },
-  "已停用「{name}」。": { en: "“{name}” has been disabled.", "zh-Hant": "已停用「{name}」。" },
+  // the platform stop (admin_mcp.disable) and its lifting (admin_mcp.lift), apart from the owner's own on/off
+  "已被平台停用": { en: "Stopped by the platform", "zh-Hant": "已被平台停用" },
+  "平台停用于 {time}": { en: "Stopped by the platform on {time}", "zh-Hant": "平台停用於 {time}" },
+  "平台停用": { en: "Stop platform-wide", "zh-Hant": "平台停用" },
+  "平台停用：{name}": { en: "Stop platform-wide: {name}", "zh-Hant": "平台停用：{name}" },
+  "平台停用连接": { en: "Stop a connection platform-wide", "zh-Hant": "平台停用連線" },
+  "将在全平台停用「{name}」（{host}）：它保存的凭据（令牌、OAuth 客户端密钥与动态登记、进行中的授权）会被清除，绑定它的 {count} 个 Agent 不再得到它的工具，新的调用、读取与连接测试都会被拒绝。拥有者不能自行恢复它，也不能为它填写新的凭据或地址；只有平台管理员可以解除停用。连接本身、工具授权与调用记录保留。": {
+    en: "“{name}” ({host}) will be stopped platform-wide: every credential it holds (the token, the OAuth client secret and a dynamic registration, authorizations in progress) is cleared, the {count} Agents bound to it no longer get its tools, and new calls, reads and connection tests are refused. Its owner cannot resume it or give it a new credential or address; only a platform administrator can lift the stop. The connection itself, its tool grants and its call records are kept.",
+    "zh-Hant": "將在全平台停用「{name}」（{host}）：它儲存的憑證（權杖、OAuth 客戶端密鑰與動態登記、進行中的授權）會被清除，綁定它的 {count} 個 Agent 不再得到它的工具，新的呼叫、讀取與連線測試都會被拒絕。擁有者不能自行恢復它，也不能為它填寫新的憑證或位址；只有平台管理員可以解除停用。連線本身、工具授權與呼叫記錄保留。" },
+  "已在全平台停用「{name}」；只有平台管理员可以解除。": { en: "“{name}” has been stopped platform-wide; only a platform administrator can lift the stop.", "zh-Hant": "已在全平台停用「{name}」；只有平台管理員可以解除。" },
+  "解除平台停用": { en: "Lift the platform stop", "zh-Hant": "解除平台停用" },
+  "解除平台停用：{name}": { en: "Lift the platform stop: {name}", "zh-Hant": "解除平台停用：{name}" },
+  "将解除「{name}」（{host}）自 {time} 起的平台停用。连接仍保持停用，也没有凭据：由它的拥有者决定是否重新启用，并在需要时重新填写凭据或重新授权；平台不会替拥有者启用它。": {
+    en: "The platform stop of “{name}” ({host}), in place since {time}, will be lifted. The connection stays disabled and holds no credential: its owner decides whether to enable it again, and enters a credential or authorizes again where it needs one. The platform does not enable it for them.",
+    "zh-Hant": "將解除「{name}」（{host}）自 {time} 起的平台停用。連線仍保持停用，也沒有憑證：由它的擁有者決定是否重新啟用，並在需要時重新填寫憑證或重新授權；平台不會替擁有者啟用它。" },
+  "已解除「{name}」的平台停用；连接仍保持停用，由拥有者决定是否重新启用。": { en: "The platform stop of “{name}” has been lifted. The connection stays disabled until its owner enables it.", "zh-Hant": "已解除「{name}」的平台停用；連線仍保持停用，由擁有者決定是否重新啟用。" },
   "没有匹配的连接。": { en: "No matching connections.", "zh-Hant": "沒有符合的連線。" },
   "还没有任何 MCP 连接。": { en: "There are no MCP connections yet.", "zh-Hant": "還沒有任何 MCP 連線。" },
-  "你的平台角色可以查看 MCP 策略与连接，不能发布策略或停用连接。": { en: "Your platform role can view the MCP policy and connections but cannot publish the policy or disable a connection.", "zh-Hant": "你的平台角色可以檢視 MCP 策略與連線，不能發佈策略或停用連線。" },
+  "你的平台角色可以查看 MCP 策略与连接，不能发布策略，也不能平台停用连接或解除停用。": { en: "Your platform role can view the MCP policy and connections, but cannot publish the policy, stop a connection platform-wide or lift a stop.", "zh-Hant": "你的平台角色可以檢視 MCP 策略與連線，不能發佈策略，也不能平台停用連線或解除停用。" },
   // ---- recent calls
   "正在读取调用记录…": { en: "Reading the call records…", "zh-Hant": "正在讀取呼叫記錄…" },
   "这个连接还没有调用记录。": { en: "This connection has no call records yet.", "zh-Hant": "這個連線還沒有呼叫記錄。" },
@@ -175,5 +186,6 @@ export const mcpMessages = {
   "MCP 策略已变化，请重新预览": { en: "The MCP policy has changed. Preview again.", "zh-Hant": "MCP 策略已變更，請重新預覽" },
   "MCP 策略记录暂不可用，请联系管理员检查": { en: "The MCP policy record is temporarily unavailable. Ask an administrator to check it.", "zh-Hant": "MCP 策略記錄暫不可用，請聯絡管理員檢查" },
   "连接不存在": { en: "This connection does not exist.", "zh-Hant": "連線不存在" },
+  "这个连接没有被平台停用": { en: "This connection is not stopped by the platform.", "zh-Hant": "這個連線沒有被平台停用" },
 };
 registerMessages(mcpMessages);

@@ -73,6 +73,7 @@ ADMIN_ACTIONS: dict[str, dict] = {
     "admin.settings.publish": _a("config", "发布平台配置", "發布平台設定", "Publish platform settings"),
     "admin.mcp.policy.publish": _a("config", "发布 MCP 策略", "發布 MCP 策略", "Publish the MCP policy"),
     "admin.mcp.connection.disable": _a("config", "平台停用 MCP 连接", "平台停用 MCP 連線", "Disable an MCP connection platform-wide"),
+    "admin.mcp.connection.lift": _a("config", "解除 MCP 连接的平台停用", "解除 MCP 連線的平台停用", "Lift a platform-wide MCP connection stop"),
     "admin.super_admin.cancel": _a("platform", "取消最高管理员交接", "取消最高管理員交接", "Cancel a super-administrator handover"),
     "admin.super_admin.offer": _a("platform", "发起最高管理员交接", "發起最高管理員交接", "Offer a super-administrator handover"),
     "admin.super_admin.ready": _a("platform", "确认最高管理员就绪", "確認最高管理員就緒", "Confirm super-administrator readiness"),

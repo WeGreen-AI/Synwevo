@@ -10,11 +10,16 @@ offers it), and sends the person's browser to the authorization endpoint with PK
 the `resource` of the MCP server. The callback (on the workplace origin, in the person's signed-in
 session) checks `state` and `iss` (RFC 9207), exchanges the code at the token endpoint — pinned,
 without redirects — and seals the token set on the connection. Refresh happens the same way when a
-token is about to expire.
+token is about to expire. A connection the platform stopped is not authorized at all, and every
+write along the way (a registration, a flow, a token set) holds only while the connection is still
+the one the authorization began with: a stop, a new address or a deletion landing meanwhile wins.
 
 Every outbound request goes through the runtime's pinned client (policy-checked destination, the
 hostname kept for TLS). Nothing from the remote server is trusted beyond its protocol role: its
-metadata is validated with the SDK's models, its issuer must match where the metadata was read.
+metadata is validated with the SDK's models; the resource metadata must name the connection's own
+server (RFC 9728 §3.3); the authorization server metadata's issuer must be, string for string, the
+issuer its well-known address was built from (RFC 8414 §3.3); the server must advertise PKCE S256;
+and a client secret goes only to the authorization server it belongs to.
 """
 from __future__ import annotations
 
@@ -29,9 +34,10 @@ import httpx2
 from mcp.client.auth.oauth2 import PKCEParameters
 from mcp.client.auth.utils import (build_oauth_authorization_server_metadata_discovery_urls,
                                    build_protected_resource_metadata_discovery_urls, extract_resource_metadata_from_www_auth,
-                                   extract_scope_from_www_auth, validate_metadata_issuer)
+                                   extract_scope_from_www_auth, issuers_match)
 from mcp.shared.auth import OAuthClientMetadata, OAuthMetadata, OAuthToken, ProtectedResourceMetadata
-from pydantic import AnyUrl, ValidationError
+from mcp.shared.auth_utils import check_resource_allowed, resource_url_from_server_url
+from pydantic import AnyHttpUrl, AnyUrl, ConfigDict, TypeAdapter, ValidationError
 
 from synwevo_core import env, sealed
 from synwevo_core.auth import audit_event
@@ -46,6 +52,12 @@ DISCOVERY_TIMEOUT_S = 20.0
 CALLBACK_PATH = "/api/suite/agent/mcp/oauth/callback"
 CLIENT_NAME = "Synwevo Agent"
 SEAL = "mcp-credential"
+#: The connection is still the OAuth connection to the server (`url`, the one parameter) that an
+#: authorization began with: not re-pointed or given another authentication, not stopped by the
+#: platform, not deleted. Each of those voids the authorization under way — its flows go, and with them
+#: what was registered or issued for it (connections.Connections.update, synwevo_identity.admin_mcp) —
+#: so a write conditional on this cannot bring back what they forgot.
+_CURRENT = "url=? AND auth_kind='oauth' AND platform_disabled_at IS NULL AND deleted_at IS NULL"
 
 
 def app_url() -> str:
@@ -58,6 +70,25 @@ def client_metadata_document() -> dict:
     return {"client_id": base + MCP_CLIENT_METADATA_PATH, "client_name": CLIENT_NAME, "client_uri": base or None,
             "redirect_uris": [base + CALLBACK_PATH], "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"], "token_endpoint_auth_method": "none", "application_type": "web"}
+
+
+# How OAuthMetadata renders an issuer URL (host case, default port, an empty path kept empty), so the
+# origin of an MCP server compares with a metadata `issuer` as strings.
+_ISSUER_URL = TypeAdapter(AnyHttpUrl, config=ConfigDict(url_preserve_empty_path=True))
+
+
+def _origin_issuer(server_url: str) -> str:
+    """The issuer identifier a 2025-03-26 server's metadata address is built from: its origin."""
+    parts = urlsplit(server_url)
+    return str(_ISSUER_URL.validate_python(f"{parts.scheme}://{parts.netloc}"))
+
+
+def _dynamic_at(stored: dict | None, issuer: str) -> bool:
+    """Whether `stored` is a dynamic registration made at `issuer`, the one authorization server its
+    client id and secret belong to (MCP authorization, "Authorization Server Binding"; compared the
+    SDK's way, `issuers_match`)."""
+    return bool(stored and stored.get("kind") == "dynamic" and stored.get("client_id") and stored.get("issuer")
+                and issuers_match(stored["issuer"], issuer))
 
 
 def _probe_request(url: str) -> httpx2.Request:
@@ -88,31 +119,54 @@ class OutboundOAuth:
                 raise ServiceError(502, "mcp_server_error", "MCP 服务没有按预期要求认证", {"http_status": probe.status_code})
             prm_hint = extract_resource_metadata_from_www_auth(probe)
             scope_hint = extract_scope_from_www_auth(probe)
+        own_resource = resource_url_from_server_url(conn["url"])
         prm = None
         for url in build_protected_resource_metadata_discovery_urls(prm_hint, conn["url"]):
             prm = await self._get_json(url, owner, ProtectedResourceMetadata)
             if prm is not None:
                 break
         if prm is not None:
+            # RFC 9728 §3.3 / §7.3: metadata naming another resource MUST NOT be used — else a server
+            # could name another service's resource and authorization server, and the token the person
+            # grants there would come back to it as a bearer. The SDK's rule
+            # (`OAuthClientProvider._validate_resource_match`): same origin, and the connection's path at
+            # or below the one named (metadata at the root names the origin).
+            if not check_resource_allowed(requested_resource=own_resource, configured_resource=str(prm.resource)):
+                raise ServiceError(502, "mcp_oauth_discovery_failed", "MCP 服务的资源元数据指向的不是这个服务地址，已拒绝",
+                                   {"reason": "resource_mismatch"})
             if not prm.authorization_servers:
                 raise ServiceError(502, "mcp_oauth_discovery_failed", "MCP 服务的资源元数据没有指明授权服务器")
-            auth_server = str(prm.authorization_servers[0]).rstrip("/")
+            # Exactly as published: the metadata's issuer is compared with it as a string.
+            auth_server = str(prm.authorization_servers[0])
             resource = str(prm.resource)
         else:
             # Servers of the 2025-03-26 revision had no resource metadata: their authorization
             # server lives at their own origin.
-            auth_server, resource = None, conn["url"]
+            auth_server, resource = None, own_resource
         meta = None
         for url in build_oauth_authorization_server_metadata_discovery_urls(auth_server, conn["url"]):
             meta = await self._get_json(url, owner, OAuthMetadata)
             if meta is not None:
-                if auth_server:
-                    validate_metadata_issuer(meta, auth_server)
                 break
         if meta is None:
             raise ServiceError(502, "mcp_oauth_discovery_failed", "找不到 MCP 服务的授权服务器元数据")
-        if "S256" not in (meta.code_challenge_methods_supported or ["S256"]):
-            raise ServiceError(502, "mcp_oauth_unsupported", "授权服务器不支持 PKCE S256")
+        # RFC 8414 §3.3 (and OpenID Connect Discovery §4.3), on every path: the `issuer` MUST be identical
+        # to the issuer the well-known address was built from, or the metadata MUST NOT be used — its
+        # endpoints would otherwise be the word of whoever answered there (a mix-up: the code, the PKCE
+        # verifier and any client secret sent to a token endpoint of the answerer's choosing). On the
+        # 2025-03-26 path that issuer is the server's origin, which `https://host` and `https://host/`
+        # both name (§3.1 drops the terminating "/" before inserting the well-known suffix).
+        issuer = str(meta.issuer)
+        expected_issuer = auth_server or _origin_issuer(conn["url"])
+        if auth_server is None and issuers_match(issuer, expected_issuer):
+            expected_issuer = issuer
+        if issuer != expected_issuer:
+            raise ServiceError(502, "mcp_oauth_discovery_failed", "授权服务器元数据的 issuer 与发现地址不一致，已拒绝",
+                               {"reason": "issuer_mismatch"})
+        # MCP authorization, "Authorization Code Protection": a document without
+        # code_challenge_methods_supported means no PKCE, and the client MUST refuse to proceed.
+        if "S256" not in (meta.code_challenge_methods_supported or []):
+            raise ServiceError(502, "mcp_oauth_unsupported", "授权服务器没有宣告支持 PKCE S256，已拒绝")
         scope = scope_hint or (" ".join(prm.scopes_supported) if prm is not None and prm.scopes_supported else None)
         if "offline_access" in (meta.scopes_supported or []) and "offline_access" not in (scope or "").split():
             # MCP authorization, "Refresh Tokens": a client MAY ask for offline_access when the
@@ -141,11 +195,11 @@ class OutboundOAuth:
         """The client id to use at this authorization server, in the specification's priority:
         pre-registered, Client ID Metadata Document, dynamic registration."""
         stored = json.loads(conn["oauth_client_json"]) if conn.get("oauth_client_json") else None
-        issuer = str(meta.issuer).rstrip("/")
+        issuer = str(meta.issuer)
         if stored and stored.get("kind") == "preregistered" and stored.get("client_id"):
             return {"kind": "preregistered", "client_id": stored["client_id"], "issuer": issuer,
                     "confidential": bool(conn.get("oauth_client_secret_sealed"))}
-        if stored and stored.get("kind") == "dynamic" and stored.get("client_id") and stored.get("issuer") == issuer:
+        if _dynamic_at(stored, issuer):
             return {**stored, "confidential": bool(conn.get("oauth_client_secret_sealed"))}
         document = client_metadata_document()
         if meta.client_id_metadata_document_supported and document["client_id"].startswith("https://"):
@@ -169,8 +223,13 @@ class OutboundOAuth:
             secret = body.get("client_secret") if isinstance(body.get("client_secret"), str) else None
             record = {"kind": "dynamic", "client_id": client_id, "issuer": issuer,
                       "registered_at": now(), "registration_endpoint": str(meta.registration_endpoint)}
-            self.store.execute("UPDATE mcp_connections SET oauth_client_json=?, oauth_client_secret_sealed=?, updated_at=? WHERE id=?",
-                               (json.dumps(record), sealed.seal(self.store, SEAL, secret) if secret else None, now(), conn["id"]))
+            # Only on the connection the registration was made for (_CURRENT): a stop, a new address or a
+            # deletion that landed meanwhile forgot the client, and its secret is not sealed back on.
+            if not self.store.execute("UPDATE mcp_connections SET oauth_client_json=?, oauth_client_secret_sealed=?, updated_at=? "
+                                      "WHERE id=? AND " + _CURRENT,
+                                      (json.dumps(record), sealed.seal(self.store, SEAL, secret) if secret else None, now(),
+                                       conn["id"], conn["url"])):
+                self._overtaken(conn["id"])
             return {**record, "confidential": bool(secret)}
         raise ServiceError(409, "mcp_oauth_registration_unavailable",
                            "这个授权服务器不接受自描述登记也没有动态登记：请先在对方处登记客户端，再在连接里填写 client_id",
@@ -181,6 +240,9 @@ class OutboundOAuth:
         self.connections.require_outbound()
         conn = self.connections._row(cid)
         self.connections._manage(user["id"], conn)
+        # Authenticating is resuming: a connection the platform stopped neither hears from this flow
+        # (no probe, no discovery, no registration) nor gets a flow, until the platform lifts the stop.
+        self.connections._platform_stop(conn)
         if conn["auth_kind"] != "oauth":
             raise ServiceError(409, "mcp_auth_kind_mismatch", "这个连接不使用 OAuth 认证")
         if not app_url():
@@ -192,23 +254,30 @@ class OutboundOAuth:
         state = secrets.token_urlsafe(32)
         redirect_uri = app_url() + CALLBACK_PATH
         t = now()
-        self.store.execute("DELETE FROM mcp_oauth_flows WHERE connection_id=? AND completed_at IS NULL", (cid,))
-        self.store.execute(
-            "INSERT INTO mcp_oauth_flows (id, connection_id, user_id, state, code_verifier_sealed, issuer, authorization_endpoint, "
-            "token_endpoint, client_id, scope, resource, redirect_uri, iss_supported, created_at, expires_at) VALUES "
-            "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (new_id("mcpflow"), cid, user["id"], state, sealed.seal(self.store, SEAL, pkce.code_verifier), str(meta.issuer).rstrip("/"),
-             str(meta.authorization_endpoint), str(meta.token_endpoint), client["client_id"], found["scope"], found["resource"],
-             redirect_uri, int(bool(meta.authorization_response_iss_parameter_supported)), t, t + FLOW_TTL_S))
+        with self.store.tx():
+            self.store.execute("DELETE FROM mcp_oauth_flows WHERE connection_id=? AND completed_at IS NULL", (cid,))
+            # Only for the connection discovery was made for (_CURRENT): a new address landing during
+            # discovery forgot the connection's flows, and a flow for the old server recorded after it
+            # would let that server's tokens be sealed on the re-pointed connection (callback).
+            if not self.store.execute(
+                    "INSERT INTO mcp_oauth_flows (id, connection_id, user_id, state, code_verifier_sealed, issuer, "
+                    "authorization_endpoint, token_endpoint, client_id, scope, resource, redirect_uri, iss_supported, created_at, "
+                    "expires_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? "
+                    "WHERE EXISTS (SELECT 1 FROM mcp_connections WHERE id=? AND " + _CURRENT + ")",
+                    (new_id("mcpflow"), cid, user["id"], state, sealed.seal(self.store, SEAL, pkce.code_verifier), str(meta.issuer),
+                     str(meta.authorization_endpoint), str(meta.token_endpoint), client["client_id"], found["scope"],
+                     found["resource"], redirect_uri, int(bool(meta.authorization_response_iss_parameter_supported)), t,
+                     t + FLOW_TTL_S, cid, conn["url"])):
+                self._overtaken(cid)
+            audit_event(self.store, "suite.agent.mcp.oauth.start", actor_kind="user", actor_id=user["id"],
+                        workspace_id=conn["owner_id"] if conn["owner_kind"] == "workspace" else None,
+                        object_kind="mcp_connection", object_id=cid,
+                        meta={"issuer": str(meta.issuer), "registration": client["kind"]})
         params = {"response_type": "code", "client_id": client["client_id"], "redirect_uri": redirect_uri, "state": state,
                   "code_challenge": pkce.code_challenge, "code_challenge_method": "S256", "resource": found["resource"]}
         if found["scope"]:
             params["scope"] = found["scope"]
         sep = "&" if urlsplit(str(meta.authorization_endpoint)).query else "?"
-        audit_event(self.store, "suite.agent.mcp.oauth.start", actor_kind="user", actor_id=user["id"],
-                    workspace_id=conn["owner_id"] if conn["owner_kind"] == "workspace" else None,
-                    object_kind="mcp_connection", object_id=cid,
-                    meta={"issuer": str(meta.issuer), "registration": client["kind"]})
         return {"authorization_url": f"{meta.authorization_endpoint}{sep}{urlencode(params)}", "issuer": str(meta.issuer),
                 "registration": client["kind"], "expires_at": t + FLOW_TTL_S}
 
@@ -242,7 +311,9 @@ class OutboundOAuth:
         verifier = sealed.unseal(self.store, SEAL, flow["code_verifier_sealed"])
         tokens = self.runtime.run(self._exchange(conn, flow, code, verifier), timeout=DISCOVERY_TIMEOUT_S * 2)
         with self.store.tx():
-            self.connections.store_tokens(cid, tokens)
+            # Tied to this flow: if a change voided it while the code was being exchanged, a newer flow
+            # (for the server the connection now points at) does not vouch for these tokens.
+            self.connections.store_tokens(cid, tokens, flow_id=flow["id"])
             self._close(flow, "ok")
             audit_event(self.store, "suite.agent.mcp.oauth.complete", actor_kind="user", actor_id=user["id"],
                         workspace_id=conn["owner_id"] if conn["owner_kind"] == "workspace" else None,
@@ -253,21 +324,40 @@ class OutboundOAuth:
             log.info("post-authorization discovery of connection %s failed: %s", cid, err.code)
         return {"connection_id": cid, "ok": True}
 
+    def _overtaken(self, cid: str) -> None:
+        """Refuse a step of the authorization whose connection is no longer the one it began with
+        (_CURRENT): a platform stop by its name, anything else — a new address or authentication, a
+        deletion — as a change."""
+        row = self.store.one("SELECT platform_disabled_at FROM mcp_connections WHERE id=?", (cid,))
+        if row:
+            self.connections._platform_stop(row)
+        raise ServiceError(409, "mcp_connection_changed", "连接在认证期间被修改、停用或删除，请重新认证")
+
     def _close(self, flow: dict, outcome: str) -> None:
         self.store.execute("UPDATE mcp_oauth_flows SET completed_at=?, outcome=?, code_verifier_sealed='' WHERE id=?",
                            (now(), outcome, flow["id"]))
 
-    def _auth_headers(self, conn: dict, client_id: str) -> dict:
-        if conn.get("oauth_client_secret_sealed"):
-            secret = sealed.unseal(self.store, SEAL, conn["oauth_client_secret_sealed"])
-            raw = base64.b64encode(f"{client_id}:{secret}".encode()).decode()
-            return {"Authorization": f"Basic {raw}"}
-        return {}
+    def _auth_headers(self, conn: dict, client_id: str, issuer: str) -> dict:
+        """Client authentication at `issuer`'s token endpoint as `client_id`: the stored secret only
+        when it belongs to that client there — the person's pre-registered client, or a dynamic
+        registration made at this same issuer. The secret of another authorization server's
+        registration (the server switched, or a Client ID Metadata Document is in use) is not sent."""
+        if not conn.get("oauth_client_secret_sealed"):
+            return {}
+        stored = json.loads(conn["oauth_client_json"]) if conn.get("oauth_client_json") else None
+        if not stored or stored.get("client_id") != client_id:
+            return {}
+        if stored.get("kind") != "preregistered" and not _dynamic_at(stored, issuer):
+            return {}
+        secret = sealed.unseal(self.store, SEAL, conn["oauth_client_secret_sealed"])
+        raw = base64.b64encode(f"{client_id}:{secret}".encode()).decode()
+        return {"Authorization": f"Basic {raw}"}
 
     async def _exchange(self, conn: dict, flow: dict, code: str, verifier: str) -> dict:
         form = {"grant_type": "authorization_code", "code": code, "redirect_uri": flow["redirect_uri"],
                 "client_id": flow["client_id"], "code_verifier": verifier, "resource": flow["resource"]}
-        return await self._token_request(conn, flow["token_endpoint"], form, self._auth_headers(conn, flow["client_id"]))
+        return await self._token_request(conn, flow["token_endpoint"], form,
+                                         self._auth_headers(conn, flow["client_id"], flow["issuer"]))
 
     async def _token_request(self, conn: dict, endpoint: str, form: dict, headers: dict) -> dict:
         async with self.runtime.http(endpoint, conn["owner_id"], read_timeout=DISCOVERY_TIMEOUT_S) as http:
@@ -293,20 +383,24 @@ class OutboundOAuth:
 
     def refresh(self, conn: dict, tokens: dict) -> dict:
         """A new token set from the refresh token, stored sealed; the caller gets the result."""
-        stored = json.loads(conn["oauth_client_json"]) if conn.get("oauth_client_json") else None
-        flow = self.store.one("SELECT token_endpoint, client_id, resource FROM mcp_oauth_flows WHERE connection_id=? AND outcome='ok' "
-                              "ORDER BY completed_at DESC LIMIT 1", (conn["id"],))
+        flow = self.store.one("SELECT id, token_endpoint, client_id, resource, issuer FROM mcp_oauth_flows WHERE connection_id=? "
+                              "AND outcome='ok' ORDER BY completed_at DESC LIMIT 1", (conn["id"],))
         if not flow or not tokens.get("refresh_token"):
             raise ServiceError(401, "mcp_auth_required", "需要重新认证这个连接")
-        client_id = (stored or {}).get("client_id") or flow["client_id"]
+        # The refresh token was issued to the flow's client at the flow's issuer; a registration
+        # stored since (another authorization server's) is not that client.
+        client_id = flow["client_id"]
         form = {"grant_type": "refresh_token", "refresh_token": tokens["refresh_token"], "client_id": client_id,
                 "resource": flow["resource"]}
         try:
-            fresh = self.runtime.run(self._token_request(conn, flow["token_endpoint"], form, self._auth_headers(conn, client_id)),
+            fresh = self.runtime.run(self._token_request(conn, flow["token_endpoint"], form,
+                                                         self._auth_headers(conn, client_id, flow["issuer"])),
                                      timeout=DISCOVERY_TIMEOUT_S * 2)
         except ServiceError as err:
             raise ServiceError(401, "mcp_auth_required", "连接的令牌无法刷新，需要重新认证", {"cause": err.code}) from None
         if not fresh.get("refresh_token"):
             fresh["refresh_token"] = tokens["refresh_token"]
-        self.connections.store_tokens(conn["id"], fresh)
+        # Tied to the authorization the refresh token came from: a change that voided it meanwhile
+        # (its flows go) is not undone by a newer authorization of the connection.
+        self.connections.store_tokens(conn["id"], fresh, flow_id=flow["id"])
         return fresh

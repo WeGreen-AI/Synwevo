@@ -68,7 +68,7 @@ const errors: Record<string, string> = {
   // MCP policy and connections (synwevo_identity.admin_mcp, synwevo_core.mcp_policy; mcp.messages.ts)
   mcp_policy_bad_revision: "策略版本无效，请重新读取当前策略", mcp_policy_invalid: "MCP 策略不符合要求，请检查各项取值",
   mcp_policy_revision_conflict: "MCP 策略已变化，请重新预览", mcp_policy_unavailable: "MCP 策略记录暂不可用，请联系管理员检查",
-  mcp_connection_not_found: "连接不存在",
+  mcp_connection_not_found: "连接不存在", mcp_not_platform_disabled: "这个连接没有被平台停用",
   not_pending_delete: "该账户没有待处理的注销申请。",
   bad_throttle: "请选择要解除的限流记录。",
   bad_access_query: "请指定要解释的工作空间与应用。",

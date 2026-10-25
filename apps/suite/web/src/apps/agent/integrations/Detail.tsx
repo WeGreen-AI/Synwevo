@@ -1,7 +1,10 @@
 /** /agent/integrations/:cid — one connection: its health and server facts, the tools with their
  *  grants and the person's own narrowing, the resources and prompts it offers, every call made
  *  through it, and whether this person's Agent uses it. Everything shown is what the server
- *  returned; management buttons are disabled with the reason when the person does not manage it. */
+ *  returned; management buttons are disabled with the reason when the person does not manage it,
+ *  and the actions a platform stop refuses are disabled with that reason. A connection pointed at
+ *  another address says what has to happen before an Agent uses it again. A write the server
+ *  executed without returning its result re-reads the connection. */
 import { useEffect, useId, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useDialog } from '@synwevo/ui';
@@ -9,7 +12,8 @@ import { read } from '../../../shared/ops';
 import { Empty, Loading } from '../../../shared/states';
 import type { IntegrationText } from './integrations.messages';
 import {
-  isReadOnly, mcpErrorKey, oauthOutcome, personalModes, safeAuthorizationUrl, slugifyAlias, toolHints, KIND_TEXT, ORIGIN_TEXT,
+  grantView, isReadOnly, mcpErrorKey, needsToken, oauthOutcome, personalModes, platformStopped, pointedElsewhere, repointSteps,
+  safeAuthorizationUrl, slugifyAlias, toolHints, KIND_TEXT, ORIGIN_TEXT,
   type Binding, type CallRecord, type ConnectionDetail, type ConnectionSummary, type GrantMode, type OAuthStart, type OAuthOutcome,
   type PersonalMode, type Prompt, type RenderedPrompt, type Resource, type ResourcePage, type Tool,
 } from './model';
@@ -47,6 +51,9 @@ function JsonBlock({ value, label }: { value: unknown; label: string }) {
 
 /** The merge of a write's output into the detail already on the page. */
 type Update = (next: ConnectionDetail) => void;
+/** Re-reads the connection: after a write the server executed but whose result it cannot return. */
+type Reload = () => void;
+const noReload: Reload = () => {};
 function withSummary(detail: ConnectionDetail, summary: ConnectionSummary): ConnectionDetail {
   return { ...detail, ...summary, tools: detail.tools, resources: detail.resources, prompts: detail.prompts, instructions: detail.instructions, calls: detail.calls };
 }
@@ -57,15 +64,27 @@ export function withBinding(detail: ConnectionDetail, binding: Binding): Connect
 
 // ---------------------------------------------------------------- overview
 
-export function OverviewTab({ detail, update, onDeleted }: { detail: ConnectionDetail; update: Update; onDeleted: () => void }) {
+export function OverviewTab({ detail, update, onDeleted, reload = noReload, onDeleteUnverified = reload }: {
+  detail: ConnectionDetail; update: Update; onDeleted: () => void; reload?: Reload;
+  /** The delete was executed but its result cannot be read: the page goes to the re-read list. */
+  onDeleteUnverified?: () => void;
+}) {
   const { m, date } = useText();
   const dialog = useDialog();
   const write = useWrite();
   const [confirming, setConfirming] = useState(false);
   const [tested, setTested] = useState<ConnectionDetail | null>(null);
   const [badAuthUrl, setBadAuthUrl] = useState(false);
+  const tokenWrite = useWrite();
+  const [token, setToken] = useState('');
+  const [tokenIssue, setTokenIssue] = useState(false);
   const manage = detail.manage;
-  const locked = write.locked || confirming;
+  // Refused while the platform's stop holds (connections._platform_stop): enabling, testing,
+  // refreshing, authenticating and giving a credential. Disabling and deleting stay open.
+  const stopped = platformStopped(detail);
+  const repointed = !stopped && pointedElsewhere(detail);
+  const askToken = manage && !stopped && needsToken(detail);
+  const locked = write.locked || tokenWrite.locked || confirming;
   const ref = { connection_id: detail.id };
   const server = detail.server_info?.title || detail.server_info?.name || null;
   const serverText = server ? (detail.server_info?.version ? `${server} ${detail.server_info.version}` : server) : m('none');
@@ -73,24 +92,24 @@ export function OverviewTab({ detail, update, onDeleted }: { detail: ConnectionD
 
   function test(operation: 'agent.mcp.connection.test' | 'agent.mcp.connection.refresh') {
     setTested(null);
-    write.start<ConnectionDetail>(operation, ref, (next) => { update(next); setTested(next); });
+    write.start<ConnectionDetail>(operation, ref, (next) => { update(next); setTested(next); }, reload);
   }
   function toggle() {
     write.start<ConnectionSummary>(detail.status === 'disabled' ? 'agent.mcp.connection.enable' : 'agent.mcp.connection.disable', ref,
-      (summary) => refreshed(withSummary(detail, summary)));
+      (summary) => refreshed(withSummary(detail, summary)), reload);
   }
   async function revoke() {
     setConfirming(true);
     try {
       if (!await dialog.confirm(m('revokeTitle'), m('revokeBody'), m('revoke'), true)) return;
-      write.start<ConnectionSummary>('agent.mcp.credential.revoke', ref, (summary) => refreshed(withSummary(detail, summary)));
+      write.start<ConnectionSummary>('agent.mcp.credential.revoke', ref, (summary) => refreshed(withSummary(detail, summary)), reload);
     } finally { setConfirming(false); }
   }
   async function remove() {
     setConfirming(true);
     try {
       if (!await dialog.confirm(m('deleteTitle'), m('deleteBody', { name: detail.name }), m('remove'), true)) return;
-      write.start<{ deleted: string }>('agent.mcp.connection.delete', ref, onDeleted);
+      write.start<{ deleted: string }>('agent.mcp.connection.delete', ref, onDeleted, onDeleteUnverified);
     } finally { setConfirming(false); }
   }
   function authenticate() {
@@ -99,14 +118,27 @@ export function OverviewTab({ detail, update, onDeleted }: { detail: ConnectionD
       const target = safeAuthorizationUrl(out.authorization_url);
       if (!target) return setBadAuthUrl(true);
       window.location.assign(target);
-    });
+    }, reload);
+  }
+  function saveToken(e: FormEvent) {
+    e.preventDefault();
+    if (locked) return;
+    const credential = token.trim();
+    setTokenIssue(!credential);
+    if (!credential) return;
+    // The token is sealed on the server; this page forgets it as soon as the server has answered.
+    tokenWrite.start<ConnectionSummary>('agent.mcp.connection.update', { ...ref, credential }, (summary) => {
+      setToken('');
+      refreshed(withSummary(detail, summary));
+    }, () => { setToken(''); reload(); });
   }
 
   return <div className="col gap16">
     <section className="card"><div className="card-b">
       <Facts>
-        <Fact label={m('health')}><span className="row wrap"><HealthBadge health={detail.health} /><ConnectionStatusBadge status={detail.status} />
+        <Fact label={m('health')}><span className="row wrap"><HealthBadge health={detail.health} /><ConnectionStatusBadge status={detail.status} stopped={stopped} />
           {detail.health_checked_at != null && <span className="muted small">{m('lastChecked')} {date(detail.health_checked_at)}</span>}</span></Fact>
+        {stopped && detail.platform_disabled_at != null && <Fact label={m('platformStoppedAt')}>{date(detail.platform_disabled_at)}</Fact>}
         {detail.last_ok_at != null && <Fact label={m('lastOk')}>{date(detail.last_ok_at)}</Fact>}
         {detail.last_error && <Fact label={m('lastError')}><ErrorLine code={detail.last_error.code} /></Fact>}
         <Fact label={m('circuit')}>{detail.circuit_open_until ? <span className="mi-err">{m('circuitOpen', { time: date(detail.circuit_open_until) })}</span> : m('circuitClosed')}</Fact>
@@ -133,13 +165,29 @@ export function OverviewTab({ detail, update, onDeleted }: { detail: ConnectionD
       </details>}
     </div></section>
     <section className="card"><div className="card-b">
-      {detail.status === 'disabled' && <p className="notice warn">{m('disabledHint')}</p>}
-      {detail.auth_kind === 'oauth' && !detail.has_credential && <p className="notice info">{m('authFirst')}</p>}
+      {stopped ? <p className="notice warn" role="status">{m('platformStopped')}</p>
+        : detail.status === 'disabled' && <p className="notice warn">{m('disabledHint')}</p>}
+      {repointed && <div className="notice warn col" role="status">
+        <p>{m('repointed')}</p>
+        <p>{m('repointedNext')}</p>
+        <ol className="mi-list-plain">{repointSteps(detail).map((key) => <li key={key}>{m(key)}</li>)}</ol>
+      </div>}
+      {!stopped && !repointed && detail.auth_kind === 'oauth' && !detail.has_credential && <p className="notice info">{m('authFirst')}</p>}
+      {askToken && <form className="col gap4" onSubmit={saveToken} noValidate>
+        {!repointed && <p className="notice info">{m('tokenMissing')}</p>}
+        <label className="field"><span>{m('tokenLabel')}</span>
+          <input className="input" type="password" autoComplete="new-password" spellCheck={false} autoCapitalize="none" value={token} maxLength={4096}
+            disabled={locked} aria-describedby={`mi-token-${detail.id}`} onChange={(e) => { setToken(e.target.value); setTokenIssue(false); tokenWrite.dismiss(); }} /></label>
+        <p id={`mi-token-${detail.id}`} className="muted small">{m('tokenHint')}</p>
+        {tokenIssue && <p className="notice err" role="alert">{m('tokenRequired')}</p>}
+        <div><button type="submit" className="btn primary" disabled={locked}>{m('saveToken')}</button></div>
+      </form>}
+      <WriteFeedback write={tokenWrite} savedText={m('tokenSaved')} />
       <div className="row wrap mi-actions">
-        {detail.auth_kind === 'oauth' && <button type="button" className="btn primary" disabled={!manage || locked} onClick={authenticate}>{write.busy && write.operation === 'agent.mcp.oauth.start' ? m('authenticating') : m('authenticate')}</button>}
-        <button type="button" className="btn" disabled={!manage || locked} onClick={() => test('agent.mcp.connection.test')}>{write.busy && write.operation === 'agent.mcp.connection.test' ? m('testing') : m('testConnection')}</button>
-        <button type="button" className="btn" disabled={!manage || locked} onClick={() => test('agent.mcp.connection.refresh')}>{m('refreshCaps')}</button>
-        <button type="button" className="btn" disabled={!manage || locked} onClick={toggle}>{m(detail.status === 'disabled' ? 'enable' : 'disable')}</button>
+        {detail.auth_kind === 'oauth' && <button type="button" className="btn primary" disabled={!manage || locked || stopped} onClick={authenticate}>{write.busy && write.operation === 'agent.mcp.oauth.start' ? m('authenticating') : m('authenticate')}</button>}
+        <button type="button" className="btn" disabled={!manage || locked || stopped} onClick={() => test('agent.mcp.connection.test')}>{write.busy && write.operation === 'agent.mcp.connection.test' ? m('testing') : m('testConnection')}</button>
+        <button type="button" className="btn" disabled={!manage || locked || stopped} onClick={() => test('agent.mcp.connection.refresh')}>{m('refreshCaps')}</button>
+        <button type="button" className="btn" disabled={!manage || locked || (stopped && detail.status === 'disabled')} onClick={toggle}>{m(detail.status === 'disabled' ? 'enable' : 'disable')}</button>
         {detail.auth_kind !== 'none' && <button type="button" className="btn" disabled={!manage || locked || !detail.has_credential} onClick={() => void revoke()}>{m('revoke')}</button>}
         <span className="spacer" />
         <button type="button" className="btn danger" disabled={!manage || locked} onClick={() => void remove()}>{m('remove')}</button>
@@ -155,49 +203,60 @@ export function OverviewTab({ detail, update, onDeleted }: { detail: ConnectionD
 
 // ---------------------------------------------------------------- tools
 
-export function ToolEntry({ tool, detail, write, update }: { tool: Tool; detail: ConnectionDetail; write: Write; update: Update }) {
+export function ToolEntry({ tool, detail, write, update, reload = noReload }: { tool: Tool; detail: ConnectionDetail; write: Write; update: Update; reload?: Reload }) {
   const { m, date } = useText();
   const id = useId();
   const manage = detail.manage;
   const bound = detail.binding.bound;
   const readOnly = isReadOnly(tool);
   const locked = write.locked;
+  const grant = grantView(tool);
+  // Its schema was not kept (connections.UNUSABLE): it can only be off.
+  const unusable = tool.unusable ? tool.unusable.code : null;
   function setGrant(mode: GrantMode) {
-    write.start<ConnectionDetail>('agent.mcp.grant.set', { connection_id: detail.id, tool: tool.name, mode }, update);
+    write.start<ConnectionDetail>('agent.mcp.grant.set', { connection_id: detail.id, tool: tool.name, mode }, update, reload);
   }
   function setPersonal(value: '' | PersonalMode) {
     const tool_modes = personalModes(detail.tools, { tool: tool.name, mode: value || null });
-    write.start<Binding>('agent.mcp.binding.set', { connection_id: detail.id, tool_modes }, (binding) => update(withBinding(detail, binding)));
+    write.start<Binding>('agent.mcp.binding.set', { connection_id: detail.id, tool_modes }, (binding) => update(withBinding(detail, binding)), reload);
   }
   return <article className={`mi-entry${tool.removed ? ' removed' : ''}`} aria-labelledby={`${id}-name`}>
     <div className="row wrap">
       <h3 id={`${id}-name`}>{tool.title || tool.name}</h3>
       {tool.title && tool.title !== tool.name && <code className="muted">{tool.name}</code>}
       {tool.removed && <span className="badge">{m('removedTool')}</span>}
-      {tool.grant.stale && !tool.removed && <span className="badge warn">{m('stale')}</span>}
+      {unusable && !tool.removed && <span className="badge warn">{m('toolUnusable')}</span>}
+      {grant.suspended && <span className="badge warn">{m('stale')}</span>}
     </div>
     {tool.description && <p className="small">{tool.description}</p>}
     <div className="mi-hints" aria-label={m('toolHints')}>{toolHints(tool.annotations).map((key) => <span key={key} className={`badge ${key === 'hintReadOnly' ? 'ok' : key === 'hintDestructive' ? 'err' : ''}`}>{m(key)}</span>)}</div>
     <div className="mi-entry-controls">
       <label className="field"><span>{m('grantLabel')}</span>
-        <select className="input" value={tool.grant.mode} disabled={!manage || tool.removed || locked} onChange={(e) => setGrant(e.target.value as GrantMode)}>
-          {(['off', 'confirm', 'auto'] as GrantMode[]).map((mode) => <option key={mode} value={mode} disabled={mode === 'auto' && !readOnly}>{m(GRANT_TEXT[mode])}</option>)}
+        <select className="input" value={grant.value} disabled={!manage || tool.removed || locked} onChange={(e) => setGrant(e.target.value as GrantMode)}>
+          {grant.suspended && <option value="" disabled>{m('staleSelect')}</option>}
+          {(['off', 'confirm', 'auto'] as GrantMode[]).map((mode) => <option key={mode} value={mode} disabled={(mode === 'auto' && !readOnly) || (mode !== 'off' && !!unusable)}>{m(GRANT_TEXT[mode])}</option>)}
         </select></label>
       {bound && <label className="field"><span>{m('personalLabel')}</span>
         <select className="input" value={tool.personal_mode ?? ''} disabled={tool.removed || locked} onChange={(e) => setPersonal(e.target.value as '' | PersonalMode)}>
           {(['', 'confirm', 'off'] as const).map((mode) => <option key={mode} value={mode}>{m(PERSONAL_TEXT[mode])}</option>)}
         </select></label>}
     </div>
+    {unusable && !tool.removed && <p className="notice warn">{m(mcpErrorKey(unusable) ?? 'mcp_tool_unusable')}</p>}
+    {grant.suspended && !unusable && <div className="notice warn mi-notice-row">
+      <p>{m('staleNotice', { mode: m(GRANT_TEXT[grant.suspended]) })}</p>
+      <button type="button" className="btn sm" disabled={!manage || locked || !grant.reconfirm}
+        onClick={() => grant.suspended && setGrant(grant.suspended)}>{m('reconfirm', { mode: m(GRANT_TEXT[grant.suspended]) })}</button>
+    </div>}
     <p className="muted small">{!readOnly ? m('autoDisabledHint') : ''}{!readOnly && bound ? ' ' : ''}{bound ? m('personalHint') : ''}</p>
     {tool.grant.granted_at != null && tool.grant.mode !== 'off' && <p className="muted small">{m('grantedAt', { time: date(tool.grant.granted_at) })}</p>}
-    <details>
+    {!unusable && <details>
       <summary>{m('schemaToggle')}</summary>
       <div className="mi-expand"><JsonBlock value={tool.input_schema} label={m('schemaToggle')} /></div>
-    </details>
+    </details>}
   </article>;
 }
 
-export function ToolsTab({ detail, update }: { detail: ConnectionDetail; update: Update }) {
+export function ToolsTab({ detail, update, reload }: { detail: ConnectionDetail; update: Update; reload?: Reload }) {
   const { m } = useText();
   const write = useWrite();
   if (!detail.tools.length) return <Empty title={m('toolsEmpty')} />;
@@ -205,31 +264,33 @@ export function ToolsTab({ detail, update }: { detail: ConnectionDetail; update:
     <p className="muted">{m('toolsIntro')}</p>
     {!detail.manage && <p className="muted small">{m('toolsManagerNote')}</p>}
     {!detail.binding.bound && <p className="muted small">{m('noBinding')}</p>}
-    <div className="suite-list">{detail.tools.map((tool) => <ToolEntry key={tool.name} tool={tool} detail={detail} write={write} update={update} />)}</div>
+    <div className="suite-list">{detail.tools.map((tool) => <ToolEntry key={tool.name} tool={tool} detail={detail} write={write} update={update} reload={reload} />)}</div>
     <WriteFeedback write={write} />
   </div>;
 }
 
 // ---------------------------------------------------------------- resources
 
-export function ResourcesTab({ detail }: { detail: ConnectionDetail }) {
+export function ResourcesTab({ detail, reload }: { detail: ConnectionDetail; reload?: Reload }) {
   const { m, duration } = useText();
   const write = useWrite();
   const [page, setPage] = useState<ResourcePage | null>(null);
+  const stopped = platformStopped(detail);
   if (!detail.resources.length) return <Empty title={m('resourcesEmpty')} />;
   function open(resource: Resource) {
     setPage(null);
-    write.start<ResourcePage>('agent.mcp.resource.read_page', { connection_id: detail.id, uri: resource.uri }, setPage);
+    write.start<ResourcePage>('agent.mcp.resource.read_page', { connection_id: detail.id, uri: resource.uri }, setPage, reload);
   }
   return <div className="col gap12">
     <p className="muted">{m('resourcesHint')}</p>
+    {stopped && <p className="notice warn" role="status">{m('platformStoppedUse')}</p>}
     <div className="suite-list">{detail.resources.map((resource) => <article key={resource.uri} className="mi-entry">
       <div className="row wrap"><h3>{resource.title || resource.name || resource.uri}</h3>
         {resource.mime_type && <span className="badge">{resource.mime_type}</span>}
         {resource.size != null && <span className="muted small">{m('bytes', { n: resource.size })}</span>}</div>
       <code className="mi-break small">{resource.uri}</code>
       {resource.description && <p className="small">{resource.description}</p>}
-      <div><button type="button" className="btn sm" disabled={write.locked} onClick={() => open(resource)}>
+      <div><button type="button" className="btn sm" disabled={write.locked || stopped} onClick={() => open(resource)}>
         {write.busy && write.input?.uri === resource.uri ? m('reading') : m('read')}</button></div>
       {page?.uri === resource.uri && <section className="col gap4" aria-label={m('preview')}>
         <div className="mi-preview-head"><strong>{m('preview')}</strong><span className="muted small">{m('bytes', { n: page.bytes })} · {duration(page.duration_ms)}</span>
@@ -244,19 +305,20 @@ export function ResourcesTab({ detail }: { detail: ConnectionDetail }) {
 
 // ---------------------------------------------------------------- prompts
 
-export function PromptEntry({ prompt, detail, write, rendered, onRendered }: {
-  prompt: Prompt; detail: ConnectionDetail; write: Write; rendered: RenderedPrompt | null; onRendered: (value: RenderedPrompt) => void;
+export function PromptEntry({ prompt, detail, write, rendered, onRendered, reload }: {
+  prompt: Prompt; detail: ConnectionDetail; write: Write; rendered: RenderedPrompt | null; onRendered: (value: RenderedPrompt) => void; reload?: Reload;
 }) {
   const { m, duration } = useText();
   const id = useId();
   const [values, setValues] = useState<Record<string, string>>({});
   const missing = prompt.arguments.filter((a) => a.required && !(values[a.name] ?? '').trim());
+  const stopped = platformStopped(detail);
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (write.locked || missing.length) return;
+    if (write.locked || stopped || missing.length) return;
     const args: Record<string, string> = {};
     for (const a of prompt.arguments) if (values[a.name] !== undefined && values[a.name] !== '') args[a.name] = values[a.name];
-    write.start<RenderedPrompt>('agent.mcp.prompt.render', { connection_id: detail.id, name: prompt.name, arguments: args }, onRendered);
+    write.start<RenderedPrompt>('agent.mcp.prompt.render', { connection_id: detail.id, name: prompt.name, arguments: args }, onRendered, reload);
   }
   return <article className="mi-entry" aria-labelledby={`${id}-name`}>
     <div className="row wrap"><h3 id={`${id}-name`}>{prompt.title || prompt.name}</h3>
@@ -268,7 +330,7 @@ export function PromptEntry({ prompt, detail, write, rendered, onRendered }: {
         {prompt.arguments.map((a) => <label key={a.name} className="field"><span>{a.name}{a.required ? ` · ${m('requiredArg')}` : ''}{a.description ? ` — ${a.description}` : ''}</span>
           <input className="input" value={values[a.name] ?? ''} maxLength={4000} autoComplete="off" onChange={(e) => setValues((old) => ({ ...old, [a.name]: e.target.value }))} /></label>)}
       </fieldset> : <p className="muted small">{m('argsEmpty')}</p>}
-      <div><button type="submit" className="btn sm" disabled={write.locked || !!missing.length}>{write.busy && write.input?.name === prompt.name ? m('rendering') : m('render')}</button></div>
+      <div><button type="submit" className="btn sm" disabled={write.locked || stopped || !!missing.length}>{write.busy && write.input?.name === prompt.name ? m('rendering') : m('render')}</button></div>
     </form>
     {rendered && <section className="col gap4" aria-label={m('preview')}>
       <div className="mi-preview-head"><strong>{m('preview')}</strong><span className="muted small">{duration(rendered.duration_ms)}</span>
@@ -280,15 +342,16 @@ export function PromptEntry({ prompt, detail, write, rendered, onRendered }: {
   </article>;
 }
 
-export function PromptsTab({ detail }: { detail: ConnectionDetail }) {
+export function PromptsTab({ detail, reload }: { detail: ConnectionDetail; reload?: Reload }) {
   const { m } = useText();
   const write = useWrite();
   const [rendered, setRendered] = useState<RenderedPrompt | null>(null);
   if (!detail.prompts.length) return <Empty title={m('promptsEmpty')} />;
   return <div className="col gap12">
     <p className="muted">{m('promptsHint')}</p>
+    {platformStopped(detail) && <p className="notice warn" role="status">{m('platformStoppedUse')}</p>}
     <div className="suite-list">{detail.prompts.map((prompt) => <PromptEntry key={prompt.name} prompt={prompt} detail={detail} write={write}
-      rendered={rendered?.name === prompt.name ? rendered : null} onRendered={setRendered} />)}</div>
+      rendered={rendered?.name === prompt.name ? rendered : null} onRendered={setRendered} reload={reload} />)}</div>
     <WriteFeedback write={write} />
   </div>;
 }
@@ -350,7 +413,7 @@ export function CallsTab({ detail }: { detail: ConnectionDetail }) {
 
 // ---------------------------------------------------------------- my agent
 
-export function MineTab({ detail, update }: { detail: ConnectionDetail; update: Update }) {
+export function MineTab({ detail, update, reload }: { detail: ConnectionDetail; update: Update; reload?: Reload }) {
   const { m } = useText();
   const write = useWrite();
   const binding = detail.binding;
@@ -365,12 +428,13 @@ export function MineTab({ detail, update }: { detail: ConnectionDetail; update: 
     write.start<Binding>('agent.mcp.binding.set', { connection_id: detail.id, enabled, resources_enabled: resources, alias: slug }, (next) => {
       update(withBinding(detail, next));
       setEnabled(!!next.enabled); setResources(!!next.resources_enabled); setAlias(next.alias ?? slug);
-    });
+    }, reload);
   }
   return <form className="col gap12" onSubmit={submit} noValidate>
     <p className="muted">{m('mineIntro')}</p>
     <div className="row wrap">{binding.bound ? (binding.enabled ? <span className="badge info">{m('bound')}</span> : <span className="badge">{m('boundDisabled')}</span>) : <span className="badge">{m('notBound')}</span>}
-      {detail.status === 'disabled' && <span className="badge warn">{m('statusDisabled')}</span>}</div>
+      {(detail.status === 'disabled' || platformStopped(detail)) && <ConnectionStatusBadge status={detail.status} stopped={platformStopped(detail)} />}</div>
+    {platformStopped(detail) && <p className="notice warn" role="status">{m('platformStoppedAgent')}</p>}
     <label className="check"><input type="checkbox" checked={enabled} disabled={write.locked} onChange={(e) => { setEnabled(e.target.checked); write.dismiss(); }} /><span>{m('enabled')}</span></label>
     <label className="field"><span>{m('alias')}</span>
       <input className="input" value={alias} maxLength={24} autoComplete="off" spellCheck={false} disabled={write.locked} aria-describedby="mi-alias-hint"
@@ -386,8 +450,9 @@ export function MineTab({ detail, update }: { detail: ConnectionDetail; update: 
 
 // ---------------------------------------------------------------- the page
 
-export function DetailView({ detail, tab, setTab, update, onDeleted, authNotice, dismissAuth }: {
+export function DetailView({ detail, tab, setTab, update, onDeleted, reload, onDeleteUnverified, authNotice, dismissAuth }: {
   detail: ConnectionDetail; tab: Tab; setTab: (tab: Tab) => void; update: Update; onDeleted: () => void;
+  reload?: Reload; onDeleteUnverified?: () => void;
   authNotice?: OAuthOutcome; dismissAuth?: () => void;
 }) {
   const { m } = useText();
@@ -401,12 +466,12 @@ export function DetailView({ detail, tab, setTab, update, onDeleted, authNotice,
     document.getElementById(`${id}-tab-${next}`)?.focus();
   }
   const panels: Record<Tab, ReactNode> = {
-    overview: <OverviewTab detail={detail} update={update} onDeleted={onDeleted} />,
-    tools: <ToolsTab detail={detail} update={update} />,
-    resources: <ResourcesTab detail={detail} />,
-    prompts: <PromptsTab detail={detail} />,
+    overview: <OverviewTab detail={detail} update={update} onDeleted={onDeleted} reload={reload} onDeleteUnverified={onDeleteUnverified ?? reload} />,
+    tools: <ToolsTab detail={detail} update={update} reload={reload} />,
+    resources: <ResourcesTab detail={detail} reload={reload} />,
+    prompts: <PromptsTab detail={detail} reload={reload} />,
     calls: <CallsTab detail={detail} />,
-    mine: <MineTab detail={detail} update={update} />,
+    mine: <MineTab detail={detail} update={update} reload={reload} />,
   };
   const count = (key: Tab) => key === 'tools' ? detail.counts.tools : key === 'resources' ? detail.counts.resources : key === 'prompts' ? detail.counts.prompts : null;
   return <>
@@ -454,11 +519,14 @@ export default function ConnectionDetailPage({ cid }: { cid: string }) {
         <h1>{detail?.name ?? m('title')}</h1>
         {detail && <p className="lede"><OwnerText summary={detail} /> · {detail.host ?? detail.url}</p>}
       </div>
-      {detail && <div className="actions"><HealthBadge health={detail.health} /><ConnectionStatusBadge status={detail.status} />
-        {detail.binding.bound && detail.binding.enabled && <span className="badge info">{m('bound')}</span>}</div>}
+      {detail && <div className="actions"><HealthBadge health={detail.health} /><ConnectionStatusBadge status={detail.status} stopped={platformStopped(detail)} />
+        {detail.binding.bound && detail.binding.enabled && !platformStopped(detail) && <span className="badge info">{m('bound')}</span>}</div>}
     </header>
+    {/* A failed re-read keeps the last detail on the page, so the failure is said beside it. */}
+    {detail && resource.error != null && <ErrorNotice error={resource.error} retry={resource.reload} />}
     {resource.loading && !detail ? <Loading /> : resource.error != null && !detail ? <ErrorNotice error={resource.error} retry={resource.reload} />
       : detail && <DetailView detail={detail} tab={tab} setTab={setTab} update={resource.setData} authNotice={authNotice} dismissAuth={() => setAuthNotice(null)}
-        onDeleted={() => navigate('/agent/integrations', { replace: true, state: { deleted: detail.name } })} />}
+        onDeleted={() => navigate('/agent/integrations', { replace: true, state: { deleted: detail.name } })} reload={resource.reload}
+        onDeleteUnverified={() => navigate('/agent/integrations', { replace: true, state: { unverified: { kind: 'delete', name: detail.name } } })} />}
   </div>;
 }

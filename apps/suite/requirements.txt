@@ -11,4 +11,7 @@ mcp==2.3.0
 mcp-types==2.3.0
 httpx2==2.13.1
 anyio==4.15.1
+# An external tool's input schema is checked with jsonschema; its references resolve through an
+# empty referencing registry (never fetched), so the library is imported directly.
 jsonschema==4.26.0
+referencing==0.37.0

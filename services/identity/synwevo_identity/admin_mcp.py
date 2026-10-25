@@ -1,10 +1,14 @@
 """Platform administration of MCP: the versioned policy (signed preview, then publish), a masked view
-of every connection's health, and the revocation of a connection or a tool grant.
+of every connection's health, and the platform-wide stop of a connection (and its lifting).
 
 Reads need `platform.config.view`; publishing needs `platform.config.manage` with the dangerous
 operation's strict re-authentication, through the same `SignedPreview` layer as the other platform
 settings. Nothing here reads a connection's credential, a call's arguments or a result: a platform
 administrator sees names, hosts, states, counts and failure codes.
+
+A stop is recorded on the connection (`platform_disabled_at` / `platform_disabled_by`), apart from
+the owner's own on/off: the owner cannot resume a stopped connection or give it a credential
+(synwevo_suite.agent.mcp.connections), and only `platform.config.manage` lifts the stop.
 """
 from __future__ import annotations
 
@@ -21,11 +25,13 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.mcp_policy import McpPolicy, McpPolicySpec
 from synwevo_core.platform_access import require_platform
 from synwevo_core.store import new_id, now
+from synwevo_core.suite_schema.mcp import settle_interrupted_calls
 
 from .admin_operations import OPERATIONS, PREVIEW_SECONDS, Operation, SignedPreview, canonical
 
 OPERATIONS.setdefault("admin.mcp.policy.publish", Operation("platform.config.manage", "high"))
 OPERATIONS.setdefault("admin.mcp.connection.disable", Operation("platform.config.manage", "high"))
+OPERATIONS.setdefault("admin.mcp.connection.lift", Operation("platform.config.manage", "high"))
 
 
 class McpPolicyOperations(SignedPreview):
@@ -153,6 +159,7 @@ def _masked_connection(store, row: dict) -> dict:
     bound = store.one("SELECT COUNT(*) AS n FROM mcp_agent_bindings WHERE connection_id=? AND enabled=1", (row["id"],))
     return {"id": row["id"], "name": row["name"], "owner_kind": row["owner_kind"], "owner_name": owner_name,
             "host": urlsplit(row["url"]).hostname, "auth_kind": row["auth_kind"], "status": row["status"],
+            "platform_disabled": bool(row.get("platform_disabled_at")), "platform_disabled_at": row.get("platform_disabled_at"),
             "health": row["health"], "last_ok_at": row["last_ok_at"], "last_error_code": row["last_error_code"],
             "failure_streak": row["failure_streak"], "circuit_open_until": row["open_until"] if (row["open_until"] or 0) > now() else None,
             "protocol_version": row["protocol_version"], "tools": tools["n"], "granted": granted["n"], "agents": bound["n"],
@@ -188,6 +195,7 @@ def build_router(store, audit):
     def overview(request: Request, q: str | None = Query(default=None, max_length=100),
                  health: str | None = Query(default=None, max_length=20), limit: int = Query(default=100, ge=1, le=500)):
         operations._actor(request, view=True)
+        settle_interrupted_calls(store)
         rows = store.all("SELECT * FROM mcp_connections WHERE deleted_at IS NULL ORDER BY health='failed' DESC, updated_at DESC LIMIT ?",
                          (limit,))
         items = [_masked_connection(store, r) for r in rows]
@@ -211,31 +219,76 @@ def build_router(store, audit):
     @router.get("/connections/{cid}/calls")
     def calls(request: Request, cid: str, limit: int = Query(default=50, ge=1, le=200)):
         operations._actor(request, view=True)
+        settle_interrupted_calls(store, connection_id=cid)
         rows = store.all("SELECT id, origin, kind, name, status, error_code, started_at, finished_at, duration_ms, request_id "
                          "FROM mcp_calls WHERE connection_id=? ORDER BY started_at DESC LIMIT ?", (cid, limit))
         return {"items": rows}
 
-    @router.post("/connections/{cid}/disable")
-    def disable(request: Request, cid: str, body: dict = Body(default=None)):
-        """Stop a connection platform-wide: its credential is forgotten and its Agent bindings stay but
-        yield nothing. A dangerous operation: re-authentication, a written reason, audited."""
-        actor = require_platform(request, OPERATIONS["admin.mcp.connection.disable"].permission, store=store, audit=audit,
-                                 dangerous=True)
+    def _reason(body) -> str:
         reason = (body or {}).get("reason") if isinstance(body, dict) else None
         reason = reason.strip() if isinstance(reason, str) else ""
         if not 8 <= len(reason) <= 500:
             raise ServiceError(400, "missing_reason", "请写明理由（8 至 500 个字）")
+        return reason
+
+    @router.post("/connections/{cid}/disable")
+    def disable(request: Request, cid: str, body: dict = Body(default=None)):
+        """Stop a connection platform-wide: recorded as the platform's decision, which its owner cannot
+        undo; every credential it holds is forgotten (the token, the OAuth client secret and a dynamic
+        registration, the authorizations in progress); its Agent bindings stay but yield nothing. A
+        dangerous operation: re-authentication, a written reason, audited."""
+        actor = require_platform(request, OPERATIONS["admin.mcp.connection.disable"].permission, store=store, audit=audit,
+                                 dangerous=True)
+        reason = _reason(body)
         with store.tx():
+            actor = require_platform(request, OPERATIONS["admin.mcp.connection.disable"].permission, store=store, audit=audit,
+                                     dangerous=True)
             row = store.one("SELECT * FROM mcp_connections WHERE id=? AND deleted_at IS NULL", (cid,))
             if not row:
                 raise ServiceError(404, "mcp_connection_not_found", "连接不存在")
-            store.execute("UPDATE mcp_connections SET status='disabled', credential_sealed=NULL, credential_hint=NULL, "
+            client = None
+            try:
+                client = json.loads(row["oauth_client_json"]) if row.get("oauth_client_json") else None
+            except ValueError:
+                client = None
+            # A client id the person registered elsewhere is no secret and stays, so that the owner can
+            # authorize again once the stop is lifted; a dynamic registration (and its secret) goes.
+            keep_client = row["oauth_client_json"] if isinstance(client, dict) and client.get("kind") == "preregistered" else None
+            t = now()
+            store.execute("UPDATE mcp_connections SET status='disabled', platform_disabled_at=COALESCE(platform_disabled_at, ?), "
+                          "platform_disabled_by=COALESCE(platform_disabled_by, ?), credential_sealed=NULL, credential_hint=NULL, "
+                          "oauth_client_secret_sealed=NULL, oauth_client_json=?, refresh_claim_until=NULL, "
                           "health=CASE WHEN auth_kind='none' THEN health ELSE 'auth_required' END, updated_at=? WHERE id=?",
-                          (now(), cid))
+                          (t, actor["id"], keep_client, t, cid))
+            store.execute("DELETE FROM mcp_oauth_flows WHERE connection_id=?", (cid,))
             audit_event(store, "admin.mcp.connection.disable", actor_kind="user", actor_id=actor["id"],
                         workspace_id=row["owner_id"] if row["owner_kind"] == "workspace" else None,
                         object_kind="mcp_connection", object_id=cid, meta={"reason": reason, "name": row["name"]},
                         request=request)
-        return {"id": cid, "status": "disabled"}
+        return {"id": cid, "status": "disabled", "platform_disabled": True}
+
+    @router.post("/connections/{cid}/lift")
+    def lift(request: Request, cid: str, body: dict = Body(default=None)):
+        """Lift a platform stop: the connection is its owner's again — still disabled and without a
+        credential, until the owner enables it and authenticates again. Dangerous, reasoned, audited."""
+        actor = require_platform(request, OPERATIONS["admin.mcp.connection.lift"].permission, store=store, audit=audit,
+                                 dangerous=True)
+        reason = _reason(body)
+        with store.tx():
+            actor = require_platform(request, OPERATIONS["admin.mcp.connection.lift"].permission, store=store, audit=audit,
+                                     dangerous=True)
+            row = store.one("SELECT * FROM mcp_connections WHERE id=? AND deleted_at IS NULL", (cid,))
+            if not row:
+                raise ServiceError(404, "mcp_connection_not_found", "连接不存在")
+            if not row.get("platform_disabled_at"):
+                raise ServiceError(409, "mcp_not_platform_disabled", "这个连接没有被平台停用")
+            store.execute("UPDATE mcp_connections SET platform_disabled_at=NULL, platform_disabled_by=NULL, updated_at=? WHERE id=?",
+                          (now(), cid))
+            audit_event(store, "admin.mcp.connection.lift", actor_kind="user", actor_id=actor["id"],
+                        workspace_id=row["owner_id"] if row["owner_kind"] == "workspace" else None,
+                        object_kind="mcp_connection", object_id=cid,
+                        meta={"reason": reason, "name": row["name"], "disabled_at": row["platform_disabled_at"]},
+                        request=request)
+        return {"id": cid, "status": row["status"], "platform_disabled": False}
 
     return router

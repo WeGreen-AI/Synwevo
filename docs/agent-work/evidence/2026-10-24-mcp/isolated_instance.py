@@ -148,6 +148,9 @@ def seed(base: str, port: int) -> dict:
     policy = McpPolicy(store)
     current = policy.read()
     if current["revision"] == 0:
+        # No allowed_hosts: the external server on the next port is not this instance's own origin
+        # (on loopback the port decides, `runtime.is_own_origin`). Listing 127.0.0.1 there would turn
+        # allowed_hosts into an allowlist and let the Agent connect to this instance's own endpoint.
         with store.tx():
             policy.append({**McpPolicy.default().model_dump(), "outbound_enabled": True, "inbound_enabled": True,
                            "allow_http": True, "allow_private_networks": ["127.0.0.1", "localhost"],

@@ -117,7 +117,8 @@ ROUTES = [
     ("GET", "/api/admin/settings/history", "platform.config.view", False),
     ("POST", "/api/admin/settings/preview", "platform.config.manage", False),
     ("POST", "/api/admin/settings/publish", "platform.config.manage", True),
-    # MCP: the platform policy (signed preview, then publish) and masked oversight of connections
+    # MCP: the platform policy (signed preview, then publish), masked oversight of connections, and
+    # the platform-wide stop of a connection
     ("GET", "/api/admin/mcp/policy", "platform.config.view", False),
     ("GET", "/api/admin/mcp/policy/history", "platform.config.view", False),
     ("POST", "/api/admin/mcp/policy/preview", "platform.config.manage", False),
@@ -125,6 +126,8 @@ ROUTES = [
     ("GET", "/api/admin/mcp/overview", "platform.config.view", False),
     ("GET", "/api/admin/mcp/connections/{cid}/calls", "platform.config.view", False),
     ("POST", "/api/admin/mcp/connections/{cid}/disable", "platform.config.manage", True),
+    # lifting a platform stop: as dangerous as the stop itself (re-authentication, reason, audit)
+    ("POST", "/api/admin/mcp/connections/{cid}/lift", "platform.config.manage", True),
     ("GET", "/api/admin/billing/prices", "platform.config.view", False),
     ("GET", "/api/admin/billing/prices/drafts/{draft_id}", "platform.config.view", False),
     ("POST", "/api/admin/billing/prices/drafts", "platform.config.manage", False),

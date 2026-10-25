@@ -13,7 +13,9 @@ requires-python = ">=3.12"
 #   httpx     — bounded DeepSeek streaming transport
 #   openpyxl  — DataPrep and Tables read and write .xlsx
 #   mcp       — Model Context Protocol server and client (official SDK)
-dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "starlette", "pydantic", "anthropic", "httpx", "openpyxl", "mcp", "mcp-types", "httpx2", "jsonschema", "anyio"]
+#   jsonschema, referencing — the Agent checks a call of an external MCP tool against the
+#               server's input schema, resolving its references inside that schema only
+dependencies = ["synwevo-core", "synwevo-auth-client", "fastapi", "starlette", "pydantic", "anthropic", "httpx", "openpyxl", "mcp", "mcp-types", "httpx2", "jsonschema", "referencing", "anyio"]
 
 [tool.setuptools.packages.find]
 include = ["synwevo_suite*"]

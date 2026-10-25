@@ -30,7 +30,7 @@ from synwevo_core.apps import Apps
 from synwevo_core.apps import PLATFORM_APP_ID as PLATFORM_APP_ID_
 from synwevo_core.oauth_consent import Consents, needed as consent_needed
 from synwevo_core.machine import directory_workspace_live
-from synwevo_core.cimd import ClientMetadataDocuments, is_client_id_url
+from synwevo_core.cimd import ClientMetadataDocuments, is_client_id_url, withdrawn_by_policy
 from synwevo_core.mcp_policy import McpPolicy
 
 
@@ -67,6 +67,19 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         return keys.jwks()
 
     # ------------------------------------------------------------------ authorize
+    def _sign_in_first(request: Request, locale: str | None) -> RedirectResponse:
+        """No central session: go and sign in, then come back to this exact request. The return
+        target is built here from our own URL, never from a client parameter."""
+        nxt = urllib.parse.quote(str(request.url.path) + "?" + str(request.url.query), safe="")
+        language = "&" + urllib.parse.urlencode({"lang": locale}) if locale is not None else ""
+        return RedirectResponse(f"/login?next={nxt}{language}", status_code=303)
+
+    def _signed_in_person(request: Request) -> str | None:
+        """The active person behind this browser request, if any — without extending the session."""
+        session = sessions.load(request.cookies.get(COOKIE_NAME), touch=False)
+        user = ident.get_user(session["user_id"]) if session else None
+        return user["id"] if user and user["status"] == "active" else None
+
     @r.get("/oidc/authorize")
     def authorize(request: Request):
         q = request.query_params
@@ -75,14 +88,24 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         state = q.get("state")
 
         client = clients.get(client_id)
-        if not client and is_client_id_url(client_id):
+        if (client is None and is_client_id_url(client_id)) or (client is not None and client.get("registration") == "cimd"):
             # An MCP client with no prior relationship: its client id is the https address of its
             # metadata document (draft-ietf-oauth-client-id-metadata-document). Fetched, checked and
             # kept as a public-client registration — only while the platform MCP policy allows it.
-            client = ClientMetadataDocuments(store).resolve(client_id)
-            audit(request, "oidc.client_metadata_document", actor_kind="system", actor_id="oidc",
-                  object_kind="oauth_client", object_id=client_id, result="ok",
-                  meta={"name": client["name"], "redirect_uris": client["redirect_uris"]})
+            # A stored registration comes through here too, every time: the policy is asked again
+            # (a withdrawn mechanism or domain ends it) and a day-old document is fetched again (a
+            # callback it dropped stops working). Fetching, and the row it writes, wait for a
+            # signed-in person: an anonymous request is sent to sign in with nothing fetched.
+            person = _signed_in_person(request)
+            client, fetched = ClientMetadataDocuments(store).resolve(client_id, may_fetch=person is not None)
+            if client is None:
+                locale = q.get("ui_locales")
+                valid = locale in ("zh-Hans", "zh-Hant", "en") and len(q.getlist("ui_locales")) == 1
+                return _sign_in_first(request, locale if valid else None)
+            if fetched:
+                audit(request, "oidc.client_metadata_document", actor_kind="system", actor_id="oidc",
+                      object_kind="oauth_client", object_id=client_id, result="ok",
+                      meta={"name": client["name"], "redirect_uris": client["redirect_uris"], "requested_by": person})
         if not client:
             # Nothing validated yet, so nothing may be redirected to.
             raise ServiceError(400, "invalid_client", "未知的客户端")
@@ -144,11 +167,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
 
         session = sessions.load(request.cookies.get(COOKIE_NAME))
         if not session:
-            # No central session: go and sign in, then come back to this exact request. The
-            # return target is built here from our own URL, never from a client parameter.
-            nxt = urllib.parse.quote(str(request.url.path) + "?" + str(request.url.query), safe="")
-            language = "&" + urllib.parse.urlencode({"lang": locale}) if locale is not None else ""
-            return RedirectResponse(f"/login?next={nxt}{language}", status_code=303)
+            return _sign_in_first(request, locale)
 
         user = ident.get_user(session["user_id"])
         if not user or user["status"] != "active":
@@ -226,7 +245,7 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         session, user = _consent_actor(request)
         row = consents.pending(rid, user_id=user["id"], central_session_id=session["id"])
         client = clients.get(row["client_id"])
-        if not client:
+        if not client or withdrawn_by_policy(store, client):
             raise ServiceError(410, "consent_expired", "该应用已停用，授权请求不再有效")
         ws = ident.get_workspace(row["workspace_id"]) if row.get("workspace_id") else None
         existing = consents.active(user["id"], row["client_id"], row.get("workspace_id"))
@@ -257,7 +276,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         with store.tx() as c:
             row = consents.pending(rid, user_id=user["id"], central_session_id=session["id"], c=c)
             client = clients.get(row["client_id"])
-            if not client:
+            if not client or withdrawn_by_policy(store, client):
+                # Disabled, or self-registered under a policy that no longer accepts it.
                 raise ServiceError(410, "consent_expired", "该应用已停用，授权请求不再有效")
             if not consents.decide(c, rid, decision):
                 raise ServiceError(409, "consent_decided", "这个授权请求已经处理过了")
@@ -380,6 +400,12 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
         client, refused = _client_auth(request, client_id, client_secret)
         if refused:
             return refused
+        if withdrawn_by_policy(store, client):
+            # A self-registered client lives as long as the MCP policy accepts it: a code or refresh
+            # token it obtained earlier is not honoured once the mechanism or its domain is withdrawn.
+            return JSONResponse({"error": "invalid_client",
+                                 "error_description": "本平台已不再接受这个客户端的自描述登记"},
+                                status_code=401, headers={"WWW-Authenticate": 'Basic realm="synwevo-oidc"'})
         audience, bad_target = _target(client, resource)
         if bad_target:
             return bad_target
@@ -522,7 +548,8 @@ def build_router(store: Store, ident: Identity, sessions: Sessions, audit, deliv
             return JSONResponse({"error": "invalid_token"}, status_code=401,
                                 headers={"WWW-Authenticate": "Bearer"})
         tok = grants.load_access(auth.split(None, 1)[1].strip())
-        if not tok:
+        holder = clients.get_any(tok["client_id"]) if tok else None
+        if not tok or (holder and withdrawn_by_policy(store, holder)):
             return JSONResponse({"error": "invalid_token"}, status_code=401,
                                 headers={"WWW-Authenticate": "Bearer"})
         user = ident.get_user(tok["user_id"])

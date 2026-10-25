@@ -13,8 +13,13 @@ import "./mcp.messages";
 /**
  * Platform governance of the Model Context Protocol (synwevo_identity.admin_mcp): the versioned
  * MCP policy with its signed preview and publication, a masked overview of every connection's
- * health, and the platform-wide disabling of a connection. Reading needs `platform.config.view`;
- * publishing and disabling need `platform.config.manage` with re-authentication (ActionDialog).
+ * health, and the platform stop of a connection and its lifting. Reading needs `platform.config.view`;
+ * publishing, stopping and lifting need `platform.config.manage` with re-authentication (ActionDialog).
+ *
+ * A platform stop is the platform's decision, apart from the owner's own on/off (`status`): the
+ * overview names it (`platform_disabled`, since `platform_disabled_at`), offers the stop for any
+ * connection not already stopped, and the lift for one that is. Lifting gives the connection back to
+ * its owner still disabled; the page never enables a connection for its owner.
  *
  * Nothing here reads a connection's credential, a call's arguments or a result: the server sends
  * names, hosts, states, counts and error codes, and that is all this page shows. No host is
@@ -46,10 +51,13 @@ type Version = { revision: number; spec: McpPolicySpec | null; actor_id: string 
   operation_id: string | null; created_at: number };
 export type Connection = {
   id: string; name: string; owner_kind: "user" | "workspace"; owner_name: string | null; host: string | null;
-  auth_kind: string; status: string; health: string; last_ok_at: number | null; last_error_code: string | null;
+  auth_kind: string; status: string; platform_disabled: boolean; platform_disabled_at: number | null;
+  health: string; last_ok_at: number | null; last_error_code: string | null;
   failure_streak: number; circuit_open_until: number | null; protocol_version: string | null;
   tools: number; granted: number; agents: number; calls_7d: number; failed_7d: number; last_call_at: number | null;
 };
+/** What `POST …/disable` and `POST …/lift` answer: the owner's own status, and whether the platform stop holds. */
+type Stopped = { id: string; status: string; platform_disabled: boolean };
 type Totals = { connections: number; failed: number; auth_required: number; calls_24h: number; failed_calls_24h: number; inbound_requests_24h: number };
 type Overview = { items: Connection[]; totals: Totals; policy: PolicyState };
 type Call = { id: string; origin: string; kind: string; name: string | null; status: string; error_code: string | null;
@@ -401,6 +409,14 @@ export function InboundCard({ state }: { state: PolicyState | null }) {
 }
 
 // ------------------------------------------------------------------------------------ the overview
+/** The platform stop of a connection and its lifting (admin_mcp.disable / admin_mcp.lift). Both are
+ *  dangerous operations: the server asks for strict re-authentication (403 `reauth_required`, which
+ *  ActionDialog answers and retries) and refuses without the written reason it audits. */
+export const stopConnection = (id: string, reason: string) =>
+  post<Stopped>(`${BASE}/connections/${encodeURIComponent(id)}/disable`, { reason });
+export const liftConnection = (id: string, reason: string) =>
+  post<Stopped>(`${BASE}/connections/${encodeURIComponent(id)}/lift`, { reason });
+
 function Stat({ name, value }: { name: string; value: number }) {
   return <div className="card stat"><div className="muted small">{name}</div><div className="v">{formatNumber(value)}</div></div>;
 }
@@ -413,6 +429,7 @@ export function OverviewPanel({ onDenied, manage }: { onDenied: () => void; mana
   const load = useAdminData<Overview>(`${BASE}/overview${qs({ q: query, health, limit: 500 })}`, onDenied);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [disabling, setDisabling] = useState<Connection | null>(null);
+  const [lifting, setLifting] = useState<Connection | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const items = load.loading || load.err ? [] : load.data?.items || [];
   const totals = load.data?.totals;
@@ -421,7 +438,7 @@ export function OverviewPanel({ onDenied, manage }: { onDenied: () => void; mana
     <div className="row gap12 wrap"><h2 id="mcp-overview-heading" className="grow">{t("MCP 连接概览")}</h2>
       <button type="button" className="btn sm" disabled={load.loading} onClick={load.reload}>{t("刷新连接概览")}</button></div>
     <p className="muted small">{t("每个连接的名称、主机、状态与数量，不含凭据、参数或结果。失败的连接排在前面。")}</p>
-    {manage.disabled && <p className="notice" role="note">{t("你的平台角色可以查看 MCP 策略与连接，不能发布策略或停用连接。")}</p>}
+    {manage.disabled && <p className="notice" role="note">{t("你的平台角色可以查看 MCP 策略与连接，不能发布策略，也不能平台停用连接或解除停用。")}</p>}
     <div role="status" aria-live="polite">{notice && <p className="notice ok">{notice}</p>}</div>
     {totals && <div className="row gap12 wrap">
       <Stat name={t("连接")} value={totals.connections} />
@@ -453,8 +470,10 @@ export function OverviewPanel({ onDenied, manage }: { onDenied: () => void; mana
           <td data-label={t("主机")}><div>{c.host || DASH}
             <span className="cell-note">{t(AUTH_LABELS[c.auth_kind] || c.auth_kind)}{c.protocol_version && <> · {t("协议 {version}", { version: c.protocol_version })}</>}</span></div></td>
           <td data-label={t("状态")}><div className="row gap4 wrap">
-            <span className={`badge ${c.status === "active" ? "ok" : "warn"}`}>{t(STATUS_LABELS[c.status] || c.status)}</span>
+            {c.platform_disabled ? <span className="badge err">{t("已被平台停用")}</span>
+              : <span className={`badge ${c.status === "active" ? "ok" : "warn"}`}>{t(STATUS_LABELS[c.status] || c.status)}</span>}
             <span className={`badge ${HEALTH_BADGE[c.health] ?? ""}`}>{t(HEALTH_LABELS[c.health] || c.health)}</span></div>
+            {c.platform_disabled && <span className="cell-note">{t("平台停用于 {time}", { time: c.platform_disabled_at ? fmtTime(c.platform_disabled_at) : DASH })}</span>}
             {c.circuit_open_until && <span className="cell-note">{t("熔断至 {time}", { time: fmtTime(c.circuit_open_until) })}</span>}
             {c.last_error_code && <span className="cell-note">{t("最近错误 {code}，连续 {count} 次", { code: c.last_error_code, count: c.failure_streak })}</span>}</td>
           <td data-label={t("工具")}>{t("已授权 {granted} / {total}", { granted: c.granted, total: c.tools })}</td>
@@ -465,20 +484,29 @@ export function OverviewPanel({ onDenied, manage }: { onDenied: () => void; mana
           <td className="act" data-label={t("操作")}><div className="row gap4 wrap">
             <button type="button" className="btn sm" aria-expanded={!!open[c.id]} aria-controls={`mcp-calls-${c.id}`} aria-label={t("最近调用记录：{name}", { name: c.name })}
               onClick={() => setOpen({ ...open, [c.id]: !open[c.id] })}>{t("最近调用记录")}</button>
-            {!manage.disabled && c.status === "active" && <button type="button" className="btn sm danger" disabled={busy}
-              aria-label={t("停用连接：{name}", { name: c.name })} onClick={() => setDisabling(c)}>{t("停用连接")}</button>}
+            {!manage.disabled && (c.platform_disabled
+              ? <button type="button" className="btn sm" disabled={busy}
+                aria-label={t("解除平台停用：{name}", { name: c.name })} onClick={() => setLifting(c)}>{t("解除平台停用")}</button>
+              : <button type="button" className="btn sm danger" disabled={busy}
+                aria-label={t("平台停用：{name}", { name: c.name })} onClick={() => setDisabling(c)}>{t("平台停用")}</button>)}
           </div></td>
         </tr>
         {open[c.id] && <tr><td colSpan={8} id={`mcp-calls-${c.id}`}><ConnectionCalls id={c.id} onDenied={onDenied} /></td></tr>}
       </Fragment>)}
       {!load.loading && !load.err && !items.length && <tr className="empty-row"><td colSpan={8}>{query || health ? t("没有匹配的连接。") : t("还没有任何 MCP 连接。")}</td></tr>}</tbody>
     </table></div>
-    {disabling && <ActionDialog title={t("停用连接")} confirmLabel={t("停用连接")} reason="required" danger
-      impact={<p>{t("将在全平台停用「{name}」（{host}）：它保存的凭据会被清除，绑定它的 {count} 个 Agent 不再得到它的工具，进行中的调用会失败。连接本身、授权设置与调用记录保留；重新启用需要连接的拥有者重新填写凭据。",
+    {disabling && <ActionDialog title={t("平台停用连接")} confirmLabel={t("平台停用")} reason="required" danger
+      impact={<p>{t("将在全平台停用「{name}」（{host}）：它保存的凭据（令牌、OAuth 客户端密钥与动态登记、进行中的授权）会被清除，绑定它的 {count} 个 Agent 不再得到它的工具，新的调用、读取与连接测试都会被拒绝。拥有者不能自行恢复它，也不能为它填写新的凭据或地址；只有平台管理员可以解除停用。连接本身、工具授权与调用记录保留。",
         { name: disabling.name, host: disabling.host || DASH, count: disabling.agents })}</p>}
-      run={(reason) => post<{ id: string; status: string }>(`${BASE}/connections/${encodeURIComponent(disabling.id)}/disable`, { reason })}
+      run={(reason) => stopConnection(disabling.id, reason)}
       onClose={() => setDisabling(null)}
-      onDone={() => { setNotice(t("已停用「{name}」。", { name: disabling.name })); setDisabling(null); load.reload(); }} />}
+      onDone={() => { setNotice(t("已在全平台停用「{name}」；只有平台管理员可以解除。", { name: disabling.name })); setDisabling(null); load.reload(); }} />}
+    {lifting && <ActionDialog title={t("解除平台停用")} confirmLabel={t("解除平台停用")} reason="required"
+      impact={<p>{t("将解除「{name}」（{host}）自 {time} 起的平台停用。连接仍保持停用，也没有凭据：由它的拥有者决定是否重新启用，并在需要时重新填写凭据或重新授权；平台不会替拥有者启用它。",
+        { name: lifting.name, host: lifting.host || DASH, time: lifting.platform_disabled_at ? fmtTime(lifting.platform_disabled_at) : DASH })}</p>}
+      run={(reason) => liftConnection(lifting.id, reason)}
+      onClose={() => setLifting(null)}
+      onDone={() => { setNotice(t("已解除「{name}」的平台停用；连接仍保持停用，由拥有者决定是否重新启用。", { name: lifting.name })); setLifting(null); load.reload(); }} />}
   </section>;
 }
 

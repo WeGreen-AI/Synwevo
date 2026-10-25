@@ -3,7 +3,7 @@
  *  below is a fixture (marked "fixture"): no server, model or browser claim is made here. */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { testServer } from './_vite.ts';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -321,4 +321,523 @@ test('the Agent shell routes the centre and lists it beside automations and sett
   assert.ok(settings.includes('<McpBindings />'));
   const chat = readFileSync(new URL('../src/apps/agent/Chat.tsx', import.meta.url), 'utf8');
   assert.ok(chat.includes('call.mcp ? <McpCallLine mcp={call.mcp} pending={pending} />'));
+});
+
+// ---------------------------------------------------------------- writes: what a failure says (finding 25)
+
+test('a write failure is read by what Synwevo said, not by its HTTP status', () => {
+  const E = (status: number, code: string, detail?: unknown, upstream = false) => new auth.ApiError(status, code, 'server prose (fixture)', detail, upstream);
+  // MCP refusals are recorded as failed runs: definitive whatever their status.
+  for (const [status, code] of [[502, 'mcp_unreachable'], [503, 'mcp_circuit_open'], [504, 'mcp_timeout'], [502, 'mcp_server_error'], [502, 'mcp_oauth_discovery_failed']] as const) {
+    assert.equal(shared.writeOutcome(E(status, code), false), 'refused', code);
+    assert.equal(shared.writeOutcome(E(status, code), true), 'refused', `${code} on a retry`);
+  }
+  assert.equal(shared.writeOutcome(E(409, 'idempotent_failure', { code: 'mcp_unreachable' }), true), 'refused');
+  assert.equal(shared.writeOutcome(E(422, 'invalid_input'), false), 'refused');
+  assert.equal(shared.writeOutcome(E(429, 'rate_limited'), false), 'refused');
+  // Only a lost connection, an intermediary and the server's crash codes leave the outcome open.
+  assert.equal(shared.writeOutcome(E(0, 'network'), false), 'unknown');
+  assert.equal(shared.writeOutcome(E(502, 'upstream_unavailable', {}, true), false), 'unknown');
+  assert.equal(shared.writeOutcome(E(403, 'gateway_blocked', {}, true), false), 'unknown');
+  for (const code of ['server_error', 'internal_error', 'operation_failed']) assert.equal(shared.writeOutcome(E(500, code), false), 'unknown', code);
+  assert.equal(shared.writeOutcome(new Error('fixture parse failure'), false), 'unknown');
+  // A receipt without a replayable result: executed, to be re-read rather than sent again.
+  assert.equal(shared.writeOutcome(E(409, 'run_result_unavailable', { status: 'succeeded' }), true), 'executed');
+  // On a retry, a refusal that precedes the receipt lookup says nothing about the first attempt.
+  for (const [status, code] of [[429, 'rate_limited'], [403, 'app_access_denied'], [401, 'session_expired']] as const) {
+    assert.equal(shared.writeOutcome(E(status, code), true), 'unknown', `${code} on a retry`);
+  }
+});
+
+// ---------------------------------------------------------------- writes: what the verifier found open (finding 25)
+
+// Corrected in this round: this test asserted that a first-attempt output_too_large leaves the
+// outcome open behind a same-key retry, so the page showed "not confirmed" and re-read nothing
+// although the change had been applied. Every write of the centre is two-phase (the next test),
+// so the refusal itself says the work was done: the page re-reads at once and sends nothing again.
+test('a result too large to record was carried out: the page re-reads at once and sends nothing again', async () => {
+  const E = (status: number, code: string, detail?: unknown) => new auth.ApiError(status, code, 'server prose (fixture)', detail);
+  // Raised by capabilities._finish after a two-phase handler committed, with the run left running.
+  assert.equal(shared.writeOutcome(E(500, 'output_too_large'), false), 'executed');
+  assert.equal(shared.writeOutcome(E(500, 'output_too_large'), true), 'executed', 'on a retry whose first attempt never arrived too');
+  const ref = { connection_id: 'mcpc_0123456789ab' };
+  for (const operation of ['agent.mcp.connection.test', 'agent.mcp.connection.refresh', 'agent.mcp.grant.set']) {
+    const fixture = scripted(E(500, 'output_too_large'), { status: 'succeeded', output: {} });
+    const writer = shared.createWriter(fixture.send, fixture.newKey);
+    let reloaded = 0;
+    writer.start(operation, ref, () => assert.fail('not saved'), () => { reloaded += 1; });
+    await settle();
+    const state = writer.getState();
+    assert.equal(reloaded, 1, `${operation}: the detail is read again`);
+    assert.equal(state.executed, true);
+    assert.equal(state.pending, false, `${operation}: the tab is not locked behind a retry`);
+    await writer.retry();
+    assert.equal(fixture.sent.length, 1, `${operation}: nothing is sent again`);
+  }
+  // A lost first response, then the retry's receipt: the same ending.
+  const lost = scripted(new auth.ApiError(0, 'network', 'fixture'), E(500, 'output_too_large'));
+  const writer = shared.createWriter(lost.send, lost.newKey);
+  let reloaded = 0;
+  writer.start('agent.mcp.connection.refresh', ref, () => assert.fail('not saved'), () => { reloaded += 1; });
+  await settle();
+  assert.equal(writer.getState().pending, true);
+  await writer.retry();
+  assert.equal(lost.sent[1].key, lost.sent[0].key);
+  assert.equal(reloaded, 1);
+  assert.equal(writer.getState().executed, true);
+});
+
+test('every write the integration centre sends is two-phase, which is what makes output_too_large an executed write', () => {
+  const source = readFileSync(new URL('../../../../apps/suite/synwevo_suite/agent/mcp/ops.py', import.meta.url), 'utf8');
+  const writes = source.split(/\bop\(id="/).slice(1).map((chunk) => chunk.split(/\n\s*op\(id="|\n\s*def /)[0])
+    .filter((chunk) => /side_effect="write"/.test(chunk));
+  const ids = writes.map((chunk) => chunk.slice(0, chunk.indexOf('"')));
+  for (const id of ['agent.mcp.connection.create', 'agent.mcp.connection.update', 'agent.mcp.connection.test', 'agent.mcp.connection.refresh',
+    'agent.mcp.grant.set', 'agent.mcp.binding.set', 'agent.mcp.credential.revoke', 'agent.mcp.oauth.start']) assert.ok(ids.includes(id), id);
+  for (const chunk of writes) assert.ok(/transactional=False/.test(chunk), `${chunk.slice(0, chunk.indexOf('"'))} is two-phase`);
+});
+
+test('a request refused for its own shape or size is definitive on a retry too', async () => {
+  const E = (status: number, code: string) => new auth.ApiError(status, code, 'server prose (fixture)');
+  // Validation reads only the payload, which a retry repeats byte for byte: no attempt under this key can have committed.
+  for (const [status, code] of [[422, 'invalid_input'], [400, 'invalid_input'], [413, 'input_too_large']] as const) {
+    assert.equal(shared.writeOutcome(E(status, code), false), 'refused', code);
+    assert.equal(shared.writeOutcome(E(status, code), true), 'refused', `${code} on a retry`);
+  }
+  const input = { connection_id: 'mcpc_0123456789ab', tool: 'echo', mode: 'auto' };
+  const fixture = scripted(new auth.ApiError(0, 'network', 'fixture'), E(422, 'invalid_input'), { status: 'succeeded', output: {} });
+  const writer = shared.createWriter(fixture.send, fixture.newKey);
+  writer.start('agent.mcp.grant.set', input, () => {});
+  await settle();
+  assert.equal(writer.getState().pending, true);
+  await writer.retry();
+  const state = writer.getState();
+  assert.equal(state.pending, false, 'the tab is not locked behind a retry that can only be refused again');
+  assert.equal(model.errorCodeOf(state.error), 'invalid_input');
+  // Nothing waits: a further retry sends nothing, the refusal can be dismissed, a corrected intent starts afresh.
+  await writer.retry();
+  assert.equal(fixture.sent.length, 2);
+  writer.dismiss();
+  assert.equal(writer.getState().error, null);
+  assert.equal(writer.start('agent.mcp.grant.set', { ...input, mode: 'confirm' }, () => {}), true);
+  await settle();
+  assert.notEqual(fixture.sent[2].key, fixture.sent[0].key);
+});
+
+/** A fixture sender: answers each request with the next scripted outcome and records what was sent. */
+function scripted(...answers: unknown[]) {
+  const sent: { operation: string; input: Record<string, unknown>; key: string }[] = [];
+  const send = async (operation: string, input: Record<string, unknown>, key: string) => {
+    sent.push({ operation, input: { ...input }, key });
+    const answer = answers.shift();
+    if (answer instanceof Error) throw answer;
+    return answer as { status: string; output: unknown };
+  };
+  let n = 0;
+  return { sent, send, newKey: () => `key-fixture-${++n}` };
+}
+/** Lets a started intent's request settle (the fixture sender answers at once). */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test('testing an unreachable server ends the attempt instead of locking the tab behind a retry', async () => {
+  const fixture = scripted(new auth.ApiError(502, 'mcp_unreachable', 'server prose (fixture)'), { status: 'succeeded', output: {} });
+  const writer = shared.createWriter(fixture.send, fixture.newKey);
+  const ref = { connection_id: 'mcpc_0123456789ab' };
+  assert.equal(writer.start('agent.mcp.connection.test', ref, () => assert.fail('not saved')), true);
+  await settle();
+  const state = writer.getState();
+  assert.equal(state.pending, false, 'a definitive refusal is not an unknown outcome');
+  assert.equal(state.busy, false);
+  assert.equal(state.executed, false);
+  assert.equal((state.error as any).code, 'mcp_unreachable');
+  // Nothing waits for a same-key retry: a retry sends nothing, the next test starts with a new key.
+  await writer.retry();
+  assert.equal(fixture.sent.length, 1);
+  assert.equal(writer.start('agent.mcp.connection.test', ref, () => {}), true);
+  await settle();
+  assert.deepEqual(fixture.sent.map((s) => s.key), ['key-fixture-1', 'key-fixture-2']);
+});
+
+test('a create whose response was lost and whose result cannot be replayed is never offered as a second create', async () => {
+  const fixture = scripted(new auth.ApiError(0, 'network', 'fixture'),
+    new auth.ApiError(409, 'run_result_unavailable', 'server prose (fixture)', { run_id: 'run_fixture', status: 'succeeded' }));
+  const writer = shared.createWriter(fixture.send, fixture.newKey);
+  const input = { owner_kind: 'user', name: 'Fixture notes server', url: 'https://mcp.fixture.test/mcp', auth_kind: 'none' };
+  let executed = 0;
+  writer.start('agent.mcp.connection.create', input, () => assert.fail('not saved'), () => { executed += 1; });
+  await settle();
+  assert.equal(writer.getState().pending, true, 'a lost response leaves the outcome open');
+  assert.equal(writer.start('agent.mcp.connection.create', input, () => {}), false, 'no second intent while the first is open');
+  await writer.retry();
+  assert.equal(fixture.sent.length, 2);
+  assert.equal(fixture.sent[1].key, fixture.sent[0].key, 'the retry repeats the same key');
+  assert.deepEqual(fixture.sent[1].input, fixture.sent[0].input, 'and the same payload');
+  const state = writer.getState();
+  assert.equal(state.executed, true, 'the server holds a receipt: executed');
+  assert.equal(state.pending, false);
+  assert.equal(executed, 1, 'the page is told to re-read instead of offering the create again');
+  // A further retry sends nothing: the intent is settled.
+  await writer.retry();
+  assert.equal(fixture.sent.length, 2);
+  writer.dismiss();
+  assert.equal(writer.getState().executed, false);
+});
+
+test('an open outcome settles only on what the retry establishes', async () => {
+  // A crash code, then a retry the rate limiter refused before the receipt lookup, then the replay.
+  const fixture = scripted(new auth.ApiError(500, 'operation_failed', 'fixture'), new auth.ApiError(429, 'rate_limited', 'fixture'),
+    { status: 'succeeded', output: { id: 'mcpc_0123456789ab' } });
+  const writer = shared.createWriter(fixture.send, fixture.newKey);
+  const saved: unknown[] = [];
+  writer.start('agent.mcp.grant.set', { connection_id: 'mcpc_0123456789ab', tool: 'echo', mode: 'auto' }, (out: unknown) => saved.push(out));
+  await settle();
+  assert.equal(writer.getState().pending, true);
+  await writer.retry();
+  assert.equal(writer.getState().pending, true, 'a 429 on a retry does not say whether the first attempt committed');
+  await writer.retry();
+  assert.deepEqual(saved, [{ id: 'mcpc_0123456789ab' }]);
+  assert.equal(writer.getState().saved, true);
+  assert.equal(new Set(fixture.sent.map((s) => s.key)).size, 1, 'one key for the whole intent');
+  // A replayed failure is definitive; the next intent gets a new key.
+  const failing = scripted(new auth.ApiError(0, 'network', 'fixture'), new auth.ApiError(409, 'idempotent_failure', 'fixture', { code: 'mcp_unreachable' }),
+    { status: 'succeeded', output: {} });
+  const second = shared.createWriter(failing.send, failing.newKey);
+  second.start('agent.mcp.connection.test', { connection_id: 'mcpc_0123456789ab' }, () => {});
+  await settle();
+  await second.retry();
+  assert.equal(second.getState().pending, false);
+  assert.equal(model.errorCodeOf(second.getState().error), 'mcp_unreachable');
+  assert.equal(second.start('agent.mcp.connection.test', { connection_id: 'mcpc_0123456789ab' }, () => {}), true);
+  await settle();
+  assert.notEqual(failing.sent[2].key, failing.sent[0].key);
+  // A run still in progress keeps the intent; a closed page forgets it.
+  const running = scripted({ status: 'running', output: null });
+  const third = shared.createWriter(running.send, running.newKey);
+  third.start('agent.mcp.connection.refresh', { connection_id: 'mcpc_0123456789ab' }, () => {});
+  await settle();
+  assert.equal(third.getState().pending, true);
+  third.close(); third.open();
+  assert.equal(third.start('agent.mcp.connection.refresh', { connection_id: 'mcpc_0123456789ab' }, () => {}), true);
+});
+
+for (const locale of LOCALES) test(`an executed write and a definitive MCP refusal are worded for what they are in ${locale}`, () => {
+  const write = (state: Record<string, unknown>) => ({ busy: false, pending: false, error: null, status: null, saved: false, executed: false, operation: null, input: null,
+    locked: false, start: () => false, retry() {}, dismiss() {}, ...state });
+  const executed = render(locale, React.createElement(shared.WriteFeedback, { write: write({ executed: true,
+    error: new auth.ApiError(409, 'run_result_unavailable', 'server prose (fixture)', { status: 'succeeded' }) }) }));
+  assert.ok(executed.includes(tr(locale, 'executed')));
+  assert.ok(!executed.includes(tr(locale, 'retrySame')) && !executed.includes(tr(locale, 'pending')));
+  assert.ok(!executed.includes('server prose'));
+  const refused = render(locale, React.createElement(shared.WriteFeedback, { write: write({ error: new auth.ApiError(502, 'mcp_unreachable', 'server prose (fixture)') }) }));
+  assert.ok(refused.includes(tr(locale, 'mcp_unreachable')) && !refused.includes(tr(locale, 'retrySame')));
+  // Elsewhere the same code reads as the same sentence.
+  assert.equal(shared.errorKeyOf(new auth.ApiError(409, 'run_result_unavailable', 'x')), 'executed');
+  // The list re-read after such a create (or delete) says so.
+  const listed = (unverified: unknown) => render(locale, React.createElement(list.ListView, { items: [summary()], policy: policy(), q: '', setQ() {},
+    loading: false, error: null, reload() {}, unverified }));
+  assert.ok(listed({ kind: 'create', name: 'Fixture notes server' }).includes(tr(locale, 'createUnverified', { name: 'Fixture notes server' })));
+  assert.ok(listed({ kind: 'delete', name: 'Fixture notes server' }).includes(tr(locale, 'deleteUnverified', { name: 'Fixture notes server' })));
+  assert.ok(!listed(null).includes(tr(locale, 'createUnverified', { name: 'Fixture notes server' })));
+  assert.deepEqual(list.unverifiedOf({ unverified: { kind: 'create', name: 'x' } }), { kind: 'create', name: 'x' });
+  for (const bad of [null, {}, { unverified: { kind: 'other', name: 'x' } }, { unverified: { kind: 'create', name: 1 } }]) assert.equal(list.unverifiedOf(bad), null);
+});
+
+// ---------------------------------------------------------------- a stale grant (finding 26)
+
+test('a stale grant is shown as suspended and can be granted again in its previous mode', () => {
+  const grant = (mode: string, stale: boolean) => ({ mode, stale, granted_by: 'user_fixture', granted_at: 1_700_000_000 });
+  assert.deepEqual(model.grantView({ grant: grant('auto', true), removed: false, annotations: { readOnlyHint: true } }), { value: '', suspended: 'auto', reconfirm: true });
+  assert.deepEqual(model.grantView({ grant: grant('confirm', true), removed: false, annotations: {} }), { value: '', suspended: 'confirm', reconfirm: true });
+  // The server no longer declares it read-only: auto cannot be granted again, another mode can be chosen.
+  assert.deepEqual(model.grantView({ grant: grant('auto', true), removed: false, annotations: {} }), { value: '', suspended: 'auto', reconfirm: false });
+  // A stale off suspends nothing; a removed tool has no controls; a current grant shows its mode.
+  assert.deepEqual(model.grantView({ grant: grant('off', true), removed: false, annotations: {} }), { value: 'off', suspended: null, reconfirm: false });
+  assert.deepEqual(model.grantView({ grant: grant('confirm', true), removed: true, annotations: {} }), { value: 'confirm', suspended: null, reconfirm: false });
+  assert.deepEqual(model.grantView({ grant: grant('auto', false), removed: false, annotations: { readOnlyHint: true } }), { value: 'auto', suspended: null, reconfirm: false });
+});
+
+for (const locale of LOCALES) test(`the tools tab offers a stale grant again in the same mode in ${locale}`, () => {
+  const stale = tool('echo', { title: 'Echo', annotations: { readOnlyHint: true }, grant: { mode: 'auto', stale: true, granted_by: 'user_fixture', granted_at: 1_700_000_000 } });
+  const data = detailFixture({ tools: [stale] });
+  const view = (d: any) => render(locale, React.createElement(detail.DetailView, { detail: d, tab: 'tools', setTab() {}, update() {}, onDeleted() {}, reload() {} }),
+    '/agent/integrations/mcpc_0123456789ab');
+  const html = view(data);
+  const auto = tr(locale, 'modeAuto');
+  // The select does not claim the suspended mode: a placeholder is selected, so choosing any mode is a change.
+  assert.ok(/<option value="" disabled="" selected="">/.test(html), 'the placeholder is the selected option');
+  assert.ok(html.includes(tr(locale, 'staleSelect')));
+  assert.ok(!/<option value="auto" selected=""/.test(html), 'auto is not shown as the current grant');
+  assert.ok(html.includes(tr(locale, 'staleNotice', { mode: auto })));
+  // One explicit action grants it again in the same mode, available to a manager.
+  const button = html.match(/<button[^>]*>([^<]*)<\/button>/g)?.find((b) => b.includes(tr(locale, 'reconfirm', { mode: auto })));
+  assert.ok(button, 'the re-grant button');
+  assert.ok(!button!.includes('disabled=""'));
+  const readOnly = view({ ...data, manage: false }).match(/<button[^>]*>([^<]*)<\/button>/g)?.find((b) => b.includes(tr(locale, 'reconfirm', { mode: auto })));
+  assert.ok(readOnly && readOnly.includes('disabled=""'), 'not a manager: disabled');
+  // A tool the server no longer declares read-only cannot be granted auto again.
+  const writes = view({ ...data, tools: [{ ...stale, annotations: {} }] }).match(/<button[^>]*>([^<]*)<\/button>/g)?.find((b) => b.includes(tr(locale, 'reconfirm', { mode: auto })));
+  assert.ok(writes && writes.includes('disabled=""'));
+  // A current grant has no placeholder and no notice.
+  const current = view({ ...data, tools: [{ ...stale, grant: { ...stale.grant, stale: false } }] });
+  assert.ok(!current.includes(tr(locale, 'staleSelect')) && /<option value="auto" selected=""/.test(current));
+});
+
+// ---------------------------------------------------------------- the codes and states the backend added (this round)
+
+/** Every mcp_* code the suite's MCP backend can raise, read from the Python sources: a refusal, a
+ *  call record's reason, a tool's unusable reason. Quoted names of schema objects are not codes. */
+const ROOT = new URL('../../../../', import.meta.url);
+function backendMcpCodes(): Set<string> {
+  const dir = 'apps/suite/synwevo_suite/agent/mcp/';
+  const files = [...readdirSync(new URL(dir, ROOT)).filter((f) => f.endsWith('.py')).map((f) => dir + f),
+    'apps/suite/synwevo_suite/agent/engine.py', 'apps/suite/synwevo_suite/agent/tools.py',
+    'packages/core/synwevo_core/mcp_policy.py', 'packages/core/synwevo_core/suite_schema/mcp.py'];
+  const schema = readFileSync(new URL('packages/core/synwevo_core/suite_schema/mcp.py', ROOT), 'utf8');
+  const objects = new Set([...schema.matchAll(/CREATE (?:UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS (mcp_[a-z_]+)/g)].map((m) => m[1]));
+  const codes = new Set<string>();
+  for (const file of files) for (const [, code] of readFileSync(new URL(file, ROOT), 'utf8').matchAll(/"(mcp_[a-z_]+)"/g)) if (!objects.has(code)) codes.add(code);
+  return codes;
+}
+const NOT_SHOWN: [string, string][] = [
+  ['mcp_connection', 'an audit object kind and a message source key, never a refusal'],
+  ['mcp_policy_invalid mcp_policy_bad_revision mcp_policy_revision_conflict',
+    'raised only when a platform administrator publishes a policy (synwevo_identity.admin_mcp); the Admin shell words them'],
+];
+
+test('every mcp_* code the backend raises has its own sentence, on the pages and in the chat', () => {
+  const codes = backendMcpCodes();
+  // The scan reads the right files: codes of each source it covers are found.
+  for (const code of ['mcp_platform_disabled', 'mcp_destination_is_self', 'mcp_response_too_large', 'mcp_oauth_denied', 'mcp_agent_only',
+    'mcp_call_interrupted', 'mcp_host_blocked', 'mcp_transfer_refused']) assert.ok(codes.has(code), code);
+  const skip = new Set<string>();
+  for (const [names, why] of NOT_SHOWN) for (const code of names.split(' ')) {
+    assert.ok(codes.has(code), `${code} is listed as not shown but no longer found (${why})`);
+    skip.add(code);
+  }
+  const t = (s: string) => s;
+  const unworded: string[] = [];
+  for (const code of [...codes].sort()) {
+    if (skip.has(code)) continue;
+    if (model.mcpErrorKey(code) !== code) { unworded.push(code); continue; }
+    const sentence = integrationCopy[code as keyof typeof integrationCopy][0];
+    assert.equal(errors.agentErrorText({ code }, t), sentence, `${code} in the chat`);
+    assert.equal(shared.errorKeyOf(new auth.ApiError(409, code, 'server prose (fixture)')), code, `${code} on the pages`);
+    for (const locale of ['en', 'zh-Hant']) assert.notEqual(core.translate(locale, sentence), sentence, `${code} in ${locale}`);
+  }
+  assert.deepEqual(unworded, [], 'raised with only the generic MCP sentence');
+});
+
+for (const locale of LOCALES) test(`each new refusal reads as what happened in ${locale}`, () => {
+  const say = (code: string) => text(render(locale, React.createElement(shared.ErrorNotice, { error: new auth.ApiError(409, code, 'server prose (fixture)') })));
+  for (const code of ['mcp_platform_disabled', 'mcp_connection_changed', 'mcp_destination_is_self', 'mcp_confirmation_required', 'mcp_agent_only',
+    'mcp_record_failed', 'mcp_call_interrupted', 'mcp_response_too_large', 'mcp_policy_unavailable', 'mcp_tool_unusable', 'mcp_schema_too_large',
+    'mcp_offer_too_large', 'mcp_address_changed'] as const) {
+    const shown = say(code);
+    assert.ok(shown.includes(tr(locale, code)), `${code}: ${shown}`);
+    assert.ok(!shown.includes('server prose') && !shown.includes(tr(locale, 'mcp_failed')), code);
+  }
+  // The OAuth callback that lost its connection to a change says so on the detail page.
+  const changed = render(locale, React.createElement(detail.DetailView, { detail: detailFixture({ auth_kind: 'oauth' }), tab: 'overview', setTab() {}, update() {},
+    onDeleted() {}, authNotice: { ok: false, code: 'mcp_connection_changed' } }), '/agent/integrations/mcpc_0123456789ab');
+  assert.ok(changed.includes(tr(locale, 'authError', { reason: tr(locale, 'mcp_connection_changed') })));
+  // A read the server could not return for its size is named as such, not as a generic failure.
+  assert.ok(text(render(locale, React.createElement(shared.ErrorNotice, { error: new auth.ApiError(500, 'output_too_large', 'x') }))).includes(tr(locale, 'tooLarge')));
+  // An executed write whose result was too large says that it was carried out.
+  const write = { busy: false, pending: false, error: new auth.ApiError(500, 'output_too_large', 'server prose (fixture)'), status: null, saved: false,
+    executed: true, operation: 'agent.mcp.connection.test', input: null, locked: false, start: () => false, retry() {}, dismiss() {} };
+  const fed = render(locale, React.createElement(shared.WriteFeedback, { write }));
+  assert.ok(fed.includes(tr(locale, 'executedTooLarge')) && !fed.includes(tr(locale, 'retrySame')) && !fed.includes('server prose'));
+});
+
+for (const locale of LOCALES) test(`a call a stopped process left running reads as an unknown outcome in ${locale}`, () => {
+  assert.deepEqual(model.callStatusView('unknown'), { key: 'callUnknown', tone: 'warn' });
+  const html = render(locale, React.createElement(detail.CallEntry, { call: call({ status: 'unknown', finished_at: 1_700_001_000, duration_ms: null,
+    error: { code: 'mcp_call_interrupted', message: 'fixture' } }) }));
+  assert.ok(html.includes(tr(locale, 'callUnknown')) && html.includes(tr(locale, 'mcp_call_interrupted')) && html.includes('mcp_call_interrupted'));
+  assert.ok(!html.includes(`>${tr(locale, 'callFailed')}<`), 'not worded as a failure');
+  // A discovery whose findings could not be saved is this side's failure, worded as such.
+  const unsaved = render(locale, React.createElement(detail.CallEntry, { call: call({ kind: 'discover', origin: 'test', status: 'failed',
+    error: { code: 'mcp_record_failed', message: 'fixture' } }) }));
+  assert.ok(unsaved.includes(tr(locale, 'mcp_record_failed')));
+  // The chat's action card an engine restart left unknown says to check, not to retry.
+  const card = errors.agentErrorText({ code: 'outcome_unknown', message: 'server prose (fixture)' }, (s: string) => core.translate(locale, s));
+  assert.equal(card, tr(locale, 'outcomeUnknown'));
+});
+
+/** A connection a platform administrator stopped (fixture): disabled by the stop, credential forgotten. */
+const stoppedFixture = (overrides: Record<string, unknown> = {}) => detailFixture({ status: 'disabled', platform_disabled: true, platform_disabled_at: 1_700_000_500,
+  has_credential: false, credential_hint: null, health: 'auth_required', ...overrides });
+const button = (html: string, label: string) => (html.match(/<button[^>]*>[^<]*<\/button>/g) ?? []).find((b) => b.replace(/<[^>]+>/g, '') === label);
+
+for (const locale of LOCALES) test(`a platform stop is named on the list, the detail and the settings, and blocks what it refuses in ${locale}`, () => {
+  // The list: the stop's own badge; the binding is not shown as used, since no Agent uses it.
+  const listed = render(locale, React.createElement(list.ListView, { items: [summary({ status: 'disabled', platform_disabled: true, platform_disabled_at: 1_700_000_500 })],
+    policy: policy(), q: '', setQ() {}, loading: false, error: null, reload() {} }));
+  assert.ok(listed.includes(tr(locale, 'statusPlatformStopped')));
+  assert.ok(listed.includes(tr(locale, 'platformStoppedRow')), 'the row says who lifts the stop');
+  assert.ok(!listed.includes(`>${tr(locale, 'bound')}<`), 'not "used by my Agent" while stopped');
+  assert.ok(!render(locale, React.createElement(list.ListView, { items: [summary()], policy: policy(), q: '', setQ() {}, loading: false, error: null, reload() {} }))
+    .includes(tr(locale, 'statusPlatformStopped')));
+  assert.ok(!render(locale, React.createElement(list.ListView, { items: [summary({ status: 'disabled' })], policy: policy(), q: '', setQ() {}, loading: false, error: null, reload() {} }))
+    .includes(tr(locale, 'platformStoppedRow')), 'the owner\'s own switch is not a platform stop');
+  // The detail, for the connection's manager.
+  const view = (tab: string, data: any) => render(locale, React.createElement(detail.DetailView, { detail: data, tab, setTab() {}, update() {}, onDeleted() {}, reload() {} }),
+    '/agent/integrations/mcpc_0123456789ab');
+  for (const kind of ['bearer', 'oauth', 'none']) {
+    const overview = view('overview', stoppedFixture({ auth_kind: kind }));
+    for (const needle of [tr(locale, 'platformStopped'), tr(locale, 'statusPlatformStopped'), tr(locale, 'platformStoppedAt')]) assert.ok(overview.includes(needle), `${kind}: ${needle}`);
+    assert.ok(!overview.includes(tr(locale, 'disabledHint')), 'the stop, not the owner\'s own switch, is the reason');
+    for (const label of ['testConnection', 'refreshCaps', 'enable'] as const) assert.ok(button(overview, tr(locale, label))?.includes('disabled=""'), `${kind}: ${label} disabled`);
+    if (kind === 'oauth') assert.ok(button(overview, tr(locale, 'authenticate'))?.includes('disabled=""'), 'authenticate disabled');
+    assert.ok(!overview.includes(tr(locale, 'authFirst')) && !overview.includes(tr(locale, 'tokenMissing')), 'no step the stop refuses is offered');
+    assert.ok(!/type="password"/.test(overview), 'no credential can be given while stopped');
+    // Deleting stays open to the manager.
+    assert.ok(!button(overview, tr(locale, 'remove'))?.includes('disabled=""'), `${kind}: delete stays open`);
+  }
+  // Disabling stays open if the connection is somehow still on.
+  assert.ok(!button(view('overview', stoppedFixture({ status: 'active' })), tr(locale, 'disable'))?.includes('disabled=""'));
+  // Resources and prompts cannot be used; the binding can be kept but the Agent does not use it.
+  const resources = view('resources', stoppedFixture());
+  assert.ok(resources.includes(tr(locale, 'platformStoppedUse')) && button(resources, tr(locale, 'read'))?.includes('disabled=""'));
+  const prompts = view('prompts', stoppedFixture({ prompts: [{ name: 'today', title: null, description: null, arguments: [] }] }));
+  assert.ok(prompts.includes(tr(locale, 'platformStoppedUse')) && /<button[^>]*type="submit"[^>]*disabled=""/.test(prompts));
+  const mine = view('mine', stoppedFixture());
+  assert.ok(mine.includes(tr(locale, 'platformStoppedAgent')) && mine.includes(tr(locale, 'statusPlatformStopped')));
+  // A connection that is not stopped shows none of this.
+  const free = view('overview', detailFixture());
+  assert.ok(!free.includes(tr(locale, 'platformStopped')) && !free.includes(tr(locale, 'statusPlatformStopped')));
+  assert.ok(!view('resources', detailFixture()).includes(tr(locale, 'platformStoppedUse')));
+  // The Agent settings row.
+  const row = render(locale, React.createElement(bindings.BindingRow, { item: summary({ status: 'disabled', platform_disabled: true }), toolCount: 0, onChanged() {} }));
+  assert.ok(row.includes(tr(locale, 'statusPlatformStopped')) && row.includes(tr(locale, 'platformStoppedAgent')));
+  assert.ok(!render(locale, React.createElement(bindings.BindingRow, { item: summary(), toolCount: 2, onChanged() {} })).includes(tr(locale, 'platformStoppedAgent')));
+});
+
+test('a connection pointed at another address is recognised from what the server reports, and its next steps follow who is reading', () => {
+  const removed = [tool('echo', { removed: true, grant: { mode: 'off', stale: false, granted_by: null, granted_at: null } })];
+  assert.equal(model.pointedElsewhere({ discovered_at: null, tools: removed }), true);
+  assert.equal(model.pointedElsewhere({ discovered_at: 1_700_000_000, tools: removed }), false, 'discovered there already');
+  assert.equal(model.pointedElsewhere({ discovered_at: null, tools: [] }), false, 'never discovered: a new connection');
+  const off = { connection_id: 'mcpc_0123456789ab', bound: true, alias: 'fixture-notes', enabled: false, resources_enabled: false };
+  assert.deepEqual(model.repointSteps({ manage: true, auth_kind: 'oauth', has_credential: false, binding: off }), ['nextAuthenticate', 'nextTest', 'nextGrant', 'nextBind']);
+  assert.deepEqual(model.repointSteps({ manage: true, auth_kind: 'bearer', has_credential: false, binding: off }), ['nextToken', 'nextTest', 'nextGrant', 'nextBind']);
+  assert.deepEqual(model.repointSteps({ manage: true, auth_kind: 'bearer', has_credential: true, binding: { connection_id: 'x', bound: false } }), ['nextTest', 'nextGrant']);
+  assert.deepEqual(model.repointSteps({ manage: false, auth_kind: 'oauth', has_credential: false, binding: off }), ['nextManagers', 'nextBind']);
+  // A personal connection's first discovery at the new address sets every usable tool to confirm
+  // (connections._record_discovery); a workspace's tools wait for a manager's grant.
+  assert.deepEqual(model.repointSteps({ owner_kind: 'user', manage: true, auth_kind: 'none', has_credential: false, binding: off }), ['nextTest', 'nextGrantPersonal', 'nextBind']);
+  assert.deepEqual(model.repointSteps({ owner_kind: 'workspace', manage: true, auth_kind: 'none', has_credential: false, binding: off }), ['nextTest', 'nextGrant', 'nextBind']);
+  assert.equal(model.needsToken({ auth_kind: 'bearer', has_credential: false }), true);
+  assert.equal(model.needsToken({ auth_kind: 'oauth', has_credential: false }), false);
+  assert.equal(model.platformStopped({ platform_disabled: true }), true);
+  assert.equal(model.platformStopped({}), false);
+});
+
+for (const locale of LOCALES) test(`a connection pointed at another address says what has to happen next in ${locale}`, () => {
+  // Fixture: what connections.update leaves after a new address — no discovery, the old tools removed
+  // and ungranted, the credential forgotten, this person's binding switched off.
+  const moved = (overrides: Record<string, unknown> = {}) => detailFixture({ url: 'https://other.fixture.test/mcp', host: 'other.fixture.test', discovered_at: null,
+    server_info: null, protocol_version: null, health: 'auth_required', has_credential: false, credential_hint: null, counts: { tools: 0, resources: 0, prompts: 0, granted: 0 },
+    tools: [tool('echo', { removed: true, grant: { mode: 'off', stale: false, granted_by: null, granted_at: null } })], resources: [], prompts: [],
+    binding: { connection_id: 'mcpc_0123456789ab', bound: true, alias: 'fixture-notes', enabled: false, resources_enabled: false, tool_modes: {} }, ...overrides });
+  const view = (data: any) => render(locale, React.createElement(detail.DetailView, { detail: data, tab: 'overview', setTab() {}, update() {}, onDeleted() {}, reload() {} }),
+    '/agent/integrations/mcpc_0123456789ab');
+  // The manager of a bearer connection: the token first, then test, grant, and the binding.
+  const bearer = view(moved());
+  for (const key of ['repointed', 'repointedNext', 'nextToken', 'nextTest', 'nextGrantPersonal', 'nextBind', 'tokenLabel', 'saveToken'] as const) assert.ok(bearer.includes(tr(locale, key)), key);
+  assert.ok(!bearer.includes(tr(locale, 'nextGrant')), 'a personal connection is granted confirm by its test, not left off');
+  const team = view(moved({ owner_kind: 'workspace', owner_id: 'ws_fixture', owner_name: 'Fixture workspace' }));
+  assert.ok(team.includes(tr(locale, 'nextGrant')) && !team.includes(tr(locale, 'nextGrantPersonal')), 'a workspace connection waits for a grant');
+  assert.ok(/<input[^>]*type="password"[^>]*autoComplete="new-password"|<input[^>]*autoComplete="new-password"[^>]*type="password"/i.test(bearer), 'the token field');
+  assert.ok(!button(bearer, tr(locale, 'saveToken'))?.includes('disabled=""'));
+  assert.ok(!bearer.includes(tr(locale, 'tokenMissing')), 'the steps already say it');
+  assert.ok(bearer.indexOf(tr(locale, 'nextToken')) < bearer.indexOf(tr(locale, 'nextTest')), 'in the order they have to happen');
+  // OAuth: authenticate (the page's own button), no token field.
+  const oauth = view(moved({ auth_kind: 'oauth' }));
+  assert.ok(oauth.includes(tr(locale, 'nextAuthenticate')) && !oauth.includes(tr(locale, 'nextToken')) && !/type="password"/.test(oauth));
+  assert.ok(!oauth.includes(tr(locale, 'authFirst')), 'one explanation, not two');
+  // Someone who uses but does not manage it: what the managers must do, and their own binding.
+  const member = view(moved({ manage: false }));
+  assert.ok(member.includes(tr(locale, 'nextManagers')) && member.includes(tr(locale, 'nextBind')));
+  assert.ok(!member.includes(tr(locale, 'nextTest')) && !/type="password"/.test(member));
+  // Discovered at the new address: no longer described as moved.
+  assert.ok(!view(moved({ discovered_at: 1_700_000_900 })).includes(tr(locale, 'repointed')));
+  // A stopped connection cannot take these steps: only the stop is explained.
+  const stopped = view(moved({ platform_disabled: true, platform_disabled_at: 1_700_000_500, status: 'disabled' }));
+  assert.ok(stopped.includes(tr(locale, 'platformStopped')) && !stopped.includes(tr(locale, 'repointed')) && !/type="password"/.test(stopped));
+  // A bearer connection whose token was revoked can be given one, by its manager only.
+  const revoked = view(detailFixture({ has_credential: false, credential_hint: null }));
+  assert.ok(revoked.includes(tr(locale, 'tokenMissing')) && /type="password"/.test(revoked) && !revoked.includes(tr(locale, 'repointed')));
+  assert.ok(!/type="password"/.test(view(detailFixture({ has_credential: false, credential_hint: null, manage: false }))));
+  assert.ok(!/type="password"/.test(view(detailFixture())), 'a stored token is not asked for again');
+});
+
+for (const locale of LOCALES) test(`a tool whose definition could not be kept can only be off, and says why in ${locale}`, () => {
+  const unusable = tool('huge', { annotations: { readOnlyHint: true }, input_schema: null, unusable: { code: 'mcp_schema_too_large', max_chars: 64_000 },
+    grant: { mode: 'off', stale: false, granted_by: null, granted_at: null } });
+  const html = render(locale, React.createElement(detail.DetailView, { detail: detailFixture({ tools: [unusable] }), tab: 'tools', setTab() {}, update() {}, onDeleted() {}, reload() {} }),
+    '/agent/integrations/mcpc_0123456789ab');
+  assert.ok(html.includes(tr(locale, 'toolUnusable')) && html.includes(tr(locale, 'mcp_schema_too_large')));
+  for (const mode of ['confirm', 'auto']) assert.ok(new RegExp(`<option value="${mode}" disabled=""`).test(html), `${mode} cannot be chosen`);
+  assert.ok(/<option value="off" selected=""/.test(html));
+  assert.ok(!html.includes(tr(locale, 'schemaToggle')), 'no definition to show');
+  // A stale grant on such a tool is not offered again.
+  assert.equal(model.grantView({ ...unusable, grant: { mode: 'confirm', stale: true, granted_by: null, granted_at: null } }).reconfirm, false);
+  const stale = render(locale, React.createElement(detail.DetailView, { detail: detailFixture({ tools: [{ ...unusable, grant: { mode: 'confirm', stale: true, granted_by: null, granted_at: null } }] }),
+    tab: 'tools', setTab() {}, update() {}, onDeleted() {}, reload() {} }), '/agent/integrations/mcpc_0123456789ab');
+  assert.ok(!stale.includes(tr(locale, 'reconfirm', { mode: tr(locale, 'modeConfirm') })));
+  // An invalid definition has its own reason, and so does an offer too large to keep whole.
+  assert.ok(render(locale, React.createElement(detail.ToolEntry, { tool: { ...unusable, unusable: { code: 'mcp_schema_invalid' } }, detail: detailFixture(),
+    write: { locked: false, start: () => false }, update() {} })).includes(tr(locale, 'mcp_schema_invalid')));
+  const crowded = render(locale, React.createElement(detail.ToolEntry, { tool: { ...unusable, unusable: { code: 'mcp_offer_too_large', max_bytes: 524_288 } },
+    detail: detailFixture(), write: { locked: false, start: () => false }, update() {} }));
+  assert.ok(crowded.includes(tr(locale, 'mcp_offer_too_large')) && !crowded.includes(tr(locale, 'mcp_tool_unusable')));
+});
+
+// ---------------------------------------------------------------- a page read too large to return (G7's regression a)
+
+test('a page read too large to return is refused for its size, not reported as an executed change', async () => {
+  const E = (status: number, code: string) => new auth.ApiError(status, code, 'server prose (fixture)');
+  for (const operation of ['agent.mcp.resource.read_page', 'agent.mcp.prompt.render']) {
+    assert.equal(shared.writeOutcome(E(500, 'output_too_large'), false, operation), 'refused', operation);
+    assert.equal(shared.writeOutcome(E(500, 'output_too_large'), true, operation), 'refused', `${operation} on a retry`);
+  }
+  // A change is still executed, with or without the operation named.
+  for (const operation of ['agent.mcp.connection.test', 'agent.mcp.grant.set', undefined]) {
+    assert.equal(shared.writeOutcome(E(500, 'output_too_large'), false, operation), 'executed', String(operation));
+  }
+  const fixture = scripted(E(500, 'output_too_large'), { status: 'succeeded', output: {} });
+  const writer = shared.createWriter(fixture.send, fixture.newKey);
+  let reloaded = 0;
+  writer.start('agent.mcp.resource.read_page', { connection_id: 'mcpc_0123456789ab', uri: 'notes://fixture/big' }, () => assert.fail('not shown'),
+    () => { reloaded += 1; });
+  await settle();
+  const state = writer.getState();
+  assert.equal(reloaded, 0, 'nothing changed that a re-read could show');
+  assert.equal(state.executed, false);
+  assert.equal(state.pending, false, 'the tab is not locked behind a retry');
+  assert.equal(shared.errorKeyOf(state.error), 'tooLarge');
+  // The next read starts afresh.
+  assert.equal(writer.start('agent.mcp.resource.read_page', { connection_id: 'mcpc_0123456789ab', uri: 'notes://fixture/small' }, () => {}), true);
+  await settle();
+  assert.notEqual(fixture.sent[1].key, fixture.sent[0].key);
+  for (const locale of LOCALES) {
+    const shown = render(locale, React.createElement(shared.WriteFeedback, { write: { ...state, locked: false, start: () => false, retry() {}, dismiss() {} } }));
+    assert.ok(text(shown).includes(tr(locale, 'tooLarge')), locale);
+    assert.ok(!shown.includes(tr(locale, 'executedTooLarge')) && !shown.includes(tr(locale, 'retrySame')) && !shown.includes('server prose'), locale);
+  }
+});
+
+test('the refusals a stop or a busy connection explains name every cause the backend has for them', () => {
+  // mcp_tool_unavailable and mcp_resources_unavailable: effective_tools and resource_connections leave a
+  // stopped connection out, so a stop reaches the chat as these codes, not as mcp_platform_disabled.
+  for (const code of ['mcp_tool_unavailable', 'mcp_resources_unavailable'] as const) {
+    assert.ok(/stopped by the platform/.test(tr('en', code)), code);
+    assert.ok(tr('zh-Hans', code).includes('被平台停用') && tr('zh-Hant', code).includes('被平台停用'), code);
+  }
+  // mcp_connection_busy is raised for a token refresh under way (connections._refreshed) and for the
+  // connection's concurrency cap (runtime): one sentence for both.
+  assert.ok(/token is being refreshed/.test(tr('en', 'mcp_connection_busy')) && /concurrent calls/.test(tr('en', 'mcp_connection_busy')));
+  // A lifted stop leaves the connection disabled and without its credential (admin_mcp.lift).
+  assert.ok(/stays disabled/.test(tr('en', 'platformStopped')) && /token or OAuth/.test(tr('en', 'platformStopped')));
 });

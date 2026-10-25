@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from synwevo_core.capabilities import Capabilities, canonical
 from synwevo_core.errors import ServiceError
 
-from .mcp.tools import MCP_PREFIX
+from .mcp.tools import CARRIERS, MCP_PREFIX
 
 MAX_RESULT_CHARS = 24_000
 MAX_SCHEMA_CHARS = 20_000
@@ -226,9 +226,10 @@ class ToolContext:
 
     def operations_index(self) -> list[dict]:
         usable = {a["id"] for a in self.caps.catalogue(self.user["id"])}
+        # The MCP carriers are reached only through the mcp: operations below, never by their ids.
         own = [{"id": op.id, "summary": op.summary, "changes_data": op.side_effect != "none"}
                for op in sorted(self.caps.registry.operations(), key=lambda o: o.id)
-               if op.app in usable and op.agent != "never"]
+               if op.app in usable and op.agent != "never" and op.id not in CARRIERS]
         return own + (self.mcp.index() if self.mcp is not None else [])
 
     def find(self, query: str | None, app: str | None, operation: str | None) -> dict:
@@ -239,7 +240,8 @@ class ToolContext:
                     return {"error": {"code": "unknown_operation", "message": f"No operation {operation!r} is available."}}
                 return self.mcp.describe(vop)
             op = self.caps.registry.get(operation)
-            if op is None or op.agent == "never" or op.app not in {a["id"] for a in self.caps.catalogue(self.user["id"])}:
+            if (op is None or op.agent == "never" or op.id in CARRIERS
+                    or op.app not in {a["id"] for a in self.caps.catalogue(self.user["id"])}):
                 return {"error": {"code": "unknown_operation", "message": f"No operation {operation!r} is available."}}
             schema = op.input_schema()
             text = canonical(schema)
@@ -272,7 +274,9 @@ class ToolContext:
                 return {"code": "workspace_not_applicable", "message": "External MCP tools do not take a workspace."}
             return self.mcp.prepare(vop, args.get("input"))
         op = self.caps.registry.get(name) if isinstance(name, str) else None
-        if op is None:
+        if op is None or op.id in CARRIERS:
+            # A carrier named directly would skip what its mcp: operation decides: the grant's mode
+            # (and so the confirmation card) and the data-flow check.
             return {"code": "unknown_operation", "message": f"No operation {name!r}. Use find_operations."}
         if op.agent == "never":
             return {"code": "not_for_agent", "message": "This operation must be done by the person in the application."}

@@ -7,6 +7,7 @@ import { contextCopy } from "./context.messages";
 
 import { fileErrorKey } from './files';
 import { fileCopy } from './files.messages';
+import { integrationCopy } from './integrations/integrations.messages';
 import { mcpErrorText } from './integrations/model';
 
 const errors: Record<string, string> = {
@@ -71,6 +72,9 @@ const errors: Record<string, string> = {
   step_limit: "已达到本次回答的步骤上限，请检查结果后继续。",
   interrupted: "服务重启中断了回答。已完成的操作保留。",
   outcome_unresolved: "部分操作的结果尚未确定，请先在对应应用核实。",
+  // An action card settled `unknown` after a restart (engine.recover): an application's operation or
+  // an external MCP tool may have run, so the sentence says to check rather than to retry.
+  outcome_unknown: integrationCopy.outcomeUnknown[0],
   model_configuration_changed: "模型配置已变化，请重新发起回答。",
   source_access_changed: "来源内容或权限已变化，请新建会话重新读取。",
   source_policy_changed: "来源空间已停止允许当前模型处理内容。",

@@ -8,7 +8,9 @@ MCP server's tools join that index as virtual operations, found and read like an
 * the call runs through one of two registered Agent operations — ``agent.mcp.tool.read`` for a
   tool the server marks read-only and the person allowed to run without asking, otherwise
   ``agent.mcp.tool.call`` with a confirmation card — so run records, idempotency (one call per
-  tool-call id) and audit are the capability layer's;
+  tool-call id) and audit are the capability layer's. Those operations (and the two resource
+  ones) are carriers: only the engine runs them, for a virtual operation it prepared; the model
+  never sees or names them, and nobody calls them directly (`CARRIERS`);
 * the result is labelled as coming from outside Synwevo and is never treated as instructions;
 * content the conversation read from a workspace may only go to an external server when that
   workspace's data-flow policy allows content to leave the platform.
@@ -20,10 +22,13 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from jsonschema import Draft202012Validator, exceptions as js_exceptions
+from jsonschema import Draft202012Validator, exceptions as js_exceptions, validators as js_validators
+from referencing import Registry
+from referencing.exceptions import Unresolvable
 
 from synwevo_core import data_flow
 from synwevo_core.capabilities import canonical
+from synwevo_core.errors import ServiceError
 
 from .connections import Connections
 
@@ -32,6 +37,9 @@ REGISTERED_CALL = "agent.mcp.tool.call"
 REGISTERED_READ = "agent.mcp.tool.read"
 REGISTERED_RESOURCE_READ = "agent.mcp.resource.read"
 REGISTERED_RESOURCE_LIST = "agent.mcp.resource.list"
+#: The registered operations a virtual one runs through. They are the engine's, not operations of
+#: their own: the model's index, `find_operations` and `run_operation` never offer or accept them.
+CARRIERS = frozenset({REGISTERED_CALL, REGISTERED_READ, REGISTERED_RESOURCE_READ, REGISTERED_RESOURCE_LIST})
 MAX_INPUT_CHARS = 200_000
 #: One line per tool in the system prompt, up to this many per connection; the rest are found by query.
 PROMPT_TOOLS_PER_CONNECTION = 40
@@ -98,6 +106,49 @@ def split_id(op_id: str) -> tuple[str, str] | None:
     return (alias, tool) if alias and tool else None
 
 
+def _first_line(*texts: Any) -> str | None:
+    """The first line with something on it, of the first text that has one. Descriptions and
+    titles are the server's: blank, whitespace-only or many-line text is theirs to send."""
+    for text in texts:
+        if isinstance(text, str):
+            for line in text.splitlines():
+                if line.strip():
+                    return line.strip()
+    return None
+
+
+def _dialect(schema: dict):
+    """The validator of the JSON Schema dialect a tool's input schema declares (`$schema`), Draft
+    2020-12 when it declares none (the MCP default); None for a dialect that cannot be checked."""
+    if "$schema" not in schema:
+        return Draft202012Validator
+    if not isinstance(schema["$schema"], str):
+        return None
+    return js_validators.validator_for(schema, default=None)
+
+
+def result_connection(store, user_id: str, alias: str | None, result: Any) -> dict | None:
+    """The connection a stored result came through: the one its call record names, or the one a
+    resource list names (it makes no request); for a result that names neither, the one the alias
+    is bound to now. A result naming a call record that is not there came through no connection
+    known now (None), never through whatever the alias names today. Deleted ones included:
+    whoever asks decides what a deleted one means."""
+    cid = None
+    if isinstance(result, dict):
+        call_id = result.get("call_id")
+        if isinstance(call_id, str):
+            row = store.one("SELECT connection_id FROM mcp_calls WHERE id=? AND user_id=?", (call_id, user_id))
+            if row is None:
+                return None
+            cid = row["connection_id"]
+        elif isinstance(result.get("connection_id"), str):
+            cid = result["connection_id"]
+    if cid is None and alias:
+        row = store.one("SELECT connection_id FROM mcp_agent_bindings WHERE user_id=? AND alias=?", (user_id, alias))
+        cid = row["connection_id"] if row else None
+    return store.one("SELECT * FROM mcp_connections WHERE id=?", (cid,)) if cid else None
+
+
 class McpTools:
     """What this person's Agent may use through MCP, for one tool context (one turn)."""
 
@@ -122,7 +173,7 @@ class McpTools:
     def index(self) -> list[dict]:
         out = []
         for e in self.entries():
-            first = (e["description"] or e["title"] or e["tool"]).strip().splitlines()[0][:160] if (e["description"] or e["title"]) else e["tool"]
+            first = (_first_line(e["description"], e["title"]) or e["tool"])[:160]
             out.append({"id": f"{MCP_PREFIX}{e['alias']}/{e['tool']}", "summary": f"[{e['connection_name']}] {first}",
                         "changes_data": not e["read_only"], "external": True, "connection": e["alias"],
                         "mode": e["mode"]})
@@ -177,11 +228,12 @@ class McpTools:
         if e is None:
             return None
         auto = e["mode"] == "auto" and e["read_only"]
-        title = e["title"] or e["tool"]
+        title = _first_line(e["title"]) or e["tool"]
+        description = e["description"] if isinstance(e["description"], str) and e["description"].strip() else title
         return McpVirtualOp(id=op_id, alias=alias, tool=tool, connection_name=e["connection_name"],
                             title={"en": f"{title} ({e['connection_name']})", "zh-Hans": f"{title}（{e['connection_name']}）",
                                    "zh-Hant": f"{title}（{e['connection_name']}）"},
-                            summary=(e["description"] or title)[:4000], side_effect="none" if auto else "external",
+                            summary=description[:4000], side_effect="none" if auto else "external",
                             agent="auto" if auto else "confirm", registered=REGISTERED_READ if auto else REGISTERED_CALL,
                             schema=e["input_schema"] if isinstance(e["input_schema"], dict) else {"type": "object"},
                             read_only=e["read_only"])
@@ -210,13 +262,27 @@ class McpTools:
         if len(canonical(raw)) > MAX_INPUT_CHARS:
             return {"code": "invalid_tool_input", "message": "Tool input is too large."}
         if op.kind == "tool":
+            # The server's schema is untrusted: whatever it does to the validator is the tool's
+            # failure, told to the model, never the turn's. References resolve inside the schema
+            # (and the dialects' own meta-schemas) only: an empty registry, so a `$ref` can never
+            # make Synwevo fetch an address.
             try:
-                Draft202012Validator.check_schema(op.schema)
-                errors = sorted(Draft202012Validator(op.schema).iter_errors(raw), key=lambda e: list(e.path))
+                validator = _dialect(op.schema)
+                if validator is None:
+                    return {"code": "mcp_schema_invalid", "message": "The server's input schema declares a JSON Schema "
+                                                                     "dialect ($schema) that cannot be checked; the tool is unavailable."}
+                validator.check_schema(op.schema)
+                errors = sorted(validator(op.schema, registry=Registry()).iter_errors(raw),
+                                key=lambda e: [str(p) for p in e.path])
             except js_exceptions.SchemaError:
                 return {"code": "mcp_schema_invalid", "message": "The server published an input schema that cannot be checked; the tool is unavailable."}
+            except Unresolvable:
+                return {"code": "mcp_schema_invalid", "message": "The server's input schema refers ($ref) to a definition "
+                                                                 "it does not contain; the tool is unavailable."}
             except RecursionError:
                 return {"code": "mcp_schema_invalid", "message": "The server's input schema is too deep to check."}
+            except Exception:  # noqa: BLE001 — see above: an unusable schema makes the tool unavailable
+                return {"code": "mcp_schema_invalid", "message": "The server published an input schema that cannot be checked; the tool is unavailable."}
             if errors:
                 return {"code": "invalid_input", "message": "The input does not match the tool's input schema.",
                         "detail": [{"loc": [str(p) for p in e.path], "message": e.message[:300]} for e in errors[:20]]}
@@ -232,21 +298,37 @@ class McpTools:
             clean = {"connection": op.alias}
         return op, None, clean
 
-    def outbound_refusal(self, sources: set[str]) -> dict | None:
-        """Content the conversation read from these workspaces would reach an external server:
-        every one of them must allow content to leave the platform (data-flow outbound `any`, and
-        the organization's cap when it is in one)."""
+    def _outbound_blocker(self, sources: set[str]) -> str | None:
+        """The name of the first of these workspaces that does not let content leave the platform
+        (data-flow outbound `any`, and the organization's cap when it is in one), read now."""
         for wid in sorted(sources):
             policy = data_flow.workspace_outbound(self.store, wid)
             row = self.store.one("SELECT organization_id, name FROM workspaces WHERE id=?", (wid,))
             cap = data_flow.organization_outbound(self.store, row["organization_id"] if row else None)
             if policy["outbound"] != "any" or cap["outbound"] != "any":
-                name = row["name"] if row else wid
-                return {"code": "mcp_transfer_refused",
-                        "message": f"This conversation has read content of workspace “{name}”, whose data-flow policy does not "
-                                   "allow content to leave Synwevo, so nothing may be sent to an external MCP server here. "
-                                   "Tell the person; a new conversation without that workspace's content can use the tool."}
+                return row["name"] if row else wid
         return None
+
+    def outbound_refusal(self, sources: set[str]) -> dict | None:
+        """Content the conversation read from these workspaces would reach an external server:
+        every one of them must allow content to leave the platform. The refusal, for the model."""
+        name = self._outbound_blocker(sources)
+        if name is None:
+            return None
+        return {"code": "mcp_transfer_refused",
+                "message": f"This conversation has read content of workspace “{name}”, whose data-flow policy does not "
+                           "allow content to leave Synwevo, so nothing may be sent to an external MCP server here. "
+                           "Tell the person; a new conversation without that workspace's content can use the tool."}
+
+    def require_outbound(self, sources: set[str]) -> None:
+        """`outbound_refusal` as the carriers raise it, at the moment the request would leave."""
+        name = self._outbound_blocker(sources)
+        if name is not None:
+            raise ServiceError(409, "mcp_transfer_refused",
+                               f"这次对话读取过工作空间“{name}”的内容，它的数据流策略不允许内容离开 Synwevo，因此不能发送给外部 MCP 服务")
+
+    def connection_of(self, op: McpVirtualOp, result: Any) -> dict | None:
+        return result_connection(self.store, self.user["id"], op.alias, result)
 
     def for_model(self, op: McpVirtualOp, result: Any, *, max_chars: int) -> dict:
         body = {"source": {"external": True, "connection": op.alias, "tool": op.tool}, "note": EXTERNAL_NOTE}

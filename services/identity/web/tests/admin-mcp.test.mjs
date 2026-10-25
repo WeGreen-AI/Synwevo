@@ -2,7 +2,8 @@
  *  `platform.config.view` (governance/access.ts, admin/navigation.ts); the policy editor shows every
  *  field of the current version and lets only `platform.config.manage` preview and publish; the
  *  overview shows each connection masked (name, host, owner, state, counts — never a credential, an
- *  argument or a result) and offers disabling only to that permission; the inbound card names the
+ *  argument or a result) with its platform stop, and offers the stop and its lifting only to that
+ *  permission, through the server's own routes with a written reason; the inbound card names the
  *  workplace endpoint as a path and derives only this origin's own metadata address; the history
  *  lists each version with its reason and actor (governance/McpTab.tsx).
  *
@@ -96,14 +97,19 @@ const HISTORY = [
   { revision: 1, spec: null, actor_id: "u_fx_other", reason: "Fixture reason for revision one", operation_id: null, created_at: T - 2 * 86400 },
 ];
 const OK = { id: "mcpc_fx_ok", name: "Fixture Weather", owner_kind: "workspace", owner_name: "Fixture Workspace", host: "weather.fixture.invalid",
-  auth_kind: "oauth", status: "active", health: "ok", last_ok_at: T, last_error_code: null, failure_streak: 0, circuit_open_until: null,
+  auth_kind: "oauth", status: "active", platform_disabled: false, platform_disabled_at: null,
+  health: "ok", last_ok_at: T, last_error_code: null, failure_streak: 0, circuit_open_until: null,
   protocol_version: "2026-07-28", tools: 6, granted: 4, agents: 3, calls_7d: 42, failed_7d: 1, last_call_at: T };
 const FAILED = { ...OK, id: "mcpc_fx_failed", name: "Fixture Tickets", owner_kind: "user", owner_name: null, host: "tickets.fixture.invalid",
   auth_kind: "bearer", health: "failed", last_ok_at: null, last_error_code: "mcp_timeout", failure_streak: 5, circuit_open_until: T + 120,
   tools: 2, granted: 0, agents: 1, calls_7d: 7, failed_7d: 7, last_call_at: T - 60 };
+// switched off by its owner: the owner's own choice, which the platform may still turn into a stop
 const OFF = { ...OK, id: "mcpc_fx_off", name: "Fixture Archive", host: "archive.fixture.invalid", status: "disabled", health: "auth_required",
   auth_kind: "none", protocol_version: null, agents: 0, calls_7d: 0, failed_7d: 0, last_call_at: null };
-const TOTALS = { connections: 3, failed: 1, auth_required: 1, calls_24h: 19, failed_calls_24h: 2, inbound_requests_24h: 11 };
+// stopped by the platform (admin_mcp.disable): disabled, credential forgotten, until the platform lifts it
+const STOPPED = { ...OK, id: "mcpc_fx_stopped", name: "Fixture Ledger", host: "ledger.fixture.invalid", auth_kind: "bearer", status: "disabled",
+  platform_disabled: true, platform_disabled_at: T - 3600, health: "auth_required", agents: 2, calls_7d: 3, failed_7d: 0, last_call_at: T - 7200 };
+const TOTALS = { connections: 4, failed: 1, auth_required: 2, calls_24h: 19, failed_calls_24h: 2, inbound_requests_24h: 11 };
 const CALLS = [
   { id: "mcpcall_fx_1", origin: "agent", kind: "tools/call", name: "get_forecast", status: "succeeded", error_code: null, started_at: T, finished_at: T + 1, duration_ms: 812, request_id: "req_fx_1" },
   { id: "mcpcall_fx_2", origin: "test", kind: "discover", name: null, status: "timeout", error_code: "mcp_timeout", started_at: T - 60, finished_at: T - 30, duration_ms: 30000, request_id: null },
@@ -112,7 +118,7 @@ function fixtures(over = {}) {
   globalThis.__fixtures = {
     "/api/admin/mcp/policy": { data: { state: STATE, default: DEFAULT, schema: SCHEMA } },
     "/api/admin/mcp/policy/history": { data: { items: HISTORY } },
-    "/api/admin/mcp/overview": { data: { items: [FAILED, OK, OFF], totals: TOTALS, policy: STATE } },
+    "/api/admin/mcp/overview": { data: { items: [FAILED, OK, OFF, STOPPED], totals: TOTALS, policy: STATE } },
     [`/api/admin/mcp/connections/${OK.id}/calls`]: { data: { items: CALLS } },
     [`/api/admin/mcp/connections/${OFF.id}/calls`]: { data: { items: [] } },
     ...over,
@@ -123,7 +129,7 @@ const VIEW = new Set(["platform.config.view"]);
 const MANAGE = new Set(["platform.config.view", "platform.config.manage"]);
 const LOCALES = ["zh-Hans", "zh-Hant", "en"];
 const HAN = /[㐀-鿿]/;
-const FIXTURE_TEXT = /Fixture (?:Weather|Tickets|Archive|Workspace|reason for revision (?:one|three))|mcpc_fx_\w+|mcpcall_fx_\d|u_fx_\w+|ao_fx_\d|req_fx_\d|get_forecast|mcp_timeout|[a-z.]+\.fixture\.invalid|10\.20\.0\.0\/16|2026-07-28/g;
+const FIXTURE_TEXT = /Fixture (?:Weather|Tickets|Archive|Ledger|Workspace|reason for revision (?:one|three))|mcpc_fx_\w+|mcpcall_fx_\d|u_fx_\w+|ao_fx_\d|req_fx_\d|get_forecast|mcp_timeout|[a-z.]+\.fixture\.invalid|10\.20\.0\.0\/16|2026-07-28/g;
 
 function inLocale(locale, run) { ui.setLocale(locale); try { return run(); } finally { ui.setLocale("zh-Hans"); } }
 const render = (locale, element) => inLocale(locale, () => renderToStaticMarkup(element).replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
@@ -253,15 +259,15 @@ test("the draft is parsed the way the server validates it, and refused in words 
   }
 });
 
-test("the overview shows every connection masked — name, host, owner, authentication, state, counts — and offers disabling only to platform.config.manage, for an enabled connection", () => {
+test("the overview shows every connection masked — name, host, owner, authentication, state, platform stop, counts — and offers the stop and its lifting only to platform.config.manage", () => {
   for (const locale of LOCALES) {
     const html = mcpTab(locale, VIEW);
     const overview = section(html, "mcp-overview-heading");
     const stats = text(overview);
-    for (const [name, value] of [["连接", 3], ["连接失败", 1], ["需要授权", 1], ["24 小时调用", 19], ["其中失败", 2], ["24 小时入站请求", 11]]) {
+    for (const [name, value] of [["连接", 4], ["连接失败", 1], ["需要授权", 2], ["24 小时调用", 19], ["其中失败", 2], ["24 小时入站请求", 11]]) {
       assert.ok(stats.includes(`${tx(locale, name)} ${inLocale(locale, () => ui.formatNumber(value))}`), `${locale}: the ${name} tile\n${stats}`);
     }
-    const ok = row(overview, OK.id), failed = row(overview, FAILED.id), off = row(overview, OFF.id);
+    const ok = row(overview, OK.id), failed = row(overview, FAILED.id), off = row(overview, OFF.id), stopped = row(overview, STOPPED.id);
     for (const s of ["Fixture Weather", "weather.fixture.invalid", tx(locale, "工作空间：{name}", { name: "Fixture Workspace" }), tx(locale, "OAuth 授权"),
       tx(locale, "协议 {version}", { version: "2026-07-28" }), tx(locale, "启用中"), tx(locale, "连接正常"), tx(locale, "已授权 {granted} / {total}", { granted: 4, total: 6 }),
       tx(locale, "其中失败 {count}", { count: 1 }), tx(locale, "最近成功 {time}", { time: inLocale(locale, () => ui.fmtTime(T)) })]) {
@@ -273,24 +279,93 @@ test("the overview shows every connection masked — name, host, owner, authenti
       assert.ok(text(failed).includes(s), `${locale}: ${s}\n${text(failed)}`);
     }
     for (const s of ["Fixture Archive", tx(locale, "已被停用"), tx(locale, "需要授权"), tx(locale, "无认证")]) assert.ok(text(off).includes(s), `${locale}: ${s}\n${text(off)}`);
+    // the platform stop is named apart from the owner's own off switch, with the time it began
+    for (const s of ["Fixture Ledger", tx(locale, "已被平台停用"), tx(locale, "平台停用于 {time}", { time: inLocale(locale, () => ui.fmtTime(T - 3600)) }),
+      tx(locale, "固定令牌"), tx(locale, "需要授权")]) assert.ok(text(stopped).includes(s), `${locale}: ${s}\n${text(stopped)}`);
+    assert.match(stopped, new RegExp(`<span class="badge err">${esc(tx(locale, "已被平台停用"))}</span>`), locale);
+    assert.ok(!text(stopped).includes(tx(locale, "已被停用")), `${locale}: a stopped connection is not shown as merely switched off`);
+    for (const c of [ok, failed, off]) assert.ok(!text(c).includes(tx(locale, "已被平台停用")) && !text(c).includes(tx(locale, "平台停用于 {time}", { time: "" }).trim()), `${locale}: no stop where there is none`);
     assert.ok(!text(off).includes(tx(locale, "协议 {version}", { version: "" }).trim()), `${locale}: no protocol version where the server sent none`);
     // the server's order is kept (failing connections first); every row opens its recent calls
-    assert.ok(overview.indexOf(FAILED.id) < overview.indexOf(OK.id) && overview.indexOf(OK.id) < overview.indexOf(OFF.id), locale);
-    for (const c of [OK, FAILED, OFF]) assert.ok(row(overview, c.id).includes(`aria-label="${tx(locale, "最近调用记录：{name}", { name: c.name })}"`), `${locale}: recent calls for ${c.id}`);
-    // a reader: no disabling, and the hint saying so; the search and the health filter
-    assert.ok(!overview.includes(`>${tx(locale, "停用连接")}</button>`), `${locale}: disabling offered without the permission`);
-    assert.ok(overview.includes(tx(locale, "你的平台角色可以查看 MCP 策略与连接，不能发布策略或停用连接。")), `${locale}: the hint`);
+    assert.ok(overview.indexOf(FAILED.id) < overview.indexOf(OK.id) && overview.indexOf(OK.id) < overview.indexOf(OFF.id)
+      && overview.indexOf(OFF.id) < overview.indexOf(STOPPED.id), locale);
+    for (const c of [OK, FAILED, OFF, STOPPED]) assert.ok(row(overview, c.id).includes(`aria-label="${tx(locale, "最近调用记录：{name}", { name: c.name })}"`), `${locale}: recent calls for ${c.id}`);
+    // a reader: neither the stop nor its lifting, and the hint saying so; the search and the health filter
+    assert.ok(!overview.includes(`>${tx(locale, "平台停用")}</button>`), `${locale}: the stop offered without the permission`);
+    assert.ok(!overview.includes(`>${tx(locale, "解除平台停用")}</button>`), `${locale}: the lift offered without the permission`);
+    assert.ok(overview.includes(tx(locale, "你的平台角色可以查看 MCP 策略与连接，不能发布策略，也不能平台停用连接或解除停用。")), `${locale}: the hint`);
     assert.match(overview, /<input type="search"/, locale);
     for (const key of Object.keys(tab.HEALTH_LABELS)) assert.ok(overview.includes(`<option value="${key}">${tx(locale, tab.HEALTH_LABELS[key])}</option>`), `${locale}: health option ${key}`);
-    // a publisher: disabling as danger, named for the connection, only where it is enabled
+    // a publisher: the stop as danger, named for the connection, wherever the platform has not stopped it
     const manage = section(mcpTab(locale, MANAGE), "mcp-overview-heading");
-    assert.match(row(manage, OK.id), new RegExp(`<button type="button" class="btn sm danger"[^>]*aria-label="${esc(tx(locale, "停用连接：{name}", { name: OK.name }))}"[^>]*>${esc(tx(locale, "停用连接"))}</button>`), `${locale}: ${row(manage, OK.id)}`);
-    assert.ok(row(manage, FAILED.id).includes(`>${tx(locale, "停用连接")}</button>`), `${locale}: a failing connection can still be disabled`);
-    assert.ok(!row(manage, OFF.id).includes(`>${tx(locale, "停用连接")}</button>`), `${locale}: a disabled connection is not disabled again`);
-    assert.ok(!manage.includes(tx(locale, "你的平台角色可以查看 MCP 策略与连接，不能发布策略或停用连接。")), `${locale}: no hint for a role that may act`);
+    const stop = (c) => new RegExp(`<button type="button" class="btn sm danger"[^>]*aria-label="${esc(tx(locale, "平台停用：{name}", { name: c.name }))}"[^>]*>${esc(tx(locale, "平台停用"))}</button>`);
+    const lift = (c) => new RegExp(`<button type="button" class="btn sm"[^>]*aria-label="${esc(tx(locale, "解除平台停用：{name}", { name: c.name }))}"[^>]*>${esc(tx(locale, "解除平台停用"))}</button>`);
+    assert.match(row(manage, OK.id), stop(OK), `${locale}: ${row(manage, OK.id)}`);
+    assert.match(row(manage, FAILED.id), stop(FAILED), `${locale}: a failing connection can still be stopped`);
+    // An owner's own off switch is theirs to turn back on: only a stop holds against them, so the
+    // platform can stop a connection its owner has switched off. (Before the stop was recorded apart
+    // from the owner's status, the page offered nothing here, and the platform could not keep such a
+    // connection off.)
+    assert.match(row(manage, OFF.id), stop(OFF), `${locale}: a connection its owner switched off can be stopped`);
+    // a stopped connection is not stopped again; the lift is offered instead, and only there
+    assert.doesNotMatch(row(manage, STOPPED.id), stop(STOPPED), `${locale}: a stopped connection is not stopped again`);
+    assert.match(row(manage, STOPPED.id), lift(STOPPED), `${locale}: ${row(manage, STOPPED.id)}`);
+    for (const c of [OK, FAILED, OFF]) assert.ok(!row(manage, c.id).includes(`>${tx(locale, "解除平台停用")}</button>`), `${locale}: no lift for ${c.id}`);
+    assert.ok(!manage.includes(tx(locale, "你的平台角色可以查看 MCP 策略与连接，不能发布策略，也不能平台停用连接或解除停用。")), `${locale}: no hint for a role that may act`);
     // nothing to list
     const empty = section(mcpTab(locale, VIEW, { "/api/admin/mcp/overview": { data: { items: [], totals: { ...TOTALS, connections: 0 }, policy: STATE } } }), "mcp-overview-heading");
     assert.ok(empty.includes(tx(locale, "还没有任何 MCP 连接。")), locale);
+  }
+});
+
+test("the stop and its lifting go to the server's own routes with the written reason, and its refusals reach the dialog", async () => {
+  // the two routes are the server's (admin_mcp.build_router), dangerous and of platform.config.manage
+  const py = readFileSync(join(ROOT, "services/identity/synwevo_identity/admin_mcp.py"), "utf8");
+  assert.match(py, /APIRouter\(prefix="\/api\/admin\/mcp"/);
+  for (const [route, action] of [["disable", "admin.mcp.connection.disable"], ["lift", "admin.mcp.connection.lift"]]) {
+    assert.ok(py.includes(`@router.post("/connections/{cid}/${route}")`), `the account service serves …/${route}`);
+    assert.ok(py.includes(`OPERATIONS.setdefault("${action}", Operation("platform.config.manage", "high"))`), action);
+    const body = py.slice(py.indexOf(`@router.post("/connections/{cid}/${route}")`)).split("@router.")[1];
+    assert.match(body, new RegExp(`require_platform\\(request, OPERATIONS\\["${esc(action)}"\\]\\.permission, store=store, audit=audit,\\s*dangerous=True\\)`), `${route} is dangerous`);
+    assert.match(body, /reason = _reason\(body\)/, `${route} takes the written reason`);
+  }
+  // the page's dialogs send exactly that: the reason, through the helpers, and only with it required
+  const src = readFileSync(new URL("../src/governance/McpTab.tsx", import.meta.url), "utf8");
+  const dialog = (state) => { const i = src.indexOf(`{${state} && <ActionDialog`); assert.ok(i >= 0, state); return src.slice(i, src.indexOf("/>}", i)); };
+  assert.match(dialog("disabling"), /reason="required" danger[\s\S]*run=\{\(reason\) => stopConnection\(disabling\.id, reason\)\}/);
+  assert.match(dialog("lifting"), /reason="required"[\s\S]*run=\{\(reason\) => liftConnection\(lifting\.id, reason\)\}/);
+  // FIXTURE transport: the real request helper of @synwevo/auth-client against a recorded fetch; no server
+  const originalFetch = globalThis.fetch, originalDocument = globalThis.document;
+  const sent = [];
+  let answer = () => Response.json({ id: STOPPED.id, status: "disabled", platform_disabled: false });
+  globalThis.document = { cookie: "dw_csrf=fixture-csrf-token" };
+  globalThis.fetch = async (url, options) => { sent.push({ url, method: options.method, body: JSON.parse(options.body), headers: new Headers(options.headers) }); return answer(); };
+  const REASON = "Fixture: the abuse report was resolved";
+  try {
+    assert.deepEqual(await tab.liftConnection(STOPPED.id, REASON), { id: STOPPED.id, status: "disabled", platform_disabled: false });
+    answer = () => Response.json({ id: OFF.id, status: "disabled", platform_disabled: true });
+    assert.deepEqual(await tab.stopConnection(OFF.id, REASON), { id: OFF.id, status: "disabled", platform_disabled: true });
+    await tab.liftConnection("mcpc_fx/../policy", REASON);
+    assert.deepEqual(sent.map((r) => [r.method, r.url, r.body]), [
+      ["POST", `/api/admin/mcp/connections/${STOPPED.id}/lift`, { reason: REASON }],
+      ["POST", `/api/admin/mcp/connections/${OFF.id}/disable`, { reason: REASON }],
+      ["POST", "/api/admin/mcp/connections/mcpc_fx%2F..%2Fpolicy/lift", { reason: REASON }]]);
+    for (const r of sent) assert.equal(r.headers.get("X-Synwevo-CSRF"), "fixture-csrf-token", "a change echoes the CSRF cookie");
+    // the strict re-authentication arrives as the refusal ActionDialog answers (and then retries)
+    answer = () => Response.json({ error: "reauth_required", message: "这一步需要重新验证身份。", detail: { scope: "admin" } }, { status: 403 });
+    await assert.rejects(tab.liftConnection(STOPPED.id, REASON), (e) => e instanceof client.ApiError && e.status === 403 && e.code === "reauth_required");
+    // lifting a connection someone else has already lifted: the server's sentence, in each language
+    answer = () => Response.json({ error: "mcp_not_platform_disabled", message: "这个连接没有被平台停用" }, { status: 409 });
+    const refused = await tab.liftConnection(STOPPED.id, REASON).catch((e) => e);
+    assert.ok(refused instanceof client.ApiError && refused.code === "mcp_not_platform_disabled", String(refused));
+    for (const locale of LOCALES) {
+      const worded = inLocale(locale, () => labels.errText(refused));
+      assert.ok(worded.startsWith(tx(locale, "这个连接没有被平台停用")), `${locale}: ${worded}`);
+      if (locale === "en") assert.ok(!HAN.test(worded), worded);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument;
   }
 });
 
@@ -353,7 +428,7 @@ test("the history lists each version with its summary, reason and actor, and off
 test("the refusals of the policy, its publication and a connection read as sentences on this page", () => {
   const codes = { mcp_policy_bad_revision: "策略版本无效，请重新读取当前策略", mcp_policy_invalid: "MCP 策略不符合要求，请检查各项取值",
     mcp_policy_revision_conflict: "MCP 策略已变化，请重新预览", mcp_policy_unavailable: "MCP 策略记录暂不可用，请联系管理员检查",
-    mcp_connection_not_found: "连接不存在", missing_reason: "请写明理由（8 至 500 个字）", admin_confirmation_required: "请先预览操作影响，再确认执行",
+    mcp_connection_not_found: "连接不存在", mcp_not_platform_disabled: "这个连接没有被平台停用", missing_reason: "请写明理由（8 至 500 个字）", admin_confirmation_required: "请先预览操作影响，再确认执行",
     idempotency_conflict: "此操作编号已用于不同的请求", admin_preview_invalid: "操作目标已变化，请重新预览", admin_preview_expired: "操作预览已过期，请重新预览" };
   const generic = (locale) => ["操作失败，请重试。", "操作未完成，请刷新后重试。"].map((s) => tx(locale, s));
   for (const [code, sentence] of Object.entries(codes)) {

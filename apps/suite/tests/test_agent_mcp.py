@@ -379,3 +379,33 @@ def test_resources_and_prompts_are_read_on_the_page_and_never_change_the_rules(w
     assert calls["mcp:fixture-notes/resources.read"]["result"]["text"] == "alpha"
     shown = world.agent.provider.requests[2]["messages"][-1]["content"][0]["content"]
     assert '"external": true' in shown and '"text": "alpha"' in shown
+
+
+def test_a_retried_add_or_change_gets_its_receipt_and_never_writes_twice(world):
+    """The page sends one idempotency key per attempt: a retry of an add whose answer was lost gets
+    the connection that was added (so the page goes on to test it, not to add another), and only
+    while the person may still use that connection."""
+    world.sign_in("alice")
+
+    def send(name, payload, key):
+        return world.post(f"/api/suite/ops/{name}", json={"input": payload, "idempotency_key": key}, headers=CSRF)
+    add = {"owner_kind": "user", "name": "Fixture notes", "url": FIXTURE_URL, "description": "fixture"}
+    first, again = send("agent.mcp.connection.create", add, "fixture-add-1"), send("agent.mcp.connection.create", add, "fixture-add-1")
+    assert first.status_code == again.status_code == 200, again.text
+    cid = first.json()["output"]["id"]
+    assert again.json()["replayed"] is True and again.json()["output"] == first.json()["output"]
+    rename = {"connection_id": cid, "name": "Renamed notes"}
+    changed, retried = send("agent.mcp.connection.update", rename, "fixture-rename-1"), send("agent.mcp.connection.update", rename, "fixture-rename-1")
+    assert changed.status_code == retried.status_code == 200, retried.text
+    assert retried.json()["replayed"] is True and retried.json()["output"]["name"] == "Renamed notes"
+    store = world.people.store
+    assert store.one("SELECT COUNT(*) AS n FROM mcp_connections WHERE owner_id=?", (world.people.uid("alice"),))["n"] == 1
+    # deleted: the receipt is not handed back, and nothing is added again
+    op(world, "agent.mcp.connection.delete", {"connection_id": cid})
+    gone = send("agent.mcp.connection.create", add, "fixture-add-1")
+    assert gone.status_code == 409 and gone.json()["error"] == "run_result_unavailable", gone.text
+    assert store.one("SELECT COUNT(*) AS n FROM mcp_connections WHERE owner_id=?", (world.people.uid("alice"),))["n"] == 1
+    # nobody else replays it: a key is the person's own
+    world.sign_in("bob")
+    other = send("agent.mcp.connection.create", add, "fixture-add-1")
+    assert other.status_code == 200 and other.json()["replayed"] is False and other.json()["output"]["owner_id"] == world.people.uid("bob")

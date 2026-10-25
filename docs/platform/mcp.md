@@ -181,6 +181,11 @@ SSE + 两代握手不是本项目的价值所在。代价：多了十个依赖�
 * SDK 的处理函数任务组必须在进程里进入一次：`new_api` 的 lifespan 没有启动钩子，所以首个请求时进入、由 `shutdown_hooks`
   退出（`McpEndpoint._ensure_running` / `close`）。
 * 请求体上限 4 MiB（SDK 答 413）。只登记 POST，其它方法由路由层答 405。
+* 网关（`infra/production/nginx.conf`）：端点在 docs 角色的主机上，走该主机的 `location /`，全局已是
+  `proxy_buffering off` / `proxy_request_buffering off`，所以 SSE 响应逐条到达客户端；读超时 300 s，与机器 API 的 REST
+  请求相同。2026-07-28 没有长连接的 GET 流，不需要像协同编辑那样单开 `location`。前面的 Cloudflare 对一个没有字节的
+  源站响应有自己的等待上限（非企业套餐约 100 s），它同样作用于 REST；耗时的业务操作本来就是异步的——工具立即返回
+  `run_id`，客户端用 `synwevo.run.get` 轮询，单个请求不长时间占着连接。
 
 ### 3.6 账户服务的配套
 

@@ -1220,7 +1220,7 @@
           "mcp"
         ],
         "summary": "The same operations as the Model Context Protocol (Streamable HTTP, JSON-RPC 2.0)",
-        "description": "One JSON-RPC request or notification per POST (protocol revision 2026-07-28; the initialize handshake of revisions 2025-03-26 to 2025-11-25 is served too). Tools are the operations listed in this document that the token's scopes allow, plus synwevo.whoami and synwevo.run.get; resources synwevo://whoami and synwevo://operations. The token must be minted for this endpoint's own URL (RFC 8707 resource); its metadata is at /.well-known/oauth-protected-resource/api/suite/v1/mcp (RFC 9728). See docs/integration/mcp.md.",
+        "description": "One JSON-RPC request or notification per POST (protocol revision 2026-07-28; the initialize handshake of revisions 2025-03-26 to 2025-11-25 is served too). Tools are the operations listed in this document that the token's scopes allow, plus synwevo.whoami and synwevo.run.get; resources synwevo://whoami and synwevo://operations. The token must be minted for this endpoint's own URL (RFC 8707 resource); its metadata is at /.well-known/oauth-protected-resource/api/suite/v1/mcp (RFC 9728). Every other method is answered 405 with Allow: POST: there is no GET stream, and the server keeps no session for a DELETE to end. See docs/integration/mcp.md.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1286,10 +1286,125 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "$ref": "#/components/responses/Unauthorized"
+            "description": "Unauthorized: no bearer token, or one that is not valid for this server (expired, revoked, minted for another resource)",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer resource_metadata=\"{the metadata URL}\", plus error=\"…\" where acting on it can help: invalid_token at 401 when a bearer token was presented (none when no token was), insufficient_scope with scope=\"…\" at 403 only where authorizing this client again can grant those scopes, and no error code on any other 403."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuiteError"
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuiteProblem"
+                }
+              }
+            }
           },
           "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "description": "Forbidden. A tools/call (or synwevo.run.get) whose operation needs a scope the token lacks is refused before it runs, with that request's JSON-RPC error as the body (code -32602; data.code insufficient_scope, data.required_scope) and, where a new authorization can grant the scope, the insufficient_scope challenge naming it. A token with no business scope left gets that challenge for the scopes its client can still be granted. Other refusals (the server closed by policy, the workspace or the registration no longer allowing it) carry the error envelope and no challenge error code.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer resource_metadata=\"{the metadata URL}\", plus error=\"…\" where acting on it can help: invalid_token at 401 when a bearer token was presented (none when no token was), insufficient_scope with scope=\"…\" at 403 only where authorizing this client again can grant those scopes, and no error code on any other 403."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SuiteError"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "jsonrpc",
+                        "id",
+                        "error"
+                      ],
+                      "properties": {
+                        "jsonrpc": {
+                          "const": "2.0"
+                        },
+                        "id": {
+                          "type": [
+                            "string",
+                            "integer"
+                          ]
+                        },
+                        "error": {
+                          "type": "object",
+                          "required": [
+                            "code",
+                            "message",
+                            "data"
+                          ],
+                          "properties": {
+                            "code": {
+                              "const": -32602
+                            },
+                            "message": {
+                              "type": "string"
+                            },
+                            "data": {
+                              "type": "object",
+                              "required": [
+                                "code",
+                                "required_scope"
+                              ],
+                              "properties": {
+                                "code": {
+                                  "const": "insufficient_scope"
+                                },
+                                "required_scope": {
+                                  "type": "string",
+                                  "description": "The scopes the call needs that the token lacks."
+                                },
+                                "scopes": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "description": "The scopes the token holds."
+                                },
+                                "reason": {
+                                  "const": "scope_not_registered",
+                                  "description": "Present when authorizing again cannot grant them: not challenged."
+                                },
+                                "request_id": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuiteProblem"
+                }
+              }
+            }
           },
           "404": {
             "$ref": "#/components/responses/NotFound"

@@ -1,8 +1,10 @@
 /** /agent/integrations/new — three steps: who owns the connection and where it is, how it
  *  authenticates, then create it (one idempotency key per attempt), test it and show what the
- *  server really offered. Secrets live in this form's state only until the create succeeds. */
+ *  server really offered. Secrets live in this form's state only until the create succeeds.
+ *  A create the server executed without returning its result leads to the re-read list, never
+ *  to a second create. */
 import { useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useSession } from '@synwevo/auth-client';
 import { Loading } from '../../../shared/states';
 import { integrationCopy, type IntegrationText } from './integrations.messages';
@@ -45,6 +47,7 @@ export function DiscoverySummary({ detail }: { detail: ConnectionDetail | Connec
 /** The form itself; `workspaces` are the ones the person administers (from the session). */
 export function NewConnectionForm({ workspaces }: { workspaces: SessionWorkspace[] }) {
   const { m } = useText();
+  const navigate = useNavigate();
   const create = useWrite();
   const test = useWrite();
   const oauth = useWrite();
@@ -76,11 +79,13 @@ export function NewConnectionForm({ workspaces }: { workspaces: SessionWorkspace
     setStep((s) => Math.min(3, s + 1));
   }
   function runTest(connection: ConnectionSummary) {
-    test.start<ConnectionDetail>('agent.mcp.connection.test', { connection_id: connection.id }, setTested);
+    // Executed without a readable result: the detail page reads the connection's state afresh.
+    test.start<ConnectionDetail>('agent.mcp.connection.test', { connection_id: connection.id }, setTested,
+      () => navigate(`/agent/integrations/${connection.id}`));
   }
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (locked || created) return;
+    if (locked || created || create.executed) return;
     setIssue(null);
     const input: Record<string, unknown> = {
       owner_kind: ownerKind, ...(ownerKind === 'workspace' ? { workspace_id: workspaceId } : {}),
@@ -93,6 +98,11 @@ export function NewConnectionForm({ workspaces }: { workspaces: SessionWorkspace
       setToken(''); setClientSecret('');
       setCreated(summary);
       if (summary.auth_kind !== 'oauth') runTest(summary);
+    }, () => {
+      // The server executed this create but cannot return the connection: a second create
+      // (a new key) would add it twice, so the person checks the re-read list instead.
+      setToken(''); setClientSecret('');
+      navigate('/agent/integrations', { replace: true, state: { unverified: { kind: 'create', name: input.name } } });
     });
   }
   function authenticate(connection: ConnectionSummary) {
@@ -101,7 +111,7 @@ export function NewConnectionForm({ workspaces }: { workspaces: SessionWorkspace
       const target = safeAuthorizationUrl(out.authorization_url);
       if (!target) return setBadAuthUrl(true);
       window.location.assign(target);
-    });
+    }, () => navigate(`/agent/integrations/${connection.id}`));
   }
 
   if (created) {
@@ -191,7 +201,7 @@ export function NewConnectionForm({ workspaces }: { workspaces: SessionWorkspace
         <span className="spacer" />
         <Link className="btn ghost" to="/agent/integrations">{m('cancel')}</Link>
         {step < 3 ? <button type="submit" className="btn primary" disabled={locked}>{m('next')}</button>
-          : <button type="submit" className="btn primary" disabled={locked}>{create.busy ? m('creating') : m('create')}</button>}
+          : <button type="submit" className="btn primary" disabled={locked || create.executed}>{create.busy ? m('creating') : m('create')}</button>}
       </div>
     </div></section>
   </form>;

@@ -35,7 +35,7 @@ from .history import open_cursor, seal_cursor
 from .context import Contexts, visible_contexts
 from .files import Files
 from .tools import TOOLS, ToolContext, policy_allows, resource_reads, snapshot_read, tool_result_text, validate_tool
-from .mcp.tools import AGENT_CALL, CANCEL_CHECK, McpTools, is_mcp, split_id
+from .mcp.tools import AGENT_CALL, CANCEL_CHECK, McpTools, is_mcp, result_connection, split_id
 
 log = logging.getLogger("synwevo.agent")
 
@@ -358,6 +358,14 @@ class Agent:
                     # from its legal readers. A later write still asks the source (and is refused).
                     continue
                 try:
+                    if "mcp_connection" in source:
+                        # A result that came through this workspace's MCP connection: readable while
+                        # the person may still use that connection (a member, the workspace active).
+                        conn = self.store.one("SELECT * FROM mcp_connections WHERE id=? AND deleted_at IS NULL",
+                                              (source["mcp_connection"],))
+                        if self.connections is None or not conn or not self.connections.may_use(user_id, conn):
+                            lost.add(wid)
+                        continue
                     if "reported_by" in source:
                         # No object there to re-read: the answer stays visible while the person
                         # still belongs to the workspace it reflects.
@@ -1047,6 +1055,19 @@ class Agent:
                     workspaces.add(wid)
         return workspaces
 
+    def mcp_sources(self, t: dict) -> set[str]:
+        """Workspaces whose content reached the model in this turn's branch, and so would go along
+        with a request to an external MCP server (the data-flow question of docs/platform/mcp.md §4.5)."""
+        asst = self.store.one("SELECT sources_json FROM agent_messages WHERE id=?", (t["assistant_message_id"],))
+        return self._content_workspaces(asst) & self._transmitted_workspaces(t, carried=True) if asst else set()
+
+    def _mcp_dependency(self, message_id: str, conn: dict | None) -> None:
+        """A result through a workspace's connection depends on that connection staying usable to
+        the person (`_lost_workspaces`): leaving the workspace hides it and seals the conversation,
+        as leaving a workspace whose records were read does. A personal connection is the person's."""
+        if conn and conn["owner_kind"] == "workspace":
+            self._add_source(message_id, {"workspace_id": conn["owner_id"], "mcp_connection": conn["id"]})
+
     def _read_only_turn(self, t: dict) -> bool:
         # A regeneration is the second answer to the same user message. Persisted topology,
         # rather than a process-local flag, survives restart and does not need a new column.
@@ -1127,10 +1148,9 @@ class Agent:
         base_row = base_row[:8] + (wid,) + (canonical(clean),)
         if is_mcp(op):
             # Content the conversation read from a workspace would leave the platform with this call:
-            # every such workspace's data-flow policy must allow that, whatever the tool does.
-            asst = self.store.one("SELECT sources_json FROM agent_messages WHERE id=?", (t["assistant_message_id"],))
-            sources = self._content_workspaces(asst) & self._transmitted_workspaces(t, carried=True)
-            refusal = ctx.mcp.outbound_refusal(sources)
+            # every such workspace's data-flow policy must allow that, whatever the tool does. Asked
+            # again on a confirmation (_decide) and by the carrier as the request leaves.
+            refusal = ctx.mcp.outbound_refusal(self.mcp_sources(t))
             if refusal:
                 record("failed", error=refusal, for_model={"error": refusal}, input_hash=binding)
                 return False
@@ -1178,7 +1198,9 @@ class Agent:
                 def stopped(turn_id=t["id"]):
                     row = self.store.one("SELECT cancel_requested FROM agent_turns WHERE id=?", (turn_id,))
                     return self._closed or not row or bool(row["cancel_requested"])
-                marks = (AGENT_CALL.set({"conversation_id": t["conversation_id"], "turn_id": t["id"], "tool_call_id": call_id}),
+                # The carrier runs only for this: the engine's tool call of a prepared mcp: operation.
+                marks = (AGENT_CALL.set({"conversation_id": t["conversation_id"], "turn_id": t["id"], "tool_call_id": call_id,
+                                         "carrier": op.registered}),
                          CANCEL_CHECK.set(stopped))
             try:
                 out = self.caps.invoke(op.registered if is_mcp(op) else op.id, clean, user_id=t["user_id"], workspace_id=wid,
@@ -1215,6 +1237,8 @@ class Agent:
             if path:
                 envelope["open_path"] = path
         if is_mcp(op):
+            # Recorded before the result is, so no stored result lacks it.
+            self._mcp_dependency(t["assistant_message_id"], ctx.mcp.connection_of(op, result))
             for_model = ctx.mcp.for_model(op, result, max_chars=self.connections.policy.current().max_result_chars)
         else:
             for_model = ctx.for_model(op, result_wid, envelope, also=sorted(reported))
@@ -1398,20 +1422,26 @@ class Agent:
                 op, wid, clean = prepared
                 if self._read_only_turn(t):
                     raise ServiceError(409, "confirmation_mismatch", "操作内容、目标版本或范围已变化，请重新发起请求")
-                try:
-                    transfer = self._transfer(t, op, wid, clean)
-                except ServiceError as err:
-                    if err.code not in data_flow.REFUSALS:
-                        raise
-                    refused = {"code": err.code, "message": err.message}
-                else:
-                    binding = self._binding(t, call_id, op, wid, clean, transfer)
-                    if binding != c["input_hash"]:
-                        # What the card rests on changed since it was shown (a source read later in
-                        # the same step, a policy revision, the target's members): the old
-                        # confirmation is void. decide() shows the new basis as a new card instead
-                        # of one that can never pass; nothing runs until the person confirms that.
-                        raise _Reissue(t, call_id, c["input_hash"], binding, transfer)
+                if is_mcp(op):
+                    # The data-flow policy as it is now: a source workspace may have stopped letting
+                    # content leave the platform while the card waited (or been read since it was
+                    # shown). Refused like a transfer, never reissued: no confirmation can pass it.
+                    refused = ctx.mcp.outbound_refusal(self.mcp_sources(t))
+                if refused is None:
+                    try:
+                        transfer = self._transfer(t, op, wid, clean)
+                    except ServiceError as err:
+                        if err.code not in data_flow.REFUSALS:
+                            raise
+                        refused = {"code": err.code, "message": err.message}
+                    else:
+                        binding = self._binding(t, call_id, op, wid, clean, transfer)
+                        if binding != c["input_hash"]:
+                            # What the card rests on changed since it was shown (a source read later in
+                            # the same step, a policy revision, the target's members): the old
+                            # confirmation is void. decide() shows the new basis as a new card instead
+                            # of one that can never pass; nothing runs until the person confirms that.
+                            raise _Reissue(t, call_id, c["input_hash"], binding, transfer)
             n = self.store.execute("UPDATE agent_tool_calls SET status='running', decided_at=?, updated_at=? WHERE id=? "
                                    "AND status='awaiting_confirmation' AND EXISTS (SELECT 1 FROM agent_turns "
                                    "WHERE id=? AND status='waiting_confirmation' AND cancel_requested=0)",
@@ -1514,6 +1544,11 @@ class Agent:
                 self._add_source(t["assistant_message_id"], {"workspace_id": c["workspace_id"]})
             run = self.store.one("SELECT * FROM op_runs WHERE user_id=? AND idempotency_key=?", (c["user_id"], f"agent:{c['id']}"))
             if run and run["status"] == "succeeded":
+                parts = split_id(c["operation"]) if c["operation"] else None
+                if t and parts:
+                    # An external tool's result the crash kept from being recorded with its connection.
+                    self._mcp_dependency(t["assistant_message_id"],
+                                         result_connection(self.store, c["user_id"], parts[0], _j(run["output"], None)))
                 self.store.execute("UPDATE agent_tool_calls SET status='succeeded', run_id=?, result_json=?, updated_at=? WHERE id=?",
                                    (run["id"], canonical(_j(run["output"], None)), now(), c["id"]))
             elif run and run["status"] == "failed":

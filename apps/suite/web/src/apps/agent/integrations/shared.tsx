@@ -2,7 +2,7 @@
  *  one write intent at a time with a retry that reuses its idempotency key, refusals in the
  *  centre's own words (never the server's prose, which may echo a submitted secret), badges and
  *  a clipboard button. Patterned on the Agent settings page. */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { ApiError } from '@synwevo/auth-client';
 import { useI18n, type Params } from '@synwevo/ui';
 import { newKey, op, read, type RunStatus } from '../../../shared/ops';
@@ -23,7 +23,8 @@ const GENERIC: Record<string, IntegrationText> = {
   invalid_input: 'invalidInput', idempotency_conflict: 'error', app_access_denied: 'denied', forbidden: 'denied',
   workspace_not_found: 'denied', not_a_member: 'denied', account_unavailable: 'signedOut',
   app_unavailable: 'unavailable', unknown_operation: 'unavailable', network: 'network', upstream_unavailable: 'error',
-  gateway_blocked: 'error', result_access_changed: 'mcp_connection_not_found',
+  gateway_blocked: 'error', result_access_changed: 'mcp_connection_not_found', run_result_unavailable: 'executed',
+  output_too_large: 'tooLarge',
 };
 
 /** The sentence for a refusal, in the centre's words. */
@@ -81,56 +82,122 @@ export function useRead<T>(operation: string, input: Record<string, unknown> = {
   return { data, setData, error, loading, reload };
 }
 
-interface Intent { operation: string; input: Record<string, unknown>; key: string; saved: (output: unknown) => void; failed?: (error: unknown) => void }
-interface WriteState { busy: boolean; pending: boolean; error: unknown; status: RunStatus | null; saved: boolean; operation: string | null;
+/** What a failed write says about the request it answered.
+ *
+ *  `refused`: definitive, nothing more will happen under this key. A refusal Synwevo itself sent
+ *  is definitive whatever its status: an MCP refusal (`mcp_unreachable` 502, `mcp_circuit_open`
+ *  503, `mcp_timeout` 504 …) is recorded as a failed run, and repeating its key only replays
+ *  `idempotent_failure`.
+ *  `unknown`: the request may have been committed. Only a lost connection, an intermediary's
+ *  answer and the server's own crash codes leave the outcome open; the intent stays for a retry
+ *  under the same key, whose receipt settles it.
+ *  `executed`: the server carried the request out but cannot hand its result back. Either it holds
+ *  a receipt for this key without a replayable result (`run_result_unavailable`: the write
+ *  operations keep none), or the result was too large to record (`output_too_large`): every write
+ *  this centre sends is two-phase (`transactional=False`, agent/mcp/ops.py), whose handler has
+ *  committed before its result is measured. Sending the intent again, under any key, could repeat
+ *  it: the page re-reads the record instead. A page read (a resource read, a rendered prompt) that
+ *  is too large changed nothing a re-read could show: it is refused, with the size as its reason.
+ *
+ *  On a retry, a refusal that precedes the receipt lookup (sign-in, access, rate limits) cannot
+ *  tell whether the first attempt committed, so it leaves the outcome open. The MCP refusals come
+ *  from the operations themselves, which run on a retry only when the first attempt never reached
+ *  the server. A refusal of the request's own shape or size reads only the payload, which the
+ *  retry repeats unchanged: the first attempt was refused the same way or never arrived. */
+export type WriteOutcome = 'refused' | 'unknown' | 'executed';
+const OUTCOME_UNKNOWN = new Set(['network', 'upstream_unavailable', 'gateway_blocked', 'server_error', 'internal_error',
+  'operation_failed']);
+const EXECUTED = new Set(['run_result_unavailable', 'output_too_large']);
+const REQUEST_REFUSED = new Set(['invalid_input', 'input_too_large']);
+/** Two-phase only so that they are recorded with their call: they read and show, and change no record. */
+const PAGE_READS = new Set(['agent.mcp.resource.read_page', 'agent.mcp.prompt.render']);
+export function writeOutcome(error: unknown, retrying: boolean, operation?: string): WriteOutcome {
+  if (!(error instanceof ApiError) || error.upstream || error.status === 0) return 'unknown';
+  if (error.code === 'output_too_large' && operation && PAGE_READS.has(operation)) return 'refused';
+  if (EXECUTED.has(error.code)) return 'executed';
+  if (OUTCOME_UNKNOWN.has(error.code)) return 'unknown';
+  if (!retrying) return 'refused';
+  return error.code === 'idempotent_failure' || error.code.startsWith('mcp_') || REQUEST_REFUSED.has(error.code) ? 'refused' : 'unknown';
+}
+
+interface Intent {
+  operation: string; input: Record<string, unknown>; key: string; attempts: number;
+  saved: (output: unknown) => void; executed?: () => void;
+}
+export interface WriteState { busy: boolean; pending: boolean; error: unknown; status: RunStatus | null; saved: boolean;
+  /** The server executed the request but cannot return its result; the page re-reads the record. */
+  executed: boolean; operation: string | null;
   /** The payload of the request in flight or awaiting a retry (never a secret the page still needs). */
   input: Record<string, unknown> | null }
+const IDLE: WriteState = { busy: false, pending: false, error: null, status: null, saved: false, executed: false, operation: null, input: null };
+type Send = (operation: string, input: Record<string, unknown>, key: string) => Promise<{ status: RunStatus; output: unknown }>;
 
-/** One intent at a time. A lost response keeps the exact payload and key in memory for a retry
- *  that cannot create a second record. Never persisted: a pending request may hold a token. */
-export function useWrite() {
-  const intent = useRef<Intent | null>(null);
-  const flight = useRef(false);
-  const live = useRef(true);
-  const [state, setState] = useState<WriteState>({ busy: false, pending: false, error: null, status: null, saved: false, operation: null, input: null });
-  useEffect(() => { live.current = true; return () => { live.current = false; intent.current = null; }; }, []);
+/** One intent at a time, without React so its decisions can be exercised directly. A lost
+ *  response keeps the exact payload and key in memory for a retry that cannot create a second
+ *  record. Never persisted: a pending request may hold a token. */
+export function createWriter(send: Send, newIntentKey: () => string = newKey) {
+  let intent: Intent | null = null;
+  let flight = false;
+  let open = true;
+  let state = IDLE;
+  const listeners = new Set<() => void>();
+  const publish = (next: WriteState) => { state = next; listeners.forEach((listener) => listener()); };
 
   async function execute() {
-    const request = intent.current;
-    if (!request || flight.current) return;
-    flight.current = true;
-    setState({ busy: true, pending: true, error: null, status: null, saved: false, operation: request.operation, input: request.input });
+    const request = intent;
+    if (!request || flight || !open) return;
+    flight = true;
+    const retrying = request.attempts > 0;
+    request.attempts += 1;
+    const base = { operation: request.operation, input: request.input };
+    publish({ ...IDLE, ...base, busy: true, pending: true });
     try {
-      const result = await op<unknown>(request.operation, request.input, { key: request.key });
-      if (!live.current) return;
+      const result = await send(request.operation, request.input, request.key);
+      if (!open) return;
       if (result.status === 'succeeded') {
-        intent.current = null;
-        setState({ busy: false, pending: false, error: null, status: null, saved: true, operation: request.operation, input: request.input });
+        intent = null;
+        publish({ ...IDLE, ...base, saved: true });
         request.saved(result.output);
       } else {
         const pending = !['failed', 'cancelled', 'partial'].includes(result.status);
-        if (!pending) intent.current = null;
-        setState({ busy: false, pending, error: null, status: result.status, saved: false, operation: request.operation, input: request.input });
+        if (!pending) intent = null;
+        publish({ ...IDLE, ...base, pending, status: result.status });
       }
     } catch (error) {
-      if (!live.current) return;
-      // A received application refusal is definitive; a network, gateway or 5xx failure may
-      // follow a committed write, so the request stays for a retry under the same key.
-      const pending = !(error instanceof ApiError && !error.upstream && error.status >= 400 && error.status < 500);
-      if (!pending) { intent.current = null; request.failed?.(error); }
-      setState({ busy: false, pending, error, status: null, saved: false, operation: request.operation, input: request.input });
+      if (!open) return;
+      const outcome = writeOutcome(error, retrying, request.operation);
+      if (outcome !== 'unknown') intent = null;
+      publish({ ...IDLE, ...base, pending: outcome === 'unknown', executed: outcome === 'executed', error });
+      if (outcome === 'executed') request.executed?.();
     } finally {
-      flight.current = false;
+      flight = false;
     }
   }
-  function start<T>(operation: string, input: Record<string, unknown>, saved: (output: T) => void, failed?: (error: unknown) => void) {
-    if (intent.current || flight.current) return false;
-    intent.current = { operation, input: { ...input }, key: newKey(), saved: (output) => saved(output as T), failed };
-    void execute();
-    return true;
-  }
-  return { ...state, locked: state.busy || state.pending, start, retry: () => void execute(),
-    dismiss: () => setState((s) => s.pending ? s : { ...s, saved: false, error: null, status: null }) };
+  return {
+    getState: () => state,
+    subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    /** Starts an intent unless one is in flight or awaiting its retry. `executed` runs when the
+     *  server executed it but cannot return the result. */
+    start<T>(operation: string, input: Record<string, unknown>, saved: (output: T) => void, executed?: () => void) {
+      if (intent || flight || !open) return false;
+      intent = { operation, input: { ...input }, key: newIntentKey(), attempts: 0, saved: (output) => saved(output as T), executed };
+      void execute();
+      return true;
+    },
+    retry: () => execute(),
+    dismiss() { if (!state.pending) publish({ ...state, saved: false, error: null, status: null, executed: false }); },
+    /** The page mounted (again, under StrictMode) or left: a closed writer forgets its intent. */
+    open() { open = true; },
+    close() { open = false; intent = null; },
+  };
+}
+export type Writer = ReturnType<typeof createWriter>;
+
+export function useWrite() {
+  const [writer] = useState(() => createWriter((operation, input, key) => op<unknown>(operation, input, { key })));
+  const state = useSyncExternalStore(writer.subscribe, writer.getState, writer.getState);
+  useEffect(() => { writer.open(); return () => writer.close(); }, [writer]);
+  return { ...state, locked: state.busy || state.pending, start: writer.start, retry: () => void writer.retry(), dismiss: writer.dismiss };
 }
 export type Write = ReturnType<typeof useWrite>;
 
@@ -138,7 +205,8 @@ export function WriteFeedback({ write, savedText }: { write: Write; savedText?: 
   const { m } = useText();
   return <div className="mi-feedback" aria-live="polite">
     {write.busy && <p role="status">{m('saving')}</p>}
-    {write.error != null && <ErrorNotice error={write.error} />}
+    {write.error != null && !write.executed && <ErrorNotice error={write.error} />}
+    {write.executed && <p className="notice warn" role="status">{m(errorCodeOf(write.error) === 'output_too_large' ? 'executedTooLarge' : 'executed')}</p>}
     {write.status && <p><RunBadge status={write.status} /></p>}
     {write.pending && !write.busy && <div className="notice warn col">
       <p>{m('pending')}</p>
@@ -153,8 +221,11 @@ export function HealthBadge({ health }: { health: string }) {
   const view = healthView(health);
   return <span className={`badge ${view.tone}`}>{m(view.key)}</span>;
 }
-export function ConnectionStatusBadge({ status }: { status: string }) {
+/** Enabled or disabled; a platform stop (which also disables) is named as such, since only the
+ *  platform can lift it. */
+export function ConnectionStatusBadge({ status, stopped = false }: { status: string; stopped?: boolean }) {
   const { m } = useText();
+  if (stopped) return <span className="badge err">{m('statusPlatformStopped')}</span>;
   return status === 'disabled' ? <span className="badge warn">{m('statusDisabled')}</span> : <span className="badge">{m('statusActive')}</span>;
 }
 export function CallStatusBadge({ status }: { status: string }) {
