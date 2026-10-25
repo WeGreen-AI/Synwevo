@@ -78,7 +78,7 @@ Docker（单进程部署：工作台 + 账户页同一源站）：`docker compos
 
 * 使用方式：电脑浏览器，单人或小团队自托管；未提供真实样本文件，全部使用合成测试数据验收。**拿到脱敏的真实文件后应补充回归测试。**
 * 默认同一批来源文件结构相同，但会逐文件、逐映射校验，不相同处明确报错。
-* 文件全程本地处理；未使用商业组件。PyMuPDF 为 AGPL（或商业许可）——对外提供服务前请确认许可证义务（见 `docs/DEPENDENCIES.md`）。
+* 文件全程本地处理；未使用商业组件。Synwevo 以 AGPL-3.0-or-later 许可（根目录 `LICENSE`、`NOTICE`；`sdk/` 为 Apache-2.0）；PyMuPDF 为 AGPL（或 Artifex 商业许可），默认构建包含它——对外提供服务时按 AGPL 第 13 条提供对应源代码（`/api/source-code`，见 `docs/DEPENDENCIES.md`）。
 
 ## 已知限制
 
