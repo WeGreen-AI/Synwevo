@@ -64,7 +64,7 @@
 | 未做 | 未推送、未部署；PWA/manifest 不存在故无 maskable 图标；邮件为纯文本不放图片；Vite 开发服务器的图标由 `@synwevo/ui/vite` 插件提供（已用 curl 验证） |
 
 最后更新：2026-09-25（导航稳定、弹层与移动端轮，Claude Code）。本轮八条反馈的复现—根因—修复—验证表在
-[issues.md](issues.md)「导航、弹层与移动端轮」；接续点（Google/Microsoft 登记、生产管理员本人绑定 TOTP、真机/真实邮箱/真实样本）
+[issues.md](issues.md)「导航、弹层与移动端轮」；接续点（Google/Microsoft 登记、管理员绑定 TOTP 的步骤、真机/真实邮箱/真实样本）
 在 [handoff.md](handoff.md) 顶部；浏览器与测试证据在 [verification.md](verification.md) §16；契约在 [sessions.md](../security/sessions.md) §4.6、§12 与
 [permissions.md](../security/permissions.md)。`a342994` 与 `61f6354` 已依次经 CI 验证并部署（备份 `20260925T071558Z`、`20260925T073728Z`），
 线上匿名检查见 [deployment.md](deployment.md)；线上未做登录态流程验收。

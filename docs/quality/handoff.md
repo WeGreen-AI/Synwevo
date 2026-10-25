@@ -217,9 +217,9 @@ Docs 项目列表页仍加载的共享块 `perm`——2026-09-27 用 source map 
    `https://accounts.wegreen.ltd/auth/external/google/callback`、`…/microsoft/callback`，scopes `openid email profile`），
    在 VPS `/opt/synwevo/runtime.env` 追加变量，`docker compose restart accounts`，然后在后台「登录方式」页点「立即检查连接」，
    再用受控账户走登录页→提供商→账户页。代理不能替代；secret 不进聊天。
-2. **生产管理员的 TOTP**：本人登录账户页 → 安全因素 → 绑定：输入口令（近期重认证）→ 扫码或手动录入 → 输入一次
-   动态码确认 → 保存恢复码。在这之前，用邮箱验证码或外部提供商登录得到的管理员会话会看到「当前登录只验证了一个
-   因素」的提示，输入口令即可解锁管理页；口令登录本身不受影响。
+2. **管理员的 TOTP**：本人登录账户页 → 安全因素 → 绑定：输入口令（近期重认证）→ 扫码或手动录入 → 输入一次
+   动态码确认 → 保存恢复码。未绑定 TOTP 的管理员用邮箱验证码或外部提供商登录得到的会话会看到「当前登录只验证了
+   一个因素」的提示，输入口令即可解锁管理页。（生产管理员账户的实际登录方式不写进公开记录，2026-10-25 脱敏。）
 3. **真机**：verification.md §16 的 iOS Safari / Android Chrome 清单；**真实外部邮箱**与**真实业务样本**同节。
 4. **生产网关的 WebSocket 升级**：把 `infra/production/nginx.conf` 里的 `map $http_upgrade $connection_upgrade` 与 `location /api/collab/`
    两段复制进 VPS 手工维护的 `/opt/synwevo/config/nginx.conf`，`nginx -t` 后 reload；完成前浏览器端的实时协同在生产回退为

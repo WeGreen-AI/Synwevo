@@ -387,7 +387,7 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
   host's `/api/auth/state` role, then with a test account: open a document template in two tabs (live editing still works), upload a
   password-protected ZIP as a Message attachment in a test group (refused with the sentence), and generate one XLSX with a detail row.
 
-**Host-side data change — legacy data claim undone (2026-09-29, at the account holder's request):** the platform administrator liyanpei2004@outlook.com (u_3f48e19e364e) had used 「指派历史数据」 in the admin overview to claim the legacy workspace `default` (3 projects, 5 templates) for their own account; the overview card then disappeared by design, and they asked for it back. Read-only first (the claim's audit line, the workspace, its one owner membership, the Docs enablement and grant, all stamped 1790684375.454307 by that account; two sessions, one OAuth code and one Docs token issued after it; jobs, previews and API keys older), then one guarded transaction in `synwevo-accounts-1` (aborts unless every row is exactly as read): the membership, the Docs entitlement and the Docs enablement created by the claim removed; the workspace back to 「历史数据（待认领）」 / `pending_claim`; that account's Docs token for `default` revoked (`membership_removed`, as leaving a workspace does); an `admin.workspace.unclaim` audit event (actor `system`, meta with requester, what it reverts and the reason). Sessions were left alone: membership is re-checked on every request and a session pointing at a workspace the person left is cleared. Verified read-only: legacy `pending_claim`, 3 projects and 5 templates intact, the account's personal and two organization workspaces unchanged. Before/after rows are in the session scratchpad `prod_unclaim_output.txt`; re-applying the claim from the admin overview restores the previous state. No other data touched.
+**Host-side data change — legacy data claim undone (2026-09-29, at the account holder's request):** a platform administrator (address and account id redacted 2026-10-25) had used 「指派历史数据」 in the admin overview to claim the legacy workspace `default` (3 projects, 5 templates) for their own account; the overview card then disappeared by design, and they asked for it back. Read-only first (the claim's audit line, the workspace, its one owner membership, the Docs enablement and grant, all stamped 1790684375.454307 by that account; two sessions, one OAuth code and one Docs token issued after it; jobs, previews and API keys older), then one guarded transaction in `synwevo-accounts-1` (aborts unless every row is exactly as read): the membership, the Docs entitlement and the Docs enablement created by the claim removed; the workspace back to 「历史数据（待认领）」 / `pending_claim`; that account's Docs token for `default` revoked (`membership_removed`, as leaving a workspace does); an `admin.workspace.unclaim` audit event (actor `system`, meta with requester, what it reverts and the reason). Sessions were left alone: membership is re-checked on every request and a session pointing at a workspace the person left is cleared. Verified read-only: legacy `pending_claim`, 3 projects and 5 templates intact, the account's personal and two organization workspaces unchanged. Before/after rows are in the session scratchpad `prod_unclaim_output.txt`; re-applying the claim from the admin overview restores the previous state. No other data touched.
 
 **Housekeeping (same day):** a diagnostic container `blissful_neumann` (clamav/clamav:1.4, `--rm`) left running since 2026-09-28 05:00 by an earlier scanner-image inspection (its `grep -r /` never finished) was stopped; the six Synwevo containers were not touched.
 
@@ -519,8 +519,8 @@ moment, nothing was found wrong afterwards. The documentation-only commit that f
 * Administrators who sign in with an e-mail code or an external provider get a one-factor session:
   account features work, `/api/admin/*` and the API console answer `403 step_up_required` until the
   password is confirmed on the account page (`amr` becomes `email+password` / `idp:<id>+password`).
-  Password sign-in is unchanged. **The production administrator's own TOTP enrolment is still theirs to
-  do** on the account page; nothing was enrolled, seeded or flagged on their behalf.
+  Password sign-in is unchanged. Administrators enrol TOTP themselves on the account page; nothing was
+  enrolled, seeded or flagged on anyone's behalf.
 * New read-only administrator view "登录方式" (`GET /api/admin/identity-providers`): masked provider
   configuration, the exact callback URIs, missing variables, live discovery check. It shows Google and
   Microsoft as **not configured** on production — no provider credentials exist in `runtime.env`, and
@@ -574,8 +574,8 @@ with `dbd4c94`. The documentation-only commits that follow carry `[skip ci]` and
   `#1e40af`); the portal stylesheet no longer carries its private green palette.
 - Sign-in page offers "keep me signed in" and e-mail code sign-in; **no external provider is
   configured**, so `/api/auth/state.external_providers` is `[]` and no provider button is shown.
-  E-mail codes use the existing production SMTP; the platform administrator account has no
-  TOTP enrolled, so it is deliberately not offered an e-mail code (documented policy).
+  E-mail codes use the existing production SMTP; an administrator account without TOTP is
+  deliberately not offered an e-mail code (documented policy).
 
 ### Post-deploy checks (first cutover, 2026-09-25 ~04:25 UTC)
 
