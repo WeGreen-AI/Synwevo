@@ -342,15 +342,26 @@ def test_without_a_release_list_nothing_is_offered(monkeypatch, tmp_path):
     assert status["available"] is False and status["complete"] is False
 
 
-def test_the_manifest_writer_needs_a_context_stamped_by_git_archive(tmp_path, capsys):
-    """In a checkout the writer's stamp still reads as git's placeholder: a build from a working
-    tree writes no manifest (and says so in the build log), so its image refuses to offer rather
-    than offering whatever the working tree held."""
-    assert source_manifest.release_stamp() is None, "检出里的占位符不应被当成发布提交"
+def test_the_manifest_writer_needs_a_context_stamped_by_git_archive(monkeypatch, tmp_path, capsys):
+    """From a working tree the writer's stamp still reads as git's placeholder: such a build writes
+    no manifest (and says so in the build log), so its image refuses to offer rather than offering
+    whatever the working tree held. Stamped, it records the files and the commit. (The installed
+    file is stamped inside the image and not in a checkout, so both states are set here.)"""
+    placeholder = "$" + "Format:%H$", "$" + "Format:%ct$"      # split: this file is not export-subst
+    monkeypatch.setattr(source_manifest, "RELEASE_COMMIT", placeholder[0])
+    monkeypatch.setattr(source_manifest, "RELEASE_TIME", placeholder[1])
+    assert source_manifest.release_stamp() is None, "占位符不应被当成发布提交"
     _plant(tmp_path, SOURCE)
     assert source_manifest.main([str(tmp_path)]) == 0
     assert not (tmp_path / source_manifest.MANIFEST_NAME).exists()
     assert "git archive" in capsys.readouterr().err
+
+    monkeypatch.setattr(source_manifest, "RELEASE_COMMIT", FIXTURE_COMMIT)
+    monkeypatch.setattr(source_manifest, "RELEASE_TIME", str(FIXTURE_COMMIT_TIME))
+    assert source_manifest.release_stamp() == (FIXTURE_COMMIT, FIXTURE_COMMIT_TIME)
+    assert source_manifest.main([str(tmp_path)]) == 0
+    manifest = source_manifest.read(tmp_path)
+    assert manifest["commit"] == FIXTURE_COMMIT and manifest["files"] == sorted(SOURCE)
 
 
 def test_git_archive_stamps_the_writer_and_the_manifest_lists_only_the_archive(tmp_path):
@@ -361,8 +372,10 @@ def test_git_archive_stamps_the_writer_and_the_manifest_lists_only_the_archive(t
     import subprocess
     import sys
     import pytest
-    if shutil.which("git") is None:
-        pytest.skip("needs git")
+    if shutil.which("git") is None or not (ROOT / ".git").exists():
+        # Inside the image the writer is already stamped and .gitattributes is not shipped (it is
+        # version-control configuration): this runs in a checkout, as the tracked-path test does.
+        pytest.skip("不是 Git 检出（镜像由 git archive 构建，没有 .git）：这一项在检出里核对")
     rel = "apps/docs/synwevo_docs/source_manifest.py"
     lines = [ln for ln in (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
              if ln.strip() and not ln.startswith("#") and "source_manifest" in ln]
