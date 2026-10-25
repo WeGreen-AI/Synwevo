@@ -799,6 +799,15 @@ def now() -> float:
     return time.time()
 
 
+#: How long a statement waits for another connection's write lock before "database is locked".
+BUSY_TIMEOUT_MS = 30_000
+#: How long opening a Store keeps retrying its migration while another process holds the writer
+#: lock longer than BUSY_TIMEOUT_MS: the first process of a deploy may be replaying the cost rollup
+#: (about 48 s per million cost admissions, suite_schema/model_cost_rollup.py). Every migration step
+#: is idempotent, so a retry starts over safely.
+MIGRATION_WAIT_S = 900
+
+
 class Store:
     def __init__(self, root: str | Path, migrate: bool = True):
         """Open the store, migrating the schema forward unless told not to.
@@ -824,9 +833,19 @@ class Store:
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "blobs").mkdir(exist_ok=True)
         c = self._c()
-        c.executescript(SCHEMA)
-        self._migrate(c)
-        self._stamp_instance_kind(c)
+        deadline = time.monotonic() + MIGRATION_WAIT_S
+        while True:
+            try:
+                c.executescript(SCHEMA)
+                self._migrate(c)
+                self._stamp_instance_kind(c)
+                break
+            except sqlite3.OperationalError as exc:
+                if (getattr(exc, "sqlite_errorcode", None) or 0) & 0xFF != sqlite3.SQLITE_BUSY or time.monotonic() >= deadline:
+                    raise
+                if c.in_transaction:
+                    c.execute("ROLLBACK")
+                logging.getLogger("synwevo.store").info("store open waits for another process's migration (writer lock)")
 
     # ---------------------------------------------------------------- instance identity
     def _stamp_instance_kind(self, c: sqlite3.Connection) -> None:
@@ -1156,12 +1175,13 @@ class Store:
     def _connect(self) -> sqlite3.Connection:
         if self.read_only:
             return self._connect_read_only()
-        c = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False, isolation_level=None)  # explicit transactions
+        c = sqlite3.connect(self.db_path, timeout=BUSY_TIMEOUT_MS / 1000, check_same_thread=False,
+                            isolation_level=None)  # explicit transactions
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA journal_mode=WAL")
         c.execute("PRAGMA foreign_keys=ON")
         c.execute("PRAGMA synchronous=NORMAL")
-        c.execute("PRAGMA busy_timeout=30000")
+        c.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_MS)}")
         return c
 
     def _c(self) -> sqlite3.Connection:

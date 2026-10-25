@@ -38,8 +38,9 @@ order, the others with one of them). Real admissions and ``RiskControls.guard`` 
 provider accounts. ``test_12000_records_*`` is the capacity case.
 
 Kept out of the random traces, each with a test of its own below: admissions violating I1's lower
-bound (``expires_at <= admitted_at``, a disagreement between the write-time producer and the
-verifier, xfail) and cost encodings no trace can carry as JSON (BLOBs).
+bound (``expires_at <= admitted_at``: found here as a disagreement between the write-time producer
+and the verifier; the verifier no longer reports it, since rollup and oracle agree on such an
+admission) and cost encodings no trace can carry as JSON (BLOBs, text with an embedded NUL).
 
 A disagreement is minimised (delta debugging over the recorded operation trace, replayed on fresh
 Stores, then halving bulk writes) and reported with its seed, step, fields and minimal trace, so
@@ -1422,11 +1423,14 @@ def test_12000_records_legacy_refuses_on_its_cap_and_the_rollup_still_equals_the
     check_rebuild(w, scope, False)
 
 
-#: Cost encodings no Ledger writes but a bulk writer or an operator could: BLOBs (bytes) and text
-#: that only Python's int() reads. Kept out of the random traces, which are JSON for replay.
+#: Cost encodings no Ledger writes but a bulk writer or an operator could: BLOBs (bytes), text
+#: that only Python's int() reads, and text with an embedded NUL (SQLite's GLOB, length() and CAST
+#: stop at it; Python's parsers do not). Kept out of the random traces, which are JSON for replay.
 ODD_COSTS = ((b"7", b"1"), (b"007", b"8"), (b"-5", b"1"), (b"", b"1"), ("-0", "1"), ("0000000000000001", "1"),
              ("1", "0000000000000008"), ("7", "-0"), (str(INT64), "1000000000000000"), ("18446744073709551616", "2"),
-             ("1e3", "1"), ("\u0663", "\u0668"), ("\uff17", "1"), ("1\n", "1"), ("1", " 8"))
+             ("1e3", "1"), ("\u0663", "\u0668"), ("\uff17", "1"), ("1\n", "1"), ("1", " 8"),
+             ("\x0099999999", "1"), ("7\x00junk", "1"), ("5", "1\x00"), ("123", "3\x007"), ("7\x00", "4"),
+             ("5\x00x", "1"), ("12", "3\x00junk"))
 
 
 @pytest.mark.parametrize("cost", ODD_COSTS, ids=[repr(c)[:40] for c in ODD_COSTS])
@@ -1455,13 +1459,12 @@ def test_odd_cost_encodings_agree_across_rollup_oracle_and_legacy(cost, tmp_path
 
 
 # ================================================================ disagreements found (regressions)
-@pytest.mark.xfail(strict=True, reason=(
-    "FINDING (equivalence property test, seed 13 before the generator excluded it): an admission with "
-    "expires_at <= admitted_at violates I1. CostRollup.check reports it (fact_i1), but the write-time producer "
-    "does not count it as malformed (contract §5 bounds expires_at only from above), so no fault is recorded: "
-    "reads keep answering until a verify latches verify_mismatch, and a rebuild then refuses with differences "
-    "instead of naming the fact to repair from backup. Producer and verifier should agree."))
 def test_an_admission_expiring_when_it_is_admitted_is_a_fault_or_verifies_clean(tmp_path, monkeypatch):
+    """Found by this test (seed 13 before the generator excluded it): an admission with expires_at <=
+    admitted_at violates I1, the producer does not count it as malformed (contract §5 bounds expires_at
+    only from above) and CostRollup.check reported it (fact_i1), so a verify latched the scope and a
+    rebuild then refused. Such an admission is never in flight for the rollup nor for the oracle, which
+    agree on it; the verifier no longer reports it, so producer and verifier agree."""
     monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
     at = ANCHORS[2] - 60
     w = make_world(tmp_path / "store", at)

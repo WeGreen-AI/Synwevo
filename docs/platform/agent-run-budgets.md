@@ -283,10 +283,14 @@ from the facts in a read snapshot hourly (last two days) and daily (from the pre
 first day), and the restore rehearsal checks every day. A mismatch, a malformed or orphan
 admission (fault `fact:<attempt>`) or a latched read-path check opens a fault for that provider
 account only: its paid calls refuse with `cost_rollup_inconsistent` until an operator runs
-`platform.py cost-rollup rebuild --environment … --provider … --account-ref … --reason …`, which
-replays that account's facts, verifies the result and resolves its faults in one transaction (or
-changes nothing). The administrators are told (`billing.cost.rollup_inconsistent`); the rebuild is
-audited (`billing.cost.rollup_rebuilt`). Recovery is never automatic.
+`python -m synwevo_core.billing.cost_rollup rebuild --environment … --provider … --account-ref …
+--reason …` in a role container (docs/platform/model-risk.md §13; locally `platform.py cost-rollup`),
+which replays that account's facts, verifies the result and resolves its faults in one transaction
+(or changes nothing). A malformed or orphan admission cannot be repaired (facts are immutable): the
+rebuild names it, and after checking it the operator accepts it (`--accept <attempt_key>`, recorded
+with actor and reason), which leaves it out of the rollup from then on. The administrators are told
+(`billing.cost.rollup_inconsistent`); the rebuild is audited (`billing.cost.rollup_rebuilt`).
+Recovery is never automatic.
 The internal snapshot exposes consistent counters only; it grants no dispatch authority and
 is not a public Admin API. Disabling admission stops new calls while existing usage recording,
 wallet release and settlement remain available.

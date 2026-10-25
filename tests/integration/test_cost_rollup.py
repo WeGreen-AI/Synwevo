@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 import json
+import re
 from pathlib import Path
 import sqlite3
 
@@ -672,3 +673,368 @@ def test_cost_rollup_cli_verifies_and_rebuilds_an_isolated_data_directory(funded
     assert json.loads(rebuilt.stdout[rebuilt.stdout.index("{"):])["facts"] == 1
     assert store.one("SELECT actor FROM model_cost_rollup_rebuilds WHERE environment='test'")["actor"].startswith("operator:")
     clean(store)
+
+
+# ---------------------------------------------------------------- review findings (2026-10-26)
+@pytest.mark.parametrize("n,d", [("\x0099999999", "1"), ("7\x00junk", "1"), ("5", "1\x00"), ("123", "3\x007")],
+                         ids=["nul-first", "nul-inside", "nul-denominator", "nul-in-denominator"])
+def test_a_cost_text_with_an_embedded_nul_is_an_exception_fact_for_sql_and_python(funded, n, d):
+    """SQLite's GLOB, length() and CAST stop at the first NUL, Python's parsers do not: the triggers
+    must class such a cost X like the verifier, so the admission refuses invalid_cost_fact as before."""
+    store, ledger, users, ticks = funded
+    _metered(funded, "nul-real", usage=Usage(2, 1, 3))
+    key = _metered(funded, "nul-fact", amount=1000)
+    _raw_usage(store, key, n, d)                        # FIXTURE: an import could write it
+    assert rollup().cost_class(n, d) == "X"
+    assert store.one("SELECT attempt_key FROM model_cost_exceptions WHERE attempt_key=?", (key,)) == {"attempt_key": key}
+    row = day_bucket(store, ticks[0] - ticks[0] % 86_400)
+    assert (row["n_adm"], row["n_res"], row["n_exc"]) == (2, 2, 1)
+    with pytest.raises(BillingError, match="invalid_cost_fact"):
+        CostAdmission(ledger, current_policy=generous).snapshot()
+    with store.tx() as t:
+        args = dict(environment="test", provider="fixture-provider", account_ref="fixture-provider-account",
+                    unit=COST_UNIT, owner=users[0], route="fixture-model-alias", now=ticks[0],
+                    risk=velocity_policy(route_cost=10**9, payer_cost=10**9).risk)
+        for fn in (rollup().velocity, rollup().reference_velocity):
+            with pytest.raises(BillingError, match="invalid_cost_fact"):
+                fn(t, **args)
+    clean(store)
+    original = derived_rows(store)
+    rollup().CostRollup.rebuild(store, environment="test", provider="fixture-provider",
+                                account_ref="fixture-provider-account", actor="fixture-operator",
+                                reason="fixture rebuild over a NUL cost")
+    assert derived_rows(store) == original
+
+
+def test_producer_triggers_older_than_their_version_are_recreated_and_the_facts_replayed(funded):
+    import re
+
+    from synwevo_core.suite_schema import model_cost_rollup as schema
+    store, ledger, _, ticks = funded
+    key = _metered(funded, "old-trigger", amount=1000)
+    with store.tx() as t:                               # FIXTURE: the producers as the first release wrote them
+        for name in schema.PRODUCERS:
+            sql = t.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,)).fetchone()[0]
+            t.execute(f"DROP TRIGGER {name}")
+            t.execute(re.sub(r"instr\([^()]*,char\(0\)\)=0 AND ", "", sql))
+        t.execute("DELETE FROM meta WHERE key=?", (schema.TRIGGERS_KEY,))
+    _raw_usage(store, key, "\x0099999999", "1")         # classed R (cost 0) by the older SQL
+    assert store.one("SELECT COUNT(*) AS n FROM model_cost_exceptions WHERE environment='test'")["n"] == 0
+    reopened = Store(store.root)
+    for name in schema.PRODUCERS:
+        sql = reopened.one("SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?", (name,))["sql"]
+        assert "char(0)" in sql, name
+    assert reopened.one("SELECT value FROM meta WHERE key=?", (schema.TRIGGERS_KEY,)) == {"value": schema.TRIGGERS_VERSION}
+    assert reopened.one("SELECT attempt_key FROM model_cost_exceptions WHERE environment='test'") == {"attempt_key": key}
+    assert reopened.one("SELECT mode FROM model_cost_rollup_audits ORDER BY rowid DESC LIMIT 1")["mode"] == "backfill"
+    clean(reopened)
+    again = Store(store.root)                           # replays once, not on every start
+    assert again.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE mode='backfill'")["n"] == \
+        reopened.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE mode='backfill'")["n"]
+
+
+@pytest.mark.parametrize("kind", ["orphan", "malformed", "far_expiry"])
+def test_an_operator_accepts_a_broken_admission_in_a_rebuild_and_the_scope_admits_again(funded, kind):
+    """Facts cannot be edited (immutable_cost_admission), so 'repair from backup' is not a way out:
+    an audited rebuild that names the broken admission with accept= leaves it out of the rollup."""
+    store, ledger, _, ticks = funded
+    admission = CostAdmission(ledger, current_policy=generous)
+    _, good = prepare(funded, "before-accept")
+    send(admission, good, amount=1)
+    _, dispatched = prepare(funded, "unadmitted")
+    ledger.dispatch(dispatched)
+    key = "fixture-orphan-attempt" if kind == "orphan" else dispatched.attempt_key
+    now = ticks[0]
+    admitted_at, expires_at = {"orphan": (1, 100), "malformed": ("soon", 100),
+                               "far_expiry": (now, now + 2 * 86_400)}[kind]
+    with store.conn() as c:                             # FIXTURE: foreign keys off, as a broken import would
+        c.execute("PRAGMA foreign_keys=OFF")
+        try:
+            c.execute("INSERT INTO model_cost_admissions VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      (key, *SCOPE, COST_UNIT.code, 3, "fixture", "{}", admitted_at, expires_at))
+        finally:
+            c.execute("PRAGMA foreign_keys=ON")
+    code = "fact_orphan_admission" if kind == "orphan" else "fact_malformed_admission"
+    assert store.one("SELECT code FROM model_cost_rollup_faults WHERE id=?", ("fact:" + key,)) == {"code": code}
+    with pytest.raises(sqlite3.IntegrityError, match="immutable_cost_admission"):
+        store.execute("DELETE FROM model_cost_admissions WHERE attempt_key=?", (key,))
+    CR = rollup().CostRollup
+    scope = dict(environment="test", provider="fixture-provider", account_ref="fixture-provider-account",
+                 actor="fixture-operator")
+    with pytest.raises(BillingError, match="cost_rollup_rebuild_refused") as caught:
+        CR.rebuild(store, reason="fixture rebuild over a broken fact", **scope)
+    assert caught.value.attempt_keys == [key]
+    with pytest.raises(BillingError, match="cost_rollup_rebuild_refused") as caught:
+        CR.rebuild(store, reason="fixture accept of a key that is no fault", accept=[key, "fixture-no-fault"], **scope)
+    assert caught.value.differences == [{"check": "accept_not_faulted", "attempt_key": "fixture-no-fault"}]
+    assert store.all("SELECT * FROM model_cost_rollup_accepted") == []
+    result = CR.rebuild(store, reason="fixture: provider usage checked, the import row is void", accept=[key], **scope)
+    assert result["accepted"] == [key] and result["resolved_faults"] == 1
+    accepted = store.one("SELECT * FROM model_cost_rollup_accepted WHERE attempt_key=?", (key,))
+    assert (accepted["code"], accepted["actor"], accepted["rebuild_id"]) == (code, "fixture-operator", result["id"])
+    assert store.all("SELECT * FROM model_cost_rollup_faults WHERE resolved_at IS NULL") == []
+    rebuilt = store.one("SELECT meta FROM audit_events WHERE action='billing.cost.rollup_rebuilt' ORDER BY at DESC LIMIT 1")
+    assert json.loads(rebuilt["meta"])["accepted"] == [key]
+    # The scope admits again: no fault, and the accepted fact moves neither the clock, parity nor records.
+    _, after = prepare(funded, "after-accept")
+    send(admission, after, amount=1)
+    snapshot = admission.snapshot()
+    assert snapshot["records"] == 2 and exact(snapshot, "daily") == 2
+    for kwargs in ({"all": True}, {"mode": "daily"}, {"since": now - 2 * 86_400, "mode": "recent"}):
+        report = CR.verify(store, now=ticks[0], **kwargs)
+        assert report.ok, report.summary()
+    assert store.all("SELECT * FROM model_cost_rollup_faults WHERE resolved_at IS NULL") == []
+    reopened = Store(store.root)
+    assert reopened.all("SELECT * FROM model_cost_rollup_faults WHERE resolved_at IS NULL") == []
+    for sql in ("DELETE FROM model_cost_rollup_accepted", "UPDATE model_cost_rollup_accepted SET reason='x'"):
+        with pytest.raises(sqlite3.IntegrityError, match="immutable_cost_rollup_accepted"):
+            store.execute(sql)
+    # A second rebuild needs no accept= for it again, and the next start replays nothing new.
+    assert CR.rebuild(store, reason="fixture second rebuild after the accept", **scope)["accepted"] == []
+    clean(store)
+
+
+def test_an_admission_expiring_when_it_is_admitted_verifies_and_rebuilds(funded):
+    """I1's lower bound (expires_at > admitted_at) is not a rollup fault: such an admission is never in
+    flight for the rollup or for the oracle, which agree; the verifier reports no difference for it."""
+    store, ledger, _, ticks = funded
+    source = template(funded, "i1-template", amount=5)
+    clone(store, source, [ticks[0] - 30], prefix="fixture-i1", settled=False, expires_after=0)
+    assert store.all("SELECT * FROM model_cost_rollup_faults") == []
+    report = rollup().CostRollup.verify(store, now=ticks[0], all=True)
+    assert report.ok, report.summary()
+    rollup().CostRollup.rebuild(store, environment="test", provider="fixture-provider",
+                                account_ref="fixture-provider-account", actor="fixture-operator",
+                                reason="fixture rebuild over an I1 lower-bound admission")
+    _, ticket = prepare(funded, "after-i1")
+    send(CostAdmission(ledger, current_policy=generous), ticket, amount=1)
+
+
+def test_scopes_whose_parts_contain_colons_latch_independently(funded):
+    store = funded[0]
+    mod, CR = rollup(), rollup().CostRollup
+    s1, s2 = ("test", "acme:eu", "main"), ("test", "acme", "eu:main")
+    with store.tx() as t:
+        seq = mod.rebuild_seq(t, s1)                    # the global backfill covers every scope
+    report = mod.VerifyReport("verify", 0, None)
+    for scope in (s1, s2):
+        result = mod.ScopeReport(scope, 0, seq)
+        result.differ("bucket", key=["fixture"])
+        report.scopes[scope] = result
+    assert CR.record(store, report) == {s1: "mismatch", s2: "mismatch"}
+
+    def open_scopes():
+        return {(r["environment"], r["provider"], r["account_ref"]) for r in store.all(
+            "SELECT environment,provider,account_ref FROM model_cost_rollup_faults WHERE resolved_at IS NULL")}
+
+    assert open_scopes() == {s1, s2}
+    s3, s4 = ("test", "beta:eu", "main"), ("test", "beta", "eu:main")
+    assert CR.latch(store, mod.RollupInconsistent(s3, "parity", seq)) == "latched"
+    assert CR.latch(store, mod.RollupInconsistent(s4, "parity", seq)) == "latched"
+    assert CR.latch(store, mod.RollupInconsistent(s4, "parity", seq)) == "already_latched"
+    assert open_scopes() == {s1, s2, s3, s4}
+    assert len(report.summary()["mismatched"]) == 2
+
+
+VALUES = ("n_adm", "n_res", "n_cross", "n_exc", "bound_hi", "bound_lo", "rbound_hi", "rbound_lo", "cost_hi", "cost_lo",
+          "cost_carry", "cost_frac")
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_a_tampered_velocity_bucket_in_a_scope_without_admissions_is_found(funded):
+    store, ledger, _, ticks = funded
+    now = ticks[0]
+    CR = rollup().CostRollup
+    with store.tx() as t:                               # FIXTURE: the gate opened by hand (the residual risk)
+        t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
+        t.execute("INSERT INTO model_cost_buckets(environment,provider,account_ref,dim,member,span,start,unit,den,"
+                  + ",".join(VALUES) + ") VALUES (?,?,?,'route','fixture-model-alias',3600,?,?,0,1,0,0,0,0,999,0,0,0,0,0,0)",
+                  (*SCOPE, now - now % 3600, COST_UNIT.code))
+        t.execute("DELETE FROM model_cost_rollup_deltas")
+    for kwargs in ({"all": True}, {"mode": "daily"}, {"since": now - 2 * 86_400, "mode": "recent"}):
+        report = CR.check(store, now=now, **kwargs)
+        assert not report.ok and report.scopes[SCOPE].differences[0]["check"] == "bucket", report.summary()
+    assert CR.record(store, report) == {SCOPE: "mismatch"}
+    _, ticket = prepare(funded, "first-admission")
+    with pytest.raises(BillingError, match="cost_rollup_inconsistent"):  # the latch, not risk_route_brake
+        send(CostAdmission(ledger, current_policy=lambda: velocity_policy(route_cost=1000)), ticket, amount=5)
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_a_stray_delta_is_reported_even_when_no_scope_exists(funded):
+    store = funded[0]
+    CR = rollup().CostRollup
+    with store.tx() as t:                               # FIXTURE: a hand-written delta, the gate open at rest
+        t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-stray')")
+    report = CR.check(store, all=True)
+    assert report.scopes == {} and report.issues == ["deltas_not_empty"] and not report.ok
+    assert report.summary()["issues"] == ["deltas_not_empty"]
+    CR.record(store, report)
+    run = store.one("SELECT status,differences FROM model_cost_rollup_audits WHERE mode='verify' AND provider='' "
+                    "ORDER BY rowid DESC LIMIT 1")
+    assert run["status"] == "mismatch" and json.loads(run["differences"])["issues"] == ["deltas_not_empty"]
+    assert store.all("SELECT * FROM audit_events WHERE action='billing.cost.rollup_inconsistent'")
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_a_velocity_bucket_with_a_negative_value_refuses_as_velocity_structure(funded):
+    store, ledger, users, ticks = funded
+    _, ticket = prepare(funded, "velocity-structure")
+    send(CostAdmission(ledger, current_policy=generous), ticket, amount=7)
+    with store.tx() as t:                               # FIXTURE: a velocity row edited past the gate
+        t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
+        t.execute("UPDATE model_cost_buckets SET bound_lo=-5 WHERE environment='test' AND dim='route' AND span=3600")
+        t.execute("DELETE FROM model_cost_rollup_deltas")
+    with store.tx() as t:
+        with pytest.raises(rollup().RollupInconsistent) as caught:
+            rollup().velocity(t, environment="test", provider="fixture-provider", account_ref="fixture-provider-account",
+                              unit=COST_UNIT, owner=users[0], route="fixture-model-alias", now=ticks[0],
+                              risk=velocity_policy(route_cost=10**9, payer_cost=10**9).risk)
+    assert caught.value.check == "velocity_structure"
+
+
+def test_verify_memory_does_not_grow_with_the_facts_it_reads(funded):
+    """CostRollup.check streams the facts: its Python peak at 20,001 facts stays near the one at 2,001
+    (the monitor runs it inside the portal process, docs/platform/model-risk.md §8)."""
+    import tracemalloc
+
+    store, ledger, _, ticks = funded
+    now = ticks[0]
+    source = template(funded, "memory-template", amount=20, settle=True)
+
+    def history(prefix, count):
+        old = [now - 3 * 86_400 - (i * 7919) % (27 * 86_400) for i in range(count // 2)]
+        recent = [now - 3600 - i for i in range(count - count // 2)]       # dense velocity rows
+        clone(store, source, old + recent, prefix=prefix, settled=True)
+
+    def peak():
+        tracemalloc.start()
+        try:
+            report = rollup().CostRollup.check(store, all=True, now=now)
+            return tracemalloc.get_traced_memory()[1], report
+        finally:
+            tracemalloc.stop()
+
+    history("fixture-mem-a", 2_000)
+    small, report = peak()
+    assert report.ok and report.facts == 2_001
+    history("fixture-mem-b", 18_000)
+    large, report = peak()
+    assert report.ok and report.facts == 20_001
+    assert large < 1.5 * small + 2**20, (small, large)
+
+
+def test_a_store_opened_while_another_process_holds_the_writer_lock_waits_for_it(funded, monkeypatch):
+    """A backfill holds the writer lock longer than busy_timeout (48 s per million admissions): a role
+    process opening the Store meanwhile waits for it instead of failing with 'database is locked'."""
+    import threading
+    import time
+
+    import synwevo_core.store as store_module
+    store = funded[0]
+    monkeypatch.setattr(store_module, "BUSY_TIMEOUT_MS", 200)
+    holder = sqlite3.connect(store.db_path, isolation_level=None, check_same_thread=False, timeout=5)
+    holder.execute("BEGIN IMMEDIATE")                   # FIXTURE: another process's long migration
+    release = threading.Timer(1.2, lambda: holder.execute("COMMIT"))
+    release.start()
+    try:
+        started = time.monotonic()
+        reopened = Store(store.root)
+        waited = time.monotonic() - started
+    finally:
+        release.join()
+        holder.close()
+    assert waited >= 1.0
+    assert reopened.one("SELECT value FROM meta WHERE key='model_cost_rollup_v1'") == {"value": "1"}
+
+
+# ---------------------------------------------------------------- the runbook, as production runs it
+ROOT = Path(__file__).resolve().parents[2]
+PRODUCTION = re.compile(r"docker compose -f /opt/synwevo/config/compose\.yaml (exec -T portal|run --rm --no-deps -T portal) "
+                        r"python -m synwevo_core\.billing\.cost_rollup ([^<`\n]*(?:<[a-z_]+>[^<`\n]*)*)</dev/null")
+
+
+def test_the_runbook_gives_the_production_container_form_and_each_command_runs(funded, tmp_path):
+    """docs/platform/model-risk.md §13 as an operator copies it: the role container's module form
+    (production has no workspace venv on the host), run --rm --no-deps while services are stopped,
+    against SYNWEVO_DATA_DIR as the container sets it; and the alert points at that runbook."""
+    import os
+    import subprocess
+    import sys
+
+    from synwevo_core.notifications import CATALOGUE
+    runbook = (ROOT / "docs" / "platform" / "model-risk.md").read_text(encoding="utf-8")
+    section = runbook[runbook.index("## 13."):]
+    commands = PRODUCTION.findall(section)
+    assert {args.split()[0] for _, args in commands} == {"verify", "rebuild"}, commands
+    assert any(kind.startswith("run") and args.startswith("rebuild") for kind, args in commands)
+    blocks = re.findall(r"```bash\n(.*?)```", section, re.S)
+    assert blocks and not any("scripts/platform.py" in block for block in blocks)   # no host-venv command
+    assert "SYNWEVO_DATA_DIR: /data" in (ROOT / "infra" / "production" / "compose.yaml").read_text(encoding="utf-8")
+    body = CATALOGUE["billing.cost.rollup_inconsistent"]["body"]
+    assert all("model-risk.md §13" in text and "platform.py" not in text for text in body.values()), body
+
+    store, ledger, _, ticks = funded
+    admission = CostAdmission(ledger, current_policy=generous)
+    _, good = prepare(funded, "runbook")
+    send(admission, good, amount=1)
+    _, dispatched = prepare(funded, "runbook-broken")
+    ledger.dispatch(dispatched)
+    with store.conn() as c:                             # FIXTURE: a malformed admission, as a broken import
+        c.execute("INSERT INTO model_cost_admissions VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  (dispatched.attempt_key, *SCOPE, COST_UNIT.code, 3, "fixture", "{}", ticks[0], ticks[0] + 3 * 86_400))
+    values = {"environment": "test", "provider": "fixture-provider", "account_ref": SCOPE[2],
+              "reason": "fixture runbook rehearsal: provider usage checked", "attempt_key": dispatched.attempt_key}
+    env = {**os.environ, "SYNWEVO_DATA_DIR": str(store.root)}
+    outcomes = []
+    for _, args in commands:
+        argv = []
+        for word in re.findall(r'"[^"]*"|\S+', args.strip()):
+            word = word.strip('"')
+            word = re.sub(r"<([a-z_]+)>", lambda m: values[m.group(1)], word)
+            argv.append({"live": "test", "deepseek": "fixture-provider"}.get(word, word))
+        done = subprocess.run([sys.executable, "-m", "synwevo_core.billing.cost_rollup", *argv], env=env, cwd=tmp_path,
+                              capture_output=True, text=True, timeout=120)
+        outcomes.append((argv[0], "--accept" in argv, done.returncode, done.stderr))
+    # verify shows the fault; a rebuild without --accept names the fact; with it the scope is clean.
+    assert [(action, accept, code) for action, accept, code, _ in outcomes] == [
+        ("verify", False, 1), ("rebuild", False, 1), ("rebuild", True, 0), ("verify", False, 0)], outcomes
+    assert dispatched.attempt_key in outcomes[1][3] and "--accept" in outcomes[1][3]
+    send(admission, prepare(funded, "after-runbook")[1], amount=1)
+    clean(store)
+
+
+# ---------------------------------------------------------------- the benchmark measures what it says
+def _bench():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("fixture_bench_cost_admission", ROOT / "scripts" / "bench_cost_admission.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_benchmark_calendar_is_the_one_its_docstring_and_evidence_state():
+    from datetime import datetime, timezone
+    bench = _bench()
+    month, now = (datetime.fromtimestamp(v, timezone.utc) for v in (bench.MONTH, bench.NOW))
+    assert (month.isoformat(), month.strftime("%A")) == ("2034-05-01T00:00:00+00:00", "Monday")
+    assert (now.isoformat(), now.strftime("%A")) == ("2034-05-20T12:00:00+00:00", "Saturday")
+    readme = (ROOT / "docs" / "agent-work" / "evidence" / "2026-10-25-cost-rollup" / "README.md").read_text(encoding="utf-8")
+    assert "2034-05-01" in bench.__doc__ and "2034-05-20T12:00" in bench.__doc__ and "2034-05-20T12:00" in readme
+
+
+def test_the_benchmark_measures_the_live_write_path_and_the_monitors_daily_verify(tmp_path, monkeypatch):
+    """A tiny run of the benchmark: the trigger cost is measured as live writers pay it (one admission
+    and one usage per transaction, interleaved with a copy without the producer triggers), and the
+    daily verify as the risk monitor runs it, with its peak memory in a child process."""
+    monkeypatch.delenv("SYNWEVO_DATA_DIR", raising=False)
+    monkeypatch.delenv("DOCWEAVE_DATA_DIR", raising=False)
+    bench = _bench()
+    result = bench.run(3_000, samples=3, dispatches=5, seed=7, work_parent=tmp_path, pairs=200, live_pairs=40)
+    live = result["triggers_live"]
+    assert live["pairs"] == 40 and live["per_transaction"] is True
+    assert {"extra_stmt_us_p50", "extra_locked_us_p50", "extra_locked_us_p95"} <= set(live)
+    daily = result["verify_daily"]
+    assert daily["ok"] and daily["facts"] >= 3_000 and daily["peak_rss_mb"] > 0
+    assert result["triggers"]["bulk"] is True
+    assert result["history"]["first"] >= bench.MONTH and result["history"]["last"] < bench.NOW

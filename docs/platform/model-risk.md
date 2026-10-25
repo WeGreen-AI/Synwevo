@@ -202,20 +202,55 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 成本准入（§1 第 3 行）与自动刹车（§3）读的是触发器维护的精确成本汇总。它与事实不一致时，只锁定那一个提供方账户
 （`environment` + `provider` + `account_ref`）：该账户的付费调用以 `cost_rollup_inconsistent` 拒绝，没有发起、没有扣费；其他账户不受影响。
 管理员收到 `billing.cost.rollup_inconsistent`，系统审计里有同名记录（含差异数量与来源：每日/每小时校验、读取时的检查）。
+全库问题（静止时 `model_cost_rollup_deltas` 有行、哨兵行丢失）即使还没有任何账户也会报告（审计对象 `*`，运行记录 `mismatch`）。
 
-1. **看差异，不改任何东西**：在服务器上 `python scripts/platform.py cost-rollup verify --all --no-record`。输出每个不一致账户的前几条
-   差异（哪个桶、期望值、实际值；或哪个敞口行多了/少了；或哪条成本事实本身损坏）。
-2. **事实本身损坏**（`fact_fault`：准入时间不是整数或为负、到期超过准入后一天、找不到调用或钱包）：重建会拒绝并列出这些准入的
-   attempt key。不要手改事实表；按 `docs/operations.md` 的恢复演练，从备份核对并修复这些行（`platform.py verify-restore` 先演练），
-   修复后再重建。
-3. **汇总与事实不一致**（`bucket` / `inflight_*` / `hold_*` / `exceptions` / `structure` / `counters`）：说明有人绕过了闸门（手写了
-   `model_cost_rollup_deltas`、关闭过触发器）或程序有缺陷。保留 verify 输出，排查来源后重建：
-   `python scripts/platform.py cost-rollup rebuild --environment live --provider deepseek --account-ref <账户> --reason "<8–500 字理由>"`。
+**在哪里运行。** 生产只有角色容器（只读根文件系统，宿主机上没有工作区虚拟环境），命令以模块形式在容器里运行：容器设置了
+`SYNWEVO_DATA_DIR=/data`，它就是 `--data` 的默认值；stdin 接 `/dev/null`（`exec -T` 没有终端）。核对在正在运行的 `portal` 容器里
+（`exec`）；重建持有写锁，在一次性容器里运行（`run --rm --no-deps`：同一镜像、数据卷与内存上限，服务停着也能运行）。下面的
+`<account_ref>`、`<reason>`（8–500 字）、`<attempt_key>` 换成实际值；`--actor <操作人>` 可写明是谁（默认 `operator:<容器用户>`）。
+本机开发用 `python scripts/platform.py cost-rollup …`，参数相同。
+
+1. **看差异，不改任何东西**：
+
+   ```bash
+   docker compose -f /opt/synwevo/config/compose.yaml exec -T portal python -m synwevo_core.billing.cost_rollup verify --all --no-record </dev/null
+   ```
+
+   输出每个不一致账户的前几条差异（哪个桶、期望值、实际值；或哪个敞口行多了/少了；或哪条成本准入本身有问题）。
+2. **重建**。`bucket` / `inflight_*` / `hold_*` / `exceptions` / `structure` / `counters` 说明有人绕过了闸门（手写了
+   `model_cost_rollup_deltas`、关闭过触发器）或程序有缺陷：保留第 1 步的输出，排查来源后重建。事实多时先停服务（见下），重建后再启动：
+
+   ```bash
+   docker compose -f /opt/synwevo/config/compose.yaml stop accounts docs portal messages
+   docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T portal python -m synwevo_core.billing.cost_rollup rebuild --environment live --provider deepseek --account-ref <account_ref> --reason "<reason>" </dev/null
+   docker compose -f /opt/synwevo/config/compose.yaml up -d --wait accounts docs portal messages
+   ```
+
    重建在一个事务里从事实重放、校验并解除该账户的故障；校验不通过时什么也不改。重建写入 `billing.cost.rollup_rebuilt` 审计。
-   重建期间持有写锁（重放加全量校验，时长随该账户的成本事实数增长：本机基准 20 万条约 11 秒、100 万条约 1 分钟，见
-   `docs/agent-work/evidence/2026-10-25-cost-rollup/`），其间所有写入等待；写入方的等待上限是 30 秒（busy_timeout），
-   超过即失败。事实量大时在维护窗口内执行（先停服务，或至少在低峰时）。
-4. 重建后再跑一次 `cost-rollup verify --all`，确认一致；付费调用随即恢复。
+3. **成本准入本身有问题**（`fact_fault`：准入时间不是整数或为负、到期超过准入后一天、找不到调用或钱包）：第 2 步的重建拒绝，
+   并逐条列出 `--accept <attempt key>`。事实表不可修改（`immutable_cost_admission`），备份里的是同一行，恢复备份只会连同之后的
+   全部事实一起丢掉，所以不要“修复”它。先核实（对照提供方的用量记录、导入来源），确认后在同一条重建命令后逐条加上 `--accept`：
 
-不要用删除故障行、改汇总表或关闭触发器来“恢复”：这些写入会被闸门拒绝（`cost_rollup_derived`），故障行不可删除；绕过闸门的写入会在
+   ```bash
+   docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T portal python -m synwevo_core.billing.cost_rollup rebuild --environment live --provider deepseek --account-ref <account_ref> --reason "<reason>" --accept <attempt_key> </dev/null
+   ```
+
+   接受写入 `model_cost_rollup_accepted`（不可修改、不可删除，含操作人、理由与重建编号）和审计 `billing.cost.rollup_rebuilt`
+   （`accepted` 列出接受的准入）。被接受的准入从此不计入成本汇总、成本准入（窗口金额、时钟检查、当日待确认数与记录数）、速率刹车
+   和校验的对照计算，也不再锁定该账户；它若真实发生过费用，只出现在提供方账单与对账里。`--accept` 只接受第 2 步列出的准入，
+   别的键整条拒绝（`accept_not_faulted`）。准入到期等于准入时刻（违反 I1 的下界）不算有问题：汇总与对照计算对它一致，校验不报告。
+4. **确认**（记录这次校验）：
+
+   ```bash
+   docker compose -f /opt/synwevo/config/compose.yaml exec -T portal python -m synwevo_core.billing.cost_rollup verify --all </dev/null
+   ```
+
+   一致后付费调用随即恢复。
+
+**时长、写锁与内存。** 重建持有写锁，时长随该账户的成本事实数增长（重放加全量校验：本机 20 万条约 15 秒、100 万条约
+90 秒，见 `docs/agent-work/evidence/2026-10-25-cost-rollup/`）；其间别的写入等待，等待上限 30 秒（busy_timeout），超过即失败，
+所以事实多时先停服务（第 2 步）。校验不占写锁（只读快照）。校验与重建按准入时间流式读取事实，内存不随事实数增长
+（本机 100 万条：每日校验进程峰值约 120 MB，其中解释器与导入约 100 MB；重建约 110 MB），可以在 `portal` 容器（1536 MB）里运行。
+
+不要用删除故障行、改汇总表或关闭触发器来“恢复”：这些写入会被闸门拒绝（`cost_rollup_derived`），故障行与接受记录不可删除；绕过闸门的写入会在
 下一次每小时校验时被发现并重新锁定。恢复从来不是自动的。

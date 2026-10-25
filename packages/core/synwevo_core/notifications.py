@@ -270,9 +270,9 @@ CATALOGUE: dict[str, dict] = {
     "billing.cost.rollup_inconsistent": {"category": "platform", "severity": "action", "email": "immediate", "title": {
         "zh-Hans": "模型成本汇总与成本事实不一致：{provider}", "zh-Hant": "模型成本彙總與成本事實不一致：{provider}",
         "en": "Model cost rollup disagrees with its facts: {provider}"}, "body": {
-        "zh-Hans": "提供方账户 {account} 的成本汇总与成本事实不一致，该账户的付费调用已暂停，被拒绝的请求没有发送，也不会扣费。请在服务器上运行 platform.py cost-rollup verify 查看差异，核实后用 platform.py cost-rollup rebuild 重建。",
-        "zh-Hant": "供應商帳戶 {account} 的成本彙總與成本事實不一致，該帳戶的付費呼叫已暫停，被拒絕的請求沒有傳送，也不會扣費。請在伺服器上執行 platform.py cost-rollup verify 檢視差異，核實後用 platform.py cost-rollup rebuild 重建。",
-        "en": "The cost rollup of provider account {account} disagrees with the cost facts, so paid calls on that account are paused; refused requests were not sent and are not charged. Run platform.py cost-rollup verify on the server to see the differences, then platform.py cost-rollup rebuild once they are understood."}},
+        "zh-Hans": "提供方账户 {account} 的成本汇总与成本事实不一致，该账户的付费调用已暂停，被拒绝的请求没有发送，也不会扣费。请按运维手册 docs/platform/model-risk.md §13 在角色容器里查看差异，核实后重建。",
+        "zh-Hant": "供應商帳戶 {account} 的成本彙總與成本事實不一致，該帳戶的付費呼叫已暫停，被拒絕的請求沒有傳送，也不會扣費。請依維運手冊 docs/platform/model-risk.md §13 在角色容器裡檢視差異，核實後重建。",
+        "en": "The cost rollup of provider account {account} disagrees with the cost facts, so paid calls on that account are paused; refused requests were not sent and are not charged. Follow the runbook in docs/platform/model-risk.md §13: see the differences in a role container, then rebuild once they are understood."}},
     # ---- A26: a platform-requested second-factor reset that fell due and was not carried out, told
     # to the administrator who asked (synwevo_identity.admin_second_factor); `void_reason` is a
     # VOID_WORDS key, `email` the account's address as the administrator already saw it.
