@@ -318,3 +318,4 @@
 | CR-012 遗留 | 卡住的 `usage_pending` / `dispatch_unknown` 尝试没有管理视图；报价没有保留期限（行不可删除） | P3 | 未开始 |
 | 金额显示精度 | 部分界面显示未取整的单位金额（如 ¥5.11182） | P3 | 未开始 |
 | 上游 429 自动重试；工具等待与 3600 秒运行时限（D-11） | 见 D17 设计 §6 | P4 | 未开始 |
+| sdk-cli-signals | Python SDK CLI `--cancel-on-interrupt`：被 SIGTERM 结束时不发取消（TS CLI 会）；作为脚本里的后台作业继承被忽略的 SIGINT 时不响应 Ctrl-C；取消请求本身慢或服务端不可达时，第一次 Ctrl-C 后阻塞在 cancel_job 且无输出（第二次 Ctrl-C 约 1 秒退出）。测试侧同一现象已由 8615036d 修正（本机镜像以 `&` 后台启动时 SIGINT 被忽略，CI 不受影响） | P4 | 未开始 |
