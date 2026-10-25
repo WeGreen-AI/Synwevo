@@ -28,8 +28,10 @@ TOOL_SETTINGS = frozenset({"SOFFICE", "TESSERACT", "TESSDATA", "CJK_FONTS", "CJK
                            "LO_PROFILE"})
 # ... and the controls of this test run itself, which no product code reads: CI says the real-room
 # client tests must run (`required`: fail instead of skipping without Node) and how many seeds the
-# random ones take. Scrubbed, `required` silently turned into a skip.
-TEST_RUN_SETTINGS = frozenset({"SYNWEVO_SHEET_CLIENTS", "SYNWEVO_SHEET_FUZZ_SEEDS"})
+# random ones take (also the cost-rollup equivalence histories and their length). Scrubbed,
+# `required` silently turned into a skip.
+TEST_RUN_SETTINGS = frozenset({"SYNWEVO_SHEET_CLIENTS", "SYNWEVO_SHEET_FUZZ_SEEDS",
+                               "SYNWEVO_COST_EQUIVALENCE_SEEDS", "SYNWEVO_COST_EQUIVALENCE_STEPS"})
 
 
 def _scrub_ambient_configuration() -> list[str]:
