@@ -70,6 +70,10 @@ NOT_OFFERED = {
     "CLAUDE.md": "the same rules, loaded by one coding tool",
     ".gitignore": "which local files version control ignores",
     ".gitattributes": "which evidence files `git archive` leaves out of a release, and which file it stamps with the commit",
+    # These two arrive with the contribution and security policy, a separate change; listed ahead
+    # so the completeness test below holds on the merged tree whichever change lands first.
+    "CONTRIBUTING.md": "how to propose a change to this repository (branches, sign-off, review)",
+    "SECURITY.md": "how to report a vulnerability to the maintainers",
 }
 EXCLUDE_PARTS = {"__pycache__", "node_modules", ".venv", "dist", ".pytest_cache", "screenshots",
                  "data", "testdata", ".local"}
