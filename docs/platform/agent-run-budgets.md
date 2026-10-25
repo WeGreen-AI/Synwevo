@@ -277,7 +277,7 @@ facts in the periods (the Ledger writes one only for a reduced cost beyond 2^63-
 only with trusted usage); the rollup checks today's pending count against today's buckets.
 
 The rollup is verified, never trusted blindly. A read-path check (bucket structure, a stale open
-row, today's pending parity, a negative absorbed amount) refuses with `cost_rollup_inconsistent`
+row, the number of exception rows, today's pending parity, a negative absorbed amount) refuses with `cost_rollup_inconsistent`
 and is latched after the refusing transaction rolls back. The risk monitor recomputes the rollup
 from the facts in a read snapshot hourly (last two days) and daily (from the previous month's
 first day), and the restore rehearsal checks every day. A mismatch, a malformed or orphan

@@ -250,7 +250,9 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   writer's transaction: the rollup commits or rolls back with the fact. No Python runs on a fact
   write path, and there is no backlog to drain.
 * **Totality.** Derived tables have no CHECK and no NOT NULL and are written only with COALESCE
-  and upserts, so no derived row can make a fact INSERT raise. A malformed admission (time not an
+  and upserts (their WITHOUT ROWID key columns, which SQLite keeps non-NULL, are always COALESCEd;
+  an upsert keeps its meaning even under an outer INSERT OR REPLACE/IGNORE), so no derived row can
+  make a fact INSERT raise. A malformed admission (time not an
   integer, negative, or expiry more than a day after admission) or an orphan one (no attempt,
   call or wallet) becomes a fault `fact:<attempt_key>` of its scope instead of a bucket.
 * **Gate.** BEFORE INSERT/UPDATE/DELETE triggers on the four derived tables refuse with
@@ -267,6 +269,8 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   Rebuilds and verifier results are insert-only (`model_cost_rollup_rebuilds`,
   `model_cost_rollup_audits`). The daily prune deletes, under the gate, velocity buckets older than
   the newest admission minus two days and open-set rows its time has passed; day buckets stay.
+  A rebuild recreates every row a read can use exactly; it may differ from the live table only
+  in rows the prune removes (so prune, rebuild, prune leaves the same rows as prune).
 
 **Backup, restore, rollback.** The SQLite backup API copies the facts and the rollup in one
 consistent snapshot, so a restored copy verifies as it was; the restore rehearsal

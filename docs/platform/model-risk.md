@@ -212,6 +212,9 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
    `model_cost_rollup_deltas`、关闭过触发器）或程序有缺陷。保留 verify 输出，排查来源后重建：
    `python scripts/platform.py cost-rollup rebuild --environment live --provider deepseek --account-ref <账户> --reason "<8–500 字理由>"`。
    重建在一个事务里从事实重放、校验并解除该账户的故障；校验不通过时什么也不改。重建写入 `billing.cost.rollup_rebuilt` 审计。
+   重建期间持有写锁（重放加全量校验，时长随该账户的成本事实数增长：本机基准 20 万条约 11 秒、100 万条约 1 分钟，见
+   `docs/agent-work/evidence/2026-10-25-cost-rollup/`），其间所有写入等待；写入方的等待上限是 30 秒（busy_timeout），
+   超过即失败。事实量大时在维护窗口内执行（先停服务，或至少在低峰时）。
 4. 重建后再跑一次 `cost-rollup verify --all`，确认一致；付费调用随即恢复。
 
 不要用删除故障行、改汇总表或关闭触发器来“恢复”：这些写入会被闸门拒绝（`cost_rollup_derived`），故障行不可删除；绕过闸门的写入会在

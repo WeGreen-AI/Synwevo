@@ -182,7 +182,7 @@
 - `/private/tmp/synwevo-cost-final.xml`：289 passed，0失败/错误/跳过，38.395s，当前完整成本增量+Ledger/Agent/报价/恢复/生命周期/blob关联回归。独立8个Store争抢最后预算只有1个准入；投影/发送/结算故障均回滚；重复打开和一次性回填保留事实。没有真实支付或模型流量。
 - 修复CR-013：10,000条历史已结算记录下捕获实际SQL并EXPLAIN，当前区间与历史pending分别使用scope索引，没有底层全历史扫描；最多10001候选溢出探测，最多10000参与累加，超限拒绝，不默默截断。
 - 修复CR-014：明确未发的成本拒绝显示已知0；终态恢复同样识别无dispatch时间戳的已释放attempt。一次真实Agent工具调用后下一步被成本拒绝，保留单次工具、已计量13输入/7输出与一次销售；真正发送后未知仍pending。
-- [本机成本快照测量](evidence/2026-10-01-model-cost/admission-benchmark.json)：macOS27/arm64、Python3.14.5、10000条合成pending、单并发30次，median24.863ms/P9530.647ms/max34.036ms；不代表HTTP、支付、真实模型吞吐或生产SLA。
+- 本机成本快照测量（10000条合成pending、单并发30次，median24.863ms/P9530.647ms/max34.036ms）：该证据文件已由 2026-10-25 成本汇总基准取代并删除（[evidence/2026-10-25-cost-rollup](evidence/2026-10-25-cost-rollup/README.md)）；不代表HTTP、支付、真实模型吞吐或生产SLA。
 - Suite typecheck/41前端/build通过；五项守卫通过（648Python/330前端、1185品牌分类、22Logo）；diff检查通过。只新增错误文案，沿用已验收的预算/错误布局；本包未新做浏览器流程，不沿用它冒充新现场。
 - 正式付费模型仍未启用；提供方账户/路由治理、付款周期预算、RPM/TPM/公平排队、成本调查Admin、支付与真实收费验收尚未完成。7190408的CI部署容器检查仍在进行，尚无本包CI/上线声明。
 
@@ -993,3 +993,14 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 
 实现与审查（13:54Z–16:3xZ，核心 1 + 写入方 2 + 审查 2 + 复核 + 修正 + 复查代理）：`test_journal_intents.py` 覆盖 28 个通用回执种类（无回执重放、有回执跳过、同种类作废、旧格式行为不变）、10 个核心写入方的竞态备份与目录 fsync 失败；账户服务写入方与 Docs/Suite webhook 写入方各有竞态与失败测试。复查：账户服务 2024、集成 1536、Suite 1175、Docs 1675（2 项环境跳过：无 LICENSE、未设 CLAMD_TEST_ADDRESS）、Message 84、账户前端 299、六个前端工作区、六项守卫与图标、根 typecheck/build、infra 12 项通过。完整根套件（16:46Z–17:17Z）：**6494 通过、0 失败、2 跳过**。
 
+
+## 2026-10-25 cost-capacity 第一阶段：精确成本汇总（本地，worktree `auto-run-server`，决定 D18）
+
+实现（契约 `costcap/contract.md` 与协调者答复）：触发器在写入成本事实的同一事务里维护每日与 1/60/3,600 秒的精确汇总、敞口集合与按提供方账户的故障；`CostAdmission._counters` 与 `RiskControls.guard` 的速率改读汇总，不再随当月已结算量增长；校验（每小时两天、每日、恢复演练全部）、命令行重建与清理。
+
+测试（Python 3.12.6 / SQLite 3.54.0）：新 `tests/integration/test_cost_rollup.py` 与改动的 `test_model_cost_admission.py`、`test_model_risk_monitor.py`、`apps/docs/tests/test_snapshot.py` 全部通过；新测试在旧代码上全部失败（容量拒绝、缺少汇总表或接口）。分套件全量：integration 1596 通过、1 失败（`test_org_templates`，worktree 缺少被 gitignore 的 `testdata/` 图片，与本变更无关）；suite 约 1545 通过、9 跳过（MCP 测试需 `apps/suite` 在 PYTHONPATH 中排在 `apps/docs` 前，同一 PYTHONPATH 顺序下合并提交 5db93f86 已有的收集冲突）；identity 2089 通过；messages、docs 退出码 0。Python 3.14.5：成本相关集成测试 412 通过；依赖应用工厂的测试因共享 `.venv` 缺少 MCP 依赖（`mcp`、`mcp_types`）无法导入，与本变更无关。五项守卫（边界、品牌、设计、组件名）通过。另以临时脚本对约 190 个随机历史做了汇总与无上限参照的逐字段比较（10 万余次，0 处不同）及重建后行一致性检查（非仓库代码，正式的等价性属性测试由另一代理独立编写）。
+
+基准（[py312](evidence/2026-10-25-cost-rollup/admission-benchmark-py312.json)，Python 3.12.6 / SQLite 3.54.0，Darwin-27.0.0-arm64）：200k：`_counters`+`guard` p95 1.784 ms、派发 p95 2.432 ms、触发器 66.4 µs/对、结算额外 0.385 ms、回填 6.748 s、40 天校验 4.141 s、两天校验 1.432 s；1M：`_counters`+`guard` p95 1.253 ms、派发 p95 2.885 ms、回填 36.713 s、40 天校验 24.411 s。
+基准（[py314](evidence/2026-10-25-cost-rollup/admission-benchmark-py314.json)，Python 3.14.5 / SQLite 3.54.0，Darwin-27.0.0-arm64）：200k：`_counters`+`guard` p95 1.825 ms、派发 p95 2.759 ms、触发器 67.0 µs/对、结算额外 0.341 ms、回填 6.793 s、40 天校验 4.879 s、两天校验 1.678 s；1M：`_counters`+`guard` p95 1.291 ms、派发 p95 3.036 ms、回填 35.609 s、40 天校验 27.043 s。
+
+200k 时契约 §12 目标全部达标；1M 时读路径达标且不变慢，回填与 40 天校验线性增长并超过 15 s（不在发送路径上）。旧的 2026-10-01 快照测量已删除并由此取代。说明见 [evidence/2026-10-25-cost-rollup/README.md](evidence/2026-10-25-cost-rollup/README.md)。没有触碰生产、`data/` 或任何密钥；没有推送。

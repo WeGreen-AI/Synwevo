@@ -1,0 +1,425 @@
+{
+  "python": "3.12.6",
+  "sqlite": "3.54.0",
+  "machine": "Darwin-27.0.0-arm64",
+  "scope": "isolated temporary Store, synthetic fixture tariffs and wallets; no network, keys or data/",
+  "runs": [
+    {
+      "size": 200000,
+      "build_s": 15.81,
+      "counts": {
+        "admissions": 200000,
+        "usage": 190000,
+        "pending": 10000,
+        "endings": 2000,
+        "buckets": 198246,
+        "day_buckets": 20,
+        "inflight": 10000,
+        "hold": 300,
+        "exceptions": 0
+      },
+      "counters_guard_ms": {
+        "n": 200,
+        "p50": 1.642,
+        "p95": 1.784,
+        "max": 1.819
+      },
+      "rows_read": 315,
+      "velocity_bucket_rows": {
+        "payer@3600": 28,
+        "route@86400": 76
+      },
+      "query_plans": [
+        {
+          "sql": "SELECT 1 FROM model_cost_rollup_faults INDEXED BY model_cost_rollup_faults_open WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND resolved_at IS NULL LIMIT 1",
+          "plan": [
+            "SEARCH model_cost_rollup_faults USING INDEX model_cost_rollup_faults_open (environment=? AND provider=? AND account_ref=?)"
+          ]
+        },
+        {
+          "sql": "SELECT 1 FROM model_cost_admissions INDEXED BY model_cost_admissions_scope WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND admitted_at>2031220800 LIMIT 1",
+          "plan": [
+            "SEARCH model_cost_admissions USING COVERING INDEX model_cost_admissions_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)"
+          ]
+        },
+        {
+          "sql": "SELECT start,unit,den,n_adm,n_res,n_cross,n_exc,bound_hi,bound_lo,rbound_hi,rbound_lo,cost_hi,cost_lo,cost_carry,cost_frac FROM model_cost_buckets WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND di",
+          "plan": [
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>?)"
+          ]
+        },
+        {
+          "sql": "SELECT i.attempt_key,i.admitted_at,a.unit,u.attempt_key AS usage_key,u.cost_n,u.cost_d,u.cost_unit FROM model_cost_exceptions i INDEXED BY model_cost_exceptions_scope LEFT JOIN model_cost_admissions a ON a.attempt_key=i.attempt_key LEFT JOI",
+          "plan": [
+            "SEARCH i USING COVERING INDEX model_cost_exceptions_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)",
+            "SEARCH a USING INDEX sqlite_autoindex_model_cost_admissions_1 (attempt_key=?) LEFT-JOIN",
+            "SEARCH u USING INDEX sqlite_autoindex_billing_usage_1 (attempt_key=?) LEFT-JOIN"
+          ]
+        },
+        {
+          "sql": "WITH o AS MATERIALIZED (SELECT attempt_key,MAX(fe) AS fe,MAX(hd) AS hd,MAX(hc) AS hc,MAX(in_f) AS in_f,MAX(in_h) AS in_h FROM (SELECT attempt_key,expires_at AS fe,NULL AS hd,NULL AS hc,1 AS in_f,0 AS in_h FROM model_cost_inflight INDEXED BY",
+          "plan": [
+            "MATERIALIZE y",
+            "MATERIALIZE x",
+            "MATERIALIZE o",
+            "CO-ROUTINE (subquery-2)",
+            "COMPOUND QUERY",
+            "LEFT-MOST SUBQUERY",
+            "SEARCH model_cost_inflight USING COVERING INDEX model_cost_inflight_open (environment=? AND provider=? AND account_ref=? AND expires_at>?)",
+            "UNION ALL",
+            "SEARCH model_cost_hold USING INDEX model_cost_hold_open (environment=? AND provider=? AND account_ref=? AND deadline>?)",
+            "SCAN (subquery-2)",
+            "USE TEMP B-TREE FOR GROUP BY",
+            "SCAN o",
+            "SEARCH a USING INDEX sqlite_autoindex_model_cost_admissions_1 (attempt_key=?) LEFT-JOIN",
+            "SEARCH c USING INDEX sqlite_autoindex_billing_calls_1 (id=?) LEFT-JOIN",
+            "SEARCH e USING COVERING INDEX sqlite_autoindex_model_cost_endings_1 (attempt_key=?) LEFT-JOIN",
+            "SEARCH u USING COVERING INDEX sqlite_autoindex_billing_usage_1 (attempt_key=?) LEFT-JOIN",
+            "SCAN x",
+            "SCAN y"
+          ]
+        },
+        {
+          "sql": "SELECT COUNT(*) FROM model_cost_pending INDEXED BY model_cost_pending_scope WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND admitted_at>=2031177600",
+          "plan": [
+            "SEARCH model_cost_pending USING COVERING INDEX model_cost_pending_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)"
+          ]
+        },
+        {
+          "sql": "SELECT unit,den,COUNT(*) AS n,SUM(n_adm) AS n_adm,SUM(n_res) AS n_res,SUM(n_cross) AS n_cross,SUM(n_exc) AS n_exc,SUM(bound_hi) AS bound_hi,SUM(bound_lo) AS bound_lo,SUM(rbound_hi) AS rbound_hi,SUM(rbound_lo) AS rbound_lo,SUM(cost_hi) AS co",
+          "plan": [
+            "CO-ROUTINE (subquery-3)",
+            "COMPOUND QUERY",
+            "LEFT-MOST SUBQUERY",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>?)",
+            "SCAN (subquery-3)",
+            "USE TEMP B-TREE FOR GROUP BY"
+          ]
+        },
+        {
+          "sql": "SELECT unit,den,COUNT(*) AS n,SUM(n_adm) AS n_adm,SUM(n_res) AS n_res,SUM(n_cross) AS n_cross,SUM(n_exc) AS n_exc,SUM(bound_hi) AS bound_hi,SUM(bound_lo) AS bound_lo,SUM(rbound_hi) AS rbound_hi,SUM(rbound_lo) AS rbound_lo,SUM(cost_hi) AS co",
+          "plan": [
+            "CO-ROUTINE (subquery-3)",
+            "COMPOUND QUERY",
+            "LEFT-MOST SUBQUERY",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>?)",
+            "SCAN (subquery-3)",
+            "USE TEMP B-TREE FOR GROUP BY"
+          ]
+        },
+        {
+          "sql": "SELECT a.unit,a.admitted_at,a.reserved_units,u.attempt_key AS usage_key,u.cost_n,u.cost_d,u.cost_unit,att.requested_model AS route,acc.owner AS owner FROM model_cost_exceptions i INDEXED BY model_cost_exceptions_scope JOIN model_cost_admiss",
+          "plan": [
+            "SEARCH i USING COVERING INDEX model_cost_exceptions_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)",
+            "SEARCH a USING INDEX sqlite_autoindex_model_cost_admissions_1 (attempt_key=?)",
+            "SEARCH att USING INDEX sqlite_autoindex_billing_attempts_1 (id=?)",
+            "SEARCH c USING INDEX sqlite_autoindex_billing_calls_1 (id=?)",
+            "SEARCH acc USING INDEX sqlite_autoindex_billing_accounts_1 (id=?)",
+            "SEARCH u USING INDEX sqlite_autoindex_billing_usage_1 (attempt_key=?) LEFT-JOIN"
+          ]
+        },
+        {
+          "sql": "SELECT unit,den,COUNT(*) AS n,SUM(n_adm) AS n_adm,SUM(n_res) AS n_res,SUM(n_cross) AS n_cross,SUM(n_exc) AS n_exc,SUM(bound_hi) AS bound_hi,SUM(bound_lo) AS bound_lo,SUM(rbound_hi) AS rbound_hi,SUM(rbound_lo) AS rbound_lo,SUM(cost_hi) AS co",
+          "plan": [
+            "CO-ROUTINE (subquery-3)",
+            "COMPOUND QUERY",
+            "LEFT-MOST SUBQUERY",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>?)",
+            "SCAN (subquery-3)",
+            "USE TEMP B-TREE FOR GROUP BY"
+          ]
+        }
+      ],
+      "counters": {
+        "totals": "{'daily': Fraction(80254395661009, 200000), 'weekly': Fraction(918956600620109, 250000), 'monthly': Fraction(7363373476813833, 1000000)}",
+        "unknown_reserved_units": 30647510,
+        "unknown_count": 300,
+        "inflight": 300,
+        "absorbed_unknown_units": 739282984,
+        "absorbed_unknown_count": 7303,
+        "rows_read": 315
+      },
+      "dispatch_ms": {
+        "n": 500,
+        "p50": 2.269,
+        "p95": 2.432,
+        "max": 4.969
+      },
+      "settle_ms": {
+        "n": 500,
+        "p50": 0.676,
+        "p95": 2.548,
+        "max": 4.316
+      },
+      "verify_40d": {
+        "s": 4.141,
+        "ok": true,
+        "facts": 200500
+      },
+      "verify_recent_2d": {
+        "s": 1.432,
+        "ok": true,
+        "facts": 28244
+      },
+      "verify_all": {
+        "s": 4.294,
+        "ok": true,
+        "facts": 200500
+      },
+      "backfill_s": 6.748,
+      "backfill_facts": 200500,
+      "triggers": {
+        "pairs": 10000,
+        "with_s": 0.73,
+        "without_s": 0.066,
+        "us_per_pair": 66.4
+      },
+      "settlement_overhead": {
+        "with": {
+          "n": 200,
+          "p50": 0.711,
+          "p95": 2.397,
+          "max": 4.011
+        },
+        "without": {
+          "n": 200,
+          "p50": 0.326,
+          "p95": 0.369,
+          "max": 4.018
+        },
+        "extra_ms_p50": 0.385
+      },
+      "db_mb": 370.0
+    },
+    {
+      "size": 1000000,
+      "build_s": 102.07,
+      "counts": {
+        "admissions": 1000000,
+        "usage": 950000,
+        "pending": 50000,
+        "endings": 2000,
+        "buckets": 510141,
+        "day_buckets": 20,
+        "inflight": 50000,
+        "hold": 300,
+        "exceptions": 0
+      },
+      "counters_guard_ms": {
+        "n": 200,
+        "p50": 1.206,
+        "p95": 1.253,
+        "max": 1.407
+      },
+      "rows_read": 318,
+      "velocity_bucket_rows": {
+        "payer@3600": 55,
+        "route@86400": 91
+      },
+      "query_plans": [
+        {
+          "sql": "SELECT 1 FROM model_cost_rollup_faults INDEXED BY model_cost_rollup_faults_open WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND resolved_at IS NULL LIMIT 1",
+          "plan": [
+            "SEARCH model_cost_rollup_faults USING INDEX model_cost_rollup_faults_open (environment=? AND provider=? AND account_ref=?)"
+          ]
+        },
+        {
+          "sql": "SELECT 1 FROM model_cost_admissions INDEXED BY model_cost_admissions_scope WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND admitted_at>2031220800 LIMIT 1",
+          "plan": [
+            "SEARCH model_cost_admissions USING COVERING INDEX model_cost_admissions_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)"
+          ]
+        },
+        {
+          "sql": "SELECT start,unit,den,n_adm,n_res,n_cross,n_exc,bound_hi,bound_lo,rbound_hi,rbound_lo,cost_hi,cost_lo,cost_carry,cost_frac FROM model_cost_buckets WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND di",
+          "plan": [
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>?)"
+          ]
+        },
+        {
+          "sql": "SELECT i.attempt_key,i.admitted_at,a.unit,u.attempt_key AS usage_key,u.cost_n,u.cost_d,u.cost_unit FROM model_cost_exceptions i INDEXED BY model_cost_exceptions_scope LEFT JOIN model_cost_admissions a ON a.attempt_key=i.attempt_key LEFT JOI",
+          "plan": [
+            "SEARCH i USING COVERING INDEX model_cost_exceptions_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)",
+            "SEARCH a USING INDEX sqlite_autoindex_model_cost_admissions_1 (attempt_key=?) LEFT-JOIN",
+            "SEARCH u USING INDEX sqlite_autoindex_billing_usage_1 (attempt_key=?) LEFT-JOIN"
+          ]
+        },
+        {
+          "sql": "WITH o AS MATERIALIZED (SELECT attempt_key,MAX(fe) AS fe,MAX(hd) AS hd,MAX(hc) AS hc,MAX(in_f) AS in_f,MAX(in_h) AS in_h FROM (SELECT attempt_key,expires_at AS fe,NULL AS hd,NULL AS hc,1 AS in_f,0 AS in_h FROM model_cost_inflight INDEXED BY",
+          "plan": [
+            "MATERIALIZE y",
+            "MATERIALIZE x",
+            "MATERIALIZE o",
+            "CO-ROUTINE (subquery-2)",
+            "COMPOUND QUERY",
+            "LEFT-MOST SUBQUERY",
+            "SEARCH model_cost_inflight USING COVERING INDEX model_cost_inflight_open (environment=? AND provider=? AND account_ref=? AND expires_at>?)",
+            "UNION ALL",
+            "SEARCH model_cost_hold USING INDEX model_cost_hold_open (environment=? AND provider=? AND account_ref=? AND deadline>?)",
+            "SCAN (subquery-2)",
+            "USE TEMP B-TREE FOR GROUP BY",
+            "SCAN o",
+            "SEARCH a USING INDEX sqlite_autoindex_model_cost_admissions_1 (attempt_key=?) LEFT-JOIN",
+            "SEARCH c USING INDEX sqlite_autoindex_billing_calls_1 (id=?) LEFT-JOIN",
+            "SEARCH e USING COVERING INDEX sqlite_autoindex_model_cost_endings_1 (attempt_key=?) LEFT-JOIN",
+            "SEARCH u USING COVERING INDEX sqlite_autoindex_billing_usage_1 (attempt_key=?) LEFT-JOIN",
+            "SCAN x",
+            "SCAN y"
+          ]
+        },
+        {
+          "sql": "SELECT COUNT(*) FROM model_cost_pending INDEXED BY model_cost_pending_scope WHERE environment='test' AND provider='bench-provider' AND account_ref='bench-account' AND admitted_at>=2031177600",
+          "plan": [
+            "SEARCH model_cost_pending USING COVERING INDEX model_cost_pending_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)"
+          ]
+        },
+        {
+          "sql": "SELECT unit,den,COUNT(*) AS n,SUM(n_adm) AS n_adm,SUM(n_res) AS n_res,SUM(n_cross) AS n_cross,SUM(n_exc) AS n_exc,SUM(bound_hi) AS bound_hi,SUM(bound_lo) AS bound_lo,SUM(rbound_hi) AS rbound_hi,SUM(rbound_lo) AS rbound_lo,SUM(cost_hi) AS co",
+          "plan": [
+            "CO-ROUTINE (subquery-3)",
+            "COMPOUND QUERY",
+            "LEFT-MOST SUBQUERY",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>?)",
+            "SCAN (subquery-3)",
+            "USE TEMP B-TREE FOR GROUP BY"
+          ]
+        },
+        {
+          "sql": "SELECT unit,den,COUNT(*) AS n,SUM(n_adm) AS n_adm,SUM(n_res) AS n_res,SUM(n_cross) AS n_cross,SUM(n_exc) AS n_exc,SUM(bound_hi) AS bound_hi,SUM(bound_lo) AS bound_lo,SUM(rbound_hi) AS rbound_hi,SUM(rbound_lo) AS rbound_lo,SUM(cost_hi) AS co",
+          "plan": [
+            "CO-ROUTINE (subquery-3)",
+            "COMPOUND QUERY",
+            "LEFT-MOST SUBQUERY",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>?)",
+            "SCAN (subquery-3)",
+            "USE TEMP B-TREE FOR GROUP BY"
+          ]
+        },
+        {
+          "sql": "SELECT a.unit,a.admitted_at,a.reserved_units,u.attempt_key AS usage_key,u.cost_n,u.cost_d,u.cost_unit,att.requested_model AS route,acc.owner AS owner FROM model_cost_exceptions i INDEXED BY model_cost_exceptions_scope JOIN model_cost_admiss",
+          "plan": [
+            "SEARCH i USING COVERING INDEX model_cost_exceptions_scope (environment=? AND provider=? AND account_ref=? AND admitted_at>?)",
+            "SEARCH a USING INDEX sqlite_autoindex_model_cost_admissions_1 (attempt_key=?)",
+            "SEARCH att USING INDEX sqlite_autoindex_billing_attempts_1 (id=?)",
+            "SEARCH c USING INDEX sqlite_autoindex_billing_calls_1 (id=?)",
+            "SEARCH acc USING INDEX sqlite_autoindex_billing_accounts_1 (id=?)",
+            "SEARCH u USING INDEX sqlite_autoindex_billing_usage_1 (attempt_key=?) LEFT-JOIN"
+          ]
+        },
+        {
+          "sql": "SELECT unit,den,COUNT(*) AS n,SUM(n_adm) AS n_adm,SUM(n_res) AS n_res,SUM(n_cross) AS n_cross,SUM(n_exc) AS n_exc,SUM(bound_hi) AS bound_hi,SUM(bound_lo) AS bound_lo,SUM(rbound_hi) AS rbound_hi,SUM(rbound_lo) AS rbound_lo,SUM(cost_hi) AS co",
+          "plan": [
+            "CO-ROUTINE (subquery-3)",
+            "COMPOUND QUERY",
+            "LEFT-MOST SUBQUERY",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>? AND start<?)",
+            "UNION ALL",
+            "SEARCH model_cost_buckets USING PRIMARY KEY (environment=? AND provider=? AND account_ref=? AND dim=? AND member=? AND span=? AND start>?)",
+            "SCAN (subquery-3)",
+            "USE TEMP B-TREE FOR GROUP BY"
+          ]
+        }
+      ],
+      "counters": {
+        "totals": "{'daily': Fraction(1477713370116609, 1000000), 'weekly': Fraction(17672017595651133, 1000000), 'monthly': Fraction(36435812720336387, 1000000)}",
+        "unknown_reserved_units": 30775781,
+        "unknown_count": 303,
+        "inflight": 303,
+        "absorbed_unknown_units": 3510968892,
+        "absorbed_unknown_count": 34927,
+        "rows_read": 318
+      },
+      "dispatch_ms": {
+        "n": 500,
+        "p50": 2.591,
+        "p95": 2.885,
+        "max": 5.001
+      },
+      "settle_ms": {
+        "n": 500,
+        "p50": 0.675,
+        "p95": 2.562,
+        "max": 3.615
+      },
+      "verify_40d": {
+        "s": 24.411,
+        "ok": true,
+        "facts": 1000500
+      },
+      "verify_recent_2d": {
+        "s": 7.175,
+        "ok": true,
+        "facts": 131127
+      },
+      "verify_all": {
+        "s": 26.265,
+        "ok": true,
+        "facts": 1000500
+      },
+      "backfill_s": 36.713,
+      "backfill_facts": 1000500,
+      "triggers": {
+        "pairs": 10000,
+        "with_s": 0.762,
+        "without_s": 0.07,
+        "us_per_pair": 69.1
+      },
+      "settlement_overhead": {
+        "with": {
+          "n": 200,
+          "p50": 0.68,
+          "p95": 2.225,
+          "max": 4.347
+        },
+        "without": {
+          "n": 200,
+          "p50": 0.356,
+          "p95": 0.468,
+          "max": 2.91
+        },
+        "extra_ms_p50": 0.324
+      },
+      "db_mb": 1740.1
+    }
+  ],
+  "targets_met": {
+    "200000": {
+      "counters_guard_p95_le_3ms": true,
+      "dispatch_p95_lt_20ms": true,
+      "triggers_le_300us_per_pair": true,
+      "settlement_extra_le_1ms": true,
+      "backfill_le_15s": true,
+      "verify_40d_le_15s": true
+    },
+    "1000000": {
+      "counters_guard_p95_le_3ms": true,
+      "dispatch_p95_lt_20ms": true,
+      "triggers_le_300us_per_pair": true,
+      "settlement_extra_le_1ms": true,
+      "backfill_le_15s": false,
+      "verify_40d_le_15s": false,
+      "counters_guard_within_1_5x_of_200k": true
+    }
+  }
+}
