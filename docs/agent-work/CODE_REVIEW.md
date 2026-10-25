@@ -540,7 +540,7 @@ CR-070历史记录补正：2026-10-09只读已核实三个指定旧失败任务u
 
 ## CR-135 · 公开条款与定价改为发送即运行，公开状态如实反映模型服务（2026-10-24，本轮新增，本地已验证）
 
-- 位置：packages/core/synwevo_core/terms.py（仅 DOCUMENTS：terms、pricing → 2026-10-24）；apps/portal/synwevo_portal/public.py、apps/portal/web/src/{PublicPages.tsx,PublicHome.tsx,messages.ts,publicRoutes.ts}；services/identity/web/src/governance/{ModelPriceCalendar.tsx,ModelPriceMarkups.tsx,ModelProviderTab.tsx,*.messages.ts}、pages/account.messages.ts、PrivacySection.tsx；tests/integration/test_public_ai_facts.py。
+- 位置：packages/core/synwevo_core/terms.py（仅 DOCUMENTS：terms、pricing → 2026-10-25，按实际发布日期，审查 fv-release-1）；apps/portal/synwevo_portal/public.py、apps/portal/web/src/{PublicPages.tsx,PublicHome.tsx,messages.ts,publicRoutes.ts}；services/identity/web/src/governance/{ModelPriceCalendar.tsx,ModelPriceMarkups.tsx,ModelProviderTab.tsx,*.messages.ts}、pages/account.messages.ts、PrivacySection.tsx；tests/integration/test_public_ai_facts.py。
 - 审查要点：旧条款与定价承诺“每次运行前确认最高预算 / 价格变化后重新确认”，与 D17 不符；条款页另有“新版本生效后的下一次付费使用会记录你接受的新版本”（按使用推定接受，审查 copy-1）；公开状态在 DeepSeek 路线过期时仍显示模型可用（copy-3，线上原有）；日历发布提示对未分时的路线也说“正在进行的回答将停止”（低）。
 - 修复：三语言新文本（发送即开始、每条回答的最高金额显示在输入框旁、价格变化只适用于之后的回答、首次使用一次性接受并记录版本）；禁用承诺扫描测试（9 个旧短语 + “下一次付费使用会记录”等，并要求出现“每条回答的最高金额”）；公开状态仅在提供方启用、路线未过期且未关闭时显示可用，否则显示“已上线，模型服务暂停”；日历提示改为只对分时价格路线生效。
 - 验证：失败先行（旧源码扫描出 16 处禁用承诺；状态测试在过期路线下失败）；版本一致性、门户公开页 28 项、账户前端 301→309 项通过；变异检查（重新插入旧短语、去掉过期判断）均被测试捕获。
