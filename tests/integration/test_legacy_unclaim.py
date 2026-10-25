@@ -282,7 +282,10 @@ class _Tab:
         raise AssertionError(f"still open; meta: {self.meta}")
 
     def close(self):
-        self.cm.__exit__(None, None, None)
+        """Idempotent: also after the server closed the socket (its portal thread ends only here)."""
+        cm, self.cm = self.cm, None
+        if cm is not None:
+            cm.__exit__(None, None, None)
 
 
 def test_an_open_live_editing_tab_can_neither_read_nor_write_after_the_undo(world, monkeypatch):
@@ -302,24 +305,30 @@ def test_an_open_live_editing_tab_can_neither_read_nor_write_after_the_undo(worl
         r = _post(alice_c, "/api/templates/builtin", {"kind": "builtin_doc", "editor": doc, "name": "历史合同模板"})
         assert r.status_code == 200, r.text
         tid = r.json()["id"]
-        reader, writer = _Tab(alice_c, tid), _Tab(alice_c, tid)
-        for tab in (reader, writer):
-            tab.sync()
-            assert "客户：" in tab.text()
+        tabs = []  # closed even when an assertion below fails: an open tab keeps re-reading this database
+        try:
+            reader = _Tab(alice_c, tid)
+            tabs.append(reader)
+            writer = _Tab(alice_c, tid)
+            tabs.append(writer)
+            for tab in (reader, writer):
+                tab.sync()
+                assert "客户：" in tab.text()
 
-        _unclaim(world)
-        assert alice_c.get(f"/api/templates/{tid}").status_code in (403, 404)
-        # a fresh sync asks for the whole document: refused, nothing sent
-        from pycrdt import Doc
-        reader.doc = Doc()
-        reader.sync()
-        assert reader.synced is False and "客户：" not in reader.text()
-        assert reader.closed() == (4403, [{"type": "closed", "reason": "membership_ended"}])
-        # an edit: refused, never applied
-        writer.type("（撤销之后写入）")
-        assert writer.closed() == (4403, [{"type": "closed", "reason": "membership_ended"}])
-        reader.close()
-        writer.close()
+            _unclaim(world)
+            assert alice_c.get(f"/api/templates/{tid}").status_code in (403, 404)
+            # a fresh sync asks for the whole document: refused, nothing sent
+            from pycrdt import Doc
+            reader.doc = Doc()
+            reader.sync()
+            assert reader.synced is False and "客户：" not in reader.text()
+            assert reader.closed() == (4403, [{"type": "closed", "reason": "membership_ended"}])
+            # an edit: refused, never applied
+            writer.type("（撤销之后写入）")
+            assert writer.closed() == (4403, [{"type": "closed", "reason": "membership_ended"}])
+        finally:
+            for tab in tabs:
+                tab.close()
     # nothing of it reached the draft the next assignee inherits
     for row in store.all("SELECT state FROM collab_docs WHERE template_id=?", (tid,)):
         from pycrdt import Doc, XmlFragment

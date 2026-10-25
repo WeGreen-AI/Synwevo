@@ -125,11 +125,17 @@ def _no_socket_outlives_its_test():
     re-reads the person's session every SYNWEVO_COLLAB_RECHECK_S on that test's database, and in a
     full run that polluted a later test counting statements (CI run 40182684885).
 
-    Autouse fixtures are set up before, and torn down after, the fixtures a test asks for, so the
-    portals this finds were started by this test and outlived all of its own teardown (the
-    `with TestClient(app)` of a `world` fixture included). Portals alive before the test started are
-    not blamed on it. The leaked WebSocket sessions are exited here, so one failing test does not
-    pollute the ones after it."""
+    This fixture is set up before, and torn down after, the function-scoped fixtures a test asks
+    for (not `monkeypatch`, which an earlier autouse fixture requests), so the portals it finds were
+    started by this test and outlived all of its own teardown (the `with TestClient(app)` of a
+    `world` fixture included). Portals alive before the test started are not blamed on it. The
+    leaked WebSocket sessions are exited here, so one failing test does not pollute the ones after it.
+
+    What it does not see: a session opened on a client that was *entered* (`with TestClient(...)`)
+    runs on that client's own portal, so no new thread appears — such a leak instead keeps the
+    client's exit waiting, which shows as a hang, not as this error; and fixtures wider than one
+    test (module, session) are set up before the snapshot and never checked. It also relies on
+    anyio naming a portal's thread "asyncio-portal-…"."""
     before = set(threading.enumerate())
     yield
     leaked = _portals_started_since(before)
@@ -140,7 +146,7 @@ def _no_socket_outlives_its_test():
     for t in leaked:
         s = sockets.get(t.name)
         if s is None:
-            named.append(f"{t.name} (not a WebSocket session: a TestClient entered and never exited?)")
+            named.append(f"{t.name} (no WebSocket session found on it: another blocking portal this test started)")
         else:
             exitable.append(s)
             query = s.scope.get("query_string", b"").decode()
