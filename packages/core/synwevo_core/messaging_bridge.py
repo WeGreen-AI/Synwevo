@@ -454,7 +454,10 @@ class ObjectConversations:
         if joined:
             self.messaging.publish([uid], {"type": "conversation", "conversation_id": cid, "change": "added"})
             self.messaging.publish(self.messaging._active_user_ids(cid), {"type": "conversation", "conversation_id": cid, "change": "updated"})
-        return {"object": self._object_out(app, anchor), "conversation": self.messaging.get(cid, uid), "created": created, "joined": joined}
+        # The create or enrolment was checked again under the writer lock and committed: answer for it
+        # as every committed Message write is answered (B3), even if a switch-off committed since.
+        return {"object": self._object_out(app, anchor), "conversation": self.messaging._after_write(cid, uid),
+                "created": created, "joined": joined}
 
     def _join(self, t, cid: str, uid: str, app: str) -> bool:
         """Add a caller who may open the object to an existing object conversation (history from

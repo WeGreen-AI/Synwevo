@@ -921,3 +921,60 @@ def test_an_organization_past_its_recovery_window_loses_its_conversations_at_onc
                                                          json={"body": "after the window, platform off", "client_id": "b3-lost-p"})):
         assert r.status_code == 404 and r.json()["error"] == "no_conversation", r.text
     _refused(c.get(f"{M}/conversations/{w.gb}"), w.b, "platform")
+
+
+# ------------------------------------------------------------------ a project discussion that landed
+_FV_PROJECT = "p_fvb3open1"
+
+
+def _fv_project(c):
+    """FIXTURE: one Docs project in the organization's workspace, with two members who may open it."""
+    store = c.ident.store
+    wid = store.one("SELECT id FROM workspaces WHERE organization_id=?", (c.oid,))["id"]
+    for key, role in (("ann", "editor"), ("ben", "viewer")):
+        store.execute("INSERT INTO memberships (workspace_id,user_id,role,can_export,created_at,updated_at,created_by) VALUES (?,?,?,1,?,?,?)",
+                      (wid, c.users[key]["id"], role, now(), now(), c.users["owner"]["id"]))
+    Apps(store, c.ident).register(app_id=DOCS_APP_ID, name="Synwevo Docs", launch_url="http://docs.testserver/")
+    store.execute("INSERT INTO projects (id,name,tenant,created_at,updated_at) VALUES (?,?,?,?,?)", (_FV_PROJECT, "A project", wid, now(), now()))
+    c.api.state.bridge_worker.publish = lambda users, event: None
+    return wid
+
+
+def _open_while_switching_off(c, monkeypatch, who):
+    """Open the project discussion while a switch-off commits right after open's write transaction
+    (from `_object_out`, which runs after the commit and before the answer is built)."""
+    original = ObjectConversations._object_out
+    fired = []
+
+    def switching_off(self, *args, **kwargs):
+        out = original(self, *args, **kwargs)
+        if not fired:
+            fired.append(True)
+            _off(c)
+        return out
+    monkeypatch.setattr(ObjectConversations, "_object_out", switching_off)
+    try:
+        return c.post(f"{M}/objects/{DOCS_APP_ID}/project/{_FV_PROJECT}/conversation", headers=c.sign_in(who))
+    finally:
+        monkeypatch.setattr(ObjectConversations, "_object_out", original)
+
+
+def test_opening_a_discussion_that_landed_before_a_switch_off_answers_for_it_and_is_audited(org, monkeypatch):
+    """A discussion created, or an enrolment committed, before the switch-off commits is answered for
+    what it did (200, as every other committed Message write) and its `messaging.object.open` audit
+    row is written; it is not refused afterwards as if it had not happened (review fv-b3-1)."""
+    c = org
+    store = c.ident.store
+    wid = _fv_project(c)
+    created = _open_while_switching_off(c, monkeypatch, "ann")
+    assert created.status_code == 200, created.text
+    assert created.json()["created"] is True
+    assert organization_app_disabled(store, c.oid, MESSAGES_APP_ID)
+    _on(c)
+    store.execute("INSERT INTO memberships (workspace_id,user_id,role,can_export,created_at,updated_at,created_by) VALUES (?,?,?,1,?,?,?)",
+                  (wid, c.users["cid"]["id"], "viewer", now(), now(), c.users["owner"]["id"]))
+    joined = _open_while_switching_off(c, monkeypatch, "cid")
+    assert joined.status_code == 200, joined.text
+    assert joined.json()["joined"] is True
+    rows = store.all("SELECT result FROM audit_events WHERE action='messaging.object.open'")
+    assert len(rows) == 2 and all(r["result"] == "ok" for r in rows)
