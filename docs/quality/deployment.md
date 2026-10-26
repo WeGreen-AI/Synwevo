@@ -1,6 +1,37 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-10-25 09:46 UTC — 311508fe, D17 send-and-go and B3, through the host receiver
+## Current release · 2026-10-25 22:15 UTC — 8a3b679d, the first deploy from `dev`
+
+**Running source: `8a3b679ddb7fa4d747054d067ec8ade6fe7a1d2e`** (origin/dev, the merge of PR #2). It is the first release
+through the new branch model (owner decision 2026-10-25): `dev` is the development and production-deploy branch, `main`
+the public open-source mirror; the `production` environment admits only `dev`, without administrator bypass; rulesets on
+`dev` and `main` require a pull request (merge commits only), forbid force pushes and deletion, and have no bypass; `dev`
+requires the `verify` check. Pipeline run 40232805667 (push to dev): verify 20:52→22:12 UTC (full runtime suite in the
+image at 3 GiB / 2 CPU), deploy 22:12→22:15 UTC through the restricted SSH command to the host receiver. Receiver backup
+`/opt/synwevo/backups/20261025T221441Z`.
+
+**What it ships over 311508fe:** the MCP platform (Synwevo as an MCP server and the Agent as an MCP client; both
+directions off by default behind a versioned policy; additive schema: nine `mcp_*` tables, four `oauth_clients` columns;
+restore rehearsal from 311508fe's schema passed, and 311508fe's code still opens the migrated database), the CI/CD switch
+to `dev` (PR #2: verify on every pull request into `dev` or `main` with a fail-closed records-only path, deploy only from
+`dev`, release-archive check against the receiver's rules, verify limit 120 minutes), and test fixes (Node 22 date
+assertions, cross-test socket leaks, statement counting, the SDK interrupt test). Earlier attempts for this content: run
+40188380863 (de4eff93, the accidental push to main) was cancelled before any step; run 40200899191 (5db93f86) reached 98%
+of the runtime suite with no failure when the former 75-minute limit cancelled it — nothing was deployed by either.
+
+**Post-deploy checks (22:16–22:20 UTC, read-only):** `/readyz` 200 on synwevo.com, workplace, accounts, docwave and
+message; accounts, docs, portal and messages all on `synwevo:8a3b679d…` and healthy, gateway recreated; no traceback or
+error line in the last 15 minutes of any role; nine `mcp_*` tables present and empty; the four `oauth_clients` columns
+present; `PRAGMA quick_check` ok; `/public/deployment.json` reports the Agent released with the model paused (the
+DeepSeek route expired 2026-10-15 and has not been renewed). The host's `SYNWEVO_ISSUER` equals the canonical
+`https://accounts.synwevo.com` on all four roles (checked before the deploy; the new start-up check refuses any other form).
+
+**Still the owner's to do:** renew the DeepSeek route in Admin; publish card-only payment settings (production still has
+revision 3); counsel review of the 2026-10-25 terms; and, from the open-source readiness audit, move the local key files
+out of the checkout, enable secret scanning / push protection / private vulnerability reporting, and apply the account-hardening steps
+the audit gave the owner directly.
+
+## 2026-10-25 09:46 UTC — 311508fe (historical; superseded above), D17 send-and-go and B3, through the host receiver
 
 **Running source: `311508fe2ba1a83f09f051030bf0cf032404491b`** (origin/main, 79 commits over 217d66d4). Receiver
 receipt: `{"deployed": "synwevo:311508fe2ba1a83f09f051030bf0cf032404491b", "backup": "/opt/synwevo/backups/20261025T094644Z"}`
@@ -160,7 +191,8 @@ where the role has them); read-only `docker ps`: `synwevo-accounts-1`, `-docs-1`
 Local gates on the same code (`a47b148`, plus the fixture change): pytest 4788 passed, 2 skipped; five guards, typecheck,
 build, npm tests, Python SDK 40, TypeScript SDK 25, infra unittest 8. Owner decisions still open: R3-FE-04 (status checks
 counted against a flow's call budget), the shared webhook resolver pool cap (R3-WH-2 remainder, R4-webhooks-merge-1/2),
-D3, D5 remainder, D7 step 2, the ClamAV host step; and which applications to enable, after their acceptance.
+D3, D5 remainder, D7 step 2; and which applications to enable, after their acceptance. (Host-side configuration
+items are left out of this list; redacted 2026-10-25.)
 
 ## 2026-10-04 — admin governance fixes deployed (7ae3527)
 
@@ -283,7 +315,7 @@ server-side; the composed server's `malware_scanner` readiness component; the ch
 The first CI-21 run, 36158250147, was cancelled by the 45-minute job timeout — that test had replaced `time.sleep` for the rest of
 the session and every later polling loop spun on the two-CPU verify container. Run 36163781043 for `729d694` passed verify and
 deploy (created 16:54 UTC, deployed 17:11 UTC); pre-upgrade backup `/opt/synwevo/backups/20260925T171110Z`. Anonymous checks:
-`/api/auth/state.challenge` is `null` (no Turnstile keys in the runtime), Docs `/readyz` now lists `malware_scanner: off`.
+`/api/auth/state` carries the new `challenge` field (it follows the runtime's Turnstile keys; the value observed then is redacted 2026-10-25), Docs `/readyz` now lists `malware_scanner: off` (scanning went live with CI-87 on 2026-09-28).
 
 **Running source:** `a02baf0bd57706f9b9d9199862ce552fd7c03d19` (CI-22 platform inbox: schema v9 `notifications`/
 `notification_deliveries`/`notification_preferences`, inbox routes in every role, the account service's e-mail dispatcher, bell
@@ -377,8 +409,8 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
   rollback needs no data restore. The workflow's pre-deploy backup still runs.
 * *Host step (CI-125):* mount the ClamAV config with `AlertEncryptedArchive yes` as in `infra/production/compose.yaml` /
   `docs/operations.md` §8 (the host's `/opt/synwevo/config/compose.yaml` is the operator's file — merge, don't copy), recreate
-  `clamav`, then `docker compose exec -T clamav clamconf -n </dev/null | grep -i alertencrypted`. Without it encrypted RAR/7z that the
-  detector cannot classify still rely on the engine; everything else in CI-125 works without the mount.
+  `clamav`, then `docker compose exec -T clamav clamconf -n </dev/null | grep -i alertencrypted`. What the option adds is in
+  `docs/operations.md` §8 (sentence reworded 2026-10-25); everything else in CI-125 works without the mount.
 * *Leave off:* `SYNWEVO_SHEET_LIVE` stays unset (live tables need the trial switch and a named trial workspace first).
 * *Behaviour users will notice:* XLSX detail rows — running totals like `SUM($B$5:B5)` now fill down like Excel (CI-123); COUNTA counts
   formulas returning ""; password-protected uploads are refused with a sentence (CI-125); PPTX tables can continue on copies of their
@@ -387,13 +419,13 @@ on the accounts and Docs origins, i.e. the routes are served by both roles; all 
   host's `/api/auth/state` role, then with a test account: open a document template in two tabs (live editing still works), upload a
   password-protected ZIP as a Message attachment in a test group (refused with the sentence), and generate one XLSX with a detail row.
 
-**Host-side data change — legacy data claim undone (2026-09-29, at the account holder's request):** the platform administrator liyanpei2004@outlook.com (u_3f48e19e364e) had used 「指派历史数据」 in the admin overview to claim the legacy workspace `default` (3 projects, 5 templates) for their own account; the overview card then disappeared by design, and they asked for it back. Read-only first (the claim's audit line, the workspace, its one owner membership, the Docs enablement and grant, all stamped 1790684375.454307 by that account; two sessions, one OAuth code and one Docs token issued after it; jobs, previews and API keys older), then one guarded transaction in `synwevo-accounts-1` (aborts unless every row is exactly as read): the membership, the Docs entitlement and the Docs enablement created by the claim removed; the workspace back to 「历史数据（待认领）」 / `pending_claim`; that account's Docs token for `default` revoked (`membership_removed`, as leaving a workspace does); an `admin.workspace.unclaim` audit event (actor `system`, meta with requester, what it reverts and the reason). Sessions were left alone: membership is re-checked on every request and a session pointing at a workspace the person left is cleared. Verified read-only: legacy `pending_claim`, 3 projects and 5 templates intact, the account's personal and two organization workspaces unchanged. Before/after rows are in the session scratchpad `prod_unclaim_output.txt`; re-applying the claim from the admin overview restores the previous state. No other data touched.
+**Host-side data change — legacy data claim undone (2026-09-29, at the account holder's request):** a platform administrator (address and account id redacted 2026-10-25) had used 「指派历史数据」 in the admin overview to claim the legacy workspace `default` (3 projects, 5 templates) for their own account; the overview card then disappeared by design, and they asked for it back. Read-only first (the claim's audit line, the workspace, its one owner membership, the Docs enablement and grant, all stamped 1790684375.454307 by that account; two sessions, one OAuth code and one Docs token issued after it; jobs, previews and API keys older), then one guarded transaction in `synwevo-accounts-1` (aborts unless every row is exactly as read): the membership, the Docs entitlement and the Docs enablement created by the claim removed; the workspace back to 「历史数据（待认领）」 / `pending_claim`; that account's Docs token for `default` revoked (`membership_removed`, as leaving a workspace does); an `admin.workspace.unclaim` audit event (actor `system`, meta with requester, what it reverts and the reason). Sessions were left alone: membership is re-checked on every request and a session pointing at a workspace the person left is cleared. Verified read-only: legacy `pending_claim`, 3 projects and 5 templates intact, the account's personal and two organization workspaces unchanged. Before/after rows are in the session scratchpad `prod_unclaim_output.txt`; re-applying the claim from the admin overview restores the previous state. No other data touched.
 
 **Housekeeping (same day):** a diagnostic container `blissful_neumann` (clamav/clamav:1.4, `--rm`) left running since 2026-09-28 05:00 by an earlier scanner-image inspection (its `grep -r /` never finished) was stopped; the six Synwevo containers were not touched.
 
-**Security fix waiting for the billing block (CI-118, 2026-09-29):** an open live-editing room could be joined from another workspace by someone who knew the template id (read and write). Fixed on `main` (8e0d529) and verified; production still runs aadcb9e and keeps the hole until a deploy runs. Nothing was deployed by hand (the release path is the workflow). **Re-running the newest `main` run is the fastest way to close it once billing is fixed.** Newest refused run: **36513461278** (ffc2442, 2026-09-29: CI-118…CI-124, the XLSX and live-table merges; pre-push 2617 passed, 1 skipped) — neither job started (billing); production still aadcb9e. Earlier refused: 36504737000 (b15f7d1), 36487070888 (c9ec717).
+**Security fix CI-118 (2026-09-29; deployed 2026-10-04 in `aadcb9e..b8cb31a`, see that record; entry rewritten 2026-10-25 in its deployed form):** an open live-editing room now admits only sessions of its own workspace. Fixed on `main` (8e0d529) and verified; the deploy then waited for the billing block, and nothing was deployed by hand (the release path is the workflow). Newest refused run at the time: **36513461278** (ffc2442, 2026-09-29: CI-118…CI-124, the XLSX and live-table merges; pre-push 2617 passed, 1 skipped) — neither job started (billing); production still aadcb9e. Earlier refused: 36504737000 (b15f7d1), 36487070888 (c9ec717).
 
-**Security fix not yet deployed — password-protected files (requirement §8.7, 2026-09-29):** ClamAV answers `OK` for what it cannot decrypt, so an encrypted ZIP/7z/RAR, Office document or PDF was accepted as clean; a Synwevo Message attachment of that kind could be downloaded by other members. Fixed on a local branch (not pushed): such uploads are not accepted (`encrypted_file`; a file whose structure cannot be checked within the detector's bounds is refused the same way), rescans report historical encrypted files without changing their access (docs/security/file-acceptance.md §3.1, §8.1); the independent security review's findings on the first version (crafted layouts accepted, an upload able to stall the event loop, structure-protected XLS refused) are fixed with regression tests (§7.4). Production keeps the gap until a deploy runs. **Host-side step after that deploy** (nothing on the host was touched): create `/opt/synwevo/config/clamd.conf` from the `clamav/clamav:1.4` image's own file plus `AlertEncryptedArchive yes`, merge the new read-only mount of the reference compose, recreate `clamav` — docs/operations.md §8. The applications detect top-level encrypted files without it; the option adds encrypted archives nested inside documents and archives.
+**Security fix CI-125 — password-protected files (requirement §8.7, 2026-09-29; deployed 2026-10-04 in `aadcb9e..b8cb31a`; entry rewritten 2026-10-25 in its deployed form):** ClamAV answers `OK` for what it cannot decrypt, so an encrypted ZIP/7z/RAR, Office document or PDF was accepted as clean; a Synwevo Message attachment of that kind could be downloaded by other members. Fixed on a local branch (not pushed): such uploads are not accepted (`encrypted_file`; a file whose structure cannot be checked within the detector's bounds is refused the same way), rescans report historical encrypted files without changing their access (docs/security/file-acceptance.md §3.1, §8.1); the independent security review's findings on the first version (crafted layouts accepted, an upload able to stall the event loop, structure-protected XLS refused) are fixed with regression tests (§7.4). **Host-side step** (the clamd option; nothing on the host was touched in this round): create `/opt/synwevo/config/clamd.conf` from the `clamav/clamav:1.4` image's own file plus `AlertEncryptedArchive yes`, merge the new read-only mount of the reference compose, recreate `clamav` — docs/operations.md §8, which also says what the option adds.
 
 **Not deployed — GitHub Actions billing (CI-104, run 36429047601, 2026-09-28 13:53 UTC):** verify succeeded (ecdbf87 = CI-104 nested details + records); the deploy job was **not started** by GitHub: "The job was not started because recent account payments have failed or your spending limit needs to be increased" (annotation on job 108959850520, no steps, no logs). Production is unchanged: every role still runs aadcb9e, the five hosts answer `/readyz` 200. Nothing was deployed by hand: the release path is the workflow, and billing is the owner's to settle. **To resume:** fix *Billing & plans* for the organization, then re-run the newest `main` run (it deploys everything pushed up to then); afterwards verify the five hosts and record it here. Later pushes were refused the same way: run 36432359515 (89fefc1, CI-105) and run 36437452354 (51f59f3, CI-106…108) — **re-run 36437452354** (or whichever `main` run is newest).
 
@@ -519,8 +551,8 @@ moment, nothing was found wrong afterwards. The documentation-only commit that f
 * Administrators who sign in with an e-mail code or an external provider get a one-factor session:
   account features work, `/api/admin/*` and the API console answer `403 step_up_required` until the
   password is confirmed on the account page (`amr` becomes `email+password` / `idp:<id>+password`).
-  Password sign-in is unchanged. **The production administrator's own TOTP enrolment is still theirs to
-  do** on the account page; nothing was enrolled, seeded or flagged on their behalf.
+  Password sign-in is unchanged. Administrators enrol TOTP themselves on the account page; nothing was
+  enrolled, seeded or flagged on anyone's behalf (production account details redacted 2026-10-25).
 * New read-only administrator view "登录方式" (`GET /api/admin/identity-providers`): masked provider
   configuration, the exact callback URIs, missing variables, live discovery check. It shows Google and
   Microsoft as **not configured** on production — no provider credentials exist in `runtime.env`, and
@@ -574,8 +606,8 @@ with `dbd4c94`. The documentation-only commits that follow carry `[skip ci]` and
   `#1e40af`); the portal stylesheet no longer carries its private green palette.
 - Sign-in page offers "keep me signed in" and e-mail code sign-in; **no external provider is
   configured**, so `/api/auth/state.external_providers` is `[]` and no provider button is shown.
-  E-mail codes use the existing production SMTP; the platform administrator account has no
-  TOTP enrolled, so it is deliberately not offered an e-mail code (documented policy).
+  E-mail codes use the existing production SMTP; an administrator account without TOTP is
+  deliberately not offered an e-mail code (documented policy; production account details redacted 2026-10-25).
 
 ### Post-deploy checks (first cutover, 2026-09-25 ~04:25 UTC)
 
@@ -778,7 +810,7 @@ was verified by checking role identity at all three hostnames after the rehearsa
   responses, with no observed JavaScript exception. This is not an authenticated document-editing
   or physical-Passkey acceptance claim.
 - The user created the administrator and chose their own password through the interactive CLI.
-  A read-only aggregate check confirmed one active administrator, three live sessions, and one
+  A read-only aggregate check confirmed an active administrator (count redacted 2026-10-25), three live sessions, and one
   active client session each for `portal-web` and `docweave-web`. The assistant did not read or
   enter the password, borrow the user's cookies, or create a replacement account.
 - Historical `default` remains `pending_claim`. After signing in, use
@@ -886,7 +918,7 @@ no SMTP password. Endpoint: `mail.hikosphere.com:587`, STARTTLS with system CA/h
 15-second socket timeout, From `Synwevo <mail@hikosphere.com>`. Verified authentication did not send
 any mail. Port 465 is supported by the code with mutually exclusive implicit TLS, and was tested
 only against the synthetic local receiver. No MX, Cloudflare inbound rule, mailcow routing,
-SMTP2GO configuration, BDR state or unrelated hosted application was changed.
+SMTP2GO configuration or other application on the host was changed (a co-tenant's name redacted 2026-10-25).
 
 ### Actual business acceptance (two messages total; no resend)
 

@@ -85,6 +85,6 @@ issuer 写进令牌并由三个依赖方校验，不能双跑；Cookie 只属于
 | `receive.py` 的 `SERVICES` 含 `messages`（随本仓库安装到 VPS 的 receiver 才会滚动它） | 仓库已改；receiver 另行安装（README） |
 | 仓库变量 `SYNWEVO_PUBLIC_HOSTS` 加 `message.synwevo.com` | 主域切换时已设三主机；消息服务上线时补上第四个 |
 | Google / Microsoft 控制台的新回调 URI（`https://accounts.synwevo.com/auth/external/<id>/callback`） | 生产尚未配置外部登录，配置时用新地址 |
-| Turnstile 小部件主机名 | 生产尚未启用；启用时登记 `accounts.synwevo.com` |
+| Turnstile 小部件主机名 | 登记 `accounts.synwevo.com`（启用步骤见 security/human-verification.md §1；生产启用状态不写进公开记录，2026-10-25 脱敏） |
 | 发件域是否改为 synwevo.com | 决定项；改则先做 SPF/DKIM/DMARC 与 SMTP2GO 域验证 |
 | 旧主机 308 保留期 | 建议 ≥ 90 天（已发邮件与书签） |

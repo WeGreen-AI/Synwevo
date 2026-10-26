@@ -10,9 +10,9 @@
     "excluded": "排除逐字阅读；仍需来源/用途审查"
   },
   "counts": {
-    "indexed": 121,
-    "partial": 141,
-    "full": 306,
+    "indexed": 119,
+    "partial": 143,
+    "full": 314,
     "excluded": 7
   },
   "agent_snapshot_drift": [
@@ -115,45 +115,84 @@
       "historical_sha256": "82ad6fde665a679bdb6c9dd89d180461d3968b2165059703d4fd3b850e7f9220"
     },
     {
+      "path": ".github/dependabot.yml",
+      "sha256": "f3a1a4a40bcbe30963a87fca49033409848ffc786025d2eab4504af2b6e416b4",
+      "bytes": 1129,
+      "lines": 32,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 authored: pip/npm/github-actions version updates targeting dev."
+    },
+    {
+      "path": ".github/pull_request_template.md",
+      "sha256": "277b45eedff9f436369ba55cd4e0f957145313104c9f799a9dc4c5698c5706d7",
+      "bytes": 1968,
+      "lines": 28,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 authored; 2026-10-26 checklist item for changes to .github/, infra/, guards and test settings."
+    },
+    {
+      "path": ".github/workflows/main-sync-guard.yml",
+      "sha256": "f9fdb26731ec3a93ed2072c07f2362083eeb62f273dbe6f564cf20010da322ef",
+      "bytes": 1897,
+      "lines": 34,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 authored: sync-source check for dev→main pull requests; executed by infra/production/tests/test_workflow.py."
+    },
+    {
       "path": ".github/workflows/production.yml",
-      "sha256": "6be28aeee95899fdf2740b3ecbb49b44007949605fcc07c4bd767a646a61ad6e",
-      "bytes": 4127,
-      "lines": 86,
-      "status": "partial",
-      "evidence": "Verify step read; logo check added (2026-09-26 logo integration).",
-      "historical_status": "indexed",
-      "historical_sha256": "244c2e983dd9d0f143ab6214cd7e8d1087d5fd1965126ac7f7a94ac3fc285b1c"
+      "sha256": "85fa09eab9ee4438820ea8651021ffe91666c3eda2016c13e72148bdb865cd4e",
+      "bytes": 20322,
+      "lines": 323,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 dev branch model: whole file read and rewritten (triggers, records-only classifier, deploy gate and guard, receiver output); 2026-10-26 review fixes: classifier reads file modes (links/submodules count as code), release archive check in both paths, job-level concurrency with re-runs in their own groups and a first-step re-run guard, paginated deploy guard, header notes on verify's limits and on main before the first sync. Its shell text is executed by infra/production/tests/test_workflow.py.",
+      "historical_status": "partial",
+      "historical_sha256": "6be28aeee95899fdf2740b3ecbb49b44007949605fcc07c4bd767a646a61ad6e"
     },
     {
       "path": ".gitignore",
-      "sha256": "c426ca741d41ab8aa03643368c59ac2201b7f09200b698dba47b5984be6d31c0",
-      "bytes": 551,
-      "lines": 28,
-      "status": "partial",
-      "reader": "main",
-      "evidence": "Incremental changed sections and relevant call paths; not a whole-file reading claim"
+      "sha256": "b807bd3eb01f42650da3a7e86506b08268063761c64e0a45487599d9cde94a7d",
+      "bytes": 1038,
+      "lines": 41,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 whole file read; key-file and local-note patterns added.",
+      "historical_status": "partial",
+      "historical_sha256": "c426ca741d41ab8aa03643368c59ac2201b7f09200b698dba47b5984be6d31c0"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "926f7a55034dad6d9b357b34f7629529479640604aa8050f948e67f655494283",
-      "bytes": 6124,
-      "lines": 99,
-      "status": "partial",
-      "reader": "main",
-      "evidence": "Verification lists read; logo check added (2026-09-26 logo integration).",
-      "historical_status": "full",
-      "historical_sha256": "11aa08b0baf15da32343f1b9051c9f525fc6f0a53eb2009cd0649b9d183b1711"
+      "sha256": "031e4adee826899a34a180d76c03c7f6185852e569e8bfae4970d0e546290b64",
+      "bytes": 10192,
+      "lines": 134,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 whole file read; section 分支与发布 added. 2026-10-26: review rule for pull requests changing the checks, main before the first sync, security fixes through an ordinary pull request into dev.",
+      "historical_status": "partial",
+      "historical_sha256": "926f7a55034dad6d9b357b34f7629529479640604aa8050f948e67f655494283"
     },
     {
       "path": "CLAUDE.md",
-      "sha256": "0051b4627ae3da8151d35948122e9e3522feadac49671f2e252ca63de2942ba7",
-      "bytes": 2970,
-      "lines": 46,
-      "status": "partial",
-      "reader": "main",
-      "evidence": "Verification list read; logo check added (2026-09-26 logo integration).",
-      "historical_status": "full",
-      "historical_sha256": "30a9181c49a819fe32c3588ef7bb7358f822a99eb5400e530886318a787fef7e"
+      "sha256": "e55352ce1331988ecd509399c9067a06d187406286693adfba29efd1443ac29f",
+      "bytes": 3747,
+      "lines": 54,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 whole file read; deploy sentence changed to the dev model.",
+      "historical_status": "partial",
+      "historical_sha256": "0051b4627ae3da8151d35948122e9e3522feadac49671f2e252ca63de2942ba7"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "6001c036b072c64736aab9c62c015d7b4cc5a665793f7f7bf7f3bb8ec0877308",
+      "bytes": 7673,
+      "lines": 150,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 authored (简体中文 + English); 2026-10-26 review rule for changes to .github/, infra/, guards and test settings."
     },
     {
       "path": "NOTICE",
@@ -166,23 +205,34 @@
     },
     {
       "path": "README.en.md",
-      "sha256": "c712481c14e44c953b6aef9c68fef0c4392944aca37f8a6036ee8462cddfde5d",
-      "bytes": 23345,
-      "lines": 340,
-      "status": "full",
-      "evidence": "Authored; logo header (2026-09-26 logo integration)."
+      "sha256": "6cf4324b8491b204e1c58a5f6354a733fcf040b6961b1265abda2fa9ff94d8d1",
+      "bytes": 24213,
+      "lines": 348,
+      "status": "partial",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 badge, CI paragraph and Contributing changed to the dev model; not a whole-file reading claim.",
+      "historical_status": "full",
+      "historical_sha256": "c712481c14e44c953b6aef9c68fef0c4392944aca37f8a6036ee8462cddfde5d"
     },
     {
       "path": "README.md",
-      "sha256": "f8234f80ab88314d2d772b98e9848ed2e9447b782f842b8a2f62221e1023ec13",
-      "bytes": 21410,
-      "lines": 314,
-      "status": "full",
-      "evidence": "Authored; logo header (2026-09-26 logo integration).",
-      "historical_git_blob": "f331b370d7",
-      "reader": "shell-portal-infra",
+      "sha256": "3afe7e3f2e2cacb1f2b2c556b5a3d51d35597f911f383e04bc42fdfa0039d082",
+      "bytes": 22158,
+      "lines": 320,
+      "status": "partial",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 badge, CI paragraph and 参与开发 changed to the dev model; not a whole-file reading claim.",
       "historical_status": "full",
-      "historical_sha256": "8ff3e34145147e9d6274284fddbca4bc110628ae8a0b8eaef64d9244d65e9287"
+      "historical_sha256": "f8234f80ab88314d2d772b98e9848ed2e9447b782f842b8a2f62221e1023ec13"
+    },
+    {
+      "path": "SECURITY.md",
+      "sha256": "1228e187d794ea67718a48ef3f1ee56169e4e5fec27f92a69ce13a692326cb61",
+      "bytes": 3034,
+      "lines": 54,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 authored (简体中文 + English); 2026-10-26 fix path: advisory fork for development and review, ordinary pull request into dev."
     },
     {
       "path": "apps/docs/AGENTS.md",
@@ -3784,14 +3834,14 @@
     },
     {
       "path": "docs/operations.md",
-      "sha256": "d78ea047e43ea9ca9ac30e26ceda09b2064deec1c6a24fcf9108d41282aa5bdd",
-      "bytes": 16714,
-      "lines": 234,
+      "sha256": "45922a82fc011586929d3a624829a1b53f3f11948127656b053fce9cff07a711",
+      "bytes": 57434,
+      "lines": 625,
       "status": "partial",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Current-round authored/updated sections; unchanged historical report not reread in full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 one historical sentence about main deploys qualified; not a whole-file reading claim.",
       "historical_status": "partial",
-      "historical_sha256": "a108dcdd89355d575aab43f1ef99ce489819f4189a18b9becf83f65c9daf9458",
-      "reader": "main"
+      "historical_sha256": "d78ea047e43ea9ca9ac30e26ceda09b2064deec1c6a24fcf9108d41282aa5bdd"
     },
     {
       "path": "docs/quality/deployment.md",
@@ -3803,14 +3853,14 @@
     },
     {
       "path": "docs/quality/handoff.md",
-      "sha256": "d53a7cdc6ba3264158e1d832a765082a559285ce08e4144af0672db29fac476a",
-      "bytes": 11660,
-      "lines": 101,
+      "sha256": "8ac2e29b0c3e9449eb787320afe6cf1d082dee0a59822f7c35d40a6e45523d34",
+      "bytes": 61485,
+      "lines": 336,
       "status": "partial",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Current-round authored/updated sections; unchanged historical report not reread in full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 one historical sentence about main deploys qualified; not a whole-file reading claim.",
       "historical_status": "partial",
-      "historical_sha256": "f0590024024c97471e60e444fb978c990598caedce16901750ce98624dd1c265",
-      "reader": "main"
+      "historical_sha256": "d53a7cdc6ba3264158e1d832a765082a559285ce08e4144af0672db29fac476a"
     },
     {
       "path": "docs/quality/issues.md",
@@ -3825,14 +3875,14 @@
     },
     {
       "path": "docs/quality/progress.md",
-      "sha256": "8ee8c30801f7c104d748b7b7ae8772283c48e903049ff6ca0ad328863fc1e2ab",
-      "bytes": 30075,
-      "lines": 325,
+      "sha256": "4a32e86f30851f1ef5d7bfcaa1a5e97cf225d6b2739ab277ebec2eb442cb086b",
+      "bytes": 48464,
+      "lines": 420,
       "status": "partial",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Current-round authored/updated sections; unchanged historical report not reread in full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 historical branch row qualified; not a whole-file reading claim.",
       "historical_status": "partial",
-      "historical_sha256": "624a7fcb2a3422b1618ec06de4f1e0959c2e031665cb9ed0d4d44f746f425e0c",
-      "reader": "main"
+      "historical_sha256": "8ee8c30801f7c104d748b7b7ae8772283c48e903049ff6ca0ad328863fc1e2ab"
     },
     {
       "path": "docs/quality/verification.md",
@@ -3933,11 +3983,23 @@
     },
     {
       "path": "infra/production/README.md",
-      "sha256": "7bb27746b1847e4a2e39da2077215b0539e7fa38cfa48e0a3a0a51b3fd4a34b3",
-      "bytes": 8209,
-      "lines": 120,
-      "status": "indexed",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Identified in current inventory; no complete-reading claim"
+      "sha256": "a7c4c2b15e19a11943639841787eb4c48acf7c139a634eae770862d1fb9afb14",
+      "bytes": 15465,
+      "lines": 199,
+      "status": "partial",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 CI/CD section read and changed to the dev model; 2026-10-26 same section: archive check, concurrency and re-runs, paginated guard, one-time switch order. Not a whole-file reading claim.",
+      "historical_status": "indexed",
+      "historical_sha256": "7bb27746b1847e4a2e39da2077215b0539e7fa38cfa48e0a3a0a51b3fd4a34b3"
+    },
+    {
+      "path": "infra/production/check_release_archive.py",
+      "sha256": "12592f2acb60ebe9653d1956adc770f84ed4443a368e39cf771294f3f1949c53",
+      "bytes": 3542,
+      "lines": 83,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-26 authored: git archive HEAD against receive.py's validate_members and the 50 MiB compressed limit."
     },
     {
       "path": "infra/production/compose.yaml",
@@ -3986,6 +4048,24 @@
       "lines": 96,
       "status": "indexed",
       "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Identified in current inventory; no complete-reading claim"
+    },
+    {
+      "path": "infra/production/tests/test_release_archive.py",
+      "sha256": "c71f33571508d8951358cbc4cfd66eb4bf03c8f274e6cda663869389258eb27b",
+      "bytes": 4976,
+      "lines": 110,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-26 authored: the archive check against throwaway repositories."
+    },
+    {
+      "path": "infra/production/tests/test_workflow.py",
+      "sha256": "e0b9fca8010d9d22cc562b0001835478430a23b26bbfb92bef57a367336e839d",
+      "bytes": 28585,
+      "lines": 569,
+      "status": "full",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-25 authored: runs the workflows' classifier, deploy guard and sync guard; 2026-10-26 adds file-mode, concurrency, verify re-run guard and pagination cases."
     },
     {
       "path": "infra/server/pyproject.toml",
@@ -4735,29 +4815,33 @@
     },
     {
       "path": "scripts/check_boundaries.py",
-      "sha256": "bbca6b1448c30812bd1141f0d2a7778c01a4957f11f21ae59c926d28770b33ba",
-      "bytes": 13679,
-      "lines": 283,
-      "status": "full",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Current-task full reading matches SHA-256",
+      "sha256": "67f323f0247b355bad420397bff1ba9ec6feee2c2f7baa5e074bbbfa19d0b7cf",
+      "bytes": 19194,
+      "lines": 385,
+      "status": "partial",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-26 Claude Code dev-switch: module docstring, skip sets, walk(), main() and the new tracked_links() (tracked symbolic links and submodules from the Git index) read; the dependency and front-end checks were not reread.",
+      "historical_status": "full",
+      "historical_sha256": "bbca6b1448c30812bd1141f0d2a7778c01a4957f11f21ae59c926d28770b33ba",
       "previous_read": {
         "sha256": "40ae7c65959808dc9aa7381c3324520df8fbe995a6775ef4c1f307d36a02cbcb",
         "status": "full",
         "evidence": "main agent full untruncated read plus reviewed/authored changes in this task"
       },
-      "reader": "infra",
       "coverage_source": "/private/tmp/synwevo-codex-infra/coverage.json",
-      "read_note": "Full original content plus reviewed complete task diff"
+      "read_note": "Full original content plus reviewed complete task diff",
+      "historical_reader": "infra"
     },
     {
       "path": "scripts/check_brand.py",
-      "sha256": "cffd8efab1d70be0b3e6817c75c392a9ed18e5cc455fdf50aa97a2c4b3bbae3e",
-      "bytes": 8918,
-      "lines": 149,
-      "status": "indexed",
-      "evidence": "Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Carried forward unchanged SHA256 from prior review: Identified in current inventory; no complete-reading claim",
-      "historical_status": "full",
-      "historical_sha256": "513b787cc8502dc04c7d6c93ea421e5427a89b56f2fa0f9ae8eedaae68be8c72"
+      "sha256": "db674e058a3579b96400497a1080bd18e9da779615d1bc31a28c3e730bf059de",
+      "bytes": 9699,
+      "lines": 155,
+      "status": "partial",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-26 Claude Code dev-switch: STABLE tail, SKIP_SUFFIX and main()'s file loop read; the link check now precedes the suffix skip. The STABLE table head was not reread.",
+      "historical_status": "indexed",
+      "historical_sha256": "cffd8efab1d70be0b3e6817c75c392a9ed18e5cc455fdf50aa97a2c4b3bbae3e"
     },
     {
       "path": "scripts/check_design.py",
@@ -4858,13 +4942,16 @@
     },
     {
       "path": "services/identity/synwevo_identity/api_platform.py",
-      "sha256": "351b5b2699bfd33ad56a99dc5327107922f8dacb34271bf70f84c4aa6e49445b",
-      "bytes": 19867,
-      "lines": 329,
-      "status": "full",
-      "reader": "C",
+      "sha256": "c2530f89eca067239e06a1a6603d92b4723283894124733215eb4a27478fe109",
+      "bytes": 35972,
+      "lines": 570,
+      "status": "partial",
+      "reader": "Claude Code dev-switch",
+      "evidence": "2026-10-26 Claude Code dev-switch: overview handler's sdk_links block read and changed (links follow dev); the rest of the router was not reread.",
+      "historical_status": "full",
+      "historical_sha256": "351b5b2699bfd33ad56a99dc5327107922f8dacb34271bf70f84c4aa6e49445b",
       "coverage_source": "/private/tmp/synwevo-platform-round/api-platform-evidence/coverage.json",
-      "evidence": "Full owned router; admission, live session/reauth, write transaction authority, owner decisions, credentials, observability and post-await return gates."
+      "historical_reader": "C"
     },
     {
       "path": "services/identity/synwevo_identity/app.py",
