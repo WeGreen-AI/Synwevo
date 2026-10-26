@@ -78,6 +78,9 @@ def windows(now: int) -> dict[str, int]:
 
 #: Verifier differences that name a broken fact (``attempt_key``), which no rebuild repairs.
 FACT_CHECKS = ("fact_fault", "undecodable_key")
+#: The store-wide issue for rows in a scope no read can name (a part that is a BLOB, a NULL or a
+#: non-UTF-8 TEXT): reported, audited and alerted, never read (``_scopes``).
+UNNAMED_SCOPE = "undecodable_scope"
 
 
 class RollupInconsistent(BillingError):
@@ -279,7 +282,10 @@ def _counters(t, environment, provider, account_ref, unit, now, records) -> dict
     read += len(xs)
     if len(xs) > MAX_EXCEPTIONS:
         raise BillingError("cost_accounting_capacity")
-    if len(xs) != exceptions_expected or any(not r["has_usage"] or r["unit"] is None for r in xs):
+    # A time that is not an integer (only a write past the gate: a TEXT or BLOB sorts above every integer,
+    # so the windows still select it) is refused like a malformed day row, never compared in Python.
+    if len(xs) != exceptions_expected or any(not r["has_usage"] or r["unit"] is None
+                                             or type(r["admitted_at"]) is not int for r in xs):
         raise inconsistent("exceptions")
     for r in xs:
         if r["unit"] != P or r["cost_unit"] != P:
@@ -689,53 +695,97 @@ class VerifyReport:
                                for scope, s in self.scopes.items() if s.count}}
 
 
-_SCOPE_PARTS = ",".join(f"typeof({c}),CAST({c} AS BLOB)" for c in ("environment", "provider", "account_ref"))
+_SCOPE_COLUMNS = ("environment", "provider", "account_ref")
+#: The tables whose rows name a scope, each with the index that leads with the scope columns and whether
+#: those columns can hold a NULL (the facts' are NOT NULL; the buckets' are a WITHOUT ROWID primary key).
+_SCOPE_SOURCES = (("model_cost_admissions INDEXED BY model_cost_admissions_scope", False),
+                  ("model_cost_buckets", False),
+                  ("model_cost_inflight INDEXED BY model_cost_inflight_open", True),
+                  ("model_cost_hold INDEXED BY model_cost_hold_open", True),
+                  ("model_cost_exceptions INDEXED BY model_cost_exceptions_scope", True))
+
+
+def _name(value) -> str | None:
+    """A scope part read as (SQLite type, bytes) as the str every read binds, or None: a part no read can
+    name (a BLOB or NULL, or a TEXT Python cannot decode), since a str never equals any of them."""
+    kind, raw = value
+    return raw.decode("utf-8") if kind == "text" and _decodes(value) else None
+
+
+def _after(column: str, value) -> tuple[str, tuple]:
+    """``column`` sorts after ``value`` (SQLite type, bytes), as one comparison the index seeks on. The scope
+    columns have TEXT affinity, so they hold only NULL, TEXT and BLOB, in that order (a number is stored
+    as text): past a NULL (or a number) comes the empty text; a TEXT Python cannot decode is bound as its
+    bytes cast to TEXT."""
+    kind, raw = value
+    if kind == "text":
+        text = _name(value)
+        return (f"{column}>?", (text,)) if text is not None else (f"{column}>CAST(? AS TEXT)", (raw,))
+    if kind == "blob":
+        return f"{column}>?", (raw,)
+    return f"{column}>=''", ()
+
+
+def _distinct(c, source: str, nullable: bool, prefix: tuple) -> list:
+    """The distinct values of the scope column after ``prefix`` (the str values of the ones before it), in
+    index order, each found by one seek past the previous one: the work grows with the distinct values,
+    never with the rows behind them. (Not a row-value comparison over all three columns: SQLite seeks
+    that on its first column only and filters the entries after it one by one.)"""
+    column = _SCOPE_COLUMNS[len(prefix)]
+    fixed = [f"{name}=?" for name in _SCOPE_COLUMNS[:len(prefix)]]
+    out, last = [], ("null", b"")                       # NULL sorts first: looked for on its own, by a seek
+    if nullable and c.execute(f"SELECT 1 FROM {source} WHERE " + " AND ".join(fixed + [f"{column} IS NULL"])
+                              + " LIMIT 1", prefix).fetchone():
+        out.append(last)
+    while True:
+        after, args = _after(column, last)
+        row = c.execute(f"SELECT typeof({column}),CAST({column} AS BLOB) FROM {source} WHERE "
+                        + " AND ".join(fixed + [after]) + f" ORDER BY {column} LIMIT 1", (*prefix, *args)).fetchone()
+        if row is None:
+            return out
+        value = (row[0], row[1] if row[1] is not None else b"")
+        if value == last:
+            raise RuntimeError("cost rollup scope scan did not advance")    # never loop on a value
+        out.append(value)
+        last = value
 
 
 def _scopes(c, environment, undecodable=None) -> list[tuple]:
-    """Every scope with facts or derived rows (a loose index scan, never a table scan).
+    """Every scope with facts or derived rows, each part a str: a loose index scan (per table, one seek
+    per distinct environment, provider and account), never a table scan.
 
-    Scope parts are read as type and bytes and bound back the same way, so a part Python cannot
-    decode (a non-UTF-8 TEXT a broken import wrote) never stops the scan; such a scope is left out
-    (no reader can ever name it: every read binds UTF-8 text) and added to ``undecodable``."""
+    Parts are read as type and bytes. A part no read can name (a BLOB or NULL, or a non-UTF-8 TEXT, which
+    only a write outside the product leaves: every read binds UTF-8 text) never stops the scan: its scope
+    is left out and added to ``undecodable`` (the scan goes past it), so the scopes returned can always
+    be bound, recorded and audited. The sentinels' environment '' is skipped."""
     found = set()
-    for table, index in (("model_cost_admissions", "model_cost_admissions_scope"),
-                         ("model_cost_buckets", None), ("model_cost_inflight", "model_cost_inflight_open"),
-                         ("model_cost_hold", "model_cost_hold_open"),
-                         ("model_cost_exceptions", "model_cost_exceptions_scope")):
-        hint = f" INDEXED BY {index}" if index else ""
-        last = [("text", b""), ("text", b""), ("text", b"")]
-        if environment is not None:
-            last[0] = ("text", environment.encode("utf-8"))
-        first = True
-        while True:
-            op = ">=" if first and environment is not None else ">"
-            # A text part is bound as str (the index then seeks on all three columns); only one Python
-            # cannot decode is bound as bytes cast to TEXT (the seek then uses fewer columns).
-            bounds, args = [], []
-            for kind, raw in last:
-                text = raw.decode("utf-8", "strict") if kind == "text" and _decodes((kind, raw)) else None
-                bounds.append("?" if kind != "text" or text is not None else "CAST(? AS TEXT)")
-                args.append(text if text is not None else raw)
-            row = c.execute(f"SELECT {_SCOPE_PARTS} FROM {table}{hint} WHERE (environment,provider,account_ref)"
-                            f"{op}({','.join(bounds)}) ORDER BY environment,provider,account_ref LIMIT 1",
-                            args).fetchone()
-            first = False
-            if row is None:
-                break
-            last = [(row[i], row[i + 1] if row[i + 1] is not None else b"") for i in (0, 2, 4)]
-            if last[0][0] == "null" or any(kind == "null" for kind, _ in last):
-                break                                    # NOT NULL columns; a row-value bound cannot pass a NULL
-            if environment is not None and last[0] != ("text", environment.encode("utf-8")):
-                break
-            if last[0] == ("text", b""):
+
+    def unnamed(*parts):
+        if undecodable is not None:
+            undecodable.add(tuple(key_label(*part) for part in parts))
+
+    for source, nullable in _SCOPE_SOURCES:
+        envs = ([("text", environment.encode("utf-8"))] if environment is not None
+                else _distinct(c, source, nullable, ()))
+        for env in envs:
+            e = _name(env)
+            if e is None:
+                unnamed(env)
+                continue
+            if e == "":
                 continue                                 # the sentinels' empty scope
-            try:
-                found.add(tuple(raw.decode("utf-8") if kind == "text" else raw for kind, raw in last))
-            except UnicodeDecodeError:
-                if undecodable is not None:
-                    undecodable.add(tuple(key_label(kind, raw) for kind, raw in last))
-    return sorted(found, key=lambda s: tuple(str(x) for x in s))
+            for provider in _distinct(c, source, nullable, (e,)):
+                p = _name(provider)
+                if p is None:
+                    unnamed(env, provider)
+                    continue
+                for account in _distinct(c, source, nullable, (e, p)):
+                    a = _name(account)
+                    if a is None:
+                        unnamed(env, provider, account)
+                    else:
+                        found.add((e, p, a))
+    return sorted(found)
 
 
 def _previous_month(now: int) -> int:
@@ -953,7 +1003,7 @@ def _check(c, *, environment, since, now, mode, scopes=None) -> VerifyReport:
         scopes = _scopes(c, environment, undecodable)
         if undecodable:
             # Rows in a scope no reader can name (every read binds UTF-8 text): told, never read.
-            report.issues.append("undecodable_scope")
+            report.issues.append(UNNAMED_SCOPE)
     for scope in scopes:
         try:
             result = _check_scope(c, scope, since=since, now=now, mode=mode)
@@ -1026,9 +1076,11 @@ class CostRollup:
                            result.rebuild_seq, at))
             status = ("mismatch" if report.issues or "mismatch" in statuses.values()
                       else "superseded" if statuses else "ok")
-            if report.issues and not statuses:
-                # A store-wide problem with no scope to latch (a delta row at rest before any fact):
-                # reported and alerted all the same; the first fact write empties the deltas.
+            if report.issues and (not statuses or UNNAMED_SCOPE in report.issues):
+                # A store-wide problem no scope's latch carries: any when no scope differs (a delta row at
+                # rest before any fact; the first fact write empties the deltas), and rows in scopes no
+                # read can name whatever else differs (no scope's fault covers them). Reported and alerted
+                # all the same.
                 _system_audit(t, "billing.cost.rollup_inconsistent", "model_cost_rollup", "*",
                               {"billing_environment": report.environment or "", "source": report.mode,
                                "issues": list(report.issues)})

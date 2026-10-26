@@ -316,14 +316,21 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   and bytes, and checks each scope on its own: a value of one scope that Python cannot read (a
   non-UTF-8 TEXT a broken import wrote) is that scope's difference (`undecodable_key`, or
   `verify_error` naming the column), latched, audited and alerted, and every other scope is still
-  checked; a scope whose provider or account name is not UTF-8 (no read can name it) is reported as
-  the store-wide issue `undecodable_scope`. The read path refuses such a value with
-  `cost_rollup_inconsistent` (check `undecodable`, latched after the refusal) instead of raising.
+  checked; a scope whose environment, provider or account name is not UTF-8 text (a BLOB, a NULL or
+  a non-UTF-8 TEXT, in a fact or in a derived row: no read can name it, every read binds UTF-8 text)
+  is left out and reported as the store-wide issue `undecodable_scope`, audited and alerted on its
+  own (object `*`) even when other scopes differ, while the scan goes on past it. The scan seeks once
+  per distinct environment, provider and account in each table, so even the hourly two-day verify
+  does work that does not grow with the history behind them. The read path refuses such a value with
+  `cost_rollup_inconsistent` (check `undecodable`, latched after the refusal) instead of raising; a
+  class-X row whose time is not an integer refuses as check `exceptions`, like a malformed day row.
   **Broken facts fail closed.** The product never writes a malformed or orphan admission or a
   non-UTF-8 key; only a write outside it can (an import with foreign keys off, hand SQL). Facts are
   immutable, so a rebuild repairs only derived rows: while any fact of the scope is broken it
   refuses (`RebuildRefused.attempt_keys`, each key printed as itself when it is printable UTF-8 text,
-  else as its type and hex bytes such as `text:x'66FF'`) and changes nothing. The scope stays
+  else as its type and hex bytes such as `text:x'66FF'`, and a key over 128 bytes as its first 128
+  bytes, its length and the SHA-256 of all of them, so two keys never share a line) and changes
+  nothing. The scope stays
   refused through restarts, rebuilds and verifies until the database is restored from a backup taken
   before that write (docs/platform/model-risk.md §13 step 3); everything written after that backup
   is lost and is reconciled from the provider's and the payment service's records, which is why an

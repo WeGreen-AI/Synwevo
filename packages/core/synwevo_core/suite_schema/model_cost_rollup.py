@@ -37,6 +37,7 @@ the facts once, inside the migration's BEGIN IMMEDIATE (``migrate``).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
@@ -250,10 +251,16 @@ def fact_fault_id(key, scope) -> str:
 _TYPE_PREFIX = re.compile(r"(?:text|blob|null|integer|real)(?::|$)")
 
 
+#: Bytes of a key shown in hex; a longer key adds its length and SHA-256 (``key_label``).
+LABEL_BYTES = 128
+
+
 def key_label(kind: str, raw) -> str:
     """How an attempt key read as (SQLite type, bytes) is shown: a printable UTF-8 text of 1-200
     characters as itself, anything else (a BLOB, a non-UTF-8 or long text, a NUL) as its type and hex
-    bytes, ``text:x'66FF'``; so every key can be named, and no two keys share a name."""
+    bytes, ``text:x'66FF'``; a key over LABEL_BYTES bytes as its first LABEL_BYTES bytes, its length
+    and the SHA-256 of all of them, ``text:x'6B…'…(210 bytes, sha256 <64 hex>)``. So every key can be
+    named, and no two keys share a name (two long ones only if SHA-256 collides)."""
     raw = raw or b""
     if kind == "null":
         return "null"
@@ -264,8 +271,10 @@ def key_label(kind: str, raw) -> str:
             text = None
         if text is not None and 0 < len(text) <= 200 and text.isprintable() and not _TYPE_PREFIX.match(text):
             return text
-    shown = raw[:128].hex().upper()
-    return f"{kind}:x'{shown}'" + (f"…({len(raw)} bytes)" if len(raw) > 128 else "")
+    shown = f"{kind}:x'{raw[:LABEL_BYTES].hex().upper()}'"
+    if len(raw) <= LABEL_BYTES:
+        return shown
+    return shown + f"…({len(raw)} bytes, sha256 {hashlib.sha256(raw).hexdigest()})"
 
 
 #: Every trigger whose SQL a TRIGGERS_VERSION covers: the producers and the fault mapping.

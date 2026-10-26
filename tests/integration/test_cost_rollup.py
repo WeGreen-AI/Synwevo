@@ -8,6 +8,7 @@ arithmetic over the cloned rows, never values read back from the implementation 
 from __future__ import annotations
 
 from fractions import Fraction
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -847,8 +848,15 @@ def _broken_admission(store, key, admitted_at, expires_at, *, as_text=False):
 _REBUILD = dict(environment="test", provider="fixture-provider", account_ref="fixture-provider-account",
                 actor="fixture-operator")
 _KW = dict(environment="test", provider="fixture-provider", account_ref="fixture-provider-account")
+
+
+def _long_label(kind, raw):
+    """How a key over 128 bytes is named: its first 128 bytes, its length and its SHA-256."""
+    return f"{kind}:x'{raw[:128].hex().upper()}'…({len(raw)} bytes, sha256 {hashlib.sha256(raw).hexdigest()})"
+
+
 _NAMED = [(b"fixture-blob-key", False, "blob:x'" + b"fixture-blob-key".hex().upper() + "'"),
-          ("k" * 201, False, "text:x'" + (b"k" * 128).hex().upper() + "'…(201 bytes)"),
+          ("k" * 201, False, _long_label("text", b"k" * 201)),
           ("fixture\x00nul", False, "text:x'" + b"fixture\x00nul".hex().upper() + "'"),
           ("-fixture-dash", False, "-fixture-dash"),
           ("fixture key\n", False, "text:x'" + b"fixture key\n".hex().upper() + "'"),
@@ -1094,7 +1102,180 @@ def test_a_scope_named_by_undecodable_text_is_reported_and_every_other_scope_is_
     run = store.one("SELECT status,differences FROM model_cost_rollup_audits WHERE mode='recent' AND provider='' "
                     "ORDER BY rowid DESC LIMIT 1")
     assert run["status"] == "mismatch" and json.loads(run["differences"])["issues"] == ["undecodable_scope"]
+    star = store.all("SELECT meta FROM audit_events WHERE action='billing.cost.rollup_inconsistent' AND object_id='*'")
+    assert [json.loads(r["meta"])["issues"] for r in star] == [["undecodable_scope"]]   # told although SCOPE latched
     assert rollup().CostRollup.prune(store)["inflight"] == 0          # prune skips the scope it cannot name
+
+
+# ---------------------------------------------------------------- scope parts that are not text (2026-10-26)
+GHOST = ("test", "fixture-provider", "fixture-ghost-account")
+#: Where a scope part no read can name comes from: a fact a broken import wrote with a BLOB part (Python's
+#: sqlite3 binds bytes as BLOB), or a derived row written past the gate with a BLOB or NULL part (a NULL only
+#: outside a primary key: WITHOUT ROWID keys are NOT NULL).
+_UNNAMED_PARTS = {
+    "admission-blob-provider": ("model_cost_admissions", ("test", b"fixture-provider", SCOPE[2])),
+    "admission-blob-account": ("model_cost_admissions", ("test", SCOPE[1], b"fixture-provider-account")),
+    "hold-blob-provider": ("model_cost_hold", ("test", b"fixture-junk", "fixture-junk-account")),
+    "inflight-blob-provider": ("model_cost_inflight", ("test", b"fixture-junk", "fixture-junk-account")),
+    "hold-null-provider": ("model_cost_hold", ("test", None, "fixture-junk-account")),
+    "exception-blob-provider": ("model_cost_exceptions", ("test", b"fixture-junk", "fixture-junk-account")),
+    "bucket-blob-account": ("model_cost_buckets", ("test", SCOPE[1], b"fixture-junk-account")),
+}
+
+
+def _junk_row(t, table, scope, now):
+    """FIXTURE: one derived row in ``scope`` (any part types), inside a transaction that opened the gate."""
+    if table == "model_cost_hold":
+        t.execute("INSERT INTO model_cost_hold(attempt_key,call_key,environment,provider,account_ref,deadline) "
+                  "VALUES ('fixture-junk','fixture-junk-call',?,?,?,?)", (*scope, now + 3600))
+    elif table == "model_cost_inflight":
+        t.execute("INSERT INTO model_cost_inflight(attempt_key,environment,provider,account_ref,expires_at) "
+                  "VALUES ('fixture-junk',?,?,?,?)", (*scope, now + 3600))
+    elif table == "model_cost_exceptions":
+        t.execute("INSERT INTO model_cost_exceptions(attempt_key,environment,provider,account_ref,admitted_at) "
+                  "VALUES ('fixture-junk',?,?,?,?)", (*scope, now - 10))
+    else:
+        t.execute("INSERT INTO model_cost_buckets(environment,provider,account_ref,dim,member,span,start,unit,den,"
+                  + ",".join(VALUES) + ") VALUES (?,?,?,'account','',86400,?,?,0,1,0,0,0,0,9,0,0,0,0,0,0)",
+                  (*scope, now - now % 86_400, COST_UNIT.code))
+
+
+@pytest.mark.cost_rollup_unchecked
+@pytest.mark.parametrize("where", list(_UNNAMED_PARTS))
+def test_a_scope_part_that_is_not_text_is_reported_and_every_other_scope_is_still_latched(funded, where):
+    """A BLOB or NULL scope part names a scope no read can reach (every read binds UTF-8 text), like a
+    non-UTF-8 one: it is the store-wide issue undecodable_scope, audited and alerted, and every named scope
+    is still checked and latched. Before, the scan kept a BLOB part as bytes and record() failed serializing
+    it (TypeError), rolling back every scope's latch: an account whose settled cost had been zeroed kept
+    admitting, and the monitor re-ran the daily verify every round. A NULL part ended that table's scan,
+    so a scope after it (here a hold row no fact justifies) went unchecked."""
+    from synwevo_core.billing.risk_monitor import RiskMonitor
+    store, ledger, _, ticks = funded
+    now = ticks[0]
+    mod, CR = rollup(), rollup().CostRollup
+    table, unnamed = _UNNAMED_PARTS[where]
+    other = lambda **kw: generous(account_ref=OTHER[2], **kw)
+    _, settled = prepare(funded, "other-settled")
+    send(CostAdmission(ledger, current_policy=other), settled, amount=50)
+    ledger.settle_trusted_usage(settled.attempt_key, evidence(settled))
+    if table == "model_cost_admissions":
+        _raw_admission(store, "fixture-unnamed-scope", unnamed, now - 10, now + 100)
+    with store.tx() as t:                               # FIXTURE: derived rows written past the gate
+        t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
+        assert t.execute("UPDATE model_cost_buckets SET cost_lo=0,cost_hi=0,cost_carry=0,cost_frac=0 WHERE environment=? "
+                         "AND provider=? AND account_ref=? AND dim='account'", OTHER).rowcount   # OTHER undercounted
+        t.execute("INSERT INTO model_cost_hold(attempt_key,call_key,environment,provider,account_ref,deadline) "
+                  "VALUES ('fixture-ghost','fixture-ghost-call',?,?,?,?)", (*GHOST, now + 3600))
+        if table != "model_cost_admissions":
+            _junk_row(t, table, unnamed, now)
+        t.execute("DELETE FROM model_cost_rollup_deltas")
+    for kwargs in ({"all": True}, {"mode": "daily"}, {"since": now - 2 * 86_400, "mode": "recent"}):
+        for environment in ("test", None):
+            report = CR.check(store, environment=environment, now=now, **kwargs)
+            assert report.issues == ["undecodable_scope"], report.summary()
+            assert set(report.scopes) == set(report.mismatched) == {OTHER, GHOST}, report.summary()
+    monitor = RiskMonitor(store, environment="test", clock=lambda: ticks[0])
+    first = monitor.run_once()
+    assert first.failures == [] and first.ran == ["cost_rollup_verify", "cost_rollup_prune"]
+    assert monitor.run_once().ran == []                 # the daily run is recorded: not re-run every round
+    assert {s for s in _open_fault_scopes(store) if all(type(p) is str for p in s)} == {OTHER, GHOST}
+    audits = store.all("SELECT object_id,meta FROM audit_events WHERE action='billing.cost.rollup_inconsistent'")
+    assert sorted(a["object_id"] for a in audits) == sorted([mod.scope_key(OTHER), mod.scope_key(GHOST), "*"])
+    assert json.loads(next(a["meta"] for a in audits if a["object_id"] == "*"))["issues"] == ["undecodable_scope"]
+    with pytest.raises(BillingError, match="cost_rollup_inconsistent"):
+        send(CostAdmission(ledger, current_policy=other), prepare(funded, "other-after")[1], amount=1)
+    send(CostAdmission(ledger, current_policy=generous), prepare(funded, "named-after")[1], amount=1)
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_the_scope_scan_seeks_once_per_name_whatever_the_history(funded):
+    """_scopes finds the scopes with one index seek per distinct environment, provider and account, and
+    one past each part no read can name, so its work does not grow with the admissions and buckets behind
+    them. Before, each step was the row-value seek (environment,provider,account_ref)>(?,?,?), which SQLite
+    starts at the environment's first entry and filters entry by entry: every verify, the hourly two-day
+    one included, walked the whole history (a non-UTF-8 provider made it every entry of the environment).
+    EXPLAIN QUERY PLAN reports SEARCH either way, so this counts VM instructions."""
+    store, _, _, ticks = funded
+    now = ticks[0]
+    source = template(funded, "scan-template", amount=1, settle=True)
+    with store.conn() as c:                             # FIXTURE: facts in scopes no read can name (foreign keys off)
+        c.execute("PRAGMA foreign_keys=OFF")
+        try:
+            for i, (bound, provider) in enumerate((("CAST(? AS TEXT)", b"zz-fixture-caf\xe9"), ("?", b"zz-fixture-blob"))):
+                c.execute(f"INSERT INTO model_cost_admissions VALUES (?,'test',{bound},?,?,3,'fixture','{{}}',?,?)",
+                          (f"fixture-unnamed-{i}", provider, SCOPE[2], COST_UNIT.code, now - 10, now + 100))
+        finally:
+            c.execute("PRAGMA foreign_keys=ON")
+    with store.tx() as t:                               # FIXTURE: a derived row with a NULL provider, past the gate
+        t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
+        _junk_row(t, "model_cost_hold", ("test", None, "fixture-junk-account"), now)
+        t.execute("DELETE FROM model_cost_rollup_deltas")
+
+    def scan(environment):
+        """(VM instructions, scopes found, parts no read can name) of one scope scan."""
+        c = store._connect()
+        steps, unnamed = [0], set()
+        c.set_progress_handler(lambda: steps.__setitem__(0, steps[0] + 1) or 0, 1)
+        try:
+            found = rollup()._scopes(c, environment, unnamed)
+            return steps[0], found, unnamed
+        finally:
+            c.set_progress_handler(None, 0)
+            c.close()
+
+    clone(store, source, [now - 3 * 86_400 - i for i in range(300)], prefix="fixture-scan-a", settled=True)
+    small = {environment: scan(environment) for environment in ("test", None)}
+    clone(store, source, [now - 4 * 86_400 - i for i in range(6_000)], prefix="fixture-scan-b", settled=True)
+    large = {environment: scan(environment) for environment in ("test", None)}
+    steps = {e: (small[e][0], large[e][0]) for e in small}
+    assert all(after <= before + 20 for before, after in steps.values()), steps     # 20x the history, same work
+    for _, found, unnamed in (*small.values(), *large.values()):
+        assert found == [SCOPE] and len(unnamed) == 3, (found, unnamed)
+
+
+@pytest.mark.cost_rollup_unchecked
+@pytest.mark.parametrize("admitted_at", ["fixture", b"fixture", "fraction"], ids=["text", "blob", "real"])
+def test_an_exception_row_whose_time_is_not_an_integer_refuses_by_name_and_latches(funded, admitted_at):
+    """A class-X row written past the gate with a TEXT or BLOB time (both sort above every integer, so the
+    windows still select it) or a fractional one: admission refuses with cost_rollup_inconsistent (check
+    ``exceptions``), latched after the refusal like the day-row checks, instead of a TypeError from
+    comparing the time with the window starts (unnamed, and unlatched until the next verify)."""
+    store, ledger, _, ticks = funded
+    key = _metered(funded, "x-cost")
+    _raw_usage(store, key, "1" + "0" * 30, "1")         # class X: a numerator above 2^63
+    value = ticks[0] + 0.5 if admitted_at == "fraction" else admitted_at
+    with store.tx() as t:                               # FIXTURE: the exception row's time edited past the gate
+        t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
+        assert t.execute("UPDATE model_cost_exceptions SET admitted_at=? WHERE attempt_key=?", (value, key)).rowcount == 1
+        t.execute("DELETE FROM model_cost_rollup_deltas")
+    top = 2**63 - 1
+    admission = CostAdmission(ledger, current_policy=lambda: generous(daily_budget=top, weekly_budget=top,
+                                                                      monthly_budget=top))
+    with pytest.raises(BillingError, match="cost_rollup_inconsistent") as caught:
+        send(admission, prepare(funded, "after-x")[1], amount=1)
+    assert isinstance(caught.value, rollup().RollupInconsistent) and caught.value.check == "exceptions"
+    admission.after_refusal(caught.value)
+    assert [r["code"] for r in store.all("SELECT code FROM model_cost_rollup_faults WHERE resolved_at IS NULL")] == \
+        ["read_exceptions"]
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_two_long_keys_alike_in_their_first_bytes_and_length_have_different_names(funded):
+    """A key over 128 bytes is named by its first 128 bytes, its length and its SHA-256: two broken keys
+    with the same first 128 bytes and length were listed as the same line, so the operator could not tell
+    which write broke the scope."""
+    store, _, _, ticks = funded
+    mod = rollup()
+    keys = ["k" * 150 + "A" * 60, "k" * 150 + "B" * 60]
+    for key in keys:
+        _broken_admission(store, key, ticks[0] - 10, ticks[0] + 100)
+    expected = sorted(_long_label("text", key.encode()) for key in keys)
+    assert len(set(expected)) == 2
+    with pytest.raises(mod.RebuildRefused) as caught:
+        mod.CostRollup.rebuild(store, reason="fixture rebuild over broken facts", **_REBUILD)
+    assert sorted(caught.value.attempt_keys) == expected
+    report = mod.CostRollup.check(store, now=ticks[0], all=True)
+    assert sorted(d["attempt_key"] for d in report.scopes[SCOPE].differences) == expected
 
 
 def test_scopes_whose_parts_contain_colons_latch_independently(funded):
