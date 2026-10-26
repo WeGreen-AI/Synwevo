@@ -6,15 +6,29 @@ tell those apart from what else sits there — a backup of ``runtime.env``, an e
 key, a ``.pgpass`` — and a list of names to leave out is never complete. So the archive is built
 only from a list of files that belong to the release:
 
-* **in the image**, this manifest. The production build context is ``git archive`` of a commit
-  (CI and the deploy receiver both build from it), so at build time the context *is* the release.
-  ``infra/Dockerfile`` runs this file right after copying the context and before building
-  anything, and it records every file then present. ``.gitattributes`` marks this file
-  ``export-subst``: ``git archive`` writes the commit and its time into the two constants below,
-  which is how the writer knows its context came from ``git archive``. In a working tree they keep
-  git's placeholder text; the writer then writes nothing, and the image refuses to offer an
-  archive rather than offer whatever the working tree held (build such an image from ``git
-  archive``, docs/operations.md §1);
+* **in the image**, this manifest. ``infra/Dockerfile`` runs this file right after copying the
+  build context and before building anything, and it records every file then present — so it
+  writes one only when it can tell that the context is the release, a ``git archive`` of one
+  commit with nothing added or changed:
+
+  - ``.gitattributes`` marks this file ``export-subst``: ``git archive`` writes the commit and its
+    committer time into the two constants below. In a working tree they keep git's placeholder
+    text, and the writer writes nothing.
+  - That proves only that *this file* came out of ``git archive``. A directory unpacked from one
+    keeps the stamp whatever is put into it afterwards — the deploy receiver's release directory,
+    CI's extraction, a release tarball a self-hoster unpacks and builds with ``docker build .`` —
+    and a key planted there went onto the manifest and out to every anonymous downloader. So the
+    writer also holds every file to the other mark ``git archive`` leaves: it gives *every* member
+    the commit's committer time as its modification time, and unpacking (tar, Python's
+    ``tarfile``) and ``docker build`` (BuildKit and the classic builder, from a directory or a tar
+    on stdin) keep it. A file with any other time was added or changed after unpacking; then the
+    context is not the release, and the writer writes nothing (and removes a manifest already
+    there), naming the files in the build log.
+
+  This catches files that arrive by accident; an operator who sets the times on purpose can publish
+  what they like from their own server anyway. Without a manifest the image refuses to offer an
+  archive rather than offer whatever its context held (build such an image from ``git archive``,
+  docs/operations.md §1);
 * **in a checkout**, ``git ls-files`` (``licensing`` asks git directly).
 
 Standard library only: the Dockerfile runs it before the platform's packages are installed
@@ -37,6 +51,8 @@ FORMAT = 1
 # and its commit time. In a checkout both still read as git's placeholders.
 RELEASE_COMMIT = "$Format:%H$"
 RELEASE_TIME = "$Format:%ct$"
+#: At most this many of the files that disqualify a context are named in the build log.
+NAMED_IN_LOG = 10
 
 
 def release_stamp() -> tuple[str, int] | None:
@@ -58,6 +74,14 @@ def _regular_files(root: Path) -> list[str]:
             if stat.S_ISREG(os.lstat(path).st_mode):
                 names.append(path.relative_to(root).as_posix())
     return sorted(n for n in names if n != MANIFEST_NAME)
+
+
+def not_from_the_archive(root: Path, names: list[str], commit_time: int) -> list[str]:
+    """The files among ``names`` that do not carry the modification time ``git archive`` gave every
+    member of the commit's archive (its committer time, in whole seconds): added to the unpacked
+    context, or changed there, after it was unpacked."""
+    expected = int(commit_time) * 1_000_000_000
+    return [name for name in names if os.lstat(Path(root) / name).st_mtime_ns != expected]
 
 
 def write(root: Path, *, commit: str, commit_time: int) -> Path:
@@ -86,15 +110,30 @@ def read(root: Path) -> dict | None:
     return body
 
 
+BUILD_FROM_ARCHIVE = ("Build from git archive instead: "
+                      "git archive --format=tar HEAD | docker build -f infra/Dockerfile -t synwevo -")
+
+
 def main(argv: list[str]) -> int:
     root = Path(argv[0] if argv else ".").resolve()
     stamp = release_stamp()
+    # Neither refusal is fatal: the image still builds (a developer's local image, say). It just
+    # cannot offer its source, and /api/source-code answers 503 saying so.
     if stamp is None:
-        # Not fatal: a developer's local image still builds. It just cannot offer its source.
+        (root / MANIFEST_NAME).unlink(missing_ok=True)
         print("source manifest: this build context is not a `git archive` of a commit, so it cannot tell "
               "the source from other files in the working tree; no manifest written, and /api/source-code "
-              "will refuse. Build from git archive instead: "
-              "git archive --format=tar HEAD | docker build -f infra/Dockerfile -t synwevo -",
+              f"will refuse. {BUILD_FROM_ARCHIVE}", file=sys.stderr)
+        return 0
+    foreign = not_from_the_archive(root, _regular_files(root), stamp[1])
+    if foreign:
+        (root / MANIFEST_NAME).unlink(missing_ok=True)
+        shown = ", ".join(foreign[:NAMED_IN_LOG]) + (", ..." if len(foreign) > NAMED_IN_LOG else "")
+        print(f"source manifest: {len(foreign)} files in this build context were added or changed after it "
+              f"was unpacked from `git archive` of commit {stamp[0]} (their modification time is not the "
+              f"commit time {stamp[1]} that git archive gives every file): {shown}. The context is not "
+              "that commit's release, so no manifest written, and /api/source-code will refuse. Remove "
+              f"them and unpack the archive again, or commit the change. {BUILD_FROM_ARCHIVE}",
               file=sys.stderr)
         return 0
     target = write(root, commit=stamp[0], commit_time=stamp[1])

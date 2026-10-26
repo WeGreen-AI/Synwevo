@@ -62,6 +62,13 @@ curl -s localhost:8765/readyz
 源代码发布清单，这样的镜像对 `/api/source-code` 返回 503（分不清源代码与工作树里的其他文件时不提供，
 而不是把备份、密钥一起发出去）。对外提供服务时请用上面的 `git archive` 构建。
 
+也可以先把 `git archive` 的发布包（例如代码托管平台按提交生成的 tar.gz）解包到目录，再在该目录里
+`docker build -f infra/Dockerfile .`（部署接收器与 CI 就是这样做的）——但解包之后不要在目录里新增或改动文件。
+提交号盖在 `source_manifest.py` 里，只能证明这一个文件来自 `git archive`；构建还核对上下文里**每个**文件的修改时间
+都是该提交的时间（`git archive` 给每个文件的时间，tar 解包与 `docker build` 都保留它）。有一个对不上——解包后放进去的
+证书、密钥、备份，或改过的源文件——构建日志就列出它们、不写发布清单，镜像对 `/api/source-code` 返回 503。
+要改代码就提交后重新 `git archive`；不能用会丢弃文件时间的方式解包或复制（`tar -m`、不带 `-p` 的 `cp -r`）。
+
 镜像内含 LibreOffice、Tesseract（chi_sim/eng）与 Noto CJK 字体。对外请在宿主机用反向代理：界面走你自己的认证，
 `/api/v1` 由 API 密钥鉴权（示例配置见 ports.md 第 3 节）。
 

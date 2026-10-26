@@ -6,7 +6,8 @@ When the service is used by others over a network, AGPL-3.0 §13 requires offeri
 complete source of the running program. ``source_archive`` builds that archive from the files
 actually installed (backend code, frontend source, scripts, docs, dependency pins, the licence
 files) – not from a separate copy that could drift – and only from the files of the source release:
-the list the image build wrote from its ``git archive`` context (``source_manifest``), or ``git
+the list the image build wrote from its ``git archive`` context, which it writes only when that
+context is the commit's archive with nothing added or changed (``source_manifest``), or ``git
 ls-files`` in a checkout. Without either it refuses; it never walks the directories, where anything
 else an operator left there would go out with it. ``SYNWEVO_DOCS_SOURCE_OFFER=off`` switches the
 download off; it is for an operator who offers the Corresponding Source another way, or who runs
@@ -212,9 +213,10 @@ class SourceUnavailable(Exception):
     """This installation has no list of the release's files, so it builds no archive."""
 
 
-UNAVAILABLE = ("本安装没有源代码发布清单：它既不是从 git archive 构建的镜像（构建时写入 SOURCE_MANIFEST.json），"
-               "也不是 Git 检出（git ls-files）。分不清哪些文件属于源代码时，为免把备份、密钥或本地配置发给任何人，"
-               "这里不提供下载。请从 git archive 构建镜像：git archive --format=tar HEAD | "
+UNAVAILABLE = ("本安装没有源代码发布清单：它不是 Git 检出（git ls-files），镜像构建时也没有写入 SOURCE_MANIFEST.json"
+               "——只有构建上下文是某个提交原样的 git archive 时才写，从工作树构建、或解包后又新增或改动过文件都不写。"
+               "分不清哪些文件属于源代码时，为免把备份、密钥或本地配置发给任何人，这里不提供下载。"
+               "请从 git archive 构建镜像：git archive --format=tar HEAD | "
                "docker build -f infra/Dockerfile -t synwevo -（见 docs/operations.md 第 1 节）。")
 
 
@@ -437,7 +439,9 @@ def _build_archive(listing: _Listing) -> Archive:
         lines = ["Synwevo 对应源代码（Corresponding Source）", ""]
         if listing.source == "manifest":
             lines += [f"本压缩包由正在运行的服务生成，是提交 {listing.commit} 的发布：文件清单是构建镜像时从构建上下文"
-                      "（该提交的 git archive）记录的 SOURCE_MANIFEST.json，文件取自运行目录。"]
+                      "（该提交的 git archive）记录的 SOURCE_MANIFEST.json，文件取自运行目录。构建时核对过上下文里"
+                      "每个文件的修改时间都是该提交的时间（git archive 给每个文件的时间）；解包后新增或改动过文件的上下文"
+                      "不写清单，这样的镜像不提供下载。"]
         else:
             lines += ["本压缩包由正在运行的服务生成：文件清单是运行目录（Git 检出）的 git ls-files（git archive 不导出的文件除外），"
                       "文件取自运行目录，包括尚未提交的修改。"]

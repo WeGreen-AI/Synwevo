@@ -359,15 +359,60 @@ def test_the_manifest_writer_needs_a_context_stamped_by_git_archive(monkeypatch,
     monkeypatch.setattr(source_manifest, "RELEASE_COMMIT", FIXTURE_COMMIT)
     monkeypatch.setattr(source_manifest, "RELEASE_TIME", str(FIXTURE_COMMIT_TIME))
     assert source_manifest.release_stamp() == (FIXTURE_COMMIT, FIXTURE_COMMIT_TIME)
+    _as_extracted(tmp_path, SOURCE)
     assert source_manifest.main([str(tmp_path)]) == 0
     manifest = source_manifest.read(tmp_path)
     assert manifest["commit"] == FIXTURE_COMMIT and manifest["files"] == sorted(SOURCE)
 
 
-def test_git_archive_stamps_the_writer_and_the_manifest_lists_only_the_archive(tmp_path):
+def _as_extracted(root: Path, names) -> None:
+    """TEST FIXTURE: give files the modification time `git archive` gives every member of its
+    archive (the commit time), as unpacking it leaves them."""
+    for rel in names:
+        os.utime(root / rel, (FIXTURE_COMMIT_TIME, FIXTURE_COMMIT_TIME))
+
+
+def test_a_context_changed_after_unpacking_writes_no_manifest(monkeypatch, tmp_path, capsys):
+    """The stamp proves only that the writer itself came out of `git archive`, and a directory
+    unpacked from one keeps that stamp whatever is added to it later — the receiver's release
+    directory, CI's extraction, a release tarball a self-hoster unpacks and builds with `docker
+    build .`. Planted there, a tunnel credential or a deploy key used to go onto the manifest and
+    out to every anonymous downloader. `git archive` also gives every member the commit's time, so
+    a file that does not carry it was added or changed after unpacking: then the context is not
+    the release, and the writer writes no manifest (an earlier one is removed) and says why."""
+    monkeypatch.setattr(source_manifest, "RELEASE_COMMIT", FIXTURE_COMMIT)
+    monkeypatch.setattr(source_manifest, "RELEASE_TIME", str(FIXTURE_COMMIT_TIME))
+    _plant(tmp_path, SOURCE)
+    _as_extracted(tmp_path, SOURCE)
+    assert source_manifest.main([str(tmp_path)]) == 0 and source_manifest.read(tmp_path) is not None
+    capsys.readouterr()
+
+    _plant(tmp_path, PLANTED)                                  # added after unpacking: now's time
+    assert source_manifest.main([str(tmp_path)]) == 0
+    assert not (tmp_path / source_manifest.MANIFEST_NAME).exists(), "解包后加进来的文件不能上清单"
+    err = capsys.readouterr().err
+    assert f"{len(PLANTED)} files" in err and "git archive" in err, err
+    assert "PLACEHOLDER-NOT-A-SECRET" not in err, "构建日志只写文件名，不写内容"
+
+    for rel in PLANTED:
+        (tmp_path / rel).unlink()
+    assert source_manifest.main([str(tmp_path)]) == 0 and source_manifest.read(tmp_path) is not None
+    edited = tmp_path / "docs" / "a.md"
+    edited.write_text("changed after unpacking\n", encoding="utf-8")     # a tracked file, edited
+    assert source_manifest.main([str(tmp_path)]) == 0
+    assert not (tmp_path / source_manifest.MANIFEST_NAME).exists(), "改过的文件不再是这个提交的发布"
+    assert "docs/a.md" in capsys.readouterr().err
+    # One second off is not the commit's time either.
+    os.utime(edited, (FIXTURE_COMMIT_TIME + 1, FIXTURE_COMMIT_TIME + 1))
+    assert source_manifest.main([str(tmp_path)]) == 0
+    assert not (tmp_path / source_manifest.MANIFEST_NAME).exists()
+
+
+def test_git_archive_stamps_the_writer_and_the_manifest_lists_only_the_archive(monkeypatch, tmp_path):
     """End to end, with this repository's own writer and its own .gitattributes line: a commit,
     `git archive` of it (what CI and the deploy receiver build from), the writer run from the
-    extracted context. The manifest names that commit and exactly the archived files."""
+    extracted context. The manifest names that commit and exactly the archived files — and once
+    files are planted in the extracted context itself (the review's probe), there is none."""
     import shutil
     import subprocess
     import sys
@@ -387,6 +432,10 @@ def test_git_archive_stamps_the_writer_and_the_manifest_lists_only_the_archive(t
     _plant(repo, SOURCE)
     _git(repo, "init", "-q")
     _git(repo, "add", "-A")
+    # Author and committer times differ: `git archive` gives members the committer time, which is
+    # what the stamp's %ct carries.
+    monkeypatch.setenv("GIT_AUTHOR_DATE", "@1700000000 +0000")
+    monkeypatch.setenv("GIT_COMMITTER_DATE", f"@{FIXTURE_COMMIT_TIME} +0000")
     _git(repo, "commit", "-q", "-m", "fixture")
     head = _git(repo, "rev-parse", "HEAD").strip()
     _plant(repo, PLANTED)                                   # untracked: not in the archive
@@ -398,7 +447,14 @@ def test_git_archive_stamps_the_writer_and_the_manifest_lists_only_the_archive(t
     assert run.returncode == 0, run.stderr
     manifest = source_manifest.read(ctx)
     assert manifest is not None and manifest["commit"] == head
+    assert manifest["commit_time"] == FIXTURE_COMMIT_TIME
     assert set(manifest["files"]) == set(SOURCE) | {rel, ".gitattributes"}
+
+    _plant(ctx, PLANTED)                                    # in the unpacked context, as the review did
+    run = subprocess.run([sys.executable, "-P", str(ctx / rel), str(ctx)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    assert source_manifest.read(ctx) is None, "解包后放进上下文的文件让构建不写清单"
+    assert f"{len(PLANTED)} files" in run.stderr, run.stderr
 
 
 def _final_stage(text: str) -> list[str]:

@@ -80,8 +80,10 @@ COPY .dockerignore .env.example conftest.py ./
 # The release manifest: every file the build context delivered, recorded before anything is built
 # or installed here. /api/source-code offers only the files on it (anything appearing in /app
 # later — a backup, a key, build output — is not), and only when the context is a `git archive` of
-# a commit, as CI and the deploy receiver build from: from a working tree it writes nothing and the
-# offer refuses (apps/docs/synwevo_docs/source_manifest.py; build with
+# a commit with nothing added or changed, as CI and the deploy receiver build from: every file must
+# carry the commit time git archive gives it. From a working tree, or from an unpacked archive
+# that has had files added or edited, it writes nothing and the offer refuses
+# (apps/docs/synwevo_docs/source_manifest.py; build with
 # `git archive --format=tar HEAD | docker build -f infra/Dockerfile -t synwevo -`).
 RUN python -P apps/docs/synwevo_docs/source_manifest.py /app
 COPY --from=ui /ui/apps/docs/web/dist apps/docs/web/dist
