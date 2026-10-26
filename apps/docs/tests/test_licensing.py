@@ -120,13 +120,15 @@ def _dockerfile_instructions(text: str) -> list[str]:
 
 
 def _dockerfile_copy_sources(text: str) -> list[str]:
-    """The source paths of every COPY from the build context (not from another stage), exactly.
+    """The source paths of every COPY from the build context (not from another stage) in the final
+    stage — what the image carries — exactly. The manifest stage's `COPY . /release` stays in
+    that stage, and the front-end stage's files reach the image only as its build output.
 
     Parsed, not substring-matched: `"docs/" in copied` was satisfied by `COPY apps/docs/ …`, so
     removing `COPY docs/ docs/` would not have failed the test that exists to catch it.
     """
     sources = []
-    for instr in _dockerfile_instructions(text):
+    for instr in _final_stage(text):
         tokens = instr.split()
         if not tokens or tokens[0].upper() != "COPY":
             continue
@@ -512,27 +514,116 @@ def test_git_archive_stamps_the_writer_and_the_manifest_lists_only_the_archive(m
     assert f"{len(PLANTED)} files" in run.stderr, run.stderr
 
 
-def _final_stage(text: str) -> list[str]:
-    instructions = _dockerfile_instructions(text)
-    last_from = max(i for i, ins in enumerate(instructions) if ins.upper().startswith("FROM "))
-    return instructions[last_from + 1:]
-
-
-def test_the_image_writes_its_manifest_from_the_build_context_alone():
-    """The manifest lists what the build context delivered: written after the last COPY from the
-    context and before anything the build itself produces (the compiled shells, the installed
-    packages' metadata), so a build product can never be offered as source either."""
-    stage = _final_stage((ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8"))
-    writes = [i for i, ins in enumerate(stage) if ins.upper().startswith("RUN ") and "source_manifest.py" in ins]
-    assert len(writes) == 1, "Dockerfile 要在最后阶段写一次发布清单"
-    at = writes[0]
-    for i, ins in enumerate(stage):
+def _stages(text: str) -> list[tuple[str | None, list[str]]]:
+    """(name, instructions) of every stage, in order; instructions before the first FROM (none in
+    infra/Dockerfile, but a parser test's snippet) count as one unnamed stage."""
+    stages: list[tuple[str | None, list[str]]] = [(None, [])]
+    for ins in _dockerfile_instructions(text):
         tokens = ins.split()
-        if tokens and tokens[0].upper() == "COPY":
-            from_stage = any(t.startswith("--from=") for t in tokens)
-            assert (i > at) == from_stage, f"清单必须写在全部上下文 COPY 之后、构建产物之前：{ins}"
+        if tokens and tokens[0].upper() == "FROM":
+            name = tokens[3] if len(tokens) >= 4 and tokens[2].upper() == "AS" else None
+            stages.append((name, []))
+        elif ins:
+            stages[-1][1].append(ins)
+    return [s for i, s in enumerate(stages) if i or s[1]]
+
+
+def _final_stage(text: str) -> list[str]:
+    return _stages(text)[-1][1]
+
+
+def _is_copy(ins: str) -> bool:
+    tokens = ins.split()
+    return bool(tokens) and tokens[0].upper() == "COPY"
+
+
+def _copy_from(ins: str) -> str | None:
+    """The stage a COPY takes its files from, or None for a COPY from the build context."""
+    return next((t.split("=", 1)[1] for t in ins.split()[1:] if t.startswith("--from=")), None)
+
+
+def test_the_manifest_is_written_from_one_fresh_copy_of_the_whole_context():
+    """Docker's layer cache leaves modification times out of a COPY's cache key: a COPY whose files
+    have the same content as in an earlier build on the same builder is that build's layer, with
+    that build's times. The writer used to check the final stage's per-directory COPYs, so every
+    build that left packages/ (and the pip layer before it) unchanged since an earlier one got
+    `COPY packages/ packages/ CACHED`, 241 files "added or changed after unpacking", and no
+    manifest — on the deploy receiver, whose cache persists from deploy to deploy, /api/source-code
+    answered 503 from the second such deploy on (17 of the 20 merges before this one left packages/
+    alone). CI never saw it: it builds on a cold runner.
+
+    The writer runs in a stage of its own over one COPY of the whole context. That COPY's cache key
+    covers every file, the writer's own export-subst stamp among them, so no build of another commit
+    can supply its layer and the files arrive with the times the context gave them. The final stage
+    takes the manifest from there with one COPY, after the last COPY from the context and before
+    anything the build produces (the compiled shells, the installed packages' metadata), so a build
+    product can never be offered as source either."""
+    stages = _stages((ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8"))
+    writers = [(name, body) for name, body in stages
+               if any(ins.upper().startswith("RUN ") and "source_manifest.py" in ins for ins in body)]
+    assert len(writers) == 1, "Dockerfile 只写一次发布清单"
+    name, body = writers[0]
+    assert name and (name, body) != stages[-1], "清单要在单独的阶段里写，不能核对最后阶段按目录复制的层"
+    copies = [ins for ins in body if _is_copy(ins)]
+    assert len(copies) == 1 and _copy_from(copies[0]) is None, copies
+    args = [t for t in copies[0].split()[1:] if not t.startswith("--")]
+    assert args[:-1] == ["."], f"清单阶段要一次复制整个构建上下文：{copies[0]}"
+    context_dir = args[-1].rstrip("/")
+    run = next(ins for ins in body if ins.upper().startswith("RUN ") and "source_manifest.py" in ins)
+    assert body.index(copies[0]) < body.index(run)
+    tokens = run.split()
+    script = next(i for i, t in enumerate(tokens) if t.endswith("source_manifest.py"))
+    assert tokens[script] == f"{context_dir}/apps/docs/synwevo_docs/source_manifest.py", run
+    assert tokens[script + 1].rstrip("/") == context_dir, "写清单的程序核对的是这次复制的整个上下文"
+    into = tokens[script + 2].rstrip("/")
+    assert into != context_dir and f"mkdir {into}" in run, "清单写到上下文之外的目录，拒绝时那里就是空的"
+
+    final = _final_stage((ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8"))
+    taken = [i for i, ins in enumerate(final) if _is_copy(ins) and _copy_from(ins) == name]
+    assert len(taken) == 1, "最后阶段要从清单阶段取一次清单"
+    at = taken[0]
+    assert final[at].split()[-2].rstrip("/") == into, final[at]
+    for i, ins in enumerate(final):
+        if _is_copy(ins):
+            assert (i < at) == (_copy_from(ins) is None), f"清单必须在全部上下文 COPY 之后、构建产物之前放进镜像：{ins}"
         if ins.upper().startswith("RUN ") and _dockerfile_editable_installs(ins):
             assert i > at, "可编辑安装产生的元数据不能先于清单出现"
+
+
+def test_the_receivers_marker_stays_out_of_the_build_context():
+    """The manifest stage checks every file of the context, and the deploy receiver writes its
+    `.archive-sha256` marker into the release directory after unpacking, at that moment's time: it
+    would count as a file added after unpacking and production would write no manifest. It is the
+    receiver's bookkeeping, not source, and the context leaves it out."""
+    import re
+    receiver = (ROOT / "infra" / "production" / "receive.py").read_text(encoding="utf-8")
+    written = re.findall(r"release / '([^']+)'", receiver)
+    assert written == [".archive-sha256"], f"接收器在发布目录里写的文件变了，核对 .dockerignore：{written}"
+    lines = [ln.strip() for ln in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+             if ln.strip() and not ln.startswith("#")]
+    assert ".archive-sha256" in lines, ".dockerignore 要挡住接收器的 .archive-sha256"
+
+
+def test_the_writer_puts_the_manifest_where_it_is_told(monkeypatch, tmp_path, capsys):
+    """`source_manifest.py CONTEXT INTO` checks CONTEXT and writes the manifest into INTO — the
+    image's manifest stage keeps it out of the context it lists — and removes one there when it
+    refuses."""
+    monkeypatch.setattr(source_manifest, "RELEASE_COMMIT", FIXTURE_COMMIT)
+    monkeypatch.setattr(source_manifest, "RELEASE_TIME", str(FIXTURE_COMMIT_TIME))
+    ctx, into = tmp_path / "context", tmp_path / "manifest"
+    _plant(ctx, SOURCE)
+    _as_extracted(ctx, SOURCE)
+    into.mkdir()
+    assert source_manifest.main([str(ctx), str(into)]) == 0
+    assert not (ctx / source_manifest.MANIFEST_NAME).exists(), "清单不写进它列出的上下文"
+    manifest = source_manifest.read(into)
+    assert manifest["commit"] == FIXTURE_COMMIT and manifest["files"] == sorted(SOURCE)
+    assert [p.name for p in into.iterdir()] == [source_manifest.MANIFEST_NAME], "目录里只有清单（没有临时文件）"
+    capsys.readouterr()
+    _plant(ctx, PLANTED[:1])
+    assert source_manifest.main([str(ctx), str(into)]) == 0
+    assert list(into.iterdir()) == [], "拒绝时不留下清单"
+    assert "1 files" in capsys.readouterr().err
 
 
 def test_the_build_context_keeps_backups_swap_files_and_keys_out():

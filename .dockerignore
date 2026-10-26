@@ -43,6 +43,9 @@ data/
 **/*.sqlite3-*
 **/*.sqlite
 **/*.db
+# The deploy receiver's record of the archive it unpacked into the release directory
+# (infra/production/receive.py): written after unpacking, so the manifest check would count it.
+.archive-sha256
 # Local agent coordination notes, never part of a release.
 docs/agent-work/CLAUDE_CODE_HANDOFF_*.txt
 docs/agent-work/.coordinator.lock*

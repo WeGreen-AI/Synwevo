@@ -23,6 +23,24 @@ COPY services/identity/web/ services/identity/web/
 # messages-assets），否则同名的 /assets 会互相遮盖——这正是"页面能开但样式没了"的来源。
 RUN npm run build -w @synwevo/docs-web && npm run build -w @synwevo/account-web && npm run build -w @synwevo/workspace-web && npm run build -w @synwevo/messages-web && npm run build -w @synwevo/suite-web
 
+# The release manifest: every file the build context delivered, recorded before anything is built.
+# /api/source-code offers only the files on it (anything appearing in /app later — a backup, a key,
+# build output — is not), and only when the context is a `git archive` of a commit with nothing
+# added or changed, as CI and the deploy receiver build from: every file must carry the commit
+# time git archive gives it. From a working tree, or from an unpacked archive that has had files
+# added or edited, it writes nothing and the offer refuses (apps/docs/synwevo_docs/source_manifest.py;
+# build with `git archive --format=tar HEAD | docker build -f infra/Dockerfile -t synwevo -`).
+#
+# A stage of its own, on one COPY of the whole context, because Docker's layer cache leaves
+# modification times out of a COPY's cache key: the final stage's per-directory COPYs come back from
+# an earlier build whenever their content is unchanged (packages/, most deploys), with that build's
+# times, and the check refused every such build on a builder that keeps its cache — the deploy
+# receiver's. This COPY's key covers every file, the writer's export-subst stamp among them, so no
+# other commit's build can supply it. The manifest goes to /manifest, empty when the writer refuses.
+FROM python:3.12-slim-trixie AS release
+COPY . /release
+RUN mkdir /manifest && python -P /release/apps/docs/synwevo_docs/source_manifest.py /release /manifest
+
 # Trixie's LibreOffice 25 supports the XLOOKUP formulas in the real engine/reference suite.
 # Bookworm's 7.4 returns #NAME? for those workbooks.
 FROM python:3.12-slim-trixie
@@ -77,15 +95,9 @@ COPY infra/Dockerfile infra/docker-compose.yml infra/
 COPY infra/production/ infra/production/
 COPY .github/ .github/
 COPY .dockerignore .env.example conftest.py ./
-# The release manifest: every file the build context delivered, recorded before anything is built
-# or installed here. /api/source-code offers only the files on it (anything appearing in /app
-# later — a backup, a key, build output — is not), and only when the context is a `git archive` of
-# a commit with nothing added or changed, as CI and the deploy receiver build from: every file must
-# carry the commit time git archive gives it. From a working tree, or from an unpacked archive
-# that has had files added or edited, it writes nothing and the offer refuses
-# (apps/docs/synwevo_docs/source_manifest.py; build with
-# `git archive --format=tar HEAD | docker build -f infra/Dockerfile -t synwevo -`).
-RUN python -P apps/docs/synwevo_docs/source_manifest.py /app
+# The release manifest the release stage above wrote (nothing, when it refused): after the last COPY
+# from the build context, before anything the build produces here.
+COPY --from=release /manifest/ ./
 COPY --from=ui /ui/apps/docs/web/dist apps/docs/web/dist
 COPY --from=ui /ui/services/identity/web/dist services/identity/web/dist
 COPY --from=ui /ui/apps/portal/web/dist apps/portal/web/dist
