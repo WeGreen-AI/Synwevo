@@ -350,6 +350,69 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   A rebuild recreates every row a read can use exactly; it may differ from the live table only
   in rows the prune removes (so prune, rebuild, prune leaves the same rows as prune).
 
+#### Per-wallet spend (the personal limits; cost-capacity phase 2, D18)
+
+`PayerBudgets._exposure` reads exact per-wallet day rows instead of up to 10,000 calls
+(`suite_schema/payer_spend_rollup.py`, `billing/spend_rollup.py`; docs/platform/agent-run-budgets.md,
+"Personal spending limits"). Its semantics are unchanged: held is the hold of every reserved call of
+the wallet (any creation time, namespace or deadline), the same in every period; spent in a period is
+the sum of the journal amounts reached through `billing_settlements.journal_id` from the wallet's
+settled calls created at or after the period's start (no upper bound, any journal kind).
+
+* **Facts.** `billing_calls` (`account_id`, `hold_units`, `created_at`, `deadline` immutable;
+  `status` leaves `reserved` once; no delete or replace; `created_at` has no type CHECK),
+  `billing_settlements` and `billing_journal` (insert-only; `call_key` the settlement's primary key,
+  `journal_id` UNIQUE, `amount` an integer >= 0). The product writes journal, settlement, then
+  `status='settled'` in one transaction; a recovery fixture or an import may insert a call already
+  settled, or (foreign keys off) a settlement before its journal entry.
+* **Table.** `payer_spend_days(account_id, start, n_set, n_paid, amt_hi, amt_lo)`, WITHOUT ROWID,
+  primary key `(account_id, start)`: per wallet and UTC day of the call's `created_at`, the settled
+  calls, how many have their settlement and journal entry, and the exact sum of those amounts in two
+  int64 limbs (base 10^15). Derived: no CHECK, no NOT NULL, the cost rollup's gate refuses any other
+  write (`cost_rollup_derived`).
+* **Producers.** Whichever arrival completes a call books it, so each call counts once and
+  `n_paid <= n_set`: a call becoming settled (AFTER UPDATE OF status, `OLD.status IS NOT 'settled'`)
+  or inserted settled books `n_set` 1, plus `n_paid` 1 and the amount when its settlement and journal
+  exist; a settlement of a settled call whose journal exists books `n_paid` 1 and the amount; a journal
+  entry that a settlement of a settled call names does the same (one UNIQUE probe per journal insert).
+  One template (`produce_spend`) serves the four triggers and the replay.
+* **Mapping onto the cost rollup's deltas** (no column added: a trigger naming a missing NEW column
+  would make every delta INSERT, and so every fact write, raise): `kind='spend'`,
+  `attempt_key`/`call_key` = call id, `environment` = the wallet account's (or ''), `provider` = '',
+  `account_ref` = wallet id, `admitted_at` = `created_at`, `reserved` = n_set, `xunit` = n_paid,
+  `c_hi`/`c_lo` = amount in limbs. A settled call whose `created_at` is not a non-negative integer is a
+  `fault` delta (`malformed_settled_call`) that the cost rollup's fault mapping latches unchanged, with
+  id `fact_fault_id(call id, (environment, '', wallet id))`. The wallet scope `(environment, '',
+  wallet id)` never meets a provider scope: `identifier()` refuses '' as a provider.
+* **Read.** One fault probe, the day rows from the earliest period start (at most 31, plus any future
+  days; a broken structure refuses as `SpendRollupInconsistent`, code `payer_budget_inconsistent`,
+  which the gateway hands to `after_refusal` and which latches the wallet), the reserved holds through
+  `billing_calls_holds` (more than 10,000 refuse `payer_budget_capacity`), then an unpaid settled call
+  in the periods (`payer_budget_inconsistent`, not latched: it clears when the fact arrives). It
+  never reads the settlements, the journal or `billing_calls_payer_period` (kept for the verifier and
+  the uncapped `reference_exposure`).
+* **Sentinel, marker, backfill.** The sentinel `('', 0, 0, 0, 0, 0)`, meta `payer_spend_rollup_v1` and
+  `payer_spend_rollup_triggers` (version "1"). A start that finds all three issues no fact query; a
+  dropped table, a lost sentinel, a missing marker or another trigger version recreates the versioned
+  triggers and replays every settled call once in rowid order inside the migration's BEGIN IMMEDIATE,
+  recorded as a rebuild and a `backfill` audit in scope `('', '@wallets', '')`. Wallet scopes read
+  their newest global rebuild there (provider scopes at `('', '', '')`), so neither family's backfill
+  supersedes the other's verify results. Store open never refuses: a malformed settled call becomes a
+  fault of its wallet. The replay
+  takes about 1 s per 200,000 settled calls on the local benchmark machine (about 7 s per million,
+  `docs/agent-work/evidence/2026-10-26-payer-spend-rollup/`).
+* **Verify, rebuild.** `CostRollup.check` adds wallet scopes (a loose index scan of the day rows' key
+  and of `billing_calls_payer_period`, one seek per wallet) to its report (`VerifyReport.wallets`):
+  each wallet's settled calls are streamed from the lower bound, its day rows recomputed and compared
+  both ways, malformed calls named (`fact_fault`, `fact_fault_missing`), and outside the hourly run the
+  read compared with the uncapped `reference_exposure`. Mismatches latch the wallet (audit
+  `billing.payer_spend.rollup_inconsistent`, alert with the wallet id only); `CostRollup.rebuild_wallet`
+  (`cost_rollup rebuild --wallet <id> --reason …`) has `rebuild`'s shape and refuses while a settled
+  call of the wallet is malformed (docs/platform/model-risk.md §13, "钱包"). One wallet's
+  daily verify streams its settled calls from the previous month's first day: about 1.7 s for 200,000
+  and 12 s for a million (the hourly two-day run 0.1-0.8 s), in a read snapshot with a flat ~107 MB process peak; the check
+  itself stays at 0.06 ms p95 at either size, and the triggers add about 12 µs to a settlement.
+
 **Backup, restore, rollback.** The SQLite backup API copies the facts and the rollup in one
 consistent snapshot, so a restored copy verifies as it was; the restore rehearsal
 (`platform.py verify-restore`) recomputes every day from the facts and fails on a difference, so

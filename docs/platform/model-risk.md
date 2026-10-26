@@ -155,6 +155,7 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 | `billing.risk.pending_exposure` | 管理员 | 用量待确认的预留成本 > `pending_alert` | 每个 UTC 日一次 |
 | `billing.risk.payment_webhook_failed` | 管理员 | 支付渠道调用 `alert_payment_webhook_failure(store, environment=, provider=, code=)` | 每渠道每代码每 UTC 日一次 |
 | `billing.cost.rollup_inconsistent` | 管理员 | 成本汇总与事实不一致，某提供方账户被锁定（§13） | 每个提供方账户每 UTC 日一次 |
+| `billing.payer_spend.rollup_inconsistent` | 管理员 | 个人支出汇总与已结算调用不一致，某钱包被锁定（§13「钱包」），只给出钱包 id | 每个钱包每 UTC 日一次 |
 
 `alert_payment_webhook_failure` 是给支付渠道工作包的挂钩：只接受渠道名与稳定代码，从不接受载荷、签名或客户信息。
 
@@ -184,7 +185,6 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 
 ## 12. 未实现与边界
 
-- 个人支出上限（`PayerBudgets`）仍按行读取最多 10,000 条调用；改用同样的汇总是下一阶段（第二阶段），本次不含。
 - 成本汇总的重建只有命令行（`platform.py cost-rollup rebuild`），没有管理端接口。
 
 - 网关在上游 402 时调用 `trip_platform_breaker` 的接线属于网关工作包；本包提供并测试了该函数与关闭后的拒绝。
@@ -298,3 +298,36 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 速率桶和从两天前那个 UTC 日零点起的日桶，不比较读取结果与对照计算；每日一轮（`cost_rollup_verify`，每个 UTC 日的第一轮）从上个月
 1 日起核对日桶，并做这项比较。所以写进更早日桶、结构完好的改动（本周、本月的准入窗口仍在累加这些桶）要到下一次每日校验才被发现，
 最长约 24 小时；在那之前该账户的成本准入读的是被改过的周、月累计。恢复从来不是自动的。
+
+### 钱包：个人支出汇总不一致
+
+个人日、周、月支出上限（`PayerBudgets`，docs/platform/agent-run-budgets.md「Personal spending limits」）读的是触发器维护的
+**每个钱包按 UTC 日的已结算支出**（`payer_spend_days`，`billing/spend_rollup.py`；成本容量第二阶段，决定 D18）。它与已结算的调用、
+结算记录、账本分录不一致时，只锁定那一个钱包（范围 `(environment, '', <钱包 id>)`，提供方为空）：该钱包的付费调用以
+`payer_budget_inconsistent` 拒绝，没有发起、没有扣费；Agent 设置里该单位的用量状态显示为 `inconsistent`，个人上限仍可修改或关闭；
+其他钱包与平台成本准入不受影响。管理员收到 `billing.payer_spend.rollup_inconsistent`（只带钱包 id，不带本人、上限或金额），
+系统审计里有同名记录。日行写入被闸门拒绝（`cost_rollup_derived`）；校验与平台成本汇总同一轮运行（每小时两天、每日从上月 1 日、
+恢复演练全部），故障、重建、审计也在同一组表里（`model_cost_rollup_faults` 等，提供方列为空）。
+
+不锁定、会自己消失的情况：某个已结算调用还缺结算记录或账本分录（`n_paid < n_set`），且在当前周期内。这时同样拒绝
+`payer_budget_inconsistent`，但缺的事实写入后立即恢复，不需要运维处理；长期存在说明结算写入中断，按账本手册核对。
+
+1. **看差异**：与上面第 1 步相同的 `verify --all --no-record`；钱包在输出里以 `["test","","<钱包 id>"]` 出现，差异是 `day`
+   （哪一天、期望值、实际值）、`structure`、`exposure`（读取结果与无上限的对照计算不同）或 `fact_fault`（哪一条已结算调用本身有问题）。
+2. **汇总被改动（`day` / `structure` / `exposure`，或读取时锁定的 `read_structure`）：重建该钱包**，在一次性容器里运行（钱包的已结算调用多时先停服务，同上）：
+
+   ```bash
+   docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T portal python -m synwevo_core.billing.cost_rollup rebuild --wallet <钱包 id> --reason "<reason>" </dev/null
+   ```
+
+   重建在一个事务里从该钱包的已结算调用重放、校验并解除它的故障；校验不通过或有第 3 步的问题时什么也不改。
+   重建写入 `billing.payer_spend.rollup_rebuilt` 审计。`--environment` 可省略（取钱包所在环境），写了就必须一致；
+   不存在的钱包以 `invalid_rebuild` 拒绝。
+3. **已结算调用本身有问题（`fact_fault`，故障代码 `fact_malformed_settled_call`）**：调用的创建时间不是非负整数（文本、小数或负数），
+   产品自己从不写出，只可能来自产品之外的写入。调用不可修改，重建会拒绝并逐条列出这些调用，什么也不改；该钱包保持拒绝，
+   直到把数据库恢复到那次写入之前的备份，做法同上面第 3 步。（这是相对旧读取的有意偏差：旧代码遇到文本时间会出错、把小数时间
+   当作数字计入、忽略负数时间。）
+4. **确认**：与上面第 4 步相同。
+
+日行丢失（表被删除、哨兵行被删除、标记或触发器版本不同）不需要运维：下一次启动在迁移的 BEGIN IMMEDIATE 里从全部已结算调用重放一次
+（记为 `('', '@wallets', '')` 的 `backfill` 审计与一条重建记录），重放期间持有写锁（时长见 docs/billing-ledger.md「Per-wallet spend」）。
