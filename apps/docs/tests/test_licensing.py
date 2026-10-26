@@ -386,6 +386,79 @@ def test_a_checkout_git_refuses_to_read_says_why_and_how_to_allow_it(monkeypatch
         assert licensing.source_status()["reason"] == said
 
 
+def test_git_is_asked_in_the_c_locale_so_its_refusal_is_recognised(monkeypatch, tmp_path):
+    """The ownership refusal is recognised by git's own words, and git speaks the server's locale:
+    under zh_CN.UTF-8 a translated git says 「检测到可疑的仓库所有权」, under de_DE "dubiose
+    Besitzverhältnisse", so on a server with such a locale the refusal read as "git failed" and the
+    answer lost the safe.directory hint. git now runs in the C locale whatever the server's.
+    TEST DOUBLE: this `git` translates its refusal as gettext would — LC_ALL, then LC_MESSAGES,
+    then LANG pick the locale, and LANGUAGE is honoured only when that locale is not C."""
+    import pytest
+    root = tmp_path / "installed"
+    _plant(root, SOURCE)
+    (root / ".git").mkdir()
+    bin_dir = tmp_path / "translated-bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "git"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'locale="${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}"\n'
+        'case "$locale" in C|C.*|POSIX) language=C ;; *) language="${LANGUAGE:-$locale}" ;; esac\n'
+        'case "$language" in\n'
+        "  C) echo \"fatal: detected dubious ownership in repository at '$2'\" >&2 ;;\n"
+        "  *) echo \"致命错误：在 '$2' 检测到可疑的仓库所有权\" >&2 ;;\n"
+        "esac\n"
+        "exit 128\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    for name in ("LC_ALL", "LC_MESSAGES", "LANGUAGE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(licensing, "ROOT", root)
+    for setting in ({"LANG": "zh_CN.UTF-8"}, {"LC_ALL": "de_DE.UTF-8"},
+                    {"LANG": "C.UTF-8", "LC_MESSAGES": "zh_CN.UTF-8", "LANGUAGE": "zh_CN"}):
+        for name, value in setting.items():
+            monkeypatch.setenv(name, value)
+        licensing._CACHE.clear()
+        with pytest.raises(licensing.SourceUnavailable) as refused:
+            licensing.source_archive()
+        assert str(refused.value) == licensing.GIT_NOT_OWNER, (setting, str(refused.value))
+        for name in setting:
+            monkeypatch.delenv(name)
+
+
+def test_a_translated_real_git_refusal_is_still_recognised(monkeypatch, tmp_path):
+    """The same with the git on this machine, where it is a translated build: told to treat the
+    repository as another account's (git's own test switch, set by a wrapper because the server
+    strips GIT_* from git's environment), under zh_CN.UTF-8. Skipped where git has no translations."""
+    import shutil
+    import subprocess
+    import pytest
+    real = shutil.which("git")
+    if real is None:
+        pytest.skip("needs git")
+    root = tmp_path / "installed"
+    _plant(root, SOURCE)
+    _git(root, "init", "-q")
+    _git(root, "add", "-A")
+    probe = subprocess.run([real, "-C", str(root), "ls-files"], capture_output=True, text=True,
+                           env={**os.environ, "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1", "LC_ALL": "zh_CN.UTF-8"})
+    if probe.returncode == 0:
+        pytest.skip("this git predates the ownership check or ignores its test switch")
+    if "dubious ownership" in probe.stderr or "unsafe repository" in probe.stderr:
+        pytest.skip("this git has no zh_CN translation of the refusal")
+    bin_dir = tmp_path / "owner-bin"
+    bin_dir.mkdir()
+    (bin_dir / "git").write_text(f"#!/bin/sh\nGIT_TEST_ASSUME_DIFFERENT_OWNER=1 exec '{real}' \"$@\"\n", encoding="utf-8")
+    (bin_dir / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    for name in ("LC_ALL", "LC_MESSAGES", "LANGUAGE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LANG", "zh_CN.UTF-8")
+    with pytest.raises(licensing._GitWontList) as refused:
+        licensing._git_tracked(root)
+    assert str(refused.value) == licensing.GIT_NOT_OWNER
+
+
 def test_a_checkout_without_git_says_so(monkeypatch, tmp_path):
     import pytest
     root = tmp_path / "installed"

@@ -275,8 +275,11 @@ def _git_tracked(root: Path) -> list[str]:
     if git is None:
         log.warning("source offer: %s has .git but there is no git program on PATH", root)
         raise _GitWontList(GIT_MISSING)
-    # The server's own environment must not point git at another repository or work tree.
-    clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # The server's own environment must not point git at another repository or work tree. And git
+    # speaks in the C locale: the refusal below is recognised by git's English words, and a
+    # translated git under the server's locale (zh_CN: 「检测到可疑的仓库所有权」) read as "git failed".
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "LANGUAGE"}
+    clean["LC_ALL"] = "C"
     try:
         listed = subprocess.run([git, "-C", str(root), "ls-files", "-z", "--cached"], check=True,
                                 capture_output=True, timeout=30, env=clean).stdout
