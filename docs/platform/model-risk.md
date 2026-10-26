@@ -242,14 +242,38 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
    恢复办法只有一个：把数据库恢复到那次写入**之前**取的备份。
    - 确定问题写入的时间（导入或操作记录；触发器记下的 `fact_*` 故障行的 `detected_at` 就是写入时刻，校验或读取发现的故障是它最晚的时刻），
      选在它之前最近的一份备份，先在隔离目录演练。
-     问题写入之后取的备份，演练里「成本汇总与成本事实一致」一项失败（✗）；之前取的通过：
+     问题写入之后取的备份，演练里「成本汇总与成本事实一致」一项失败（✗）；之前取的通过。演练只读 `.tar.gz` 归档，在一次性容器里
+     以 uid 1000 运行（与服务相同）；`/opt/synwevo/backups/` 里有两种备份，命令以 root 在主机上运行：
+     - **归档**（`synwevo-<时间>.tar.gz`）：一次性容器取的一致备份（`docs/operations.md` §10 第 3 步），所在目录是
+       `install -d -m 0700 -o 1000 -g 1000` 建的，直接演练：
 
-     ```bash
-     B=/opt/synwevo/backups/<备份目录>
-     docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T -e TMPDIR=/backup -v "$B":/backup docs python apps/docs/scripts/snapshot.py verify --archive /backup/<归档文件> --journal-from /data </dev/null
-     ```
+       ```bash
+       W=/opt/synwevo/backups/<归档所在目录>
+       docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T -e TMPDIR=/backup -v "$W":/backup docs python apps/docs/scripts/snapshot.py verify --archive /backup/<归档文件> --journal-from /data </dev/null
+       ```
 
-   - 停服务，按 `docs/operations.md` §2「恢复」带安全日志恢复这份备份（备份之后的撤权会重放），核对后再启动，然后执行第 4 步。
+     - **接收器备份**（目录名是取备份的 UTC 时间，如 `20261025T094600Z`；`/opt/synwevo/current.json` 的 `backup` 是最近一份）：
+       每次部署前接收器停下服务后取的离线副本（`infra/production/receive.py` `promote()`）。目录是 root 所有、0700，里面是数据目录原样复制的
+       `data/` 和 `manifest.json`，没有归档：uid 1000 的容器既读不进这个目录（`PermissionError`），也不能把 `data/` 当归档读
+       （`IsADirectoryError`）。先把 `data/` 复制进一个 uid 1000 所有的新目录（备份本身不动；要有与 `data/` 同样大的空间），用同一镜像的
+       `snapshot.py create` 从这份副本做出归档，再演练这份归档：
+
+       ```bash
+       B=/opt/synwevo/backups/<接收器备份目录>
+       W=/opt/synwevo/backups/restore-$(date -u +%Y%m%dT%H%M%SZ)
+       install -d -m 0700 -o 1000 -g 1000 "$W"
+       cp -a "$B/data" "$W/data"
+       chown -R 1000:1000 "$W/data"
+       docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T -e TMPDIR=/backup -v "$W":/backup docs python apps/docs/scripts/snapshot.py create --data /backup/data --out /backup </dev/null
+       docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T -e TMPDIR=/backup -v "$W":/backup docs python apps/docs/scripts/snapshot.py verify --archive /backup/<上一步写出的 synwevo-….tar.gz> --journal-from /data </dev/null
+       ```
+
+       这份归档记下的拍摄时间是做归档的时刻，不是部署时刻：部署之后的撤权在报告里列为「早于备份时间、备份却没有回执的预写撤销」，
+       备份里没有它们的回执，照样重放。`$W` 里是含密钥的副本，与其他备份同等保护。
+   - 停服务，按 `docs/operations.md` §2「恢复」带安全日志恢复演练通过的那份归档（接收器备份恢复的就是 `$W` 里做出的归档；备份之后的
+     撤权会重放），核对后再启动，然后执行第 4 步。不要把接收器备份的 `data/` 拷回 `/opt/synwevo/data`：那是接收器在发布公开之前失败时
+     自己的回滚，公开之后要走带安全日志的恢复（`infra/production/README.md`「Backup, upgrade and rollback」）——拷回会用备份里较旧的
+     安全日志盖掉正在使用的那份，备份之后的撤权不再重放，会话也不会结束。
    - 备份之后写入的一切都会丢失，包括这段时间的成本与计费事实（准入、用量、钱包流水）：按提供方账单与支付记录核对这段时间。
      所以任何导入或手写 SQL 之前先取一份一致备份（`docs/operations.md` §2、§10 第 3 步的一次性容器），做完立即执行第 1 步：
      发现问题时，要恢复的就是刚取的那份备份，丢失的只有这一次写入。
@@ -269,4 +293,8 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 （本机 100 万条：每日校验进程峰值约 120 MB，其中解释器与导入约 100 MB；重建约 110 MB），可以在 `portal` 容器（1536 MB）里运行。
 
 不要用删除故障行、改汇总表、改写事实或关闭触发器来“恢复”：汇总表的写入会被闸门拒绝（`cost_rollup_derived`），故障行与成本事实不可删除、
-不可修改；绕过闸门的写入会在下一次每小时校验时被发现并重新锁定。恢复从来不是自动的。
+不可修改。绕过闸门的写入（手写 `model_cost_rollup_deltas`、关闭触发器）由定时校验发现并重新锁定，但不一定是下一次每小时校验（§8）：
+每小时一轮（`cost_rollup_verify_recent`）核对全库问题（静止时有 delta 行、哨兵行丢失）、全部敞口行、速率窗口内（最新准入前两天起）的
+速率桶和从两天前那个 UTC 日零点起的日桶，不比较读取结果与对照计算；每日一轮（`cost_rollup_verify`，每个 UTC 日的第一轮）从上个月
+1 日起核对日桶，并做这项比较。所以写进更早日桶、结构完好的改动（本周、本月的准入窗口仍在累加这些桶）要到下一次每日校验才被发现，
+最长约 24 小时；在那之前该账户的成本准入读的是被改过的周、月累计。恢复从来不是自动的。

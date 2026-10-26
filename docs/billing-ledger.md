@@ -266,10 +266,17 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   full-string match; such a cost is class X and refuses `invalid_cost_fact` as before.
 * **Gate.** BEFORE INSERT/UPDATE/DELETE triggers on the four derived tables refuse with
   `cost_rollup_derived` unless a delta row exists, i.e. unless the write comes from an apply
-  trigger. Hand-writing deltas or dropping triggers bypasses the gate; the hourly verifier finds
-  what it left: it compares every derived row of a scope (velocity rows from the horizon, or all
-  of them while the scope has no admission yet), and reports a delta row at rest or a missing
-  sentinel even when no scope exists. The velocity read also checks each bucket row it sums.
+  trigger. Hand-writing deltas or dropping triggers bypasses the gate; a scheduled verify finds
+  what it left, but not necessarily the next hourly one. Every round reports a delta row at rest
+  or a missing sentinel even when no scope exists, and compares a scope's whole open set, its
+  velocity rows from the horizon (all of them while the scope has no admission yet) and its day
+  rows from a lower bound: the hourly round (`cost_rollup_verify_recent`) from the start of the
+  UTC day two days back, without comparing the read path's counters with the uncapped oracle; the
+  daily round (`cost_rollup_verify`, the first round of each UTC day) from the previous month's
+  first day, with that comparison. So a value written into an older day row with its structure
+  intact, one the weekly or monthly window still sums, is found only by the next daily verify, up
+  to about 24 hours later, and until then admission reads the altered total
+  (docs/platform/model-risk.md §13). The velocity read also checks each bucket row it sums.
 * **Sentinels and marker.** Each derived table holds one sentinel row in the empty scope; meta
   `model_cost_rollup_v1` marks the backfill and `model_cost_rollup_triggers` the version of the
   versioned triggers' SQL (the producers and the fault mapping; 4 since the fault id names the key
