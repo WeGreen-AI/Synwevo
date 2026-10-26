@@ -278,14 +278,14 @@ SMTP2GO 账户或收件人能看：
 
 排查时把地址的本地部分遮掉；不要导出正文或令牌。`docker logs` 只保留最近三份 10 MB，超过两周的记录要看 SMTP2GO。
 
-2026-09-26 核对的发信域状态（`hikosphere.com`）：SPF `v=spf1 ip4:149.28.18.222 include:_spf.mx.cloudflare.net ~all`
-**没有** SMTP2GO 出口；DKIM `mailcow2026._domainkey` 已发布且与 rspamd 持有的公钥一致；DMARC `p=none`。
-`wegreen.ltd` 也已有 mailcow 签发并发布的 `mailcow2026` DKIM。要提高机构网关的接受率，按顺序做（都是 DNS/供应商侧，不改代码）：
+核对发信域时看三项（都是公开 DNS，用 `dig TXT` 即可）：SPF 是否包含实际的出口（本链路是 SMTP2GO 中继）、
+DKIM 选择器（本部署是 `mailcow2026._domainkey`）是否发布且与 rspamd 持有的公钥一致、DMARC 的策略与 `rua`。
+某一天的记录快照不写在这里，查询结果以 DNS 为准（2026-10-25 删去 2026-09-26 的快照）。要提高机构网关的接受率，按顺序做（都是 DNS/供应商侧，不改代码）：
 
 1. SMTP2GO 后台验证发件域 `hikosphere.com`（按其给出的 CNAME 记录发布），这样回信地址（Return-Path）与 DKIM 都与 From 对齐，
    退信也会回到可查的地方；同时给事务邮件关闭「链接跟踪 / 打开跟踪」，否则 SMTP2GO 重写正文会破坏 mailcow 的签名，机构网关还会再重写一次链接。
 2. SPF 加 `include:spf.smtp2go.com`（若 SMTP2GO 使用自己的回信域，这一条不影响 DMARC，但让 From 域的 SPF 记录与实际出口一致）。
-3. DMARC 先保持 `p=none` 并把 `rua` 指向能看到的报表；对齐验证一周无失败后再考虑 `quarantine`。
+3. DMARC 从 `p=none` 起步并把 `rua` 指向能看到的报表；对齐验证一周无失败后升到 `quarantine`，再到 `reject`。
 4. 评估把 From 改到产品域 `wegreen.ltd`（链接域与发件域一致是常见评分项）：需要 mailcow 里该域的信箱或 send-as 授权，
    再改 `smtp.env` 的 `SYNWEVO_MAIL_FROM` 并重启 `accounts`。
 
@@ -371,7 +371,7 @@ VPS 上编辑 `/opt/synwevo/runtime.env` 追加上表变量，`docker compose re
 | 不做 | 不把用户文件送往 VirusTotal 等外部平台；不提供跳过扫描的按钮；不用测试密钥或关闭检查让流水线变绿 |
 | 加密文件（§8.7） | 开启扫描时，设有密码的压缩包、Office 文档和要密码才能打开的 PDF 一律不接纳（400/410 `encrypted_file`，不是恶意软件、不进隔离区）。顶层的加密由应用自己识别；clamd 加 `AlertEncryptedArchive yes` 后，**嵌在文档或压缩包里的**加密压缩包也会以 `Heuristics.Encrypted.*` 报出（应用同样当作"加密、不接纳"）。只开这一项：`AlertEncrypted`/`AlertEncryptedDoc` 会把只设权限密码、不需要密码就能打开的 PDF 也报出来 |
 
-**clamd 选项 `AlertEncryptedArchive yes`（主机侧，随下一次部署执行；参考 compose 已加挂载）。** 官方镜像只接受挂载进来的
+**clamd 选项 `AlertEncryptedArchive yes`（主机侧一次性步骤；参考 compose 已加挂载）。** 官方镜像只接受挂载进来的
 配置文件，所以用同一标签镜像自带的 `clamd.conf` 加一行，挂到 `/etc/clamav/clamd.conf`（只读）。**先建文件再合并 compose**：
 文件不存在时 Docker 会在那个位置建一个目录，clamd 起不来。换镜像标签时按同样步骤重新生成。
 
@@ -436,7 +436,7 @@ docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwev
 | 项 | 值 |
 |---|---|
 | 启用 | `runtime.env` 同时设置 `SYNWEVO_TURNSTILE_SITE_KEY` 与 `SYNWEVO_TURNSTILE_SECRET`（只设一个则 accounts 拒绝启动）；`SYNWEVO_TURNSTILE_HOSTNAMES` 默认 `SYNWEVO_ISSUER` 的主机 |
-| 创建 Widget | Cloudflare 仪表盘 → Turnstile → Add widget → 主机名 `accounts.wegreen.ltd`，模式 Managed；由持有 Cloudflare 账户的人完成，密钥不经聊天或提交 |
+| 创建 Widget | Cloudflare 仪表盘 → Turnstile → Add widget → 主机名 `accounts.synwevo.com`（域名迁移前为 `accounts.wegreen.ltd`），模式 Managed；由持有 Cloudflare 账户的人完成，密钥不经聊天或提交 |
 | 生效 | `docker compose restart accounts`；核对 `GET /api/auth/state` 的 `challenge.site_key`（无 secret）、注册页出现组件、审计 `auth.challenge result=ok` |
 | 故障 | siteverify 不可达时注册/找回/验证码登录返回 503 `challenge_unavailable`（`Retry-After: 30`），不放行；已登录业务、未触发风险的口令登录、机器接口不受影响。审计 `auth.challenge result=error` 记录原因 |
 | 回滚 | 删除两个变量并重启；页面不再加载 Cloudflare 脚本，CSP 回到默认 |

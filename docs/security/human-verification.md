@@ -24,7 +24,7 @@
 | 预期变化 | 配置了密钥的部署：注册、重发验证邮件、找回口令、邮箱验证码登录的表单显示一个 Turnstile 组件，请求体多一个 `challenge_token`；口令登录在同一地址连续 3 次失败后才要求它。未配置：一切照旧，`/api/auth/state.challenge = null`，页面不加载任何外部脚本。 |
 | 边界与风险 | 组件脚本被拦截（隐私插件、企业代理）时表单无法提交——这是明确的拒绝而非放行，页面给出原因与重试；Cloudflare 不可达时 503 `challenge_unavailable`，注册/找回在故障期间不可用（有意，见 §5）；令牌只对同一 `action` 与允许的主机名有效；秘密只在服务端；测试密钥只在隔离实例。 |
 | 验收 | §7：缺失/伪造/已用/过期/跨 action/跨 hostname 令牌都不能放行且不产生账户或邮件；正常挑战后业务可完成；口令登录第一次不弹挑战、3 次失败后必须带令牌；验证服务离线时 503 且无副作用；未配置时行为不变；三语言、手机、键盘可完成；真实组件 + Cloudflare 测试密钥在隔离实例上走通。 |
-| 发布与恢复 | 无数据迁移。环境变量控制启停：生产先不设密钥部署代码（行为不变），账户持有人在 Cloudflare 仪表盘创建 Widget（主机名 `accounts.wegreen.ltd`，模式 Managed）后把两把密钥写进 VPS 的 `runtime.env`，重启 accounts 即生效；回滚只需删掉两把密钥。 |
+| 发布与恢复 | 无数据迁移。环境变量控制启停：生产先不设密钥部署代码（行为不变），账户持有人在 Cloudflare 仪表盘创建 Widget（主机名 `accounts.synwevo.com`——2026-09-27 域名迁移前为 `accounts.wegreen.ltd`，见 `docs/platform/domain-migration.md`；模式 Managed）后把两把密钥写进 VPS 的 `runtime.env`，重启 accounts 即生效；回滚只需删掉两把密钥。 |
 
 ## 2. 策略：谁被挑战、何时
 
@@ -103,4 +103,4 @@ CSP：配置了密钥时 `script-src`/`frame-src` 各多一个 `https://challeng
 * 邀请滥用、Passkey 匿名 begin、已登录重发仍只靠现有预算与会话绑定（风险低、成本低）。
 * 多实例下 API 网关的 300 次/分钟按密钥限额仍是单进程内存计数（§7.3 的下一批）；本轮涉及的所有窗口计数都在共享数据库中。
 * 没有管理端"挑战失败统计"页面：审计事件 `auth.challenge` 可查询，不另建装饰性仪表盘。
-* 生产尚未配置密钥（需要账户持有人在 Cloudflare 创建 Widget）。
+* 生产密钥由账户持有人在 Cloudflare 创建 Widget 后配置（步骤见 §1「发布与恢复」与 `docs/operations.md` §9）；生产是否已配置不写进公开记录（2026-10-25 脱敏）。
