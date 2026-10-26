@@ -97,6 +97,11 @@ export SYNWEVO_DATA_DIR=/srv/synwevo/data
 用 `.venv/bin/python -m synwevo_server.run` 启动；拆分部署的发行者与回调配置见
 [integration/ports.md](integration/ports.md)。
 
+从检出运行时，`/api/source-code` 按 `git ls-files` 打包。服务若以另一个账户运行、而仓库属于运营方账户，
+git（2.35.2 起）会以 “dubious ownership” 拒绝读取，`/api/source-code` 返回 503 并说明原因。确认信任该目录后，
+以**运行服务的账户**执行 `git config --global --add safe.directory <安装目录>`（或用 `--system` 写入系统配置）；
+服务不替你跳过这项检查，也不读取 `GIT_*` 环境变量。
+
 绑定非本机地址时必须先决定界面鉴权方式（`SYNWEVO_UI_AUTH=basic` 并 `python -m synwevo_identity.cli ui-user add`，或 `proxy`），
 否则服务会拒绝启动并打印处理方式——这是为了避免「以为有代理其实裸奔」。
 

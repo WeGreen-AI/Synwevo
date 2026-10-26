@@ -342,6 +342,61 @@ def test_without_a_release_list_nothing_is_offered(monkeypatch, tmp_path):
     assert status["available"] is False and status["complete"] is False
 
 
+def _fake_git(tmp_path: Path, monkeypatch, stderr: str) -> None:
+    """TEST FIXTURE: a `git` on PATH that refuses as git does when the repository belongs to another
+    account (CVE-2022-24765; the tests cannot chown a directory to another user)."""
+    bin_dir = tmp_path / "fake-bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "said.txt").write_text(stderr + "\n", encoding="utf-8")
+    fake = bin_dir / "git"
+    fake.write_text(f"#!/bin/sh\nexec 1>&2\nwhile IFS= read -r line; do printf '%s\\n' \"$line\"; done < '{bin_dir}/said.txt'\n"
+                    "exit 128\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+
+def test_a_checkout_git_refuses_to_read_says_why_and_how_to_allow_it(monkeypatch, tmp_path):
+    """A checkout run by an account that does not own it: git (2.35.2 and later) refuses with
+    "dubious ownership", and the offer used to answer that the installation was neither an image nor
+    a Git checkout — wrong, and no hint of the real cause. It says it is a checkout git will not
+    read, and that the operator adds the directory to safe.directory in the service account's or
+    the system's gitconfig (the server does not override git's check itself). The absolute path git
+    prints stays on the server: the answer is anonymous."""
+    import pytest
+    root = tmp_path / "installed"
+    _plant(root, SOURCE)
+    (root / ".git").mkdir()
+    for i, message in enumerate((f"fatal: detected dubious ownership in repository at '{root}'",
+                                 f"fatal: unsafe repository ('{root}' is owned by someone else)")):   # git 2.35.2
+        _fake_git(tmp_path / f"git-{i}", monkeypatch, message)
+        monkeypatch.setattr(licensing, "ROOT", root)
+        licensing._CACHE.clear()
+        with pytest.raises(licensing.SourceUnavailable) as refused:
+            licensing.source_archive()
+        said = str(refused.value)
+        assert "safe.directory" in said and "Git 检出" in said, said
+        assert "也不是 Git 检出" not in said, "它就是 Git 检出，不能说不是"
+        assert str(root) not in said and str(tmp_path) not in said, "匿名回答不带安装目录的绝对路径"
+        # The same reason on the next request (the refusal is cached), and in the status.
+        with pytest.raises(licensing.SourceUnavailable) as again:
+            licensing.source_archive()
+        assert str(again.value) == said
+        assert licensing.source_status()["reason"] == said
+
+
+def test_a_checkout_without_git_says_so(monkeypatch, tmp_path):
+    import pytest
+    root = tmp_path / "installed"
+    _plant(root, SOURCE)
+    (root / ".git").mkdir()
+    (tmp_path / "empty-bin").mkdir()
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
+    monkeypatch.setattr(licensing, "ROOT", root)
+    with pytest.raises(licensing.SourceUnavailable) as refused:
+        licensing.source_archive()
+    assert "Git 检出" in str(refused.value) and "找不到 git" in str(refused.value), str(refused.value)
+
+
 def test_the_manifest_writer_needs_a_context_stamped_by_git_archive(monkeypatch, tmp_path, capsys):
     """From a working tree the writer's stamp still reads as git's placeholder: such a build writes
     no manifest (and says so in the build log), so its image refuses to offer rather than offering

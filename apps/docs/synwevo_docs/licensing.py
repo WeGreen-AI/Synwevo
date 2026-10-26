@@ -18,6 +18,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import io
+import logging
 import math
 import os
 import stat
@@ -34,6 +35,8 @@ from synwevo_core import env
 from synwevo_core.http import repo_root
 
 from . import source_manifest
+
+log = logging.getLogger("synwevo.docs.licensing")
 
 ROOT = repo_root() or Path(__file__).resolve().parents[3]
 # The Corresponding Source of the *running program*. After the platform restructure that is more
@@ -218,6 +221,20 @@ UNAVAILABLE = ("本安装没有源代码发布清单：它不是 Git 检出（gi
                "分不清哪些文件属于源代码时，为免把备份、密钥或本地配置发给任何人，这里不提供下载。"
                "请从 git archive 构建镜像：git archive --format=tar HEAD | "
                "docker build -f infra/Dockerfile -t synwevo -（见 docs/operations.md 第 1 节）。")
+# A checkout git will not list. Each says what is wrong and what the operator does about it; none
+# carries the installation's path or git's own words (the answer is anonymous; the log has them).
+_WONT_LIST = "这里不提供下载，以免把备份、密钥或本地配置一起发出。"
+GIT_MISSING = ("本安装是 Git 检出，但运行本服务的环境里找不到 git 程序，无法列出受版本控制的文件。"
+               "请在服务器上安装 git，或改用从 git archive 构建的镜像（见 docs/operations.md 第 1 节）。" + _WONT_LIST)
+GIT_NOT_OWNER = ("本安装是 Git 检出，但 git 拒绝读取它：仓库的属主不是运行本服务的账户（git 的 safe.directory 保护，"
+                 "CVE-2022-24765）。运营方确认信任该目录后，在运行本服务的账户或系统的 gitconfig 里把安装目录加入 "
+                 "safe.directory（以该账户执行 git config --global --add safe.directory <安装目录>，或用 --system）；"
+                 "本服务不替运营方跳过这项检查，也不读取 GIT_* 环境变量。" + _WONT_LIST)
+GIT_FAILED = ("本安装是 Git 检出，但 git 没能列出它受版本控制的文件（git ls-files 失败，原因见服务日志）。" + _WONT_LIST)
+
+
+class _GitWontList(Exception):
+    """git did not list the checkout; the argument is the answer for the requester."""
 
 
 def _is_environment_file(name: str) -> bool:
@@ -243,14 +260,21 @@ def _include_of(name: str) -> str | None:
     return rel
 
 
-def _git_tracked(root: Path) -> list[str] | None:
+def _git_tracked(root: Path) -> list[str]:
     """`git ls-files` of a checkout, less what `git archive` would not export (``export-ignore``),
-    so a checkout offers what an image built from it would. None when git cannot answer."""
+    so a checkout offers what an image built from it would. ``_GitWontList`` when git cannot answer.
+
+    git 2.35.2 and later refuse a repository another account owns ("dubious ownership"), which is
+    what a checkout run under a separate service account meets. That check protects the service
+    account from configuration the repository's owner wrote (CVE-2022-24765), so it is not
+    overridden here (no ``-c safe.directory``); the refusal says how the operator allows the
+    directory instead of claiming there is no checkout."""
     import shutil
     import subprocess
     git = shutil.which("git")
     if git is None:
-        return None
+        log.warning("source offer: %s has .git but there is no git program on PATH", root)
+        raise _GitWontList(GIT_MISSING)
     # The server's own environment must not point git at another repository or work tree.
     clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     try:
@@ -260,11 +284,21 @@ def _git_tracked(root: Path) -> list[str] | None:
         attrs = subprocess.run([git, "-C", str(root), "check-attr", "-z", "--stdin", "export-ignore"],
                                input="\0".join(names).encode("utf-8", "surrogateescape"), check=True,
                                capture_output=True, timeout=30, env=clean).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
+    except subprocess.CalledProcessError as failed:
+        said = (failed.stderr or b"").decode("utf-8", "replace").strip()
+        log.warning("source offer: git could not list the checkout at %s: %s", root, said[:500])
+        lowered = said.lower()
+        refused = "dubious ownership" in lowered or "unsafe repository" in lowered
+        raise _GitWontList(GIT_NOT_OWNER if refused else GIT_FAILED) from None
+    except (OSError, subprocess.SubprocessError) as failed:
+        log.warning("source offer: git could not list the checkout at %s: %r", root, failed)
+        raise _GitWontList(GIT_FAILED) from None
+    if not names:
+        log.warning("source offer: git ls-files lists nothing in the checkout at %s", root)
+        raise _GitWontList(GIT_FAILED)
     fields = attrs.decode("utf-8", "surrogateescape").split("\0")
     ignored = {fields[i] for i in range(0, len(fields) - 2, 3) if fields[i + 2] == "set"}
-    return [n for n in names if n not in ignored] if names else None
+    return [n for n in names if n not in ignored]
 
 
 def _release_list(root: Path) -> tuple[list[str], str, str | None, int | None]:
@@ -275,14 +309,17 @@ def _release_list(root: Path) -> tuple[list[str], str, str | None, int | None]:
     a list of names, so any other file under an offered directory — runtime.env.bak, a swap file,
     origin.key, .pgpass — went to anyone who asked.
     """
+    git_refused = None
     if (root / ".git").exists():
-        names = _git_tracked(root)
-        if names is not None:
-            return names, "git", None, None
+        try:
+            return _git_tracked(root), "git", None, None
+        except _GitWontList as refused:
+            git_refused = str(refused)
     manifest = source_manifest.read(root)
     if manifest is not None:
         return manifest["files"], "manifest", manifest["commit"], manifest["commit_time"]
-    raise SourceUnavailable(UNAVAILABLE)
+    # A checkout git would not list is still a checkout: say that, not "neither".
+    raise SourceUnavailable(git_refused or UNAVAILABLE)
 
 
 @dataclass(frozen=True)
@@ -339,14 +376,14 @@ def _current_listing() -> _Listing:
         hit = _CACHE.get("listing")
         if hit is not None and hit[0] == key:
             _key, listing, at = hit
-            if (listing is not None and listing.source == "manifest") or _now() - at < CHECKOUT_TTL_S:
-                if listing is None:
-                    raise SourceUnavailable(UNAVAILABLE)
+            if (isinstance(listing, _Listing) and listing.source == "manifest") or _now() - at < CHECKOUT_TTL_S:
+                if isinstance(listing, SourceUnavailable):
+                    raise SourceUnavailable(str(listing))        # the same reason as the first time
                 return listing
         try:
             listing = _make_listing(Path(ROOT))
-        except SourceUnavailable:
-            _CACHE["listing"] = (key, None, _now())
+        except SourceUnavailable as refused:
+            _CACHE["listing"] = (key, refused, _now())
             raise
         _CACHE["listing"] = (key, listing, _now())
         return listing
