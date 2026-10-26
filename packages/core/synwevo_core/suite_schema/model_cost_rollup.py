@@ -17,13 +17,11 @@ the fact that changed it and no Python ever runs on a fact write path:
 * ``model_cost_inflight`` / ``model_cost_hold`` — the open set: an admission without usage while
   its in-flight window lasts, and while its call is still reserved without a recorded local stop.
 * ``model_cost_rollup_faults`` — per-scope latches: a malformed or orphan admission (found by the
-  same triggers), a verifier mismatch, or a read-path inconsistency. An open fault refuses the
-  scope's paid dispatch until an audited rebuild (``platform.py cost-rollup rebuild``).
-* ``model_cost_rollup_accepted`` — malformed or orphan admissions an operator accepted in a rebuild
-  (``--accept``): facts cannot be edited, so such an admission stays a fact but is left out of the
-  rollup, the read path's clock, parity and records counts and the verifier's oracle from then on,
-  and out of the scope's newest admission M (the velocity horizon, prune and the verifier's horizon).
-  Usage that arrives for it after the accept latches the scope (fault ``usage:<attempt_key>``).
+  same triggers; fault id ``fact_fault_id``), a verifier mismatch, or a read-path inconsistency. An
+  open fault refuses the scope's paid dispatch. A latch from the derived rows is cleared by an audited
+  rebuild (``platform.py cost-rollup rebuild``); one from a broken fact never is: facts cannot be
+  edited, so the scope stays refused until the database is restored from a backup taken before the
+  write that broke it (docs/platform/model-risk.md §13).
 
 The GATE: derived tables refuse every direct write (``cost_rollup_derived``) unless a row exists in
 the transient ``model_cost_rollup_deltas``, which is empty at rest; a fact trigger inserts its
@@ -40,6 +38,7 @@ the facts once, inside the migration's BEGIN IMMEDIATE (``migrate``).
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import time
 
@@ -50,10 +49,10 @@ HORIZON_S = 172_800        # velocity buckets older than (newest admission - thi
 SPANS = (1, 60, 3600)
 MARKER = "model_cost_rollup_v1"
 #: Version of the versioned triggers' SQL (VERSIONED). 2 (2026-10-26): canonical() refuses an embedded
-#: NUL (SQLite's GLOB, length() and CAST stop at the first NUL, Python does not), and accepted admissions
-#: are left out. 3 (2026-10-26): accepted admissions are left out of the velocity horizon too, and
-#: usage that arrives for an accepted admission latches its scope (``usage:<attempt_key>``).
-TRIGGERS_KEY, TRIGGERS_VERSION = "model_cost_rollup_triggers", "3"
+#: NUL (SQLite's GLOB, length() and CAST stop at the first NUL, Python does not). 4 (2026-10-26): the
+#: fault id names the attempt key and each scope part by SQLite type and bytes (``fact_fault_id``), and
+#: the producers are those of version 2 again (version 3 was a since-removed variant of them).
+TRIGGERS_KEY, TRIGGERS_VERSION = "model_cost_rollup_triggers", "4"
 DERIVED = ("model_cost_buckets", "model_cost_inflight", "model_cost_hold", "model_cost_exceptions")
 INT64_MAX = "9223372036854775807"
 
@@ -99,40 +98,28 @@ def _whole(n, d):
 
 # ---------------------------------------------------------------- the producer template
 _ORPHAN = "(att.id IS NULL OR c.id IS NULL OR acc.id IS NULL)"
-_ACCEPTED = "EXISTS(SELECT 1 FROM model_cost_rollup_accepted x WHERE x.attempt_key=a.attempt_key)"
 _MALFORMED = ("(typeof(a.admitted_at)<>'integer' OR typeof(a.expires_at)<>'integer' OR a.admitted_at<0"
               f" OR a.expires_at>a.admitted_at+{DAY})")
-#: The scope's newest admission M, minus HORIZON_S: the oldest velocity bucket a read can still use.
-#: An accepted admission is not M (its admitted_at may be garbage far ahead, which would put every
-#: real admission's velocity buckets before the horizon); billing/cost_rollup.py's prune and verifier
-#: take M the same way (``cost_rollup.newest``).
-NOT_ACCEPTED = "NOT EXISTS(SELECT 1 FROM model_cost_rollup_accepted x WHERE x.attempt_key={}.attempt_key)"
+#: The scope's newest admission M, minus HORIZON_S: the oldest velocity bucket a read can still use;
+#: billing/cost_rollup.py's prune and verifier take M the same way (``cost_rollup.newest``). Facts are
+#: insert-only, so M never decreases.
 _HORIZON = ("(SELECT h.admitted_at FROM model_cost_admissions h INDEXED BY model_cost_admissions_scope"
             " WHERE h.environment=a.environment AND h.provider=a.provider AND h.account_ref=a.account_ref"
-            f" AND typeof(h.admitted_at)='integer' AND {NOT_ACCEPTED.format('h')}"
-            f" ORDER BY h.admitted_at DESC LIMIT 1)-{HORIZON_S}")
+            f" AND typeof(h.admitted_at)='integer' ORDER BY h.admitted_at DESC LIMIT 1)-{HORIZON_S}")
 _JOINS = (" FROM model_cost_admissions a"
           " LEFT JOIN billing_attempts att ON att.id=a.attempt_key"
           " LEFT JOIN billing_calls c ON c.id=att.call_key"
           " LEFT JOIN billing_accounts acc ON acc.id=c.account_id")
 
 
-def produce(kind: str, where: str, *, order: str = "", arriving: bool = False) -> str:
+def produce(kind: str, where: str, *, order: str = "") -> str:
     """The one producer: admitted/resolved (or fault) deltas for the admissions matching ``where``.
 
     It reads the admission (by primary key in the triggers, in rowid order in a replay) and LEFT
     JOINs its attempt, call and wallet account; ``resolved`` also joins the usage fact. A malformed
-    or orphan admission, or one an operator accepted as such, yields a ``fault`` delta instead,
-    never a bucket (the fault row it names already exists, resolved, for an accepted one).
-
-    ``arriving`` (only the usage trigger): the usage fact is being written now. For an accepted
-    admission that is cost the operator did not see when accepting it and that no window will
-    count, so its fault delta says ``accepted_usage``: the fault ``usage:<attempt_key>`` latches
-    the scope until a rebuild. A replay never passes it, so a rebuild or a start never re-latches."""
-    bad = f"({_ORPHAN} OR {_MALFORMED} OR {_ACCEPTED})"
-    first = f"WHEN {_ACCEPTED} THEN 'accepted_usage' " if arriving else ""
-    code = (f"CASE {first}WHEN {_ORPHAN} THEN 'orphan_admission' WHEN {_MALFORMED} THEN 'malformed_admission'"
-            f" WHEN {_ACCEPTED} THEN 'accepted_admission' END")
+    or orphan admission yields a ``fault`` delta instead, never a bucket."""
+    bad = f"({_ORPHAN} OR {_MALFORMED})"
+    code = f"CASE WHEN {_ORPHAN} THEN 'orphan_admission' WHEN {_MALFORMED} THEN 'malformed_admission' END"
     if kind == "admitted":
         extra, usage = "NULL,0,0,0,0,0", ""
     elif kind == "resolved":
@@ -219,16 +206,74 @@ END;""",
     "model_cost_usage_rollup": f"""
 CREATE TRIGGER IF NOT EXISTS model_cost_usage_rollup AFTER INSERT ON billing_usage
 WHEN EXISTS(SELECT 1 FROM model_cost_admissions WHERE attempt_key=NEW.attempt_key) BEGIN
- {produce('resolved', 'a.attempt_key=NEW.attempt_key', arriving=True)};
+ {produce('resolved', 'a.attempt_key=NEW.attempt_key')};
  DELETE FROM model_cost_rollup_deltas;
 END;""",
 }
+def _typed(x: str) -> str:
+    """SQL: a value as its SQLite type and bytes, ``text:6B``; never NULL, never a decode in Python."""
+    return f"typeof({x})||':'||hex({x})"
+
+
+def fault_id_sql(key: str, environment: str, provider: str, account_ref: str) -> str:
+    """SQL for the id of a broken fact's fault: ``fact:<key>@<environment>/<provider>/<account_ref>``,
+    each part as its type and bytes (``_typed``). SQLite's || would turn a BLOB key into the TEXT of
+    the same bytes; with the type and the scope in it, a BLOB and a TEXT key with the same bytes, or
+    the same key in two scopes, never share a row (whose ON CONFLICT DO NOTHING would latch nothing).
+    ``fact_fault_id`` computes the same id in Python."""
+    return (f"'fact:'||{_typed(key)}||'@'||{_typed(environment)}||'/'||{_typed(provider)}"
+            f"||'/'||{_typed(account_ref)}")
+
+
+def _typed_py(value) -> tuple[str, bytes]:
+    if isinstance(value, tuple):                        # (SQLite type, bytes), as the verifier reads keys
+        return value[0], value[1] or b""
+    if value is None:
+        return "null", b""
+    if isinstance(value, bytes):
+        return "blob", value
+    if isinstance(value, str):
+        return "text", value.encode("utf-8")
+    raise TypeError(type(value).__name__)
+
+
+def fact_fault_id(key, scope) -> str:
+    """The id ``fault_id_sql`` gives the fault of the broken admission ``key`` in ``scope``: a key or
+    scope part is a str (TEXT), bytes (BLOB), None (NULL) or a (SQLite type, bytes) pair."""
+    parts = []
+    for value in (key, *scope):
+        kind, raw = _typed_py(value)
+        parts.append(f"{kind}:{raw.hex().upper()}")
+    return f"fact:{parts[0]}@{parts[1]}/{parts[2]}/{parts[3]}"
+
+
+_TYPE_PREFIX = re.compile(r"(?:text|blob|null|integer|real)(?::|$)")
+
+
+def key_label(kind: str, raw) -> str:
+    """How an attempt key read as (SQLite type, bytes) is shown: a printable UTF-8 text of 1-200
+    characters as itself, anything else (a BLOB, a non-UTF-8 or long text, a NUL) as its type and hex
+    bytes, ``text:x'66FF'``; so every key can be named, and no two keys share a name."""
+    raw = raw or b""
+    if kind == "null":
+        return "null"
+    if kind == "text":
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = None
+        if text is not None and 0 < len(text) <= 200 and text.isprintable() and not _TYPE_PREFIX.match(text):
+            return text
+    shown = raw[:128].hex().upper()
+    return f"{kind}:x'{shown}'" + (f"…({len(raw)} bytes)" if len(raw) > 128 else "")
+
+
 #: Every trigger whose SQL a TRIGGERS_VERSION covers: the producers and the fault mapping.
-VERSIONED = {**PRODUCERS, "model_cost_rollup_apply_fault": """
+VERSIONED = {**PRODUCERS, "model_cost_rollup_apply_fault": f"""
 CREATE TRIGGER IF NOT EXISTS model_cost_rollup_apply_fault AFTER INSERT ON model_cost_rollup_deltas
 WHEN NEW.kind='fault' BEGIN
  INSERT INTO model_cost_rollup_faults(id,environment,provider,account_ref,code,detail,detected_at)
-  VALUES (CASE WHEN NEW.code='accepted_usage' THEN 'usage:' ELSE 'fact:' END||COALESCE(NEW.attempt_key,'(null)'),
+  VALUES ({fault_id_sql('NEW.attempt_key', 'NEW.environment', 'NEW.provider', 'NEW.account_ref')},
    COALESCE(NEW.environment,''),COALESCE(NEW.provider,''),
    COALESCE(NEW.account_ref,''),'fact_'||COALESCE(NEW.code,'invalid'),COALESCE(NEW.code,'invalid'),
    COALESCE(CAST(strftime('%s','now') AS INTEGER),0))
@@ -303,17 +348,6 @@ CREATE TRIGGER IF NOT EXISTS model_cost_rollup_audits_no_update BEFORE UPDATE ON
 BEGIN SELECT RAISE(ABORT,'immutable_cost_rollup_audit'); END;
 CREATE TRIGGER IF NOT EXISTS model_cost_rollup_audits_no_delete BEFORE DELETE ON model_cost_rollup_audits
 BEGIN SELECT RAISE(ABORT,'immutable_cost_rollup_audit'); END;
--- Operator decisions, insert-only: a malformed or orphan admission accepted in a rebuild (--accept).
-CREATE TABLE IF NOT EXISTS model_cost_rollup_accepted (
-    attempt_key TEXT PRIMARY KEY NOT NULL, environment TEXT NOT NULL, provider TEXT NOT NULL,
-    account_ref TEXT NOT NULL, code TEXT NOT NULL, rebuild_id TEXT NOT NULL, actor TEXT NOT NULL,
-    reason TEXT NOT NULL, accepted_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS model_cost_rollup_accepted_scope ON model_cost_rollup_accepted(environment,provider,account_ref);
-CREATE TRIGGER IF NOT EXISTS model_cost_rollup_accepted_no_update BEFORE UPDATE ON model_cost_rollup_accepted
-BEGIN SELECT RAISE(ABORT,'immutable_cost_rollup_accepted'); END;
-CREATE TRIGGER IF NOT EXISTS model_cost_rollup_accepted_no_delete BEFORE DELETE ON model_cost_rollup_accepted
-BEGIN SELECT RAISE(ABORT,'immutable_cost_rollup_accepted'); END;
 {''.join(_gate(t) for t in DERIVED)}
 
 -- Apply: one trigger per delta kind. Totality: COALESCE and upserts only.
@@ -398,8 +432,9 @@ def replay(c, scope=None) -> dict:
     """Recompute the derived rows of ``scope`` (all scopes when None) from the facts, through the
     same producer and apply triggers as a live write. The caller owns the BEGIN IMMEDIATE.
 
-    Returns {"facts": admissions replayed, "faults": [attempt keys of malformed/orphan facts],
-    "accepted": [attempt keys an operator accepted, left out as before]}."""
+    Returns {"facts": admissions replayed, "faults": [the malformed or orphan admissions' keys, each
+    read as its SQLite type and bytes and named by ``key_label``]}: a broken import can write a key
+    Python cannot decode (a non-UTF-8 TEXT), and a replay inside Store open must still finish."""
     c.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('gate')")
     for table in DERIVED:
         where, args = _scope_clause(table, scope)
@@ -407,12 +442,11 @@ def replay(c, scope=None) -> dict:
     where, args = _scope_clause("a", scope)
     facts = c.execute(produce("admitted", where, order=" ORDER BY a.rowid"), args).rowcount
     c.execute(produce("resolved", where, order=" ORDER BY a.rowid"), args)
-    rows = c.execute("SELECT DISTINCT d.attempt_key,x.attempt_key IS NOT NULL FROM model_cost_rollup_deltas d "
-                     "LEFT JOIN model_cost_rollup_accepted x ON x.attempt_key=d.attempt_key WHERE d.kind='fault'").fetchall()
+    rows = c.execute("SELECT DISTINCT typeof(attempt_key),CAST(attempt_key AS BLOB) FROM model_cost_rollup_deltas "
+                     "WHERE kind='fault'").fetchall()
     _write_sentinels(c)
     c.execute("DELETE FROM model_cost_rollup_deltas")
-    return {"facts": facts, "faults": sorted({r[0] for r in rows if not r[1]}, key=str),
-            "accepted": sorted({r[0] for r in rows if r[1]}, key=str)}
+    return {"facts": facts, "faults": sorted(key_label(kind, raw) for kind, raw in rows)}
 
 
 def triggers_current(c) -> bool:

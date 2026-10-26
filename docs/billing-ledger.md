@@ -254,9 +254,12 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   an upsert keeps its meaning even under an outer INSERT OR REPLACE/IGNORE), so no derived row can
   make a fact INSERT raise. A malformed admission (time not an
   integer, negative, or expiry more than a day after admission) or an orphan one (no attempt,
-  call or wallet) becomes a fault `fact:<attempt_key>` of its scope instead of a bucket. An
-  expiry equal to (or before) the admission time is not a fault: such an admission is never in
-  flight, for the rollup and for the oracle alike.
+  call or wallet) becomes a fault of its scope instead of a bucket. Its id names the attempt key
+  and each scope part by SQLite type and bytes (`fact:text:<hex>@text:<hex>/…`), since SQLite's
+  `||` turns a BLOB into the TEXT of the same bytes: a BLOB and a TEXT key with the same bytes, or
+  the same key in two scopes, each latch their own scope. An expiry equal to (or before) the
+  admission time is not a fault: such an admission is never in flight, for the rollup and for the
+  oracle alike.
 * **Cost classes.** A cost is canonical only as text of ASCII digits with no NUL byte: SQLite's
   GLOB, `length()` and `CAST` stop at an embedded NUL (`'\x0099'` would glob, measure and cast as
   `''`/0), so the SQL test rejects a NUL first (`instr(x,char(0))=0`) and agrees with the verifier's
@@ -269,8 +272,8 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   sentinel even when no scope exists. The velocity read also checks each bucket row it sums.
 * **Sentinels and marker.** Each derived table holds one sentinel row in the empty scope; meta
   `model_cost_rollup_v1` marks the backfill and `model_cost_rollup_triggers` the version of the
-  versioned triggers' SQL (the producers and the fault mapping; 3 since accepted admissions are
-  left out of the velocity horizon and late usage on one latches). A start that finds the
+  versioned triggers' SQL (the producers and the fault mapping; 4 since the fault id names the key
+  and the scope by type and bytes). A start that finds the
   marker, the current trigger version and all four sentinels issues no fact query. A dropped or
   emptied derived table (sentinel gone), a missing marker or another trigger version (whose
   triggers it drops and recreates in the same transaction) replays all facts once, inside the
@@ -309,29 +312,34 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   `platform.py cost-rollup`) is the operator's tool (docs/platform/model-risk.md §13). The verifier
   streams the facts in admission-time order and keeps only the buckets still open, writing complete
   expected buckets to a temporary table it joins against the live ones, so its memory does not grow
-  with the facts it reads (it runs inside the portal process). A malformed or orphan admission
-  cannot be repaired (facts are immutable): an operator who has checked it accepts it in a rebuild
-  (`--accept=<name>` as the refusal prints it: the key itself, or `sha256:…` for a key no command
-  line can carry, such as a BLOB, a NUL or a long text; recorded in the insert-only
-  `model_cost_rollup_accepted` with actor and reason). Only a closed admission can be accepted: one
-  without usage whose call still holds is refused (`accept_still_open`), since its provider cost
-  may not exist yet anywhere to check. An accepted admission is left out of the rollup, the read
-  path's clock, parity and records counts, the verifier's oracle and the scope's newest admission M
-  (the velocity horizon, prune and the verifier's horizon all take M without it, as the clock check
-  does) from then on. Usage that still arrives for it (late) would be cost no window counts, so it
-  latches the scope instead (`usage:<attempt_key>`, `fact_accepted_usage`, reported by the
-  verifier as `accepted_usage`); a rebuild after checking that cost resolves it, and no replay
-  raises it again.
+  with the facts it reads (it runs inside the portal process). It reads attempt keys as SQLite type
+  and bytes, and checks each scope on its own: a value of one scope that Python cannot read (a
+  non-UTF-8 TEXT a broken import wrote) is that scope's difference (`undecodable_key`, or
+  `verify_error` naming the column), latched, audited and alerted, and every other scope is still
+  checked; a scope whose provider or account name is not UTF-8 (no read can name it) is reported as
+  the store-wide issue `undecodable_scope`. The read path refuses such a value with
+  `cost_rollup_inconsistent` (check `undecodable`, latched after the refusal) instead of raising.
+  **Broken facts fail closed.** The product never writes a malformed or orphan admission or a
+  non-UTF-8 key; only a write outside it can (an import with foreign keys off, hand SQL). Facts are
+  immutable, so a rebuild repairs only derived rows: while any fact of the scope is broken it
+  refuses (`RebuildRefused.attempt_keys`, each key printed as itself when it is printable UTF-8 text,
+  else as its type and hex bytes such as `text:x'66FF'`) and changes nothing. The scope stays
+  refused through restarts, rebuilds and verifies until the database is restored from a backup taken
+  before that write (docs/platform/model-risk.md §13 step 3); everything written after that backup
+  is lost and is reconciled from the provider's and the payment service's records, which is why an
+  import or hand SQL is preceded by a consistent backup and followed by `verify --all --no-record`.
   Rebuilds and verifier results are insert-only (`model_cost_rollup_rebuilds`,
   `model_cost_rollup_audits`). The daily prune deletes, under the gate, velocity buckets older than
-  the newest (not accepted) admission minus two days and open-set rows its time has passed; day
-  buckets stay.
+  the newest admission minus two days and open-set rows its time has passed; day buckets stay. The
+  newest admission never moves back (facts are insert-only), so a prune that read it earlier can only
+  delete less.
   A rebuild recreates every row a read can use exactly; it may differ from the live table only
   in rows the prune removes (so prune, rebuild, prune leaves the same rows as prune).
 
 **Backup, restore, rollback.** The SQLite backup API copies the facts and the rollup in one
 consistent snapshot, so a restored copy verifies as it was; the restore rehearsal
-(`platform.py verify-restore`) recomputes every day from the facts and fails on a difference. A
+(`platform.py verify-restore`) recomputes every day from the facts and fails on a difference, so
+a backup taken after a broken fact fails it and one taken before passes (the recovery above). A
 backup from before the rollup replays once when the restored store first opens. A code rollback
 leaves the tables and triggers in place: older code ignores the tables, the triggers keep them
 current under it, and a later roll-forward finds the marker and sentinels and replays nothing.

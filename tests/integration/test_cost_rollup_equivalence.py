@@ -24,9 +24,8 @@ platform fault); completed, late and platform_fault usage in cost classes R, Q a
 after its admission; local stops; cancel, expiry and release; clock steps back; bulk SQL
 (clustered on window edges); reopen (plain, after a lost marker, a dropped or emptied derived
 table); rebuild; prune; recorded verify; rarely an orphan or malformed admission, also one dated
-days ahead (its scope must then refuse, and only it), which an operator may later accept in a
-rebuild once it is closed (from then on it is outside every fact the oracle reads, also as the
-newest admission). ``test_accepted_broken_admissions_*`` runs histories that always have one.
+days ahead (its scope must then refuse, and only it, until the end of the history: no rebuild,
+reopen, prune or verify clears it). ``test_a_broken_admission_*`` runs histories that always have one.
 
 After every step: ``CostRollup.check`` over every day is clean (and, alternately, as the risk
 monitor's daily and recent verifies run it), except that each orphan or malformed fact is
@@ -48,9 +47,9 @@ A disagreement is minimised (delta debugging over the recorded operation trace, 
 Stores, then halving bulk writes) and reported with its seed, step, fields and minimal trace, so
 it can become a deterministic test.
 
-Default: 300 fixed seeds × ``STEPS`` (12) steps after a short prelude, plus 60 histories with an
-accepted broken admission. ``SYNWEVO_COST_EQUIVALENCE_SEEDS=N`` runs seeds 1..N instead,
-``SYNWEVO_COST_EQUIVALENCE_ACCEPT_SEEDS=N`` N accept histories, ``SYNWEVO_COST_EQUIVALENCE_STEPS=K``
+Default: 300 fixed seeds × ``STEPS`` (12) steps after a short prelude, plus 60 histories with a broken
+admission. ``SYNWEVO_COST_EQUIVALENCE_SEEDS=N`` runs seeds 1..N instead,
+``SYNWEVO_COST_EQUIVALENCE_FAULT_SEEDS=N`` N broken-admission histories, ``SYNWEVO_COST_EQUIVALENCE_STEPS=K``
 changes the steps per history.
 """
 from __future__ import annotations
@@ -70,7 +69,7 @@ import pytest
 from synwevo_core.billing import BillingError, ChargeContext, Ledger, Rate, Unit, Usage
 from synwevo_core.billing.admission import CostAdmission, CostPolicy
 from synwevo_core.billing.cost_rollup import (
-    CostRollup, RebuildRefused, accept_name, counters as rollup_counters, reference_counters, reference_velocity,
+    CostRollup, RebuildRefused, counters as rollup_counters, reference_counters, reference_velocity,
     velocity as rollup_velocity,
 )
 from synwevo_core.billing.risk import BrakeTripped, RiskControls, RiskPolicy
@@ -82,8 +81,8 @@ from tests.integration.test_billing_ledger import (
 )
 
 SEEDS = list(range(1, int(os.environ.get("SYNWEVO_COST_EQUIVALENCE_SEEDS") or 300) + 1))
-#: Histories of test_accepted_broken_admissions_on_random_histories (SYNWEVO_COST_EQUIVALENCE_ACCEPT_SEEDS).
-ACCEPT_SEEDS = int(os.environ.get("SYNWEVO_COST_EQUIVALENCE_ACCEPT_SEEDS") or 60)
+#: Histories of test_a_broken_admission_keeps_its_scope_refused_on_random_histories.
+FAULT_SEEDS = int(os.environ.get("SYNWEVO_COST_EQUIVALENCE_FAULT_SEEDS") or 60)
 STEPS = int(os.environ.get("SYNWEVO_COST_EQUIVALENCE_STEPS") or 12)
 
 PROVIDER = "fixture-provider"
@@ -147,8 +146,7 @@ def oracle_windows(now: int) -> dict:
             "monthly": int(datetime(moment.year, moment.month, 1, tzinfo=timezone.utc).timestamp())}
 
 
-#: Every fact of a scope, except admissions an operator accepted (CostRollup.rebuild accept=): those
-#: are outside the rollup by an audited decision, so the oracle never reads them.
+#: Every fact of a scope.
 FACTS = ("SELECT a.attempt_key,a.unit,a.reserved_units,a.admitted_at,a.expires_at,att.id AS attempt,"
          "att.requested_model AS route,c.id AS call,c.status AS call_status,c.deadline AS call_deadline,"
          "acc.id AS account,acc.owner AS owner,e.attempt_key AS ending,u.attempt_key AS usage,u.cost_n,u.cost_d,"
@@ -156,8 +154,7 @@ FACTS = ("SELECT a.attempt_key,a.unit,a.reserved_units,a.admitted_at,a.expires_a
          "LEFT JOIN billing_calls c ON c.id=att.call_key LEFT JOIN billing_accounts acc ON acc.id=c.account_id "
          "LEFT JOIN model_cost_endings e ON e.attempt_key=a.attempt_key "
          "LEFT JOIN billing_usage u ON u.attempt_key=a.attempt_key "
-         "WHERE a.environment=? AND a.provider=? AND a.account_ref=? "
-         "AND NOT EXISTS(SELECT 1 FROM model_cost_rollup_accepted x WHERE x.attempt_key=a.attempt_key)")
+         "WHERE a.environment=? AND a.provider=? AND a.account_ref=?")
 
 
 def scope_facts(t, scope) -> list[dict]:
@@ -759,10 +756,6 @@ def run_op(w: World, op: dict, *, checking: bool = True) -> dict:
             CostRollup.rebuild(w.store, environment=op["scope"][0], provider=op["scope"][1], account_ref=op["scope"][2],
                                actor="fixture-equivalence", reason="equivalence property test rebuild",
                                clock=lambda: w.now)
-        elif kind == "accept":
-            CostRollup.rebuild(w.store, environment=op["env"], provider=PROVIDER, account_ref=op["acct"],
-                               actor="fixture-equivalence", reason="equivalence property test accept",
-                               accept=op["names"], clock=lambda: w.now)
         elif kind == "prune":
             CostRollup.prune(w.store)
         elif kind == "verify":
@@ -787,11 +780,9 @@ def run_op(w: World, op: dict, *, checking: bool = True) -> dict:
 # ================================================================ checks after every step
 def usable_rows(t, scope) -> dict:
     """Every derived row a read can still use (contract §8 prune): velocity buckets from the
-    horizon, inflight/hold rows not yet passed by the newest (not accepted) admission, all day
-    buckets and X rows."""
-    row = t.execute("SELECT MAX(admitted_at) FROM model_cost_admissions a WHERE environment=? AND provider=? "
-                    "AND account_ref=? AND typeof(admitted_at)='integer' AND NOT EXISTS(SELECT 1 FROM "
-                    "model_cost_rollup_accepted x WHERE x.attempt_key=a.attempt_key)", scope).fetchone()
+    horizon, inflight/hold rows not yet passed by the newest admission, all day buckets and X rows."""
+    row = t.execute("SELECT MAX(admitted_at) FROM model_cost_admissions WHERE environment=? AND provider=? "
+                    "AND account_ref=? AND typeof(admitted_at)='integer'", scope).fetchone()
     M = row[0]
     clauses = {"model_cost_buckets": ("dim='account' OR start>=?", (M - 172_800,) if M is not None else None),
                "model_cost_inflight": ("expires_at>?", (M,) if M is not None else None),
@@ -857,25 +848,16 @@ def check_rebuild(w: World, scope, faulted: bool):
         raise Mismatch("rebuild:rows:" + ",".join(sorted(diff)), {"scope": scope, "diff": diff}, spec)
 
 
-def has_accepted(t, scope) -> bool:
-    """The 5db93f86 code predates accept=: it reads an accepted admission as a fact like any other, so
-    the legacy comparisons stop for a scope that has one (rollup, reference and oracle go on)."""
-    return t.execute("SELECT 1 FROM model_cost_rollup_accepted WHERE environment=? AND provider=? AND account_ref=? "
-                     "LIMIT 1", tuple(scope)).fetchone() is not None
-
-
 def read_counters(w: World, t, facts, spec):
     scope, unit, now = tuple(spec["scope"]), Unit(*spec["unit"]), spec["now"]
     expect = oracle_counters(t, facts, unit, now)
     faulted = "cost_rollup_inconsistent" in expect.codes
-    accepted = has_accepted(t, scope)
-    STATS["counters:accepted_scope"] += accepted
     rollup = outcome(lambda: rollup_counters(t, environment=scope[0], provider=scope[1], account_ref=scope[2],
                                              unit=unit, now=now, records=spec["records"]))
     reference = None if faulted else outcome(lambda: reference_counters(
         t, environment=scope[0], provider=scope[1], account_ref=scope[2], unit=unit, now=now))
     legacy = None
-    if not faulted and not accepted:
+    if not faulted:
         policy = CostPolicy("fixture-legacy", scope[2], scope[1], unit, True, 0, 0, 0, 0, 1, 1)
         legacy = outcome(lambda: LegacyCostCounters(scope[0])._counters(t, policy, now))
     compare_counters(spec, expect, rollup, reference, legacy)
@@ -892,9 +874,7 @@ def read_velocity(w: World, t, facts, spec):
     rollup = outcome(lambda: rollup_velocity(t, **kwargs))
     reference = outcome(lambda: reference_velocity(t, **kwargs))
     legacy = None
-    accepted = has_accepted(t, scope)
-    STATS["velocity:accepted_scope"] += accepted
-    if (risk.payer_window_cost is not None or risk.route_window_cost is not None) and not accepted:
+    if risk.payer_window_cost is not None or risk.route_window_cost is not None:
         policy = CostPolicy("fixture-legacy", scope[2], scope[1], unit, True, 0, 0, 0, 0, 1, 1, risk=risk)
         legacy = outcome(lambda: LegacyRiskControls(w.store, environment=scope[0]).velocity_scan(
             t, policy=policy, risk=risk, payer={"owner": owner}, route=route, now=now))
@@ -907,7 +887,7 @@ def read_velocity(w: World, t, facts, spec):
                                 route=route)
         for who, controls in (("rollup", RiskControls(w.store, environment=scope[0], clock=lambda: now)),
                               ("legacy", LegacyRiskControls(w.store, environment=scope[0], clock=lambda: now))):
-            if who == "legacy" and (expect.candidates > CAP or accepted):
+            if who == "legacy" and expect.candidates > CAP:
                 continue
             got = outcome(lambda c=controls: c.guard(t, policy=policy, call=call, attempt=attempt,
                                                      amount=spec["amount"], now=now))
@@ -946,7 +926,7 @@ WINDOW_CHOICES = (60, 61, 119, 120, 3_599, 3_600, 3_601, 7_200, 86_399, 86_400)
 
 class History:
     def __init__(self, root: Path, seed: int, *, steps: int = STEPS, fault_rate: float = 0.05,
-                 fault_by: int | None = None, accept_rate: float = 0.25, weights: dict = WEIGHTS):
+                 fault_by: int | None = None, weights: dict = WEIGHTS):
         self.seed, self.steps = seed, steps
         self.rng = random.Random(seed)
         anchor = self.rng.choice(ANCHORS)
@@ -959,7 +939,7 @@ class History:
         self.n = 0
         self.faulted = set()
         self.fault_step = (self.rng.randint(1, fault_by or steps) if self.rng.random() < fault_rate else None)
-        self.accept_rate, self.weights = accept_rate, weights
+        self.weights = weights
 
     # ---------------------------------------------------------------- helpers
     def key(self, kind: str) -> str:
@@ -1078,14 +1058,11 @@ class History:
                 op["retry_of"] = w.reverse[rng.choice(retry)["id"]]
             return op
         if kind in ("usage_sql", "usage_api", "ending"):
-            # Not an accepted admission: usage arriving for one latches its scope (a test of its own,
-            # test_cost_rollup.py), which the oracle does not model.
             open_attempts = self.rows(
                 "SELECT a.attempt_key,att.call_key,c.status,att.owner AS writer,e.attempt_key AS ending,"
                 "u.attempt_key AS usage FROM model_cost_admissions a JOIN billing_attempts att ON att.id=a.attempt_key "
                 "JOIN billing_calls c ON c.id=att.call_key LEFT JOIN model_cost_endings e ON e.attempt_key=a.attempt_key "
-                "LEFT JOIN billing_usage u ON u.attempt_key=a.attempt_key WHERE NOT EXISTS(SELECT 1 FROM "
-                "model_cost_rollup_accepted x WHERE x.attempt_key=a.attempt_key) ORDER BY a.rowid")
+                "LEFT JOIN billing_usage u ON u.attempt_key=a.attempt_key ORDER BY a.rowid")
             real = [r for r in open_attempts if r["writer"] == "fixture-equivalence-worker" and r["usage"] is None]
             sql = [r for r in open_attempts if r["writer"] != "fixture-equivalence-worker" and r["usage"] is None]
             if kind == "usage_api" and real:
@@ -1180,18 +1157,6 @@ class History:
         self.faulted.add(scope)
         return op
 
-    def gen_accept(self):
-        """An operator accepts every broken admission of a faulted scope once each is closed (no call
-        still holding it without usage, else the rebuild refuses accept_still_open), by the names
-        the refusal prints."""
-        scope = self.rng.choice(sorted(self.faulted))
-        with self.w.store.tx() as t:
-            bad = [f for f in scope_facts(t, scope) if broken(f)]
-        if not bad or any(f["usage"] is None and f["attempt"] is not None and f["call"] is not None
-                          and f["call_status"] == "reserved" and f["call_deadline"] > self.w.now for f in bad):
-            return None
-        return {"op": "accept", "env": scope[0], "acct": scope[2], "names": [accept_name(f["attempt_key"]) for f in bad]}
-
     def risk_spec(self, scope, owner: int, route: str, now: int, amount: int):
         """Windows from 60 s to a day, thresholds at the oracle's total + amount, or one below."""
         rng = self.rng
@@ -1231,13 +1196,11 @@ class History:
         if self.fault_step == index:
             op = self.gen_fault()
         else:
-            op = self.gen_accept() if self.faulted and self.rng.random() < self.accept_rate else None
+            op = None
             while op is None:
                 kind = self.rng.choices(list(self.weights), weights=list(self.weights.values()))[0]
                 op = self.gen(kind)
         self.apply(op)
-        if op["op"] == "accept":
-            self.faulted.discard((op["env"], PROVIDER, op["acct"]))
         return op
 
     def prelude(self):
@@ -1411,17 +1374,25 @@ def test_rollup_equals_oracle_and_legacy_on_random_histories(seed, tmp_path, mon
     run_history(tmp_path, seed)
 
 
-@pytest.mark.parametrize("seed", range(1, ACCEPT_SEEDS + 1))
-def test_accepted_broken_admissions_on_random_histories(seed, tmp_path, monkeypatch):
-    """Every history has a broken admission in its first half (a third of them dated days ahead) and an
-    operator accepts it once it is closed; prunes are more frequent. From then on the scope must equal
-    the oracle again, with the accepted admission outside every fact it reads (also as the newest one:
-    the velocity horizon, prune and the verifier's horizon)."""
+@pytest.mark.parametrize("seed", range(1, FAULT_SEEDS + 1))
+def test_a_broken_admission_keeps_its_scope_refused_on_random_histories(seed, tmp_path, monkeypatch):
+    """Every history has a broken admission in its first half (a third of them dated days ahead, so
+    also the scope's newest admission); prunes, clock steps, rebuilds and reopens are more frequent.
+    Fail closed: from the fault on, every read of that scope refuses cost_rollup_inconsistent and every
+    rebuild of it refuses, to the end of the history (no operation clears it: only restoring a backup
+    from before the write does), while the other scopes still equal the oracle."""
     monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
-    history = run_history(tmp_path, 10_000 + seed, fault_rate=1.0, fault_by=STEPS // 2, accept_rate=0.6,
-                          weights={**WEIGHTS, "prune": 10, "clock": 20})
-    STATS["accept:histories"] += 1
-    STATS["accept:accepted"] += any(op["op"] == "accept" for op in history.trace)
+    history = run_history(tmp_path, 10_000 + seed, fault_rate=1.0, fault_by=STEPS // 2,
+                          weights={**WEIGHTS, "prune": 10, "clock": 20, "rebuild": 6, "reopen": 4})
+    assert history.faulted
+    with history.w.store.tx() as t:
+        for scope in history.faulted:
+            assert t.execute("SELECT 1 FROM model_cost_rollup_faults WHERE environment=? AND provider=? AND account_ref=? "
+                             "AND resolved_at IS NULL", scope).fetchone(), scope
+            with pytest.raises(BillingError, match="cost_rollup_inconsistent"):
+                rollup_counters(t, environment=scope[0], provider=scope[1], account_ref=scope[2], unit=MAIN,
+                                now=history.w.now)
+    STATS["fault:histories"] += 1
 
 
 def test_12000_records_legacy_refuses_on_its_cap_and_the_rollup_still_equals_the_oracle(tmp_path, monkeypatch):

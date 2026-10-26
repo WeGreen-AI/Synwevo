@@ -319,7 +319,7 @@ def test_a_malformed_or_orphan_admission_commits_as_a_fault_and_refuses_its_scop
                       (key, *SCOPE, COST_UNIT.code, 3, "fixture", "{}", admitted_at, 100))
         finally:
             c.execute("PRAGMA foreign_keys=ON")
-    fault = store.one("SELECT * FROM model_cost_rollup_faults WHERE id=?", ("fact:" + key,))
+    fault = store.one("SELECT * FROM model_cost_rollup_faults WHERE id=?", (rollup().fact_fault_id(key, SCOPE),))
     assert fault["resolved_at"] is None and fault["code"] == f"fact_{kind}_admission"
     assert (fault["environment"], fault["provider"], fault["account_ref"]) == SCOPE
     _, refused = prepare(funded, "after-fault")
@@ -329,13 +329,15 @@ def test_a_malformed_or_orphan_admission_commits_as_a_fault_and_refuses_its_scop
     assert store.one("SELECT COUNT(*) AS n FROM model_cost_admissions")["n"] == count
     assert store.one("SELECT status FROM billing_attempts WHERE id=?", (refused.attempt_key,))["status"] == "prepared"
     reopened = Store(store.root)                        # opening never refuses
-    assert reopened.one("SELECT resolved_at FROM model_cost_rollup_faults WHERE id=?", ("fact:" + key,))["resolved_at"] is None
+    assert reopened.one("SELECT resolved_at FROM model_cost_rollup_faults WHERE id=?",
+                        (rollup().fact_fault_id(key, SCOPE),))["resolved_at"] is None
     with pytest.raises(BillingError, match="cost_rollup_rebuild_refused") as caught:
         rollup().CostRollup.rebuild(store, environment="test", provider="fixture-provider",
                                     account_ref="fixture-provider-account", actor="fixture-operator",
                                     reason="fixture rebuild over a broken fact")
     assert key in caught.value.attempt_keys
-    assert store.one("SELECT resolved_at FROM model_cost_rollup_faults WHERE id=?", ("fact:" + key,))["resolved_at"] is None
+    assert store.one("SELECT resolved_at FROM model_cost_rollup_faults WHERE id=?",
+                     (rollup().fact_fault_id(key, SCOPE),))["resolved_at"] is None
 
 
 @pytest.mark.cost_rollup_unchecked
@@ -733,72 +735,92 @@ def test_producer_triggers_older_than_their_version_are_recreated_and_the_facts_
         reopened.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE mode='backfill'")["n"]
 
 
-@pytest.mark.parametrize("kind", ["orphan", "malformed", "far_expiry"])
-def test_an_operator_accepts_a_broken_admission_in_a_rebuild_and_the_scope_admits_again(funded, kind):
-    """Facts cannot be edited (immutable_cost_admission), so 'repair from backup' is not a way out:
-    an audited rebuild that names the broken admission with accept= leaves it out of the rollup."""
-    store, ledger, _, ticks = funded
+def _snapshot_tool():
+    """The backup/restore script (apps/docs/scripts/snapshot.py), loaded by path: it is a script."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("fixture_snapshot_tool", ROOT / "apps" / "docs" / "scripts" / "snapshot.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _backup(snapshot, data, out):
+    from types import SimpleNamespace
+    assert snapshot.create(SimpleNamespace(data=str(data), out=str(out))) == 0
+    (archive,) = out.glob("*.tar.gz")
+    return archive
+
+
+@pytest.mark.cost_rollup_unchecked
+@pytest.mark.parametrize("kind", ["orphan", "malformed", "far_expiry", "future"])
+def test_a_broken_admission_keeps_its_scope_refused_until_a_backup_from_before_it_is_restored(
+        funded, tmp_path, monkeypatch, capsys, kind):
+    """Facts cannot be edited (immutable_cost_admission) and only a write outside the product (an import
+    with foreign keys off, hand SQL) can break one. The product fails closed: the scope refuses, and no
+    rebuild, start, ended call or later verify clears it (each refusal changes nothing). The way out is
+    the backup taken before that write (docs/platform/model-risk.md §13 step 3): its restore rehearsal
+    passes, one taken after the write fails it, and the restored store admits again."""
+    from types import SimpleNamespace
+
+    from tests.integration.test_billing_ledger import fixture_authorize, fixture_verify
+    store, ledger, users, ticks = funded
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(store.root))
+    CR, snapshot = rollup().CostRollup, _snapshot_tool()
     admission = CostAdmission(ledger, current_policy=generous)
-    _, good = prepare(funded, "before-accept")
-    send(admission, good, amount=1)
+    send(admission, prepare(funded, "before-damage")[1], amount=1)
+    before = _backup(snapshot, store.root, tmp_path / "backup-before")
     _, dispatched = prepare(funded, "unadmitted")
     ledger.dispatch(dispatched)
     key = "fixture-orphan-attempt" if kind == "orphan" else dispatched.attempt_key
     now = ticks[0]
-    admitted_at, expires_at = {"orphan": (1, 100), "malformed": ("soon", 100),
-                               "far_expiry": (now, now + 2 * 86_400)}[kind]
-    with store.conn() as c:                             # FIXTURE: foreign keys off, as a broken import would
-        c.execute("PRAGMA foreign_keys=OFF")
-        try:
-            c.execute("INSERT INTO model_cost_admissions VALUES (?,?,?,?,?,?,?,?,?,?)",
-                      (key, *SCOPE, COST_UNIT.code, 3, "fixture", "{}", admitted_at, expires_at))
-        finally:
-            c.execute("PRAGMA foreign_keys=ON")
+    admitted_at, expires_at = {"orphan": (1, 100), "malformed": ("soon", 100), "far_expiry": (now, now + 2 * 86_400),
+                               "future": (now + 10 * 86_400, now + 12 * 86_400)}[kind]
+    _broken_admission(store, key, admitted_at, expires_at)
     code = "fact_orphan_admission" if kind == "orphan" else "fact_malformed_admission"
-    assert store.one("SELECT code FROM model_cost_rollup_faults WHERE id=?", ("fact:" + key,)) == {"code": code}
+    assert store.one("SELECT code FROM model_cost_rollup_faults WHERE id=?", (rollup().fact_fault_id(key, SCOPE),)) == \
+        {"code": code}
     with pytest.raises(sqlite3.IntegrityError, match="immutable_cost_admission"):
         store.execute("DELETE FROM model_cost_admissions WHERE attempt_key=?", (key,))
-    CR = rollup().CostRollup
-    scope = dict(environment="test", provider="fixture-provider", account_ref="fixture-provider-account",
-                 actor="fixture-operator")
-    with pytest.raises(BillingError, match="cost_rollup_rebuild_refused") as caught:
-        CR.rebuild(store, reason="fixture rebuild over a broken fact", **scope)
-    assert caught.value.attempt_keys == [key]
-    with pytest.raises(BillingError, match="cost_rollup_rebuild_refused") as caught:
-        CR.rebuild(store, reason="fixture accept of a key that is no fault", accept=[key, "fixture-no-fault"], **scope)
-    assert caught.value.differences == [{"check": "accept_not_faulted", "attempt_key": "fixture-no-fault"}]
-    assert store.all("SELECT * FROM model_cost_rollup_accepted") == []
-    if kind != "orphan":
-        # Its call still holds and has no usage: not yet (test_accept_waits_until_the_admission_is_closed_*).
-        with pytest.raises(BillingError, match="cost_rollup_rebuild_refused") as caught:
-            CR.rebuild(store, reason="fixture accept while the call still holds", accept=[key], **scope)
-        assert caught.value.differences == [{"check": "accept_still_open", "attempt_key": key}]
-        ticks[0] = now + 501                            # past the call's deadline (now + 500)
-        assert ledger.expire_due() >= 1
-    result = CR.rebuild(store, reason="fixture: provider usage checked, the import row is void", accept=[key], **scope)
-    assert result["accepted"] == [key] and result["resolved_faults"] == 1
-    accepted = store.one("SELECT * FROM model_cost_rollup_accepted WHERE attempt_key=?", (key,))
-    assert (accepted["code"], accepted["actor"], accepted["rebuild_id"]) == (code, "fixture-operator", result["id"])
-    assert store.all("SELECT * FROM model_cost_rollup_faults WHERE resolved_at IS NULL") == []
-    rebuilt = store.one("SELECT meta FROM audit_events WHERE action='billing.cost.rollup_rebuilt' ORDER BY at DESC LIMIT 1")
-    assert json.loads(rebuilt["meta"])["accepted"] == [key]
-    # The scope admits again: no fault, and the accepted fact moves neither the clock, parity nor records.
-    _, after = prepare(funded, "after-accept")
-    send(admission, after, amount=1)
-    snapshot = admission.snapshot()
-    assert snapshot["records"] == 2 and exact(snapshot, "daily") == 2
-    for kwargs in ({"all": True}, {"mode": "daily"}, {"since": now - 2 * 86_400, "mode": "recent"}):
-        report = CR.verify(store, now=ticks[0], **kwargs)
-        assert report.ok, report.summary()
-    assert store.all("SELECT * FROM model_cost_rollup_faults WHERE resolved_at IS NULL") == []
-    reopened = Store(store.root)
-    assert reopened.all("SELECT * FROM model_cost_rollup_faults WHERE resolved_at IS NULL") == []
-    for sql in ("DELETE FROM model_cost_rollup_accepted", "UPDATE model_cost_rollup_accepted SET reason='x'"):
-        with pytest.raises(sqlite3.IntegrityError, match="immutable_cost_rollup_accepted"):
-            store.execute(sql)
-    # A second rebuild needs no accept= for it again, and the next start replays nothing new.
-    assert CR.rebuild(store, reason="fixture second rebuild after the accept", **scope)["accepted"] == []
-    clean(store)
+
+    tries = []
+
+    def refused():
+        tries.append(1)
+        rows, faults = derived_rows(store), store.all("SELECT * FROM model_cost_rollup_faults ORDER BY id")
+        with pytest.raises(rollup().RebuildRefused) as caught:
+            CR.rebuild(store, reason="fixture rebuild over a broken fact", clock=lambda: ticks[0], **_REBUILD)
+        assert caught.value.attempt_keys == [key]
+        assert derived_rows(store) == rows and store.all("SELECT * FROM model_cost_rollup_faults ORDER BY id") == faults
+        assert _open_fault_scopes(store) == {SCOPE}
+        with pytest.raises(BillingError, match="cost_rollup_inconsistent"):
+            send(admission, prepare(funded, f"refused-{len(tries)}")[1], amount=1)
+
+    refused()
+    ticks[0] = now + 501                                # the unadmitted call's hold ends (deadline now + 500)
+    ledger.expire_due()
+    refused()
+    assert _open_fault_scopes(Store(store.root)) == {SCOPE}            # a start keeps the latch
+    for kwargs in ({"mode": "daily"}, {"since": now - 2 * 86_400, "mode": "recent"}, {"all": True}):
+        report = CR.verify(store, now=ticks[0], clock=lambda: ticks[0], **kwargs)  # recorded (the orphan is in 1970)
+        assert {d["check"] for d in report.scopes[SCOPE].differences} <= {"fact_fault"}, report.summary()
+    assert [(d["check"], d["attempt_key"]) for d in report.scopes[SCOPE].differences] == [("fact_fault", key)]
+    refused()
+    # The recovery: the backup from before the broken write. One taken after it fails the rehearsal.
+    after = _backup(snapshot, store.root, tmp_path / "backup-after")
+    capsys.readouterr()
+    assert snapshot.verify(SimpleNamespace(archive=str(after), journal_from=str(store.root))) == 1
+    assert "✗ 成本汇总与成本事实一致" in capsys.readouterr().out
+    assert snapshot.verify(SimpleNamespace(archive=str(before), journal_from=str(store.root))) == 0
+    into = tmp_path / "restored"
+    assert snapshot.restore(SimpleNamespace(archive=str(before), into=str(into), journal_from=str(store.root))) == 0
+    restored = Store(into)
+    assert restored.all("SELECT * FROM model_cost_rollup_faults") == []
+    assert restored.one("SELECT COUNT(*) AS n FROM model_cost_admissions")["n"] == 1
+    restored_ledger = Ledger(restored, environment="test", namespace=ledger.namespace, authorize=fixture_authorize,
+                             verify_payment=fixture_verify, clock=lambda: ticks[0], max_hold_seconds=1000)
+    world = (restored, restored_ledger, users, ticks)
+    send(CostAdmission(restored_ledger, current_policy=generous), prepare(world, "after-restore")[1], amount=1)
+    clean(restored, now=ticks[0])
 
 
 def test_an_admission_expiring_when_it_is_admitted_verifies_and_rebuilds(funded):
@@ -817,180 +839,262 @@ def test_an_admission_expiring_when_it_is_admitted_verifies_and_rebuilds(funded)
     send(CostAdmission(ledger, current_policy=generous), ticket, amount=1)
 
 
-def _broken_admission(store, key, admitted_at, expires_at):
-    """FIXTURE: a broken admission written with foreign keys off, as a broken import would."""
-    with store.conn() as c:
-        c.execute("PRAGMA foreign_keys=OFF")
-        try:
-            c.execute("INSERT INTO model_cost_admissions VALUES (?,?,?,?,?,?,?,?,?,?)",
-                      (key, *SCOPE, COST_UNIT.code, 3, "fixture", "{}", admitted_at, expires_at))
-        finally:
-            c.execute("PRAGMA foreign_keys=ON")
+def _broken_admission(store, key, admitted_at, expires_at, *, as_text=False):
+    """FIXTURE: a broken admission in SCOPE written with foreign keys off, as a broken import would."""
+    _raw_admission(store, key, SCOPE, admitted_at, expires_at, as_text=as_text)
 
 
 _REBUILD = dict(environment="test", provider="fixture-provider", account_ref="fixture-provider-account",
                 actor="fixture-operator")
 _KW = dict(environment="test", provider="fixture-provider", account_ref="fixture-provider-account")
+_NAMED = [(b"fixture-blob-key", False, "blob:x'" + b"fixture-blob-key".hex().upper() + "'"),
+          ("k" * 201, False, "text:x'" + (b"k" * 128).hex().upper() + "'…(201 bytes)"),
+          ("fixture\x00nul", False, "text:x'" + b"fixture\x00nul".hex().upper() + "'"),
+          ("-fixture-dash", False, "-fixture-dash"),
+          ("fixture key\n", False, "text:x'" + b"fixture key\n".hex().upper() + "'"),
+          ("blob:x'6B'", False, "text:x'" + b"blob:x'6B'".hex().upper() + "'"),
+          (b"fixture-caf\xe9", True, "text:x'" + b"fixture-caf\xe9".hex().upper() + "'")]
 
 
-@pytest.mark.parametrize("kind", ["orphan", "future", "milliseconds"])
-def test_an_accepted_future_admission_moves_neither_the_horizon_nor_prune_nor_the_verifier(funded, kind):
-    """An accepted admission is outside the rollup everywhere, also as the scope's newest admission M:
-    the producers' velocity horizon, prune and the verifier's horizon and instant leave it out, as
-    the read path's clock check does. A garbage future admitted_at (a broken import's date ahead, or
-    milliseconds) would otherwise switch the velocity brake off, let prune drop every real open row
-    and keep the verifier blind to both."""
-    store, ledger, users, ticks = funded
+@pytest.mark.cost_rollup_unchecked
+@pytest.mark.parametrize("key,as_text,label", _NAMED, ids=["blob", "long", "nul", "dash", "newline", "spelled-like-a-name",
+                                                           "not-utf8"])
+def test_every_broken_admission_is_named_by_the_rebuild_and_the_command_line(funded, capsys, key, as_text, label):
+    """A broken import can write any key (a BLOB, a long or non-printable or non-UTF-8 text, one spelled
+    like another key's name): the rebuild's refusal and the command line name each, one per line and
+    distinctly, so the operator can find the write that broke the scope; nothing is changed."""
+    store, _, _, ticks = funded
+    mod = rollup()
+    _broken_admission(store, key, ticks[0] - 10, ticks[0] + 100, as_text=as_text)    # no attempt: an orphan
+    faults = store.all("SELECT * FROM model_cost_rollup_faults")
+    assert len(faults) == 1 and faults[0]["resolved_at"] is None
+    with pytest.raises(mod.RebuildRefused) as caught:
+        mod.CostRollup.rebuild(store, reason="fixture rebuild over a broken fact", **_REBUILD)
+    assert caught.value.attempt_keys == [label]
+    argv = ["rebuild", "--data", str(store.root), "--environment", "test", "--provider", "fixture-provider",
+            "--account-ref", "fixture-provider-account", "--reason", "fixture: the import row is broken",
+            "--actor", "fixture-operator"]
+    assert mod.main(argv) == 1
+    err = capsys.readouterr().err
+    assert [line[2:] for line in err.splitlines() if line.startswith("  ")] == [label], err
+    assert "备份" in err and "--accept" not in err
+    assert store.all("SELECT * FROM model_cost_rollup_faults") == faults
+    labels = [named for _, _, named in _NAMED]
+    assert len(set(labels)) == len(labels)
+
+
+# ---------------------------------------------------------------- undecodable values, fault ids (2026-10-26)
+OTHER = ("test", "fixture-provider", "fixture-other-account")
+#: A TEXT value that is not UTF-8 (Latin-1 "café"): SQLite stores it unchecked, Python's sqlite3
+#: raises OperationalError when it decodes one.
+UNDECODABLE = b"fixture-caf\xe9"
+
+
+def _raw_admission(store, key, scope, admitted_at, expires_at, *, as_text=False):
+    """FIXTURE: an admission a broken import writes (foreign keys off), with any key; ``as_text``
+    stores the key's bytes as TEXT (CAST), which is how a non-UTF-8 text gets in."""
+    value = "CAST(? AS TEXT)" if as_text else "?"
+    with store.conn() as c:
+        c.execute("PRAGMA foreign_keys=OFF")
+        try:
+            c.execute(f"INSERT INTO model_cost_admissions VALUES ({value},?,?,?,?,?,?,?,?,?)",
+                      (key, *scope, COST_UNIT.code, 3, "fixture", "{}", admitted_at, expires_at))
+        finally:
+            c.execute("PRAGMA foreign_keys=ON")
+
+
+def _undecodable_cost(store, key):
+    """FIXTURE: a usage fact whose cost numerator is a non-UTF-8 TEXT (class X for SQL)."""
+    with store.tx() as t:
+        t.execute("UPDATE billing_attempts SET status='settled' WHERE id=?", (key,))
+        t.execute("INSERT INTO billing_usage(attempt_key,facts,outcome,cost_n,cost_d,cost_unit,charge,absorbed_n,"
+                  "absorbed_d,late,created_at) VALUES (?,'{}','completed',CAST(? AS TEXT),'1',?,0,'0','1',0,0)",
+                  (key, b"7\xe9", COST_UNIT.code))
+
+
+def _hex_label(kind, raw):
+    return f"{kind}:x'{raw.hex().upper()}'"
+
+
+def _open_fault_scopes(store):
+    return {(r["environment"], r["provider"], r["account_ref"]) for r in store.all(
+        "SELECT environment,provider,account_ref FROM model_cost_rollup_faults WHERE resolved_at IS NULL")}
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_an_undecodable_orphan_key_latches_its_scope_and_every_tool_names_it(funded, capsys):
+    """The fault id, the rebuild's refusal, the command line, the verifier and a start's replay read an
+    attempt key by its SQLite type and bytes, so each names a non-UTF-8 key instead of raising
+    OperationalError (which left the scope unnamed and a replay unable to finish)."""
+    from synwevo_core.suite_schema import model_cost_rollup as schema
+    store, ledger, _, ticks = funded
+    mod, CR = rollup(), rollup().CostRollup
+    now = ticks[0]
+    send(CostAdmission(ledger, current_policy=generous), prepare(funded, "before-undecodable")[1], amount=1)
+    _raw_admission(store, UNDECODABLE, SCOPE, now - 10, now + 100, as_text=True)
+    label = _hex_label("text", UNDECODABLE)
+    assert store.all("SELECT id,code FROM model_cost_rollup_faults") == [
+        {"id": mod.fact_fault_id(("text", UNDECODABLE), SCOPE), "code": "fact_orphan_admission"}]
+    rows = derived_rows(store)
+    with pytest.raises(mod.RebuildRefused) as caught:
+        CR.rebuild(store, reason="fixture rebuild over an undecodable key", **_REBUILD)
+    assert caught.value.attempt_keys == [label]
+    argv = ["rebuild", "--data", str(store.root), "--environment", "test", "--provider", "fixture-provider",
+            "--account-ref", "fixture-provider-account", "--reason", "fixture: the import row is broken",
+            "--actor", "fixture-operator"]
+    assert mod.main(argv) == 1
+    err = capsys.readouterr().err
+    assert label in err and "OperationalError" not in err, err
+    assert derived_rows(store) == rows and _open_fault_scopes(store) == {SCOPE}
+    for kwargs in ({"all": True}, {"mode": "daily"}, {"since": now - 2 * 86_400, "mode": "recent"}):
+        report = CR.check(store, now=now, **kwargs)
+        assert [(d["check"], d["attempt_key"]) for d in report.scopes[SCOPE].differences] == [("fact_fault", label)]
+    with store.tx() as t:                               # FIXTURE: an older trigger version, so a start replays
+        t.execute("UPDATE meta SET value='fixture-older' WHERE key=?", (schema.TRIGGERS_KEY,))
+    reopened = Store(store.root)
+    audit = reopened.one("SELECT differences FROM model_cost_rollup_audits WHERE mode='backfill' ORDER BY rowid DESC LIMIT 1")
+    assert json.loads(audit["differences"])["faults"] == [label]
+    assert _open_fault_scopes(reopened) == {SCOPE}
+    with pytest.raises(BillingError, match="cost_rollup_inconsistent"):
+        send(CostAdmission(ledger, current_policy=generous), prepare(funded, "after-undecodable")[1], amount=1)
+
+
+@pytest.mark.cost_rollup_unchecked
+@pytest.mark.parametrize("where", ["key", "cost"])
+def test_one_scopes_undecodable_value_is_that_scopes_fault_and_the_other_scopes_are_still_checked(funded, where):
+    """A non-UTF-8 value in one provider account's facts (a well-formed fact's attempt key, or a class-X
+    cost text) no longer stops the verifier for the whole environment: that account is latched (audited,
+    alerted), every other account is still checked (here a tampered bucket is found), the risk monitor
+    reports no failed step and a rebuild of the broken account refuses instead of raising."""
+    from synwevo_core.billing.risk_monitor import RiskMonitor
+    store, ledger, _, ticks = funded
     now = ticks[0]
     CR = rollup().CostRollup
-    if kind == "orphan":
-        key, at, expires = "fixture-future-orphan", now + 10 * 86_400, now + 10 * 86_400 + 100
+    send(CostAdmission(ledger, current_policy=lambda: generous(account_ref=OTHER[2])), prepare(funded, "other")[1],
+         amount=3)
+    if where == "key":      # attempt, call and wallet rows present: a well-formed fact for SQL
+        clone(store, template(funded, "undecodable-template", amount=5, settle=True), [now - 30],
+              prefix=b"\xff", settled=True)
+        label = _hex_label("text", b"\xff-attempt-0")
+        assert store.one("SELECT COUNT(*) AS n FROM model_cost_admissions WHERE hex(attempt_key)=?",
+                         (b"\xff-attempt-0".hex().upper(),))["n"] == 1
+        assert store.all("SELECT * FROM model_cost_rollup_faults") == []
     else:
-        _, ticket = prepare(funded, "future-" + kind)
-        ledger.dispatch(ticket)
-        ledger.settle_trusted_usage(ticket.attempt_key, evidence(ticket))   # closed, its cost known
-        key = ticket.attempt_key
-        at = now + 10 * 86_400 if kind == "future" else now * 1000
-        expires = at + (2 * 86_400 if kind == "future" else 120_000)
-    _broken_admission(store, key, at, expires)
-    code = "fact_orphan_admission" if kind == "orphan" else "fact_malformed_admission"
-    assert store.one("SELECT code FROM model_cost_rollup_faults WHERE id=?", ("fact:" + key,)) == {"code": code}
-    CR.rebuild(store, reason="fixture: provider records checked, the import row is void", accept=[key],
-               clock=lambda: ticks[0], **_REBUILD)
-    # 1. The velocity brake: 5 + 5 reaches the route's threshold of 10, as without the accepted row.
-    braking = CostAdmission(ledger, current_policy=lambda: velocity_policy(route_cost=10))
-    outcomes = []
-    for i in range(4):
-        _, ticket = prepare(funded, f"after-accept-{i}")
-        try:
-            send(braking, ticket, amount=5)
-            outcomes.append("admitted")
-        except BillingError as exc:
-            outcomes.append(exc.code)
-    assert outcomes == ["admitted", "admitted", "risk_route_brake", "risk_route_brake"], outcomes
-    risk = velocity_policy(route_cost=10).risk
-    with store.tx() as t:
-        mine = rollup().velocity(t, **_KW, unit=COST_UNIT, owner=users[0], route="fixture-model-alias",
-                                 now=ticks[0], risk=risk)
-        theirs = rollup().reference_velocity(t, **_KW, unit=COST_UNIT, owner=users[0], route="fixture-model-alias",
-                                             now=ticks[0], risk=risk)
-    assert mine == theirs == (0, 10)
-    # 2. Prune keeps the real open rows, so the open-set limits still count them.
-    open_rows = "SELECT attempt_key FROM model_cost_inflight WHERE environment='test' ORDER BY attempt_key"
-    before = store.all(open_rows)
-    CR.prune(store)
-    assert store.all(open_rows) == before and len(before) == 2
-    with store.tx() as t:
-        got = rollup().counters(t, **_KW, unit=COST_UNIT, now=ticks[0])
-        want = rollup().reference_counters(t, **_KW, unit=COST_UNIT, now=ticks[0])
-    fields = ("inflight", "unknown_count", "unknown_reserved_units")
-    assert [got[f] for f in fields] == [want[f] for f in fields] == [2, 2, 10]
-    with pytest.raises(BillingError, match="cost_inflight_limit"):
-        send(CostAdmission(ledger, current_policy=lambda: generous(max_inflight=2)),
-             prepare(funded, "over-inflight-cap")[1], amount=1)
-    # 3. The verifier is clean, and it does compare these velocity rows (from the real horizon).
-    for kwargs in ({"all": True}, {"mode": "daily"}, {"since": now - 2 * 86_400, "mode": "recent"}):
-        report = CR.check(store, now=ticks[0], **kwargs)
-        assert report.ok, report.summary()
-    with store.tx() as t:                               # FIXTURE: the gate opened by hand
+        _undecodable_cost(store, _metered(funded, "undecodable-cost"))
+    with store.tx() as t:                               # FIXTURE: the other account's bucket edited past the gate
         t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
-        assert t.execute("DELETE FROM model_cost_buckets WHERE environment='test' AND dim='route' AND span=1").rowcount
+        assert t.execute("UPDATE model_cost_buckets SET n_adm=n_adm+5 WHERE environment=? AND provider=? "
+                         "AND account_ref=? AND dim='account'", OTHER).rowcount
         t.execute("DELETE FROM model_cost_rollup_deltas")
     for kwargs in ({"all": True}, {"mode": "daily"}, {"since": now - 2 * 86_400, "mode": "recent"}):
-        report = CR.check(store, now=ticks[0], **kwargs)
-        assert not report.ok and {d["check"] for d in report.scopes[SCOPE].differences} == {"bucket"}, report.summary()
-    CR.rebuild(store, reason="fixture rebuild after the tampered velocity row", clock=lambda: ticks[0], **_REBUILD)
-    clean(store, now=ticks[0])
+        report = CR.check(store, environment="test", now=now, **kwargs)
+        assert set(report.mismatched) == {SCOPE, OTHER}, report.summary()
+        assert "bucket" in {d["check"] for d in report.scopes[OTHER].differences}
+        mine = report.scopes[SCOPE].differences
+        if where == "key":
+            assert [(d["check"], d["attempt_key"]) for d in mine] == [("undecodable_key", label)]
+        else:
+            assert [d["check"] for d in mine] == ["verify_error"] and "decode" in mine[0]["detail"]
+    result = RiskMonitor(store, environment="test", clock=lambda: ticks[0]).run_once()
+    assert result.failures == [] and "cost_rollup_verify" in result.ran
+    assert _open_fault_scopes(store) == {SCOPE, OTHER}
+    alerted = {json.loads(r["meta"])["account_ref"] for r in store.all(
+        "SELECT meta FROM audit_events WHERE action='billing.cost.rollup_inconsistent'")}
+    assert alerted == {SCOPE[2], OTHER[2]}
+    with pytest.raises(rollup().RebuildRefused) as caught:
+        CR.rebuild(store, reason="fixture rebuild over an undecodable value", clock=lambda: ticks[0], **_REBUILD)
+    if where == "key":
+        assert caught.value.attempt_keys == [label]
+    else:
+        assert [d["check"] for d in caught.value.differences] == ["verify_error"]
+    for account in (SCOPE[2], OTHER[2]):
+        with pytest.raises(BillingError, match="cost_rollup_inconsistent"):
+            send(CostAdmission(ledger, current_policy=lambda a=account: generous(account_ref=a)),
+                 prepare(funded, "refused-" + account)[1], amount=1)
 
 
-def test_accept_waits_until_the_admission_is_closed_and_its_late_usage_latches_the_scope(funded):
-    """An admission without usage whose call still holds may yet cost what nobody has seen (no provider
-    record exists for a call still running): accept refuses it (accept_still_open), changing nothing,
-    until its hold has ended or its usage is recorded. Usage that still arrives for an accepted
-    admission (late) is outside the cost windows, so it latches the scope (fact_accepted_usage) instead
-    of letting the caps run past it unseen; once checked, a plain rebuild resolves that latch."""
-    store, ledger, _, ticks = funded
-    CR = rollup().CostRollup
+@pytest.mark.cost_rollup_unchecked
+def test_the_read_path_refuses_an_undecodable_value_with_a_named_check_that_latches(funded):
+    """Admission and the velocity brake read class-X cost texts back: one that is not UTF-8 refuses with
+    cost_rollup_inconsistent (check ``undecodable``), latched after the refusal like the other read-path
+    checks, instead of an unhandled OperationalError on the dispatch path."""
+    store, ledger, users, ticks = funded
     admission = CostAdmission(ledger, current_policy=generous)
-    _, ticket = prepare(funded, "open-accept")
-    ledger.dispatch(ticket)
-    key, now = ticket.attempt_key, ticks[0]
-    _broken_admission(store, key, now, now + 2 * 86_400)            # expiry beyond a day: malformed
-    with pytest.raises(BillingError, match="cost_rollup_rebuild_refused") as caught:
-        CR.rebuild(store, reason="fixture accept while the call still holds", accept=[key],
-                   clock=lambda: ticks[0], **_REBUILD)
-    assert caught.value.differences == [{"check": "accept_still_open", "attempt_key": key}]
-    assert store.all("SELECT * FROM model_cost_rollup_accepted") == []
-    assert store.one("SELECT resolved_at FROM model_cost_rollup_faults WHERE id=?", ("fact:" + key,)) == {"resolved_at": None}
-    ticks[0] = now + 501                                             # past the call's deadline (now + 500)
-    assert ledger.expire_due() == 1
-    result = CR.rebuild(store, reason="fixture: the hold ended, the provider shows no usage yet", accept=[key],
-                        clock=lambda: ticks[0], **_REBUILD)
-    assert result["accepted"] == [key]
-    send(admission, prepare(funded, "after-closed-accept")[1], amount=1)
-    settled = ledger.settle_trusted_usage(key, evidence(ticket))   # the provider's cost arrives late
-    assert settled.late
-    fault = store.one("SELECT code,resolved_at FROM model_cost_rollup_faults WHERE id=?", ("usage:" + key,))
-    assert fault == {"code": "fact_accepted_usage", "resolved_at": None}
-    _, refused = prepare(funded, "after-late-usage")
-    with pytest.raises(BillingError, match="cost_rollup_inconsistent"):
-        send(admission, refused, amount=1)
-    report = CR.check(store, now=ticks[0], all=True)
-    assert [d["check"] for d in report.scopes[SCOPE].differences] == ["accepted_usage"], report.summary()
-    assert Store(store.root).one("SELECT resolved_at FROM model_cost_rollup_faults WHERE id=?",
-                                 ("usage:" + key,)) == {"resolved_at": None}      # a start keeps the latch
-    CR.rebuild(store, reason="fixture: the late provider cost of the accepted attempt checked",
-               clock=lambda: ticks[0], **_REBUILD)
-    assert store.all("SELECT * FROM model_cost_rollup_faults WHERE resolved_at IS NULL") == []
-    CR.rebuild(store, reason="fixture: a later rebuild does not latch it again", clock=lambda: ticks[0], **_REBUILD)
-    assert store.all("SELECT * FROM model_cost_rollup_faults WHERE resolved_at IS NULL") == []
-    send(admission, prepare(funded, "after-late-usage-checked")[1], amount=1)
-    clean(store, now=ticks[0])
+    _undecodable_cost(store, _metered(funded, "undecodable-cost"))
+    _, ticket = prepare(funded, "after-undecodable-cost")
+    with pytest.raises(BillingError, match="cost_rollup_inconsistent") as caught:
+        send(admission, ticket, amount=1)
+    error = caught.value
+    assert isinstance(error, rollup().RollupInconsistent) and (error.scope, error.check) == (SCOPE, "undecodable")
+    admission.after_refusal(error)
+    assert [r["code"] for r in store.all("SELECT code FROM model_cost_rollup_faults WHERE resolved_at IS NULL")] == \
+        ["read_undecodable"]
+    with store.tx() as t:
+        with pytest.raises(rollup().RollupInconsistent) as velocity:
+            rollup().velocity(t, **_KW, unit=COST_UNIT, owner=users[0], route="fixture-model-alias", now=ticks[0],
+                              risk=velocity_policy(route_cost=10**9, payer_cost=10**9).risk)
+    assert velocity.value.check == "undecodable"
 
 
-@pytest.mark.parametrize("key", [b"fixture-blob-key", "k" * 201, "fixture\x00nul", "-fixture-dash", "fixture key\n",
-                                 "sha256:fixture"], ids=["blob", "long", "nul", "dash", "newline", "prefix"])
-def test_every_broken_admission_can_be_named_for_accept_in_python_and_on_the_command_line(funded, key, capsys):
-    """A broken import can write any key (a BLOB, a long text, a NUL): the rebuild names each faulted
-    admission so that accept= and the command line can give it back, or the scope stays latched."""
-    import shlex
+@pytest.mark.cost_rollup_unchecked
+def test_fault_ids_tell_key_types_and_scopes_apart(funded):
+    """SQLite's || turns a BLOB into the TEXT of the same bytes, and the old id had no scope: a BLOB and
+    a TEXT key with the same bytes, in one account or in two, shared one fault row, so the second broken
+    admission latched nothing. Now each has its own row in its own account, and the verifier finds it."""
+    store, ledger, _, ticks = funded
+    mod = rollup()
+    now = ticks[0]
+    broken = [("fixture-k", SCOPE), (b"fixture-k", SCOPE), ("fixture-k2", SCOPE), (b"fixture-k2", OTHER)]
+    for i, (key, scope) in enumerate(broken):
+        _raw_admission(store, key, scope, now - 40 + i, now + 100)
+    rows = store.all("SELECT id,environment,provider,account_ref,code FROM model_cost_rollup_faults "
+                     "WHERE resolved_at IS NULL ORDER BY id")
+    assert sorted((r["id"], (r["environment"], r["provider"], r["account_ref"])) for r in rows) == \
+        sorted((mod.fact_fault_id(key, scope), scope) for key, scope in broken)
+    assert len({r["id"] for r in rows}) == 4 and {r["code"] for r in rows} == {"fact_orphan_admission"}
+    assert _open_fault_scopes(store) == {SCOPE, OTHER}
+    for account in (SCOPE[2], OTHER[2]):
+        with pytest.raises(BillingError, match="cost_rollup_inconsistent"):
+            send(CostAdmission(ledger, current_policy=lambda a=account: generous(account_ref=a)),
+                 prepare(funded, "after-" + account)[1], amount=1)
+    report = mod.CostRollup.check(store, now=now, all=True)
+    for scope, labels in ((SCOPE, ["blob:x'" + b"fixture-k".hex().upper() + "'", "fixture-k", "fixture-k2"]),
+                          (OTHER, ["blob:x'" + b"fixture-k2".hex().upper() + "'"])):
+        found = report.scopes[scope].differences
+        assert sorted(d["attempt_key"] for d in found) == sorted(labels), found
+        assert {d["check"] for d in found} == {"fact_fault"}                # no fact_fault_missing
 
-    store, _, _, ticks = funded
+
+@pytest.mark.cost_rollup_unchecked
+def test_a_scope_named_by_undecodable_text_is_reported_and_every_other_scope_is_still_checked(funded):
+    """A broken import can write an account name that is not UTF-8. No read can ever name that scope
+    (every read binds UTF-8 text), so its facts reach no limit; the scan of scopes reads names as type
+    and bytes, reports it as the store-wide issue undecodable_scope and goes on checking the others."""
+    store, ledger, _, ticks = funded
+    now = ticks[0]
     CR = rollup().CostRollup
-    _broken_admission(store, key, ticks[0] - 10, ticks[0] + 100)    # no attempt: an orphan
-    assert store.one("SELECT COUNT(*) AS n FROM model_cost_rollup_faults WHERE resolved_at IS NULL")["n"] == 1
-    with pytest.raises(BillingError, match="cost_rollup_rebuild_refused") as caught:
-        CR.rebuild(store, reason="fixture rebuild over a broken fact", **_REBUILD)
-    assert caught.value.attempt_keys == [key]
-    argv = ["rebuild", "--data", str(store.root), "--environment", "test", "--provider", "fixture-provider",
-            "--account-ref", "fixture-provider-account", "--reason", "fixture: the import row is void",
-            "--actor", "fixture-operator"]
-    assert rollup().main(argv) == 1
-    printed = [line.strip() for line in capsys.readouterr().err.splitlines() if line.strip().startswith("--accept")]
-    assert len(printed) == 1, printed
-    words = shlex.split(printed[0])
-    assert len(words) == 1 and words[0].startswith("--accept=")
-    if isinstance(key, str) and len(key) <= 200 and key.isprintable() and not key.startswith("sha256:"):
-        assert words[0] == "--accept=" + key                         # a plain key is printed as itself
-    assert rollup().main(argv + words) == 0
-    assert store.all("SELECT * FROM model_cost_rollup_faults WHERE resolved_at IS NULL") == []
-    assert store.one("SELECT attempt_key FROM model_cost_rollup_accepted") == {"attempt_key": key}
-    with pytest.raises(BillingError, match="cost_rollup_rebuild_refused") as caught:
-        CR.rebuild(store, reason="fixture: a text is not the BLOB of the same bytes", accept=["fixture-blob-key-x"],
-                   **_REBUILD)
-    assert caught.value.differences == [{"check": "accept_not_faulted", "attempt_key": "fixture-blob-key-x"}]
-    clean(store)
-
-
-@pytest.mark.parametrize("key", [b"fixture-blob-key", "k" * 201])
-def test_accept_also_takes_the_raw_key_of_any_type(funded, key):
-    store, _, _, ticks = funded
-    _broken_admission(store, key, ticks[0] - 10, ticks[0] + 100)
-    result = rollup().CostRollup.rebuild(store, reason="fixture: the import row is void", accept=[key], **_REBUILD)
-    assert result["accepted"] == [rollup().accept_name(key)] and result["resolved_faults"] == 1
-    with pytest.raises(BillingError, match="invalid_cost_rollup_accept"):
-        rollup().CostRollup.rebuild(store, reason="fixture: not a key", accept=[7], **_REBUILD)
-    clean(store)
+    send(CostAdmission(ledger, current_policy=generous), prepare(funded, "named-scope")[1], amount=2)
+    with store.conn() as c:                             # FIXTURE: foreign keys off, the account name as raw bytes
+        c.execute("PRAGMA foreign_keys=OFF")
+        try:
+            c.execute("INSERT INTO model_cost_admissions VALUES ('fixture-undecodable-scope','test','fixture-provider',"
+                      "CAST(? AS TEXT),?,3,'fixture','{}',?,?)", (UNDECODABLE, COST_UNIT.code, now - 10, now + 100))
+        finally:
+            c.execute("PRAGMA foreign_keys=ON")
+    with store.tx() as t:                               # FIXTURE: the named scope's bucket edited past the gate
+        t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
+        assert t.execute("UPDATE model_cost_buckets SET n_adm=n_adm+1 WHERE environment=? AND provider=? "
+                         "AND account_ref=? AND dim='account'", SCOPE).rowcount
+        t.execute("DELETE FROM model_cost_rollup_deltas")
+    for kwargs in ({"all": True}, {"mode": "daily"}, {"since": now - 2 * 86_400, "mode": "recent"}):
+        report = CR.check(store, environment="test", now=now, **kwargs)
+        assert report.issues == ["undecodable_scope"] and list(report.scopes) == [SCOPE], report.summary()
+        assert "bucket" in {d["check"] for d in report.scopes[SCOPE].differences}
+    assert CR.record(store, report) == {SCOPE: "mismatch"}
+    run = store.one("SELECT status,differences FROM model_cost_rollup_audits WHERE mode='recent' AND provider='' "
+                    "ORDER BY rowid DESC LIMIT 1")
+    assert run["status"] == "mismatch" and json.loads(run["differences"])["issues"] == ["undecodable_scope"]
+    assert rollup().CostRollup.prune(store)["inflight"] == 0          # prune skips the scope it cannot name
 
 
 def test_scopes_whose_parts_contain_colons_latch_independently(funded):
@@ -1137,6 +1241,7 @@ PRODUCTION = re.compile(r"docker compose -f /opt/synwevo/config/compose\.yaml (e
                         r"python -m synwevo_core\.billing\.cost_rollup ([^<`\n]*(?:<[a-z_]+>[^<`\n]*)*)</dev/null")
 
 
+@pytest.mark.cost_rollup_unchecked
 def test_the_runbook_gives_the_production_container_form_and_each_command_runs(funded, tmp_path):
     """docs/platform/model-risk.md §13 as an operator copies it: the role container's module form
     (production has no workspace venv on the host), run --rm --no-deps while services are stopped,
@@ -1161,31 +1266,43 @@ def test_the_runbook_gives_the_production_container_form_and_each_command_runs(f
     admission = CostAdmission(ledger, current_policy=generous)
     _, good = prepare(funded, "runbook")
     send(admission, good, amount=1)
+    values = {"environment": "test", "provider": "fixture-provider", "account_ref": SCOPE[2],
+              "reason": "fixture runbook rehearsal: the source was checked"}
+    env = {**os.environ, "SYNWEVO_DATA_DIR": str(store.root)}
+
+    def run_all():
+        outcomes = []
+        for _, args in commands:
+            argv = []
+            for word in re.findall(r'"[^"]*"|\S+', args.strip()):
+                word = word.strip('"')
+                word = re.sub(r"<([a-z_]+)>", lambda m: values[m.group(1)], word)
+                argv.append({"live": "test", "deepseek": "fixture-provider"}.get(word, word))
+            done = subprocess.run([sys.executable, "-m", "synwevo_core.billing.cost_rollup", *argv], env=env,
+                                  cwd=tmp_path, capture_output=True, text=True, timeout=120)
+            outcomes.append((argv[0], done.returncode, done.stderr))
+        return outcomes
+
+    # Step 2: a derived row edited past the gate. verify shows it, the rebuild repairs it, verify confirms.
+    with store.tx() as t:                               # FIXTURE: the gate opened by hand
+        t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
+        t.execute("UPDATE model_cost_buckets SET n_adm=n_adm+1 WHERE environment='test' AND dim='account'")
+        t.execute("DELETE FROM model_cost_rollup_deltas")
+    outcomes = run_all()
+    assert [(action, code) for action, code, _ in outcomes] == [("verify", 1), ("rebuild", 0), ("verify", 0)], outcomes
+    send(admission, prepare(funded, "after-rebuild")[1], amount=1)
+    # Step 3: a broken fact. The rebuild names it and changes nothing; the account stays refused.
     _, dispatched = prepare(funded, "runbook-broken")
     ledger.dispatch(dispatched)
-    ledger.settle_trusted_usage(dispatched.attempt_key, evidence(dispatched))   # closed: acceptable (§13 step 3)
     with store.conn() as c:                             # FIXTURE: a malformed admission, as a broken import
         c.execute("INSERT INTO model_cost_admissions VALUES (?,?,?,?,?,?,?,?,?,?)",
                   (dispatched.attempt_key, *SCOPE, COST_UNIT.code, 3, "fixture", "{}", ticks[0], ticks[0] + 3 * 86_400))
-    values = {"environment": "test", "provider": "fixture-provider", "account_ref": SCOPE[2],
-              "reason": "fixture runbook rehearsal: provider usage checked", "attempt_key": dispatched.attempt_key}
-    env = {**os.environ, "SYNWEVO_DATA_DIR": str(store.root)}
-    outcomes = []
-    for _, args in commands:
-        argv = []
-        for word in re.findall(r'"[^"]*"|\S+', args.strip()):
-            word = word.strip('"')
-            word = re.sub(r"<([a-z_]+)>", lambda m: values[m.group(1)], word)
-            argv.append({"live": "test", "deepseek": "fixture-provider"}.get(word, word))
-        done = subprocess.run([sys.executable, "-m", "synwevo_core.billing.cost_rollup", *argv], env=env, cwd=tmp_path,
-                              capture_output=True, text=True, timeout=120)
-        outcomes.append((argv[0], "--accept" in argv, done.returncode, done.stderr))
-    # verify shows the fault; a rebuild without --accept names the fact; with it the scope is clean.
-    assert [(action, accept, code) for action, accept, code, _ in outcomes] == [
-        ("verify", False, 1), ("rebuild", False, 1), ("rebuild", True, 0), ("verify", False, 0)], outcomes
-    assert dispatched.attempt_key in outcomes[1][3] and "--accept" in outcomes[1][3]
-    send(admission, prepare(funded, "after-runbook")[1], amount=1)
-    clean(store)
+    outcomes = run_all()
+    assert [(action, code) for action, code, _ in outcomes] == [("verify", 1), ("rebuild", 1), ("verify", 1)], outcomes
+    assert dispatched.attempt_key in outcomes[1][2] and "§13" in outcomes[1][2] and "备份" in outcomes[1][2]
+    with pytest.raises(BillingError, match="cost_rollup_inconsistent"):
+        send(admission, prepare(funded, "after-runbook")[1], amount=1)
+    assert "accept" not in section.lower()
 
 
 # ---------------------------------------------------------------- the benchmark measures what it says

@@ -31,7 +31,8 @@ TOOL_SETTINGS = frozenset({"SOFFICE", "TESSERACT", "TESSDATA", "CJK_FONTS", "CJK
 # random ones take (also the cost-rollup equivalence histories and their length). Scrubbed,
 # `required` silently turned into a skip.
 TEST_RUN_SETTINGS = frozenset({"SYNWEVO_SHEET_CLIENTS", "SYNWEVO_SHEET_FUZZ_SEEDS",
-                               "SYNWEVO_COST_EQUIVALENCE_SEEDS", "SYNWEVO_COST_EQUIVALENCE_STEPS"})
+                               "SYNWEVO_COST_EQUIVALENCE_SEEDS", "SYNWEVO_COST_EQUIVALENCE_FAULT_SEEDS",
+                               "SYNWEVO_COST_EQUIVALENCE_STEPS"})
 
 
 def _scrub_ambient_configuration() -> list[str]:

@@ -266,13 +266,14 @@ CATALOGUE: dict[str, dict] = {
         "zh-Hans": "尚未确认用量的调用预留成本合计 {amount} {unit}，超过提醒阈值。", "zh-Hant": "尚未確認用量的呼叫預留成本合計 {amount} {unit}，超過提醒門檻。",
         "en": "Calls without confirmed usage hold {amount} {unit} of reserved cost, above the alert threshold."}},
     # ---- the exact cost rollup disagrees with its facts (billing/cost_rollup.py): one provider account's
-    # paid calls refuse until an operator rebuilds it. Identifiers only; the differences stay in the audit.
+    # paid calls refuse until an operator rebuilds it, or, when a cost fact itself is broken, restores the
+    # backup from before that write. Identifiers only; the differences stay in the audit.
     "billing.cost.rollup_inconsistent": {"category": "platform", "severity": "action", "email": "immediate", "title": {
         "zh-Hans": "模型成本汇总与成本事实不一致：{provider}", "zh-Hant": "模型成本彙總與成本事實不一致：{provider}",
         "en": "Model cost rollup disagrees with its facts: {provider}"}, "body": {
-        "zh-Hans": "提供方账户 {account} 的成本汇总与成本事实不一致，该账户的付费调用已暂停，被拒绝的请求没有发送，也不会扣费。请按运维手册 docs/platform/model-risk.md §13 在角色容器里查看差异，核实后重建。",
-        "zh-Hant": "供應商帳戶 {account} 的成本彙總與成本事實不一致，該帳戶的付費呼叫已暫停，被拒絕的請求沒有傳送，也不會扣費。請依維運手冊 docs/platform/model-risk.md §13 在角色容器裡檢視差異，核實後重建。",
-        "en": "The cost rollup of provider account {account} disagrees with the cost facts, so paid calls on that account are paused; refused requests were not sent and are not charged. Follow the runbook in docs/platform/model-risk.md §13: see the differences in a role container, then rebuild once they are understood."}},
+        "zh-Hans": "提供方账户 {account} 的成本汇总与成本事实不一致，该账户的付费调用已暂停，被拒绝的请求没有发送，也不会扣费。请按运维手册 docs/platform/model-risk.md §13 在角色容器里查看差异：汇总被改动时核实后重建；成本事实本身有问题时重建会拒绝，需从那次写入之前的备份恢复。",
+        "zh-Hant": "供應商帳戶 {account} 的成本彙總與成本事實不一致，該帳戶的付費呼叫已暫停，被拒絕的請求沒有傳送，也不會扣費。請依維運手冊 docs/platform/model-risk.md §13 在角色容器裡檢視差異：彙總被改動時核實後重建；成本事實本身有問題時重建會拒絕，需從那次寫入之前的備份還原。",
+        "en": "The cost rollup of provider account {account} disagrees with the cost facts, so paid calls on that account are paused; refused requests were not sent and are not charged. Follow the runbook in docs/platform/model-risk.md §13: see the differences in a role container; rebuild once they are understood when the rollup was changed, or restore the backup from before the write when a cost fact itself is broken (a rebuild refuses then)."}},
     # ---- A26: a platform-requested second-factor reset that fell due and was not carried out, told
     # to the administrator who asked (synwevo_identity.admin_second_factor); `void_reason` is a
     # VOID_WORDS key, `email` the account's address as the administrator already saw it.

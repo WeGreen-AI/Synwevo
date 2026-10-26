@@ -202,12 +202,14 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 成本准入（§1 第 3 行）与自动刹车（§3）读的是触发器维护的精确成本汇总。它与事实不一致时，只锁定那一个提供方账户
 （`environment` + `provider` + `account_ref`）：该账户的付费调用以 `cost_rollup_inconsistent` 拒绝，没有发起、没有扣费；其他账户不受影响。
 管理员收到 `billing.cost.rollup_inconsistent`，系统审计里有同名记录（含差异数量与来源：每日/每小时校验、读取时的检查）。
-全库问题（静止时 `model_cost_rollup_deltas` 有行、哨兵行丢失）即使还没有任何账户也会报告（审计对象 `*`，运行记录 `mismatch`）。
+全库问题（静止时 `model_cost_rollup_deltas` 有行、哨兵行丢失）即使还没有任何账户也会报告（审计对象 `*`，运行记录 `mismatch`）；
+提供方或账户名不是 UTF-8 文本的事实（`undecodable_scope`，只能来自产品之外的写入）也这样报告：没有任何读取能用到这些事实，
+其他账户照常核对，处理同第 3 步。一个账户的事实读不出来，只记为该账户的差异（`verify_error`），不会让其他账户漏检。
 
 **在哪里运行。** 生产只有角色容器（只读根文件系统，宿主机上没有工作区虚拟环境），命令以模块形式在容器里运行：容器设置了
 `SYNWEVO_DATA_DIR=/data`，它就是 `--data` 的默认值；stdin 接 `/dev/null`（`exec -T` 没有终端）。核对在正在运行的 `portal` 容器里
 （`exec`）；重建持有写锁，在一次性容器里运行（`run --rm --no-deps`：同一镜像、数据卷与内存上限，服务停着也能运行）。下面的
-`<account_ref>`、`<reason>`（8–500 字）、`<attempt_key>` 换成实际值；`--actor <操作人>` 可写明是谁（默认 `operator:<容器用户>`）。
+`<account_ref>`、`<reason>`（8–500 字）换成实际值；`--actor <操作人>` 可写明是谁（默认 `operator:<容器用户>`）。
 本机开发用 `python scripts/platform.py cost-rollup …`，参数相同。
 
 1. **看差异，不改任何东西**：
@@ -217,7 +219,7 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
    ```
 
    输出每个不一致账户的前几条差异（哪个桶、期望值、实际值；或哪个敞口行多了/少了；或哪条成本准入本身有问题）。
-2. **重建**。`bucket` / `inflight_*` / `hold_*` / `exceptions` / `structure` / `counters` 说明有人绕过了闸门（手写了
+2. **汇总被改动：重建**。`bucket` / `inflight_*` / `hold_*` / `exceptions` / `structure` / `counters` 说明有人绕过了闸门（手写了
    `model_cost_rollup_deltas`、关闭过触发器）或程序有缺陷：保留第 1 步的输出，排查来源后重建。事实多时先停服务（见下），重建后再启动：
 
    ```bash
@@ -226,23 +228,31 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
    docker compose -f /opt/synwevo/config/compose.yaml up -d --wait accounts docs portal messages
    ```
 
-   重建在一个事务里从事实重放、校验并解除该账户的故障；校验不通过时什么也不改。重建写入 `billing.cost.rollup_rebuilt` 审计。
-3. **成本准入本身有问题**（`fact_fault`：准入时间不是整数或为负、到期超过准入后一天、找不到调用或钱包）：第 2 步的重建拒绝，
-   并逐条列出 `--accept=<名称>`（名称就是 attempt key；BLOB、超过 200 字或含 NUL 等不可打印字符的键给出 `sha256:…`，原样复制即可）。
-   事实表不可修改（`immutable_cost_admission`），备份里的是同一行，恢复备份只会连同之后的全部事实一起丢掉，所以不要“修复”它。
-   先核实（对照提供方的用量记录、导入来源），确认后在同一条重建命令后逐条加上 `--accept`。只能接受已结束的准入：还没有用量、
-   而它的调用仍在保留期内的，重建拒绝（`accept_still_open`）——那次调用的费用可能还没有出现在任何记录里，等保留到期或用量记录后再接受：
+   重建在一个事务里从事实重放、校验并解除该账户的故障；校验不通过，或该账户有任何一条成本事实本身有问题（第 3 步）时，
+   什么也不改。重建写入 `billing.cost.rollup_rebuilt` 审计。
+3. **成本事实本身有问题：恢复到问题写入之前的备份**。`fact_fault`（准入时间不是整数或为负、到期超过准入后一天、找不到调用或钱包）、
+   `undecodable_key`（attempt key 不是 UTF-8 文本）、写明某列无法解码（`Could not decode`）的 `verify_error`，以及读取时锁定的
+   `read_undecodable`：产品自己从不写出这样的事实，它只能来自产品之外的写入（关掉外键的导入、手写 SQL）。成本事实不可修改
+   （`immutable_cost_admission`），所以第 2 步的重建拒绝，并逐行列出这些准入（可打印的 attempt key 原样给出，其余给出 SQLite 类型与
+   十六进制字节，例如 `text:x'66FF'`、`blob:x'6B'`，便于在库里找到那次写入），什么也不改。该账户保持拒绝（失败即关闭）：重启、重建、
+   调用结束、之后的校验都不会解除，也没有别的命令能解除。
 
-   ```bash
-   docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T portal python -m synwevo_core.billing.cost_rollup rebuild --environment live --provider deepseek --account-ref <account_ref> --reason "<reason>" --accept <attempt_key> </dev/null
-   ```
+   恢复办法只有一个：把数据库恢复到那次写入**之前**取的备份。
+   - 确定问题写入的时间（导入或操作记录；触发器记下的 `fact_*` 故障行的 `detected_at` 就是写入时刻，校验或读取发现的故障是它最晚的时刻），
+     选在它之前最近的一份备份，先在隔离目录演练。
+     问题写入之后取的备份，演练里「成本汇总与成本事实一致」一项失败（✗）；之前取的通过：
 
-   接受写入 `model_cost_rollup_accepted`（不可修改、不可删除，含操作人、理由与重建编号）和审计 `billing.cost.rollup_rebuilt`
-   （`accepted` 列出接受的准入）。被接受的准入从此不计入成本汇总、成本准入（窗口金额、时钟检查、当日待确认数与记录数）、速率刹车
-   和校验的对照计算，也不再算作该账户最新的准入（速率桶的时间范围、清理与校验都不以它为准），也不再锁定该账户；它若真实发生过
-   费用，只出现在提供方账单与对账里。接受之后它的用量若仍到达（迟到用量），这笔费用不进任何窗口，所以该账户重新锁定
-   （故障 `usage:<attempt key>`、`fact_accepted_usage`，校验差异 `accepted_usage`）：核对这笔费用后，再执行一次第 2 步的重建
-   （不需要 `--accept`）即解除。`--accept` 只接受第 2 步列出的准入，别的键整条拒绝（`accept_not_faulted`）。准入到期等于准入时刻（违反 I1 的下界）不算有问题：汇总与对照计算对它一致，校验不报告。
+     ```bash
+     B=/opt/synwevo/backups/<备份目录>
+     docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T -e TMPDIR=/backup -v "$B":/backup docs python apps/docs/scripts/snapshot.py verify --archive /backup/<归档文件> --journal-from /data </dev/null
+     ```
+
+   - 停服务，按 `docs/operations.md` §2「恢复」带安全日志恢复这份备份（备份之后的撤权会重放），核对后再启动，然后执行第 4 步。
+   - 备份之后写入的一切都会丢失，包括这段时间的成本与计费事实（准入、用量、钱包流水）：按提供方账单与支付记录核对这段时间。
+     所以任何导入或手写 SQL 之前先取一份一致备份（`docs/operations.md` §2、§10 第 3 步的一次性容器），做完立即执行第 1 步：
+     发现问题时，要恢复的就是刚取的那份备份，丢失的只有这一次写入。
+
+   准入到期等于准入时刻（违反 I1 的下界）不算有问题：汇总与对照计算对它一致，校验不报告。
 4. **确认**（记录这次校验）：
 
    ```bash
@@ -256,5 +266,5 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 所以事实多时先停服务（第 2 步）。校验不占写锁（只读快照）。校验与重建按准入时间流式读取事实，内存不随事实数增长
 （本机 100 万条：每日校验进程峰值约 120 MB，其中解释器与导入约 100 MB；重建约 110 MB），可以在 `portal` 容器（1536 MB）里运行。
 
-不要用删除故障行、改汇总表或关闭触发器来“恢复”：这些写入会被闸门拒绝（`cost_rollup_derived`），故障行与接受记录不可删除；绕过闸门的写入会在
-下一次每小时校验时被发现并重新锁定。恢复从来不是自动的。
+不要用删除故障行、改汇总表、改写事实或关闭触发器来“恢复”：汇总表的写入会被闸门拒绝（`cost_rollup_derived`），故障行与成本事实不可删除、
+不可修改；绕过闸门的写入会在下一次每小时校验时被发现并重新锁定。恢复从来不是自动的。

@@ -15,9 +15,9 @@
                                                      # 恢复并补上备份之后的撤销（安全日志）
     python scripts/platform.py cost-rollup verify [--all] [--environment test|live]
                                                      # 核对模型成本汇总与成本事实（不一致会锁定该账户）
-    python scripts/platform.py cost-rollup rebuild --environment E --provider P --account-ref A --reason "…" [--accept=NAME]
-                                                     # 从事实重建一个提供方账户的成本汇总（审计、校验后才生效；
-                                                     # 生产在角色容器里运行，见 docs/platform/model-risk.md §13）
+    python scripts/platform.py cost-rollup rebuild --environment E --provider P --account-ref A --reason "…"
+                                                     # 从事实重建一个提供方账户的成本汇总（审计、校验后才生效；成本
+                                                     # 事实本身有问题时拒绝；生产在角色容器里运行，见 docs/platform/model-risk.md §13）
 
 `setup` runs with any Python ≥ 3.12 on a clean checkout: it imports nothing from this repository,
 because nothing from this repository is installed until it has run. Every other command needs
@@ -571,8 +571,9 @@ def cost_rollup(args) -> int:
 
     Never automatic: the hourly and daily checks only verify and latch (billing/cost_rollup.py). A
     rebuild replays that account's facts, verifies the result and resolves its faults in one
-    transaction, or changes nothing (a malformed fact is named; facts cannot be edited, so after
-    checking it the operator accepts it with --accept, which leaves it out of the rollup).
+    transaction, or changes nothing. A broken fact is named and refuses the rebuild: facts cannot be
+    edited, so that account stays refused until the database is restored from a backup taken before
+    the write that broke it (docs/platform/model-risk.md §13).
     Works on the configured data directory; a test or rehearsal points SYNWEVO_DATA_DIR elsewhere.
     Run as its own module (like backup's snapshot tool): this file's name would shadow the
     standard library's `platform` for anything imported in-process.
@@ -583,8 +584,6 @@ def cost_rollup(args) -> int:
                         ("--account-ref", args.account_ref), ("--reason", args.reason), ("--actor", args.actor)):
         if value:
             cmd += [flag, value]
-    for key in args.accept:
-        cmd.append("--accept=" + key)               # one word: a key may start with "-"
     cmd += [flag for flag, on in (("--all", args.all), ("--no-record", args.no_record)) if on]
     return subprocess.run(cmd, cwd=str(ROOT)).returncode
 
@@ -650,8 +649,6 @@ def main() -> int:
     cr.add_argument("--provider")
     cr.add_argument("--account-ref")
     cr.add_argument("--reason", help="rebuild：理由（8 至 500 个字），写入审计")
-    cr.add_argument("--accept", action="append", default=[], metavar="ATTEMPT_KEY",
-                    help="rebuild：接受这条有问题的成本准入（事实不可修改；接受后不再计入汇总），可重复")
     cr.add_argument("--actor", help="rebuild：操作人（写入审计；默认 operator:<系统用户>）")
     cr.set_defaults(func=cost_rollup)
 
