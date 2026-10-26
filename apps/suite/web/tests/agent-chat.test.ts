@@ -396,7 +396,7 @@ const SCAN_ROOT = process.env.AGENT_SCAN_ROOT ? process.env.AGENT_SCAN_ROOT.repl
 const AGENT_DIR = 'apps/suite/synwevo_suite/agent/';
 const SOURCES = [...readdirSync(SCAN_ROOT + AGENT_DIR).filter((f) => f.endsWith('.py')).map((f) => AGENT_DIR + f),
   'packages/core/synwevo_core/agent_safety.py',
-  ...['ledger', 'admission', 'risk', 'traffic', 'payer_budgets', 'org_payers', 'models'].map((n) => `packages/core/synwevo_core/billing/${n}.py`)];
+  ...['ledger', 'admission', 'cost_rollup', 'risk', 'traffic', 'payer_budgets', 'org_payers', 'models'].map((n) => `packages/core/synwevo_core/billing/${n}.py`)];
 /** Codes built at run time (an HTTP status table, a period name), spelled out. */
 const COMPUTED = ['provider_balance', 'provider_error', 'provider_overloaded', 'provider_rate_limited',
   ...['daily', 'weekly', 'monthly'].flatMap((p) => [`billing_payer_${p}_budget_exceeded`, `billing_cost_${p}_budget_exceeded`])];
