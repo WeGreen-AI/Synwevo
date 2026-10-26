@@ -314,9 +314,10 @@ def client_ip(request: Request) -> str:
 
 
 #: The IPv6 prefixes one holder routinely controls, narrowest first: a /64 is one subnet, and an end
-#: site is delegated room for many — RFC 6177 (BCP 157) advises against handing it a single /64,
-#: and in practice it gets a /56 (256 /64s, a routine residential delegation) or a /48 (65,536,
-#: free from IPv6 tunnel brokers). Wider than a /48 is an operator's allocation, shared by sites.
+#: site is given "at least one /64, and in most cases significantly more" (RFC 6177, BCP 157, which
+#: names a /56 as a home default) — in practice a /56 (256 /64s, a routine residential delegation)
+#: or a /48 (65,536, free from IPv6 tunnel brokers). Wider than a /48 is an operator's allocation,
+#: shared by many sites.
 IPV6_HOLDER_PREFIXES = (64, 56, 48)
 
 
