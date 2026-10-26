@@ -1007,8 +1007,16 @@ A13 详情新增 `agent_access`（暂停状态、理由、操作者、关联举�
 
 ## 2026-10-26 成本汇总复核修复（本地，worktree `auto-run-server`）
 
-修复复核的十项发现（提交 `fix(billing): close the cost-rollup review findings`），每项先写失败测试（在旧代码上全部失败，日志 `costfix/logs/failing-first-*.log`）：成本文本含 NUL 时触发器与校验分类一致（`instr(x,char(0))=0`，SQLite 3.54.0 与 3.46.1 实测），生产触发器带版本并在旧库上重建一次；事实不可修改，有问题的准入由运维在审计的重建里 `--accept`（不再计入汇总、读取路径与对照计算）；I1 下界不再算校验差异（原 xfail 去掉标记后通过，内容未改）；故障 id 用 JSON 数组命名范围；无准入范围的速率桶与无范围时的增量行会被校验发现；校验按时间流式读取（1M 每日校验峰值约 114 MB，修订前约 2.7 GB；同进程派发最大延迟 17 ms，修订前 930 ms）；打开 Store 时等待别的进程的迁移；运维手册与告警给出生产容器命令（测试逐条运行手册命令）；基准修正日历并在实时写入路径上测触发器。
+修复复核的十项发现（提交 `fix(billing): close the cost-rollup review findings`），每项先写失败测试（在旧代码上全部失败，日志 `costfix/logs/failing-first-*.log`）：成本文本含 NUL 时触发器与校验分类一致（`instr(x,char(0))=0`，SQLite 3.54.0 与 3.46.1 实测），生产触发器带版本并在旧库上重建一次；事实不可修改，有问题的准入由运维在审计的重建里 `--accept`（不再计入汇总、读取路径与对照计算；这条“接受”路径之后按协调者决定删除，见下文“删除接受路径”一节）；I1 下界不再算校验差异（原 xfail 去掉标记后通过，内容未改）；故障 id 用 JSON 数组命名范围；无准入范围的速率桶与无范围时的增量行会被校验发现；校验按时间流式读取（1M 每日校验峰值约 114 MB，修订前约 2.7 GB；同进程派发最大延迟 17 ms，修订前 930 ms）；打开 Store 时等待别的进程的迁移；运维手册与告警给出生产容器命令（测试逐条运行手册命令）；基准修正日历并在实时写入路径上测触发器。
 
 测试（Python 3.12.6 / SQLite 3.54.0）：全部五个套件退出码 0（integration、docs、identity、messages、suite）；等价性属性测试 300 个种子与容量、奇异编码用例通过；Python 3.14.5 下成本相关集成测试（含等价性测试）通过。四项守卫通过。
 
 基准（[py312](evidence/2026-10-25-cost-rollup/admission-benchmark-py312.json)、[py314](evidence/2026-10-25-cost-rollup/admission-benchmark-py314.json)，说明见 [README](evidence/2026-10-25-cost-rollup/README.md)）：`_counters`+`guard` p95 1.34–1.86 ms，派发 p95 2.61–2.83 ms，结算额外 0.34–0.37 ms，均达标；触发器在实时写入路径上每对 315–360 µs（p50，超过 300 µs 目标；批量摊销 66–70 µs 只是下限，原因与可选项见 README）；1M 时回填约 34 s、每日校验约 29–30 s（超过 15 s，不在发送路径上，校验内存不增长）。没有触碰生产、`data/` 或任何密钥；没有推送。
+
+## 2026-10-26 删除成本汇总的运维“接受”路径；损坏的成本事实失败即关闭（本地，worktree `auto-run-server`，决定 D18 第 6 条）
+
+协调者决定：三轮评审在接受路径上反复发现绕过金额上限的问题（探针在会话草稿区 `costaccept/`），接受路径删除；该 schema 从未部署，直接删除、不迁移。提交 `87e768ff`：删除 `rebuild(accept=…)`、命令行与 `platform.py` 的 `--accept`、`accept_name()`、`model_cost_rollup_accepted` 表及其全部读取、对已接受准入的速率时间范围/清理/校验/时钟与当日待确认数排除、`fact_accepted_usage`/`usage:` 迟到用量锁定与重建的第二次重放。重建只修复派生行；该账户任何一条成本事实有问题时拒绝、列出这些事实、什么也不改；账户保持拒绝（`cost_rollup_inconsistent`），直到恢复问题写入之前的备份（runbook §13 第 3 步）。同一提交：attempt key 在重放、校验与拒绝里按 SQLite 类型与字节读取（`key_label`），非 UTF-8 的值不再让整个环境的校验或重建抛出 OperationalError：校验逐账户隔离（`verify_error`、`undecodable_key`，记录、锁定、审计、告警，其他账户照常核对），账户名不是 UTF-8 时报告全库问题 `undecodable_scope`，读取路径以 `RollupInconsistent`（`undecodable`）拒绝并锁定；故障 id 按类型与十六进制字节命名键和账户（`fact_fault_id`），BLOB 与同字节的 TEXT 键、两个账户里的同一键各有自己的故障行。`TRIGGERS_VERSION` 4（触发器 SQL 变了，启动时重放一次）。
+
+测试（Python 3.12.6 / SQLite 3.54.0）：新测试先在旧代码上失败（未解码的孤立键、按账户隔离的键与成本两例、读取路径拒绝、故障 id：`costremove/failing-first.log`；未解码账户名：`costremove/failing-first-scope.log`，都在会话草稿区）；评审者的 5 个未解码键/故障 id 探针在新代码上全部不再成立（`costremove/probes_after.log`）。接受测试换成：失败即关闭并经真实 `snapshot.py` 备份/演练/恢复解除（问题写入之后的备份演练失败、之前的通过，恢复后可准入；orphan、malformed、far_expiry、future 四种）、七种键形的命名测试、对派生行改动与损坏事实两种情况逐条运行 runbook 命令的测试。等价性属性测试去掉 accept 操作，保留 300 个种子并把 60 个“必有损坏准入”的历史改为断言该账户到历史结束都拒绝（`SYNWEVO_COST_EQUIVALENCE_FAULT_SEEDS`，根 conftest 现在放行它；原 `…_ACCEPT_SEEDS` 被清掉而无效）：退出码 0。五个套件退出码 0：integration 2017 通过、docs 1676 通过 2 跳过（环境）、identity 2089、messages 107、suite 1527。Python 3.14.5 下成本相关集成测试（含等价性测试）退出码 0。守卫：边界、品牌、设计、组件名、Logo 与应用图标资产检查均退出码 0。
+
+基准未重测：README 注明表中数字与 JSON 是删除前测的（删除只去掉读路径上的两个子查询），准入路径查询计划已在当前代码上重新取得。没有触碰生产、`data/` 或任何密钥；没有推送。
