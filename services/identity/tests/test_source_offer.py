@@ -71,15 +71,42 @@ def test_without_a_release_list_the_account_service_refuses_rather_than_walks(tm
     assert c.get("/api/about").json()["source_offer"] is True
 
 
+# Run in a fresh interpreter: the suites share one process (pyproject testpaths, Synwevo Docs'
+# first), so by the time this file runs synwevo_docs is long in sys.modules and a before/after
+# comparison here could never fail. The child reports what answering made it load.
+ANSWER_CHILD = r"""
+import json, sys
+from pathlib import Path
+from fastapi.testclient import TestClient
+from synwevo_core import source_offer
+source_offer.ROOT = Path(sys.argv[1])
+from synwevo_identity.app import create_app
+c = TestClient(create_app(sys.argv[2], start_jobs=False))
+about, archive = c.get("/api/about"), c.get("/api/source-code")
+from synwevo_core.workers import stop_all
+stop_all(wait=3.0)
+print(json.dumps({"pdf_engine": about.json().get("pdf_engine"), "archive": archive.status_code,
+                  "loaded": sorted(n for n in sys.modules if n.split(".")[0] in sys.argv[3:])}))
+"""
+# Synwevo Docs and the PDF libraries either of its engines would load.
+NOT_LOADED = ("synwevo_docs", "pymupdf", "fitz", "pypdfium2")
+
+
 def test_the_account_service_does_not_load_the_document_engine_to_answer(tmp_path, monkeypatch):
     """The statement names the PDF engine the deployment's settings select without importing
     Synwevo Docs or the PDF library: the account service starts and answers without either."""
+    import json
+    import os
+    import subprocess
     import sys
-    _installation(tmp_path / "installed", monkeypatch, built=True)
-    monkeypatch.setenv("SYNWEVO_DOCS_PDF_ENGINE", "pdfium")
-    loaded = {name for name in sys.modules if name == "synwevo_docs" or name.startswith("synwevo_docs.")}
-    c = _client(tmp_path, monkeypatch, "session")
-    assert c.get("/api/about").json()["pdf_engine"] == "pdfium"
-    assert c.get("/api/source-code").status_code == 200
-    now = {name for name in sys.modules if name == "synwevo_docs" or name.startswith("synwevo_docs.")}
-    assert now == loaded, f"账户服务为回答许可声明导入了 Synwevo Docs：{sorted(now - loaded)}"
+    root = tmp_path / "installed"
+    _installation(root, monkeypatch, built=True)
+    child_env = {k: v for k, v in os.environ.items() if k not in ("SYNWEVO_ROLE", "SYNWEVO_DOCS_SOURCE_OFFER")}
+    child_env.update(SYNWEVO_UI_AUTH="session", SYNWEVO_DATA_DIR=str(tmp_path / "d"),
+                     SYNWEVO_DOCS_PDF_ENGINE="pdfium")
+    run = subprocess.run([sys.executable, "-c", ANSWER_CHILD, str(root), str(tmp_path / "d"), *NOT_LOADED],
+                         env=child_env, cwd=tmp_path, capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stderr
+    report = json.loads(run.stdout.strip().splitlines()[-1])
+    assert report["pdf_engine"] == "pdfium" and report["archive"] == 200, report
+    assert report["loaded"] == [], f"账户服务为回答许可声明导入了 Synwevo Docs 或 PDF 库：{report['loaded']}"
