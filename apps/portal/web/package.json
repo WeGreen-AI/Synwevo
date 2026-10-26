@@ -2,6 +2,7 @@
   "name": "@synwevo/workspace-web",
   "private": true,
   "version": "1.0.0",
+  "license": "AGPL-3.0-or-later",
   "description": "Synwevo Workspace 首页",
   "type": "module",
   "scripts": {

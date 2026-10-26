@@ -2,3 +2,6 @@
 # archive (`git archive`) that CI and the host receiver build from: the receiver caps it at 50 MiB
 # and the evidence alone had grown to 19 MB (pre-deploy review host-03, 2026-10-23).
 docs/agent-work/evidence/** export-ignore
+# The release manifest writer learns from these two placeholders that its build context is a `git archive`
+# of a commit (which commit, and when): the image's source offer lists only that archive's files.
+packages/core/synwevo_core/source_manifest.py export-subst

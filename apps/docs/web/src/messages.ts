@@ -5831,9 +5831,9 @@ export const messages = {
     "en": "The organization has no shared templates yet. Choose “Publish to organization…” on a template in the library.",
     "zh-Hant": "組織裡還沒有共享模板。在模板庫對模板選擇「發布到組織…」。"
   },
-  "所有文件都在本服务的服务器上处理，不发送到外部服务。": {
-    "en": "All files are processed on this service's own server and never sent to external services.",
-    "zh-Hant": "所有文件都在本服務的伺服器上處理，不發送到外部服務。"
+  "Synwevo Docs 的解析、转换、文字识别与生成都在本服务的服务器上完成。只有使用个人 Agent 时，对话与你选择发送的文件内容会发送给所配置的模型提供方。": {
+    "en": "Synwevo Docs parses, converts, recognizes text in and generates files on this service's own server. Only when you use the personal Agent are the conversation and the file contents you choose to send passed to the configured model provider.",
+    "zh-Hant": "Synwevo Docs 的解析、轉換、文字識別與生成都在本服務的伺服器上完成。只有使用個人 Agent 時，對話與你選擇發送的文件內容會發送給所配置的模型提供方。"
   },
   "弃用后组织成员不能再用它建立新项目；已复制到各工作空间的模板与任务不受影响。": {
     "en": "Once deprecated, members can no longer use it for new projects; copies already made in workspaces and their jobs are unaffected.",
@@ -6027,9 +6027,25 @@ export const messages = {
     "en": "Everything runs on this server; files are never sent to external services. Scaling and date shifting use one factor or offset per column, so totals and ordering are preserved.",
     "zh-Hant": "所有處理都在本伺服器完成，文件不發送到外部服務。數值縮放與日期平移對整列使用同一比例或天數，保留合計與排序關係。"
   },
-  "均为开源组件；不使用付费组件或外部云服务": {
-    "en": "All open-source components; no paid components or external cloud services",
-    "zh-Hant": "均為開源組件；不使用付費組件或外部雲服務"
+  "均为开源组件": {
+    "en": "All open-source components",
+    "zh-Hant": "均為開源組件"
+  },
+  "本程序的许可与源代码": {
+    "en": "This program's license and source code",
+    "zh-Hant": "本程式的許可與原始碼"
+  },
+  "下载正在运行版本的源代码": {
+    "en": "Download the source of the running version",
+    "zh-Hant": "下載正在執行版本的原始碼"
+  },
+  "由本服务正在运行的文件生成（tar.gz），无需登录即可下载。": {
+    "en": "Built from the files this service is running (tar.gz). No sign-in needed.",
+    "zh-Hant": "由本服務正在執行的文件生成（tar.gz），無需登入即可下載。"
+  },
+  "本部署已关闭源代码下载：运营方以其他方式提供对应源代码。": {
+    "en": "This deployment has turned the source download off: its operator provides the Corresponding Source another way.",
+    "zh-Hant": "本部署已關閉原始碼下載：營運方以其他方式提供對應原始碼。"
   },
   "当前部署：排版引擎 ": {
     "en": "This deployment: layout engine ",

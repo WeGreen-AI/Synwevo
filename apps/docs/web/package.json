@@ -2,6 +2,7 @@
   "name": "@synwevo/docs-web",
   "private": true,
   "version": "1.0.0",
+  "license": "AGPL-3.0-or-later",
   "description": "Synwevo Docs 工作台：上传、模板、映射、预览与生成",
   "type": "module",
   "scripts": {

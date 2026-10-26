@@ -110,6 +110,11 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     install_probes(api, plat.store, degradable={"malware_scanner": scanner_health, "messaging": lambda: messaging_health(api)})
     bootstrap_messages_app(plat.store, plat.identity, role=role)
     api.include_router(build_session_router(plat.identity, plat.sessions, plat.audit))
+    # The licence and the Corresponding Source offer (AGPL-3.0 §13) for the people using this
+    # origin; anonymous (synwevo_core.http SOURCE_OFFER_PATHS). Here and not in install(): the
+    # composer mounts it once for the process.
+    from synwevo_core.source_offer import router as source_offer_router
+    api.include_router(source_offer_router())
     api.include_router(build_rp_router(plat.store, plat.identity, plat.sessions, plat.audit))
     api.include_router(build_account_redirect_router())
 

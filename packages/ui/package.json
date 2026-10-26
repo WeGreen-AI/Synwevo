@@ -1,6 +1,7 @@
 {
   "name": "@synwevo/ui",
   "version": "1.0.0",
+  "license": "AGPL-3.0-or-later",
   "private": true,
   "description": "Synwevo 三个外壳共用的视觉规范与基础组件：设计变量、主题、Toast/对话框、尺寸适配",
   "type": "module",

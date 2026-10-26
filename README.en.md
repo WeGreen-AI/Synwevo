@@ -10,8 +10,9 @@
 **Let workflows handle the repetitive work.**
 
 A workflow automation platform: one unified account, one workspace portal, and the first business
-application, **Synwevo Docs** (data mapping and batch document generation). Everything runs on your
-own machine or server. No file ever leaves it.
+application, **Synwevo Docs** (data mapping and batch document generation). Documents are parsed,
+converted, recognised and generated on your own machine or server; only the optional personal Agent
+sends the conversation and the files you choose to the configured model provider.
 
 [简体中文](README.md) · English
 
@@ -336,10 +337,33 @@ Most documents are written in Chinese.
 
 ## License and data
 
-* **Synwevo has not chosen a license yet.** Until a `LICENSE` file is added to the repository, no grant of rights should be assumed.
-* PyMuPDF is AGPL-3.0 (or an Artifex commercial license). When it is enabled and the service is offered over a network, the corresponding-source obligation of AGPL-3.0 §13 applies; `/api/source-code` builds that archive from the **files actually running**. For an AGPL-free deployment, build from `apps/docs/requirements-pdfium.txt` and select the `pdfium` engine.
-* All processing happens on your own machine or server; no file is sent to an external service and no paid component is required.
-* User data, the database, key material and backups are never committed, never enter the image build context and are never written to logs.
+* **License: [AGPL-3.0-or-later](LICENSE).** Synwevo is free software: you can redistribute it and/or
+  modify it under the terms of the GNU Affero General Public License as published by the Free
+  Software Foundation, either version 3 of the License, or (at your option) any later version. It
+  comes with no warranty. Copyright belongs to the Synwevo contributors, and WeGreen-AI maintains the
+  project; see [NOTICE](NOTICE). These terms also apply to the earlier public commits of this repository.
+* **The SDKs are Apache-2.0.** The Python and TypeScript clients, the n8n workflows and the
+  acceptance scripts under `apps/docs/sdk/` are licensed under [Apache-2.0](apps/docs/sdk/LICENSE),
+  so you can copy them into closed-source calling code.
+* **The name, logos and icons are not licensed.** See [TRADEMARKS.md](TRADEMARKS.md): you may say
+  "based on Synwevo", but a modified version that you distribute or offer to others as a service
+  must carry your own name and artwork.
+* **Offer the source when you serve users over a network.** If you offer a modified Synwevo to
+  users over a network, section 13 of AGPL-3.0 requires offering them its Corresponding Source.
+  `/api/source-code`, on every origin and without signing in, builds that archive from the **files
+  actually running** (including `LICENSE`, `NOTICE` and `TRADEMARKS.md`). The footers of the public
+  site, the workspace and the sign-in pages, and the Docs page about licences, link to it.
+* **The default build includes PyMuPDF (AGPL-3.0, or an Artifex commercial license).** The image,
+  CI and `scripts/platform.py setup` all install it, and production uses the `pymupdf` engine. There
+  is **no** verified platform build without AGPL components: `apps/docs/requirements-pdfium.txt`
+  covers Synwevo Docs only, lacks `pycrdt` (needed for live co-editing) and is installed by no build;
+  `SYNWEVO_DOCS_PDF_ENGINE=pdfium` switches the engine but leaves PyMuPDF in the image. Third-party
+  components and their licenses are listed in [NOTICE](NOTICE) and [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+* Documents are parsed, converted, recognised and generated on your own machine or server. Only
+  when you use the personal Agent are the conversation and the files you choose to send passed to
+  the configured model provider (Anthropic).
+* User data, the database, key material and backups are never committed, never enter the image
+  build context and are never written to logs.
 
 ---
 

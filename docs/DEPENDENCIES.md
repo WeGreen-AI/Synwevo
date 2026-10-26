@@ -1,6 +1,6 @@
 # 依赖组件、许可证与部署要求
 
-所有组件均为开源、**无需付费**；未使用任何商业 SDK、外部账号或云服务，所有文件处理在本机 / 用户自有服务器完成。版本与许可证取自实际安装包的元数据（`pip show` / `package.json`），核对日期 2026-09-23。
+Synwevo 自身以 **AGPL-3.0-or-later** 许可，`apps/docs/sdk/` 下的 SDK 为 Apache-2.0，名称、Logo 与图标不在许可之内（见根目录 `LICENSE`、`NOTICE`、`TRADEMARKS.md`）。下列第三方组件均为开源组件。文档的解析、转换、文字识别与生成都在本机 / 用户自有服务器完成；例外是可选的个人 Agent：它用官方 SDK（`anthropic`）调用所配置的模型提供方 Anthropic，需要该提供方的账号与 API 密钥并按用量计费，对话以及用户选择发送的文件内容会发给它（见 1.2 节）。版本与许可证取自实际安装包的元数据（`pip show` / `package-lock.json`）；元数据只写大类或与包内 `LICENSE` 文件不一致时以文件为准（xlrd 的元数据只写 "BSD"，文件里还有一份带广告与致谢条款的早期许可，见第 1 节），核对日期 2026-09-23，1.2 节与第 3 节的补充条目核对于 2026-10-25。完整的运行时清单在根目录 `NOTICE`（与 `packages/core/synwevo_core/source_offer.py` 的 `THIRD_PARTY` 逐条一致），`apps/docs/tests/test_licensing.py` 对照 `infra/server/requirements.lock` 与 `package-lock.json` 检查它没有漏项。
 
 ## 1. 服务端（Python，`apps/docs/requirements.txt`）
 
@@ -13,12 +13,12 @@
 | python-docx | 1.2.0 | MIT | 免费 | 构建内置文档模板、重新打开校验输出 | 字段标记/填充使用 lxml 直接处理 XML |
 | python-pptx | 1.0.2 | MIT | 免费 | 重新打开校验 PPTX 输出、生成测试数据 | PPTX 填充使用 lxml 直接处理 XML |
 | lxml | 6.1.3 | BSD-3 | 免费 | OOXML 解析与改写（禁用外部实体与网络） | — |
-| **PyMuPDF** | 1.28.2 | **AGPL-3.0 或 Artifex 商业许可（双许可）** | 开源使用免费；商业闭源分发需向 Artifex 购买许可（价格需询价） | PDF 解析、渲染、文字坐标、redaction 删除原文字、写入文字、表单字段、字体子集化 | **注意 AGPL**：若把本软件作为网络服务提供给第三方，且修改了源代码，需要按 AGPL 向用户提供对应源代码；仅在组织内部自用通常可满足。不接受 AGPL 时**不需要改代码**：设置 `SYNWEVO_DOCS_PDF_ENGINE=pdfium`（或干脆不安装 PyMuPDF）即可切换到下方第 6 节的无 AGPL 部署模式 |
-| **pypdfium2** | 5.13.0 | **Apache-2.0 / BSD-3-Clause** | 免费 | 无 AGPL 部署模式下的 PDF **读取**引擎：页面几何与旋转、文字坐标、全文提取、页面渲染、OCR 前处理 | 只读：不提供 redaction、写入文字与表单扁平化，因此该模式下 PDF / 图片**模板**不可用（见第 6 节） |
+| **PyMuPDF** | 1.28.2 | **AGPL-3.0 或 Artifex 商业许可（双许可）** | 开源使用免费；商业闭源分发需向 Artifex 购买许可（价格需询价） | PDF 解析、渲染、文字坐标、redaction 删除原文字、写入文字、表单字段、字体子集化 | **注意 AGPL**：它是唯一的第三方 AGPL 组件，默认构建（镜像、CI、`scripts/platform.py setup`）都安装它。向网络用户提供服务时按 AGPL-3.0 第 13 条提供对应源代码（`/api/source-code`，见第 6 节）；Synwevo 本身也是 AGPL-3.0-or-later。`SYNWEVO_DOCS_PDF_ENGINE=pdfium` 只切换引擎，不会把它从镜像中去掉；目前没有经过验证的不含它的平台构建（第 6 节） |
+| **pypdfium2** | 5.13.0 | **Apache-2.0 / BSD-3-Clause** | 免费 | pdfium 引擎模式下的 PDF **读取**引擎：页面几何与旋转、文字坐标、全文提取、页面渲染、OCR 前处理 | 只读：不提供 redaction、写入文字与表单扁平化，因此该模式下 PDF / 图片**模板**不可用（见第 6 节） |
 | fontTools | 4.65.0 | MIT | 免费 | PDF 中文字体子集化（输出从 3.5 MB 降到约 10 KB） | — |
 | Pillow | 12.3.0 | MIT-CMU | 免费 | 图片读取、EXIF 方向校正、OCR 前处理 | 像素上限 `SYNWEVO_DOCS_MAX_IMAGE_MPIX` |
 | charset-normalizer | 3.5.1 | MIT | 免费 | CSV/TXT 编码猜测（兜底） | 优先按 BOM / UTF-8 / GB18030 判断 |
-| xlrd | 2.0.2 | BSD | 免费 | 无 LibreOffice 时直接读取 XLS | 只支持 .xls |
+| xlrd | 2.0.2 | BSD-3-Clause；部分早期代码为 David Giffin 的 BSD-4-Clause 式许可（安装包元数据只写 "BSD"，以包内 LICENSE 为准） | 免费 | 无 LibreOffice 时直接读取 XLS | 只支持 .xls。**许可注意**：早期代码那部分许可的第 3 条是广告条款，第 4 条要求任何形式的再分发都保留致谢「This product includes software developed by David Giffin」（根目录 `NOTICE` 已带）。自由软件基金会认为带广告条款的 BSD 许可与 GPL 不兼容，而本程序以 AGPL 许可、在同一进程中导入 xlrd。目前不传播 xlrd：镜像不发布到任何仓库，对应源代码包也不含依赖，所以没有现实义务冲突；**若要发布镜像或含依赖的二进制包**，先解决它——例如让 .xls 一律经 LibreOffice 转换（镜像里已有），不再导入 xlrd——并随附上述致谢 |
 | pycrdt | 0.14.6 | MIT | 免费 | 内置文档模板的多人实时协同：服务端的共享文档（y-crdt 的 Python 绑定），与浏览器端 Yjs 同一协议 | 房间在 Docs 进程内存中，状态持久化到唯一数据库；多 worker 部署需要粘性路由（见 docs/platform/docs-collaboration.md） |
 | olefile | 0.47 | BSD | 免费 | 识别 DOC/XLS/PPT 与加密的 OOXML | — |
 
@@ -40,24 +40,42 @@
 
 去掉这一组：移除 `synwevo_suite/app.py` 与 `agent/__init__.py` 里的两处 `install` 调用即可，表与列是加法，数据不丢（`platform/mcp.md` §6）。
 
+### 1.2 平台的其余运行时组件（`infra/server/requirements.lock`，核对日期 2026-10-25）
+
+| 组件 | 版本 | 许可证 | 用途 | 说明 |
+|---|---|---|---|---|
+| anthropic（含 jiter、docstring-parser） | 1.9.0 / 0.17.0 / 0.18.0 | MIT | 个人 Agent 调用模型提供方 Anthropic 的官方 SDK | 可选功能；需要部署方或用户自己的 API 密钥，按用量计费，请求发往 `api.anthropic.com` |
+| py-vapid / http-ece | 1.9.4 / 1.2.1 | **MPL-2.0** / MIT | Web 推送的 VAPID 签名与载荷加密（`synwevo_core/push.py`） | MPL-2.0 是文件级弱著作权保护，未修改、作为独立包使用 |
+| certifi / truststore | 2026.7.22 / 0.10.4 | **MPL-2.0** / MIT | 出站 HTTPS 的根证书与系统证书库（HTTP 客户端的依赖） | 未修改、作为独立包使用 |
+| XlsxWriter / et-xmlfile | 3.2.9 / 2.0.0 | BSD-2-Clause / MIT | python-pptx 与 openpyxl 的依赖 | — |
+| typing_extensions | 4.16.0 | PSF-2.0 | 类型标注的运行时支持 | — |
+
+其余传递依赖（pydantic-core、anyio、h11、idna、click、httpcore 等）与许可证见 `NOTICE`。
+
 ## 2. 系统组件（可选，但决定部分能力）
 
 | 组件 | 验证版本 | 许可证 | 费用 | 用途 | 未安装时 |
 |---|---|---|---|---|---|
 | **LibreOffice** | 26.8.0.3 | MPL-2.0 | 免费 | DOC/XLS/PPT/ODT/ODS/ODP/RTF 转换；DOCX/XLSX/PPTX → PDF 导出；内置公式引擎不支持的函数的后备计算 | 这些功能在界面标为「缺依赖」且不可选择，其余功能正常；XLS 仍可用 xlrd 读取 |
 | **Tesseract OCR** | 5.5.0 | Apache-2.0 | 免费 | 扫描 PDF / 图片识别 | OCR 按钮提示未安装；扫描件无法取值 |
-| tessdata_fast（chi_sim / eng / osd） | 4.x 模型 | Apache-2.0 | 免费 | 中文简体 + 英文识别模型（约 17 MB，放在 `apps/docs/tessdata`） | 缺少时只能用系统自带语言 |
+| tessdata_fast（chi_sim / eng / osd） | 4.x 模型 | Apache-2.0 | 免费 | 中文简体 + 英文识别模型（约 17 MB，放在 `apps/docs/tessdata`，与上游逐字节一致，来源、哈希与许可证见该目录的 `README.md` 与 `LICENSE`）；本地开发使用，镜像改用 Debian 的语言包 | 缺少时只能用系统自带语言 |
 | Droid Sans Fallback（随 PyMuPDF 提供） | — | Apache-2.0 | 免费 | PDF 写入中文 | — |
 | 中文字体（Linux 部署建议 `fonts-noto-cjk`） | — | SIL OFL | 免费 | LibreOffice 导出 PDF 时显示中文 | PDF 导出中文可能显示为方框；模板使用的字体未安装时上传即提示 |
+| ClamAV（生产部署的独立容器 `clamav/clamav`） | 1.4 | GPL-2.0-only | 免费 | 上传文件的恶意软件扫描，经网络（clamd）调用，不与本程序链接；容器每小时向病毒库更新服务器取更新 | 不配置 `SYNWEVO_CLAMD_ADDRESS` 时界面明确显示未配置扫描引擎；生产设置 `SYNWEVO_MALWARE_SCAN=required`（见 `docs/operations.md`） |
+| nginx（生产部署的反向代理容器） | 1.28 | BSD-2-Clause | 免费 | TLS 终止与反向代理（`infra/production/nginx.conf`） | 本地开发不需要 |
 
-## 3. 前端（`frontend/package.json`，构建后为静态文件）
+## 3. 前端（各外壳的 `package.json`，版本锁定在根目录 `package-lock.json`，构建后为静态文件）
 
 | 组件 | 版本 | 许可证 | 用途 |
 |---|---|---|---|
 | React / React DOM | 19.3.0 | MIT | 界面 |
 | React Router | 7.18.4 | MIT | 路由 |
 | TipTap（react、starter-kit、table、text-style、text-align、image、highlight、pm） | 3.31.3 | MIT | 内置文档模板编辑器（仅使用开源扩展，未使用 TipTap Pro） |
+| Yjs / y-websocket / y-protocols / lib0 / @tiptap/y-tiptap | 13.6.33 / 3.1.0 / 1.0.7 / 0.2.118 / 3.0.9 | MIT | Docs 文档实时协同的浏览器端（与服务端 pycrdt 同一协议） |
+| qrcode | 1.5.4 | MIT | 账户页 TOTP 绑定二维码 |
 | Vite / TypeScript（仅构建） | 8.3.0 / 7.0.2 | MIT / Apache-2.0 | 构建工具 |
+
+其余随界面打包的传递依赖均为 MIT 或 ISC（`apps/docs/tests/test_licensing.py` 检查锁文件中的每个非开发依赖）。
 
 ## 4. 开发与测试（`requirements-dev.txt`）
 
@@ -71,20 +89,22 @@
 * Python 3.12 或更高（已在 3.14 验证），Node.js 20+（仅构建界面时需要）。
 * 内存：实测 5 000 份 DOCX 的批处理全过程进程峰值约 440 MB（见 `docs/ACCEPTANCE.md`）；建议至少 2 GB，启用 LibreOffice 转换时建议 4 GB。
 * 磁盘：原文件、模板版本与输出以内容哈希存放在 `SYNWEVO_DATA_DIR`，重复内容只存一份；需按生成量预留空间。
-* 不需要外部网络（安装依赖与下载 OCR 模型时除外）。
+* 文档处理不需要外部网络（安装依赖时除外）。用到外部网络的都是可选功能：个人 Agent 调用模型提供方、Agent 连接外部 MCP 服务、Web 推送经浏览器厂商的推送服务、邮件经所配置的 SMTP 服务；生产的 ClamAV 容器定时更新病毒库。
 
-## 6. 无 AGPL 部署模式（已实测）
+## 6. pdfium 引擎与不含 PyMuPDF 的构建
 
-PyMuPDF 是唯一的 AGPL 组件。把它换掉不需要修改代码，也不需要购买商业许可：
+> **现状（2026-10-25）：没有经过验证的不含 PyMuPDF 的平台构建。** 默认构建（`infra/Dockerfile`、CI、`scripts/platform.py setup`）都安装 PyMuPDF。`SYNWEVO_DOCS_PDF_ENGINE=pdfium` 只切换引擎，MuPDF 二进制仍在镜像里，它的 AGPL 义务仍然适用。`apps/docs/requirements-pdfium.txt` 只覆盖 Synwevo Docs，缺少 2026-09-26 起实时协同必需的 `pycrdt`（`collab.py` 在模块级导入它），也没有任何构建或 CI 从它安装。下面 2026-09-23 的实测早于 pycrdt 的引入，只说明引擎切换本身的能力边界。另外，Synwevo 本身以 AGPL-3.0-or-later 许可：去掉 PyMuPDF 去掉的是第三方 AGPL 组件，不是 Synwevo 自己的许可条款。
+
+PyMuPDF 是唯一的第三方 AGPL 组件。切换到 pdfium 引擎不需要修改代码：
 
 ```bash
 SYNWEVO_DOCS_PDF_ENGINE=pdfium .venv/bin/python -m synwevo_server.run
-# 或者在构建镜像时直接不安装 PyMuPDF —— 引擎会自动回落到 pdfium
+# 不安装 PyMuPDF 时引擎会自动回落到 pdfium（但见上面的现状：目前没有这样的平台构建）
 ```
 
 此模式下 `pypdfium2`（Apache-2.0 / BSD-3）承担全部 PDF 读取工作。
 
-| 能力 | 无 AGPL 模式 |
+| 能力 | pdfium 引擎 |
 |---|---|
 | XLSX / DOCX / PPTX 模板与生成（含公式计算、重复明细、重复内容块） | **完全可用** |
 | PDF 来源文件：解析、页面预览、文字坐标、全文查找、OCR、取值 | **完全可用** |
@@ -101,13 +121,27 @@ SYNWEVO_DOCS_PDF_ENGINE=pdfium .venv/bin/python -m synwevo_server.run
 
 回归覆盖：`apps/docs/tests/test_pdfium_engine.py` 对同一批 PDF 用两个引擎交叉比对页面几何与词坐标（要求 80% 以上的词一致、坐标差 < 0.02），并断言模板类操作被明确拒绝、能力矩阵把对应行标为 `unavailable`。
 
-### 仍然使用 PyMuPDF 时的 AGPL 合规
+### 对应源代码（AGPL-3.0 第 13 条）
 
-如果需要 PDF / 图片模板而选择保留 PyMuPDF，服务内置了「对应源代码」提供方式，满足 AGPL 第 13 条的网络分发义务：
+Synwevo 本身是 AGPL-3.0-or-later，默认构建又包含 PyMuPDF。服务内置了「对应源代码」提供方式，用于 AGPL 第 13 条的网络分发义务：
 
 ```bash
 curl -O http://<你的部署地址>/api/source-code      # 运行中的服务按自身安装目录打包
 ```
 
-实测（2026-09-23）：返回 479 296 字节的 tar.gz，153 个条目，含后端与前端源码、脚本、文档、依赖版本清单和 `SOURCE_OFFER.txt` 说明；**不包含** `data/`（用户文件）、`.venv/`、`node_modules/`。
-产品界面「关于与许可」页展示当前引擎、第三方组件与许可证，并提供同一入口。
+实测（2026-09-23）：返回 479 296 字节的 tar.gz，153 个条目。2026-10-25 在本地检出上重测（`source_archive()`，当时在 `synwevo_docs.licensing`，现为 `synwevo_core.source_offer`）：约 37 MB、2 206 个条目，含全部应用（Docs、门户、Message、`apps/suite` 的业务应用与个人 Agent）、平台共享包与前端包、账户服务、部署组装、脚本、测试、文档、依赖锁文件、`LICENSE` / `NOTICE` / `TRADEMARKS.md` 和 `SOURCE_OFFER.txt` 说明；**不包含** `data/`（用户文件）、`.venv/`、`node_modules/`、编译产物与 tessdata 模型文件。压缩包的路径清单与 `infra/Dockerfile` 的 COPY 行双向核对（`apps/docs/tests/test_licensing.py`）。
+
+2026-10-26 补齐：对应源代码包括构建、安装与运行程序的脚本（GPLv3 第 1 条），所以生产部署实际运行的文件（`infra/production`：compose、nginx、部署接收器、`runtime.env.example`）、构建并发布镜像的 CI 工作流（`.github`）、镜像构建上下文规则（`.dockerignore`）、配置模板（`.env.example`）与测试配置（`conftest.py`）也在包里，镜像相应地复制它们。「完整」不再只是「与 COPY 行一致」（那是同一份清单写两遍）：测试还对照 `git ls-files`，每个受版本控制的顶层路径要么在 `INCLUDE` 里，要么在 `NOT_OFFERED` 里写明不提供的理由（目前是 `AGENTS.md`、`CLAUDE.md`、`.gitignore`、`.gitattributes`，以及贡献说明与安全政策合并进来后的 `CONTRIBUTING.md`、`SECURITY.md`）。压缩包匿名可下载，所以填写过的环境文件（`.env`、`runtime.env`、`smtp.env` 等）无论放在哪里都不进包，`.dockerignore` 也不让它们进入镜像构建上下文；只提供 `*.example` 模板。
+源代码包面向**所有**网络用户（第 13 条说的是与程序交互的全部用户，不只是登录成员）：部署的每个角色（账户、门户、Docs、消息）都挂载 `/api/about` 与 `/api/source-code`（共享包的 `synwevo_core.source_offer.router`：`synwevo_server` 组装时每个进程挂一次，账户服务、门户与 Synwevo Message 单独运行时由各自的工厂挂载——它们不能导入 Synwevo Docs；Docs 进程的 `/api/about` 报告它实际选用的 PDF 引擎，其余按同一配置、同一规则得出，内容一致），请求网关在任何认证模式下都不要求登录（`synwevo_core.http` 的 `SOURCE_OFFER_PATHS`，精确路径）。公开站点与工作空间的页脚、每个登录 / 注册 / 找回页的页脚都链接到它；Docs 的「关于与许可」页显示本程序的许可、AGPL 组件说明和下载按钮，以及第三方组件与许可证。压缩包每个客户端（IPv4 地址，或 IPv6 的 /64）每分钟最多下载 6 次。回归覆盖：`tests/integration/test_source_offer.py`（五个角色 × 两种认证模式，均匿名可达；相邻路径不因此匿名）。
+
+2026-10-26 安全复审后（当时的 `synwevo_docs.licensing`、`synwevo_docs.source_manifest`，现为 `synwevo_core.source_offer`、`synwevo_core.source_manifest`）：
+
+* **只打包源代码发布清单上的文件，不再遍历目录。** 以前按 `INCLUDE` 遍历运行目录、再按文件名排除，于是 `INCLUDE` 目录下任何未受版本控制的文件——`runtime.env.bak`、`runtime.env~`、`.runtime.env.swp`、`origin.key`、`htpasswd`、`.pgpass`、`.npmrc`、`credentials.json`、SQLite 备份——都会匿名发给任何人（自托管从工作树构建、或直接从检出运行时；生产镜像由 `git archive` 构建，不受影响）。现在清单只有两种来源：**镜像**里是构建时写入的 `SOURCE_MANIFEST.json`——`infra/Dockerfile` 在复制完构建上下文、构建任何东西之前运行 `source_manifest.py`，记录上下文里的每个文件；它只在上下文是某个提交的 `git archive` 时才写（`.gitattributes` 让 `git archive` 把提交号写进该文件，`export-subst`），CI 与部署接收器都是这样构建的；**检出**里是 `git ls-files`（去掉 `export-ignore` 的文件，与镜像一致）。两者都没有时返回 503 `source_unavailable` 并说明怎样从 `git archive` 构建，**不会退回到遍历**。检出而 git 拒绝列出时（服务账户不是仓库属主，git 的 “dubious ownership”），503 说的是这个原因与 `safe.directory` 的处理方式，而不是「既不是镜像也不是检出」（docs/operations.md 第 1 节）；git 总在 C 语言环境下运行（`LC_ALL=C`），服务器的语言环境是中文或德文时，翻译过的拒绝（「检测到可疑的仓库所有权」）原来被当成「git 失败」、丢了 `safe.directory` 的提示。按文件名排除（填写过的 `.env` 等）仍保留在清单之后作为第二道防线；`.dockerignore` 也补上了备份、编辑器临时文件、密钥、凭据文件与数据库的模式，让它们不进入工作树构建的镜像。
+* **解包后的上下文也要原样。** 第二轮复审：提交号只盖在 `source_manifest.py` 一个文件里，只能证明这个文件来自 `git archive`；从 `git archive` 解包出来的目录之后再放进任何文件，盖章照样有效——部署接收器的 `releases/<sha>`、CI 的 `private-source`、自托管者解包后 `docker build .` 的发布包。复审在解包目录里放了 13 个文件（Cloudflare 隧道凭据、`acme.json`、`cloudflare.ini`、`id_dsa`、`deploy_key`、`kubeconfig`、`.git-credentials`、`.docker/config.json` 等），`.dockerignore` 只挡住 2 个，其余 11 个进了清单、匿名下载可得（生产不受影响：接收器的发布目录里只有解包内容与不被复制的 `.archive-sha256`）。现在写清单前还核对另一个 `git archive` 留下的标记：它给**每个**成员的修改时间都是该提交的提交时间（%ct），tar / Python `tarfile` 解包与 `docker build`（BuildKit 与旧构建器，目录或 stdin 的 tar）都保留它（2026-10-26 本机 Docker 28.3.3 实测）。上下文里有一个文件的时间对不上——解包后加进来的，或改过的——就不写清单（已有的也删掉），构建日志列出文件名（最多 10 个，不含内容），镜像对 `/api/source-code` 返回 503。这防的是意外带进去的文件；有意改文件时间的运营方本来就能从自己的服务器发出任何东西。
+* **核对新复制的上下文，不是缓存的层。** 第三轮复审：Docker 的 COPY 缓存键只看内容、不看修改时间，按目录复制的层只要内容没变就从更早的构建原样取回，文件带着那次构建的时间。写清单的程序原来核对最后阶段按目录复制的 `/app`，于是在保留构建缓存的机器上（部署接收器的缓存在两次部署之间一直在），只要 `packages/` 与它之前的 pip 层没变——此前 20 次合并里有 17 次——`COPY packages/ packages/` 就是 CACHED，241 个文件被当成「解包后改过」，镜像不写清单，`/api/source-code` 在生产返回 503；CI 每次在全新的机器上构建，看不到这个问题。复审用接收器的解包流程实测：7dd0ef34 写出 1 755 个文件的清单，接着构建 `packages/` 相同的 b44b7e0f 就没有清单。现在 `infra/Dockerfile` 在单独的 `release` 阶段里 `COPY . /release`、对它写清单，最后阶段在全部上下文 COPY 之后、任何构建产物之前用一条 `COPY --from=release` 取来。这一条 COPY 的缓存键覆盖上下文的每个文件，包括带提交号盖章的 `source_manifest.py`，所以别的提交的构建不可能提供它，文件带着上下文给的时间。核对的是整个上下文，因此接收器在发布目录里写的 `.archive-sha256` 由 `.dockerignore` 挡在外面。剩下的一种情形：同一提交、内容完全相同的重新构建沿用上一次的结果，拒绝也一样（例如用 `tar -m` 解包后被拒，再正确解包），这时用 `--no-cache` 重建（docs/operations.md 第 1 节）。
+* **包里的 docs/ 就是镜像里的 docs/。** 检出模式同样跳过 `export-ignore` 的 `docs/agent-work/evidence/**`，所以本地生成的包与线上一致：2026-10-26 在检出上实测 14.9 MB、1 746 个条目（此前 37.3 MB、2 228 个，差额正是这 482 个镜像本来就没有的证据文件；没有任何受版本控制的源文件丢失）。注意：只改 `docs/` 的合并**不触发验证与部署**（`.github/workflows/production.yml` 的 `paths` 过滤），线上压缩包里的 `docs/` 会停在上一次代码部署；文档改动（例如脱敏）要立即进入线上压缩包，就手动运行一次该工作流（`workflow_dispatch`）。
+* **每个进程只算一次，重复请求是 O(1)。** 以前每个请求都遍历并 stat 整棵树（约 2 200 个文件，两遍）才发现包已经建好：每个匿名请求约 0.1 s CPU。现在镜像的清单与压缩包在进程内只算一次（生产根文件系统只读）；检出每 30 s 至多重新列一次（约 35 ms），内容没变就不重新打包。复审者的 `cpu.py` 方法（只读到状态行即断开，服务端进程 CPU）：修复前 105 ms/请求（复审时 121–131 ms），修复后每个 /64 各一次的 600 个 200 共 0.23 s，即约 0.4 ms/请求；带匹配 ETag 的 600 次重新验证（304）约 0.3 ms/请求。
+* **边缘可以缓存。** 200 与 304 都带 `Cache-Control: public, max-age=600` 与强 ETag（压缩包的 SHA-256）；`If-None-Match` 匹配时返回 304、没有正文，也不计入下载次数；429 等错误仍是 `no-store`。部署后最多 10 分钟内各处都换成新版本。Cloudflare 默认只按文件扩展名缓存，要让它吸收 `/api/source-code` 的重复下载，需要在 Cloudflare 加一条把该路径设为可缓存的 Cache Rule——这是 Cloudflare 的设置，本次没有改动。
+* **可复现、不泄露服务器信息。** 成员按名称排序，属主统一为 uid/gid 0、用户名与组名为空，权限只有 0644/0755，时间是发布提交的时间（检出用固定时间），gzip 头不带时间与文件名：同一发布在任何进程、任何角色上生成的包逐字节相同（所以 ETag 也相同）。以前成员带着服务器上文件属主的 uid 与用户名——检出部署时就是运营方的登录名。
+* **下载限速按 /64。** 一个 IPv6 用户通常拿到整个 /64，可以在其中随意换地址，按完整地址计数等于不限速（复审实测同一 /64 的 60 个地址拿到 60 个压缩包）。现在 IPv6 按 /64、IPv4 按地址、IPv4 映射地址按其 IPv4 地址计数（`synwevo_core.http.address_buckets`）。第二轮复审：只按 /64 时，一个 /56（常见的家庭宽带分配，256 个 /64）或 /48（隧道服务免费提供，65 536 个 /64）的持有者能拿到 256 倍或 65 536 倍的额度（实测同一 /56 内轮换 16 个 /64、各 6 次，96 次全是 200）。现在同一次下载还要计入它的 /56 与 /48，二者各有两个与四个客户端的额度（每分钟 12 与 24 次），任何一级不够就拒绝、哪一级都不扣（`source_offer.WIDER_PREFIX_CLIENTS`）。一个 /48 持有者每分钟至多 24 个压缩包（约 360 MB），而不是 65 536 × 6 个；更宽的前缀是运营商分配、由许多站点共用，不再合并计数，以免一个人锁住整个运营商的用户。第三轮复审更正了这里的前提：/56 与 /48 是一个持有者**可能**拥有的范围，不一定只属于一个持有者——VPS 与云主机从同一个地址池给每台服务器一个 /64，移动网络每条连接一个 /64（RFC 6459），那里的 /56、/48 由许多互不相干的用户共用。在这样一个 /48 里分处至少两个 /56 的四个客户端，各自不超过每分钟 6 次（合计约 6 MB/s），就能让这个 /48 的其他用户在它们持续下载期间一直收到 429。这是有意接受的取舍：单看地址分不出「地址池里的不同用户」与「一个持有者的不同子网」，只按 /64 计数又会给任何 /48 持有者 65 536 倍的额度；被拒绝的请求不花任何代价、带着重试时间，下载一停就恢复；IPv4 与其他 /48 不受影响（`source_offer.WIDER_PREFIX_CLIENTS` 的注释写明了这一点）。同一轮还补上：带着 IPv4 地址的 IPv6 地址按那个 IPv4 地址计数，与 IPv4 映射地址一样——NAT64 / SIIT 的通用前缀 `64:ff9b::/96`（RFC 6052；以前在 SIIT 前端后面，整个 IPv4 互联网共用一个每分钟 6 次的桶）、Teredo（RFC 4380，以前同一个 Teredo 服务器的全部客户端共用一个 /64）与 6to4（RFC 3056）；本地用途的 `64:ff9b:1::/48`（RFC 8215）里 IPv4 地址的位置由运营方决定，不拆开。Cloudflare 的 Cache Rule 加上之后，重复下载由边缘吸收，这一层只是源站的兜底。
+* 回归覆盖：`apps/docs/tests/test_licensing.py`（检出与镜像中放置的未跟踪文件都不提供；没有清单时拒绝；`git archive` 端到端盖章与清单，以及在解包目录里放入或改动文件后不写清单；git 以属主为由拒绝时说明 `safe.directory`，git 翻译过的拒绝也一样；Dockerfile 在单独阶段对一次复制的整个上下文写清单、在构建产物之前放进镜像，接收器的 `.archive-sha256` 不进上下文；`.dockerignore` 模式；成员归一化与逐字节复现；重复请求不触碰文件系统；检出 TTL）、`apps/docs/tests/test_services_licensing.py`、`tests/integration/test_source_offer.py`（ETag/304 不计数、IPv6 /64 及其 /56、/48，NAT64 / Teredo / 6to4 按所带的 IPv4 地址，503）。

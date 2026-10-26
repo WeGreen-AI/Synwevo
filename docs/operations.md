@@ -51,10 +51,29 @@ SMTP 的已授权配置方式仍见第 6 节，不能为本轮自动获取 VPS �
 
 ```bash
 cp .env.example .env            # 按需修改；密钥不要写进文件，用 CLI 创建
-docker compose -f infra/docker-compose.yml up -d --build    # 监听 127.0.0.1:8765，数据卷 ./data
+# 从 git archive 构建：镜像只含受版本控制的文件，并记下源代码发布清单（/api/source-code 只打包清单上的文件）。
+# 未提交的修改用 `git stash create` 生成的临时提交带上（工作树干净时它不输出，退回 HEAD）。
+rev=$(git stash create); git archive --format=tar "${rev:-HEAD}" | docker build -f infra/Dockerfile -t synwevo:local -
+docker compose -f infra/docker-compose.yml up -d             # 监听 127.0.0.1:8765，数据卷 ./data
 docker compose -f infra/docker-compose.yml exec synwevo python -m synwevo_docs.cli apikey create --name ci --tenant <工作空间ID> --scopes read,write
 curl -s localhost:8765/readyz
 ```
+
+`docker compose … up -d --build` 仍可用，但它从工作树构建：上下文不是 `git archive`，构建日志会提示没有写入
+源代码发布清单，这样的镜像对 `/api/source-code` 返回 503（分不清源代码与工作树里的其他文件时不提供，
+而不是把备份、密钥一起发出去）。对外提供服务时请用上面的 `git archive` 构建。
+
+也可以先把 `git archive` 的发布包（例如代码托管平台按提交生成的 tar.gz）解包到目录，再在该目录里
+`docker build -f infra/Dockerfile .`（部署接收器与 CI 就是这样做的）——但解包之后不要在目录里新增或改动文件。
+提交号盖在 `source_manifest.py` 里，只能证明这一个文件来自 `git archive`；构建还核对上下文里**每个**文件的修改时间
+都是该提交的时间（`git archive` 给每个文件的时间，tar 解包与 `docker build` 都保留它）。有一个对不上——解包后放进去的
+证书、密钥、备份，或改过的源文件——构建日志就列出它们、不写发布清单，镜像对 `/api/source-code` 返回 503。
+要改代码就提交后重新 `git archive`；不能用会丢弃文件时间的方式解包或复制（`tar -m`、不带 `-p` 的 `cp -r`）。
+这项核对在镜像的单独阶段里进行，对象是一次复制进来的**整个**构建上下文，而不是最后阶段按目录复制的层：Docker 的层缓存
+不看文件时间，内容没变的目录（多数部署里的 `packages/`）会从更早的构建原样取回、带着那次的时间。所以上下文里多出来的
+任何文件——即使镜像并不复制它——也会让构建不写清单（部署接收器自己的 `.archive-sha256` 由 `.dockerignore` 挡在上下文外）。
+同一提交、内容完全相同的重新构建会沿用上一次的结果，拒绝也一样：如果是解包丢了文件时间而被拒，正确解包后用
+`docker build --no-cache` 重新构建。
 
 镜像内含 LibreOffice、Tesseract（chi_sim/eng）与 Noto CJK 字体。对外请在宿主机用反向代理：界面走你自己的认证，
 `/api/v1` 由 API 密钥鉴权（示例配置见 ports.md 第 3 节）。
@@ -83,6 +102,11 @@ export SYNWEVO_DATA_DIR=/srv/synwevo/data
 成功以本副本进程的 `/readyz` 为准，端口被其他进程占用会失败。生产单进程按需设置鉴权与对外 URL 后，
 用 `.venv/bin/python -m synwevo_server.run` 启动；拆分部署的发行者与回调配置见
 [integration/ports.md](integration/ports.md)。
+
+从检出运行时，`/api/source-code` 按 `git ls-files` 打包。服务若以另一个账户运行、而仓库属于运营方账户，
+git（2.35.2 起）会以 “dubious ownership” 拒绝读取，`/api/source-code` 返回 503 并说明原因。确认信任该目录后，
+以**运行服务的账户**执行 `git config --global --add safe.directory <安装目录>`（或用 `--system` 写入系统配置）；
+服务不替你跳过这项检查，也不读取 `GIT_*` 环境变量。
 
 绑定非本机地址时必须先决定界面鉴权方式（`SYNWEVO_UI_AUTH=basic` 并 `python -m synwevo_identity.cli ui-user add`，或 `proxy`），
 否则服务会拒绝启动并打印处理方式——这是为了避免「以为有代理其实裸奔」。

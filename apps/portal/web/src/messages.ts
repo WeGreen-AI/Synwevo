@@ -346,6 +346,9 @@ export const portalMessages = {
   "服务条款": {"en": "Terms of service", "zh-Hant": "服務條款"},
   "AI 使用规范": {"en": "AI use rules", "zh-Hant": "AI 使用規範"},
   "定价": {"en": "Pricing", "zh-Hant": "定價"},
+  // The AGPL-3.0 §13 offer in every page's footer: the archive of the running program's source.
+  "源代码（AGPL-3.0）": {"en": "Source code (AGPL-3.0)", "zh-Hant": "原始碼（AGPL-3.0）"},
+  "下载正在运行版本的对应源代码": {"en": "Download the Corresponding Source of the running version", "zh-Hant": "下載正在執行版本的對應原始碼"},
   "版本 {version}，自 {date} 起生效。": {"en": "Version {version}, in effect from {date}.", "zh-Hant": "版本 {version}，自 {date} 起生效。"},
   "未开放：不会向 AI 模型发送任何内容": {"en": "Not available: no content is sent to any AI model", "zh-Hant": "未開放：不會向 AI 模型傳送任何內容"},
   "已上线，模型服务尚未开放：不会向 AI 模型发送任何内容": {"en": "Released, model service not yet open: no content is sent to any AI model", "zh-Hant": "已上線，模型服務尚未開放：不會向 AI 模型傳送任何內容"},

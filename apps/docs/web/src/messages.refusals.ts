@@ -72,7 +72,7 @@ export const refusalMessages = {
   "排版引擎未启用，无法进行此格式转换（部署说明见 docs/DEPLOY.md）": { en: "The layout engine is not enabled, so this format conversion cannot be done (see docs/DEPLOY.md for deployment).", "zh-Hant": "排版引擎未啟用，無法進行此格式轉換（部署說明見 docs/DEPLOY.md）" },
   "文件已损坏或格式不受支持，无法打开。": { en: "The file is damaged or in an unsupported format and cannot be opened.", "zh-Hant": "文件已損壞或格式不受支援，無法開啟。" },
   "文字识别失败，请稍后重试；如果持续出现，请联系管理员。": { en: "Text recognition failed. Try again later; if it keeps happening, contact an administrator.", "zh-Hant": "文字辨識失敗，請稍後重試；如果持續出現，請聯絡管理員。" },
-  "本部署已关闭源代码下载（运营方已取得相应许可或未使用 AGPL 组件）": { en: "Source code download is turned off on this deployment (the operator holds the corresponding license or uses no AGPL components).", "zh-Hant": "本部署已關閉原始碼下載（營運方已取得相應授權或未使用 AGPL 組件）" },
+  "本部署已关闭源代码下载（运营方以其他方式提供对应源代码，或运行未经修改、不含第三方 AGPL 组件的版本）": { en: "Source code download is turned off on this deployment (the operator offers the corresponding source another way, or runs an unmodified version without third-party AGPL components).", "zh-Hant": "本部署已關閉原始碼下載（營運方以其他方式提供對應原始碼，或運行未經修改、不含第三方 AGPL 組件的版本）" },
 
   // ------------------------------------------------------------------ sample rules
   "请填写每个表单块开头的标记文字（例如「姓名：」或表单标题）": { en: "Enter the text that starts each form block (for example “Name:” or the form title).", "zh-Hant": "請填寫每個表單塊開頭的標記文字（例如「姓名：」或表單標題）" },

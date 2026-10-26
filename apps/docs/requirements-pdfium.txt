@@ -1,5 +1,7 @@
-# AGPL-free installation: everything except PyMuPDF.  Run with SYNWEVO_DOCS_PDF_ENGINE=pdfium (automatic when
-# PyMuPDF is absent).  PDF / image templates are unavailable in this mode; see docs/DEPENDENCIES.md.
+# Synwevo Docs' pins without PyMuPDF, kept for the pdfium engine (SYNWEVO_DOCS_PDF_ENGINE=pdfium, automatic when
+# PyMuPDF is absent; PDF / image templates are unavailable then). NOT a tested build: it lacks pycrdt, which
+# live co-editing has imported at module level since 2026-09-26, it covers Docs only (not the platform image),
+# and no image or CI job installs it. See docs/DEPENDENCIES.md §6.
 -r ../../packages/auth-client/python/requirements.txt
 openpyxl==3.1.5
 python-docx==1.2.0
