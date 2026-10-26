@@ -8,9 +8,9 @@
 
 ## 实际发布与CI
 
-- **生产当前为 `8a3b679ddb7fa4d747054d067ec8ade6fe7a1d2e`**（2026-10-25 22:15Z，dev 的第一次部署：MCP 平台 + CI/CD 切换到 dev + 测试修复；流水线运行 40232805667 verify/deploy 均成功；备份 `/opt/synwevo/backups/20261025T221441Z`；五域 /readyz 200、四角色同镜像且 healthy、无错误日志；9 张 mcp_* 表与 oauth_clients 4 列已迁移，quick_check ok；记录 `docs/quality/deployment.md` 当前段）。
+- **生产当前为 `d6d4a0b498c5051e65b72f942593214f36738b8b`**（2026-10-26 10:37Z，流水线运行 40298661682：许可证与 AGPL 源码提供、成本核算上限第一阶段（精确汇总，D18）；同日此前经流水线部署 bce8336f 脱敏、a84f21ba/57b44340/2b832b91 依赖与分组配置；备份 `/opt/synwevo/backups/20261026T103644Z`；五域 /readyz 200、四角色同镜像且 healthy、无错误日志；三个域名 `/api/source-code` 同一 15,062,993 字节源码包；成本汇总回填 ok、0 个未处理故障；记录 `docs/quality/deployment.md` 当前段）。
 - 流水线：仓库公开后 Actions 托管运行器免费；verify 上限 120 分钟（MCP 合入后全量运行时测试约 68 分钟）。不要重跑早于已部署版本的旧运行；部署守卫也会拒绝。
-- 进行中的 PR：#3 脱敏（进 dev）、#4 首次 dev→main 同步；许可证 PR 在合入前修复公开源码接口的安全问题（只发已跟踪文件、进程内缓存与按 /64 限流、按 scope 路径判定、归一化打包元数据）；成本核算上限（cost-capacity）实现完成、终审中。
+- 已合入 dev 的开源与流程 PR：#2 切换、#3 脱敏、#5 记录、#13 许可证、#14 依赖分组、#15 成本核算上限；Dependabot #6–#9 已合入，#10–#12（Tiptap 单包升级）关闭待分组 PR。下一步：dev→main 同步；成本核算上限第二阶段（个人支出上限 `payer_budgets.py`）。
 - 待所有者：① Admin 支付设置仍为 v3（card + wechat_pay + alipay），请重新发布仅含银行卡的版本；② DeepSeek 路线 2026-10-15 已过期，付费 Agent 调用被拒（公开状态如实显示“模型服务暂停”），请在 Admin 续期；③ 2026-10-25 条款与定价文本请法律顾问复核；④ DeepSeek 训练与保留书面答复未取得；⑤ 开源审计：把本机密钥文件移出检出目录，开启 secret scanning / push protection / 私密漏洞报告，按审计直接告知所有者的步骤加固管理员账户；成本核算上限上线前保持付费 Agent 放行名单模式。
 
 ## 当前工作包与下一条动作

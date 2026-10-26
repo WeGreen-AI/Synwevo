@@ -1,6 +1,42 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-10-25 22:15 UTC — 8a3b679d, the first deploy from `dev`
+## Current release · 2026-10-26 10:37 UTC — d6d4a0b4, licences, the AGPL source offer and the exact cost rollup
+
+**Running source: `d6d4a0b498c5051e65b72f942593214f36738b8b`** (origin/dev). Pipeline run 40298661682 (push to dev):
+verify 09:20→10:33 UTC, deploy 10:33→10:37 UTC through the restricted SSH command; receiver backup
+`/opt/synwevo/backups/20261026T103644Z`. A run for the licence merge alone (40285908354, f9a7ccdf) was cancelled
+during its verify, before any deploy, so that one run deployed the licence and the cost rollup together.
+
+**What it ships:**
+- **Licences (PR #13):** AGPL-3.0-or-later for the platform, Apache-2.0 for the SDKs, TRADEMARKS.md and NOTICE.
+- **The AGPL §13 source offer:** `/api/about` and `/api/source-code` are anonymous on every role and in every standalone
+  factory. The archive holds only the release's files (a manifest written in its own build stage from the `git archive`
+  context), is built once per process, is reproducible, and carries a strong ETag; downloads are limited per IPv4
+  address and per IPv6 /64, /56 and /48.
+- **Exact cost rollup, phase 1 (PR #15, decision D18):** platform cost admission and the velocity brake read
+  trigger-maintained aggregates, so their cost no longer grows with monthly volume. A broken cost fact fails closed for its
+  provider account and is recovered from a backup taken before it.
+- **Earlier releases the same day, all through the pipeline and all checked the same way:** bce8336f (01:42, redaction
+  PR #3), a84f21ba (06:18), 57b44340 (07:23) and 2b832b91 (08:38) — Dependabot action and Vite plugin updates, and the
+  Dependabot grouping (PR #14).
+
+**Post-deploy checks (10:37–10:45 UTC, read-only):**
+- **Health:** `/readyz` 200 on all five hosts. The four roles run `synwevo:d6d4a0b4…` and are healthy; the gateway was
+  recreated. No traceback or error line in the last 20 minutes of any role.
+- **Source offer:** `/api/source-code` answers 200 on synwevo.com, accounts and docwave with the same 15,062,993-byte
+  archive and ETag (1,761 entries; no key, environment, database or data file among them). `/api/about` reports
+  AGPL-3.0-or-later.
+- **Cost rollup migration:** the rollup tables exist; the `model_cost_rollup_v1` and trigger markers are set; one
+  `backfill` audit row with status ok; 38 admissions produced 18 buckets; 0 open faults; `PRAGMA quick_check` ok.
+
+**For the owner:**
+- Add a Cloudflare Cache Rule for `/api/source-code`, so the edge absorbs repeat downloads. Today every download reaches
+  the origin; the per-prefix limit still bounds it.
+- Confirm the copyright holder: NOTICE reads "the Synwevo contributors", maintained by WeGreen-AI.
+- The items from the earlier record still stand: the DeepSeek route renewal, card-only payment settings, counsel review,
+  and the open-source audit's account hardening.
+
+## 2026-10-25 22:15 UTC — 8a3b679d (historical; superseded above), the first deploy from `dev`
 
 **Running source: `8a3b679ddb7fa4d747054d067ec8ade6fe7a1d2e`** (origin/dev, the merge of PR #2). It is the first release
 through the new branch model (owner decision 2026-10-25): `dev` is the development and production-deploy branch, `main`
