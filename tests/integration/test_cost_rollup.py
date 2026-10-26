@@ -1501,8 +1501,12 @@ def test_the_benchmark_calendar_is_the_one_its_docstring_and_evidence_state():
     month, now = (datetime.fromtimestamp(v, timezone.utc) for v in (bench.MONTH, bench.NOW))
     assert (month.isoformat(), month.strftime("%A")) == ("2034-05-01T00:00:00+00:00", "Monday")
     assert (now.isoformat(), now.strftime("%A")) == ("2034-05-20T12:00:00+00:00", "Saturday")
-    readme = (ROOT / "docs" / "agent-work" / "evidence" / "2026-10-25-cost-rollup" / "README.md").read_text(encoding="utf-8")
-    assert "2034-05-01" in bench.__doc__ and "2034-05-20T12:00" in bench.__doc__ and "2034-05-20T12:00" in readme
+    assert "2034-05-01" in bench.__doc__ and "2034-05-20T12:00" in bench.__doc__
+    # The evidence is export-ignored (.gitattributes), so the release image and CI's runtime suite do
+    # not carry it; the README is checked where it exists, in a checkout.
+    readme = ROOT / "docs" / "agent-work" / "evidence" / "2026-10-25-cost-rollup" / "README.md"
+    if readme.exists():
+        assert "2034-05-20T12:00" in readme.read_text(encoding="utf-8")
 
 
 def test_the_benchmark_measures_the_live_write_path_and_the_monitors_daily_verify(tmp_path, monkeypatch):
