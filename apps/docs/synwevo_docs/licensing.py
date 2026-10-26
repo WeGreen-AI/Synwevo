@@ -516,15 +516,25 @@ def _build_archive(listing: _Listing) -> Archive:
     return Archive(data, name, f'"{digest}"')
 
 
-#: Archive downloads per minute per client — an IPv4 address, or an IPv6 /64
-#: (``synwevo_core.http.address_buckets``). The offer is anonymous and the archive is about 15 MB,
-#: so one client cannot turn it into a bandwidth pump; a person fetching the source is never near
-#: this. A revalidation answered 304 is not a download and is not counted.
+#: Archive downloads per minute per client — an IPv4 address (an IPv6 form of one counts as it), or
+#: an IPv6 /64 (``synwevo_core.http.address_buckets``). The offer is anonymous and the archive is
+#: about 15 MB, so one client cannot turn it into a bandwidth pump; a person fetching the source is
+#: never near this. A revalidation answered 304 is not a download and is not counted.
 DOWNLOADS_PER_MIN = 6
 #: How many clients' allowance each wider IPv6 prefix gets. Whoever holds a /56 or a /48 holds 256
 #: or 65,536 /64s, so per /64 alone such a holder got that many times DOWNLOADS_PER_MIN; counted
 #: at every prefix, a /48 gets at most four clients' worth. A download must fit every one of its
 #: address's buckets, and a refused one is charged to none.
+#:
+#: What that costs: a /56 or a /48 is not always one holder. Where a provider gives each customer
+#: a /64 out of one pool (VPS and cloud hosts, mobile networks), these buckets are shared by
+#: unrelated tenants, and four clients in two or more /56s of such a /48, each within its own six
+#: a minute (about 6 MB/s of archive between them), keep the /48's other tenants at 429 for as long
+#: as they keep downloading. Accepted, because an address cannot tell a pool's tenants from one
+#: holder's subnets, and counting per /64 alone gives every /48 holder 65,536 times the allowance:
+#: the refusal costs the refused nothing, says when to retry and ends with the drain; IPv4 clients
+#: and other /48s are untouched; and with an edge cache rule for this path (a CDN setting, not made
+#: here) repeated downloads do not reach this limit at all.
 WIDER_PREFIX_CLIENTS = {56: 2, 48: 4}
 
 

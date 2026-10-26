@@ -188,6 +188,38 @@ def test_the_limit_also_counts_the_wider_prefixes_a_site_is_given(tmp_path, monk
     assert get("198.51.100.9").status_code == 200, "IPv4 不受 IPv6 前缀计数影响"
 
 
+def test_an_ipv6_address_that_carries_an_ipv4_address_is_counted_as_it():
+    """Behind a NAT64 or SIIT front (RFC 6052's well-known prefix 64:ff9b::/96) every IPv4 client
+    arrives as 64:ff9b::<its address>, all in one /64, so the whole IPv4 Internet shared one bucket.
+    A Teredo address's /64 is its Teredo server, shared by every client of that server (RFC 4380),
+    and a 6to4 /48 is the one IPv4 address it is built from (RFC 3056). Each is counted as the IPv4
+    address it carries, as an IPv4-mapped address already was."""
+    from synwevo_core.http import address_buckets
+    assert address_buckets("64:ff9b::198.51.100.7") == ("198.51.100.7",)
+    assert address_buckets("64:ff9b::cb00:7109") == ("203.0.113.9",)
+    # RFC 4380's example: server 65.54.227.120, client 192.0.2.45 (stored inverted), port 40000.
+    assert address_buckets("2001:0000:4136:e378:8000:63bf:3fff:fdd2") == ("192.0.2.45",)
+    assert address_buckets("2002:c633:6407:1::1") == ("198.51.100.7",)
+    # The local-use translation prefix (RFC 8215) has no fixed place for the IPv4 address: it is
+    # counted per prefix, like any other IPv6 address.
+    assert address_buckets("64:ff9b:1::c633:6407") == ("64:ff9b:1::/64", "64:ff9b:1::/56", "64:ff9b:1::/48")
+    assert address_buckets("2001:db8:1:2::1") == ("2001:db8:1:2::/64", "2001:db8:1::/56", "2001:db8:1::/48")
+
+
+def test_clients_behind_a_translator_each_get_their_own_downloads(tmp_path, monkeypatch, small_tree):
+    from synwevo_docs import licensing
+    monkeypatch.setattr(licensing, "DOWNLOADS_PER_MIN", 2)
+    monkeypatch.setenv("SYNWEVO_TRUST_PROXY", "1")
+    c = _client(tmp_path / "nat64", monkeypatch, mode="session", role="accounts")
+
+    def get(address):
+        return c.get("/api/source-code", headers={"X-Forwarded-For": address}).status_code
+
+    assert [get("64:ff9b::198.51.100.7") for _ in range(3)] == [200, 200, 429]
+    assert get("198.51.100.7") == 429, "经翻译器来的就是这个 IPv4 客户端"
+    assert [get("64:ff9b::198.51.100.8"), get("64:ff9b::203.0.113.9")] == [200, 200], "翻译器后面的其他客户端不受影响"
+
+
 def test_without_a_release_list_the_archive_is_refused_not_walked(tmp_path, monkeypatch):
     """An installation with neither the image's manifest nor a Git checkout cannot tell its source
     from whatever else sits in the directory, so it serves nothing rather than everything."""

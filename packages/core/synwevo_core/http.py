@@ -313,25 +313,48 @@ def client_ip(request: Request) -> str:
     return (request.client.host if request.client else "") or ""
 
 
-#: The IPv6 prefixes one holder routinely controls, narrowest first: a /64 is one subnet, and an end
-#: site is given "at least one /64, and in most cases significantly more" (RFC 6177, BCP 157, which
-#: names a /56 as a home default) — in practice a /56 (256 /64s, a routine residential delegation)
-#: or a /48 (65,536, free from IPv6 tunnel brokers). Wider than a /48 is an operator's allocation,
-#: shared by many sites.
+#: The IPv6 prefixes an address-based limit counts a client under, narrowest first. A /64 is one
+#: subnet, and an end site is given "at least one /64, and in most cases significantly more" (RFC
+#: 6177, BCP 157, which names a /56 as a home default) — in practice a /56 (256 /64s, a routine
+#: residential delegation) or a /48 (65,536, free from IPv6 tunnel brokers). That is what one holder
+#: *can* control, not what one holder always does: VPS and cloud providers give each server its own
+#: /64 out of a shared pool, and mobile networks one /64 per connection (RFC 6459), so there a /56
+#: or a /48 is many unrelated customers. An address cannot tell the two apart; a limit that counts
+#: the wider prefixes says what that costs (``synwevo_docs.licensing.WIDER_PREFIX_CLIENTS``). Wider
+#: than a /48 is an operator's allocation and is never counted.
 IPV6_HOLDER_PREFIXES = (64, 56, 48)
+
+
+def _carried_ipv4(ip):
+    """The IPv4 address an IPv6 address is a form of, or None: IPv4-mapped (``::ffff:a.b.c.d``);
+    RFC 6052's well-known NAT64 / SIIT prefix (``64:ff9b::a.b.c.d``), the form in which a
+    translator in front of an IPv6 server presents every IPv4 client; Teredo (``2001::/32``, RFC
+    4380: the client's public address, stored inverted); 6to4 (``2002:V4ADDR::/48``, RFC 3056).
+    Answering such an address takes the IPv4 address it names, so it is that client. The local-use
+    translation prefix ``64:ff9b:1::/48`` (RFC 8215) puts the IPv4 address where the operator chose
+    and is not unwrapped."""
+    import ipaddress
+    if ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped
+    if ip in ipaddress.IPv6Network("64:ff9b::/96"):
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    if ip.teredo is not None:
+        return ip.teredo[1]
+    return ip.sixtofour
 
 
 def address_buckets(address: str) -> tuple[str, ...]:
     """Every key an address-based rate limit counts a client under, narrowest first: an IPv4
     address as it is (one key); an IPv6 address by each prefix in ``IPV6_HOLDER_PREFIXES``; an
-    IPv4-mapped IPv6 address as the IPv4 address it carries.
+    IPv6 address that is a form of an IPv4 address (IPv4-mapped, NAT64 / SIIT, Teredo, 6to4) as
+    that IPv4 address.
 
     The holder of a prefix chooses the addresses inside it — privacy extensions rotate them on
     their own — so a bucket per /128 limits nothing (60 addresses of one /64 each got their own
     allowance), and a bucket per /64 limits a /56 holder 256 times over and a /48 holder 65,536
     times. A limit that means "per client" counts every one of these keys, each with its own
-    allowance. Anything that is not an address (a test client's name, an empty string) is its own
-    single key.
+    allowance. Behind a NAT64 or SIIT front, per /64 put the whole IPv4 Internet in one bucket.
+    Anything that is not an address (a test client's name, an empty string) is its own single key.
     """
     import ipaddress
     try:
@@ -339,15 +362,16 @@ def address_buckets(address: str) -> tuple[str, ...]:
     except ValueError:
         return (address or "unknown",)
     if ip.version == 6:
-        if ip.ipv4_mapped is not None:
-            return (str(ip.ipv4_mapped),)
+        carried = _carried_ipv4(ip)
+        if carried is not None:
+            return (str(carried),)
         return tuple(str(ipaddress.IPv6Network((ip, n), strict=False)) for n in IPV6_HOLDER_PREFIXES)
     return (str(ip),)
 
 
 def address_bucket(address: str) -> str:
     """The narrowest of ``address_buckets``: an IPv4 address as it is, an IPv6 address by its /64,
-    an IPv4-mapped IPv6 address as the IPv4 address it carries."""
+    an IPv6 form of an IPv4 address as that IPv4 address."""
     return address_buckets(address)[0]
 
 
