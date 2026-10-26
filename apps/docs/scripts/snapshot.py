@@ -1001,12 +1001,14 @@ def verify(args) -> int:
         check(s.schema_version() == SCHEMA_VERSION, f"schema v{s.schema_version()}（升级到当前版本）")
         n_proj = s.one("SELECT COUNT(*) AS n FROM projects")["n"]
         check(n_proj == actual.get("projects"), f"通过应用读到 {n_proj} 个项目")
-        # The exact cost rollup is derived from the cost facts by triggers; a backup carries both in
-        # one snapshot. Recompute every day from the facts (verify --all): a difference fails the
-        # rehearsal, because the restored copy would refuse that provider account's paid calls.
+        # The exact cost rollup and the per-wallet spend rollup are derived from the cost facts and the
+        # settled calls by triggers; a backup carries both in one snapshot. Recompute every day from the
+        # facts (verify --all): a difference fails the rehearsal, because the restored copy would refuse
+        # that provider account's (or wallet's) paid calls.
         from synwevo_core.billing.cost_rollup import CostRollup
         rollup = CostRollup.check(s, all=True, mode="restore")
-        check(rollup.ok, f"成本汇总与成本事实一致：{len(rollup.scopes)} 个提供方账户，{rollup.facts} 条成本事实",
+        check(rollup.ok, f"成本汇总与成本事实一致：{len(rollup.scopes)} 个提供方账户，{rollup.facts} 条成本事实；"
+              f"{len(rollup.wallets)} 个钱包，{rollup.wallet_facts} 条已结算调用",
               "" if rollup.ok else json.dumps(rollup.summary(), ensure_ascii=False, default=str)[:2000])
         _close(s)
 

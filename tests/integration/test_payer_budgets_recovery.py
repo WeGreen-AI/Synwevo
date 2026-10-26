@@ -251,18 +251,41 @@ def capacity_money(money):
     return money, prepared, call
 
 
+def _settled_copies(t, call, indices):
+    """Bulk fixture data only: settled copies of the real settled ``call``, each with its own attempt,
+    usage, journal entry and settlement (as capacity_money writes them)."""
+    settlement = dict(t.execute("SELECT * FROM billing_settlements WHERE call_key=?", (call["id"],)).fetchone())
+    attempt = dict(t.execute("SELECT * FROM billing_attempts WHERE id=?", (settlement["attempt_key"],)).fetchone())
+    usage = dict(t.execute("SELECT * FROM billing_usage WHERE attempt_key=?", (attempt["id"],)).fetchone())
+    journal = dict(t.execute("SELECT * FROM billing_journal WHERE id=?", (settlement["journal_id"],)).fetchone())
+    _insert_fixture_copies(t, "billing_calls", call, (
+        {"id": f"fixture-sale-{i}", "logical_call_id": f"fixture-sale-{i}"} for i in indices))
+    _insert_fixture_copies(t, "billing_attempts", attempt, (
+        {"id": f"fixture-attempt-{i}", "call_key": f"fixture-sale-{i}",
+         "fence": f"fixture-fence-{i}", "request_id": f"fixture-request-{i}"} for i in indices))
+    _insert_fixture_copies(t, "billing_usage", usage, ({"attempt_key": f"fixture-attempt-{i}"} for i in indices))
+    _insert_fixture_copies(t, "billing_journal", journal, (
+        {"id": f"fixture-journal-{i}", "voucher": f"fixture-voucher-{i}",
+         "reference": f"fixture-sale-{i}"} for i in indices))
+    _insert_fixture_copies(t, "billing_settlements", settlement, (
+        {"call_key": f"fixture-sale-{i}", "attempt_key": f"fixture-attempt-{i}",
+         "journal_id": f"fixture-journal-{i}"} for i in indices))
+
+
 def _overflow_fixture(capacity_money):
     money, _, template = capacity_money
-    # The bulk history run now has 10,000 calls; the target has its own run.
+    # Only holds count against the bound (settled history is read from per-wallet day rows, cost-capacity
+    # phase 2): 4,999 bulk holds and the target, plus 5,001 more holds, exceed 10,000 reserved calls.
     with money[0].tx() as t:
-        _insert_fixture_copies(t, "billing_calls", template, [{
-            "id": "fixture-over-capacity", "logical_call_id": "fixture-over-capacity",
-            "status": "reserved"}])
-    assert money[0].one("SELECT COUNT(*) AS n FROM billing_calls")["n"] == 10_001
+        _insert_fixture_copies(t, "billing_calls", template, (
+            {"id": f"fixture-over-capacity-{i}", "logical_call_id": f"fixture-over-capacity-{i}",
+             "status": "reserved"} for i in range(5_001)))
+    assert money[0].one("SELECT COUNT(*) AS n FROM billing_calls WHERE status='reserved'")["n"] == 10_001
+    assert money[0].one("SELECT COUNT(*) AS n FROM billing_calls")["n"] == 15_001
 
 
 def test_exact_fact_capacity_reports_all_exposure_and_allows_dispatch(capacity_money):
-    money, ticket, _ = capacity_money
+    money, ticket, template = capacity_money
     current = view(money)
     assert current["usage_state"] == "available"
     assert (current["periods"]["daily"]["spent"], current["periods"]["daily"]["held"],
@@ -272,6 +295,14 @@ def test_exact_fact_capacity_reports_all_exposure_and_allows_dispatch(capacity_m
     after = view(money)
     assert after["usage_state"] == "available"
     assert (after["periods"]["daily"]["spent"], after["periods"]["daily"]["held"]) == ("5001", "4999")
+    # Settled volume never refuses: 10,000 more settled calls and one more hold are still exact.
+    with money[0].tx() as t:
+        _settled_copies(t, template, range(5_000, 15_000))
+        _insert_fixture_copies(t, "billing_calls", template, [{
+            "id": "fixture-held-extra", "logical_call_id": "fixture-held-extra", "status": "reserved"}])
+    more = view(money)
+    assert more["usage_state"] == "available"
+    assert (more["periods"]["daily"]["spent"], more["periods"]["daily"]["held"]) == ("15001", "5000")
     assert_balanced(money[0])
 
 
@@ -304,7 +335,7 @@ def test_over_capacity_refuses_money_admission_without_partial_writes(capacity_m
             _call(money, "fixture-over-capacity-reservation")
         else:
             ledger.dispatch(ticket)
-    assert store.one("SELECT COUNT(*) AS n FROM billing_calls")["n"] == 10_001
+    assert store.one("SELECT COUNT(*) AS n FROM billing_calls")["n"] == 15_001
     assert store.all("SELECT * FROM billing_events ORDER BY seq") == events
     assert store.all("SELECT * FROM billing_payer_budget_admissions") == admissions
     assert store.one("SELECT status,dispatched_at FROM billing_attempts WHERE id=?", (ticket.attempt_key,)) == {

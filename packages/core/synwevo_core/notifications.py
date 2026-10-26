@@ -274,6 +274,16 @@ CATALOGUE: dict[str, dict] = {
         "zh-Hans": "提供方账户 {account} 的成本汇总与成本事实不一致，该账户的付费调用已暂停，被拒绝的请求没有发送，也不会扣费。请按运维手册 docs/platform/model-risk.md §13 在角色容器里查看差异：汇总被改动时核实后重建；成本事实本身有问题时重建会拒绝，需从那次写入之前的备份恢复。",
         "zh-Hant": "供應商帳戶 {account} 的成本彙總與成本事實不一致，該帳戶的付費呼叫已暫停，被拒絕的請求沒有傳送，也不會扣費。請依維運手冊 docs/platform/model-risk.md §13 在角色容器裡檢視差異：彙總被改動時核實後重建；成本事實本身有問題時重建會拒絕，需從那次寫入之前的備份還原。",
         "en": "The cost rollup of provider account {account} disagrees with the cost facts, so paid calls on that account are paused; refused requests were not sent and are not charged. Follow the runbook in docs/platform/model-risk.md §13: see the differences in a role container; rebuild once they are understood when the rollup was changed, or restore the backup from before the write when a cost fact itself is broken (a rebuild refuses then)."}},
+    # ---- the per-wallet spend rollup disagrees with its settled calls (billing/spend_rollup.py, cost-capacity
+    # phase 2): that wallet's paid calls refuse (personal limits cannot be counted) until an operator rebuilds
+    # it, or, when a settled call itself is broken, restores the backup from before that write. The wallet id
+    # only: never its owner, limits or amounts.
+    "billing.payer_spend.rollup_inconsistent": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "个人支出汇总与已结算调用不一致：钱包 {wallet}", "zh-Hant": "個人支出彙總與已結算呼叫不一致：錢包 {wallet}",
+        "en": "Personal spend rollup disagrees with settled calls: wallet {wallet}"}, "body": {
+        "zh-Hans": "钱包 {wallet} 的个人支出汇总与已结算的调用不一致，无法核算个人日、周、月支出上限，该钱包的付费调用已暂停；被拒绝的请求没有发送，也不会扣费。请按运维手册 docs/platform/model-risk.md §13 在角色容器里查看差异：汇总被改动时核实后重建（--wallet）；已结算调用本身有问题时重建会拒绝，需从那次写入之前的备份恢复。",
+        "zh-Hant": "錢包 {wallet} 的個人支出彙總與已結算的呼叫不一致，無法核算個人日、週、月支出上限，該錢包的付費呼叫已暫停；被拒絕的請求沒有傳送，也不會扣費。請依維運手冊 docs/platform/model-risk.md §13 在角色容器裡檢視差異：彙總被改動時核實後重建（--wallet）；已結算呼叫本身有問題時重建會拒絕，需從那次寫入之前的備份還原。",
+        "en": "The personal spend rollup of wallet {wallet} disagrees with its settled calls, so its daily, weekly and monthly limits cannot be counted and its paid calls are paused; refused requests were not sent and are not charged. Follow the runbook in docs/platform/model-risk.md §13: see the differences in a role container; rebuild it (--wallet) once they are understood when the rollup was changed, or restore the backup from before the write when a settled call itself is broken (a rebuild refuses then)."}},
     # ---- A26: a platform-requested second-factor reset that fell due and was not carried out, told
     # to the administrator who asked (synwevo_identity.admin_second_factor); `void_reason` is a
     # VOID_WORDS key, `email` the account's address as the administrator already saw it.

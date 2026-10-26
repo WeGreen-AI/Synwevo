@@ -567,7 +567,8 @@ def restart(args) -> int:
 
 
 def cost_rollup(args) -> int:
-    """Verify the exact cost rollup against its facts, or rebuild one provider account's rollup.
+    """Verify the exact cost rollup against its facts, or rebuild one provider account's rollup (or, with
+    --wallet, one wallet's spend rollup: the personal limits' day rows, billing/spend_rollup.py).
 
     Never automatic: the hourly and daily checks only verify and latch (billing/cost_rollup.py). A
     rebuild replays that account's facts, verifies the result and resolves its faults in one
@@ -581,7 +582,8 @@ def cost_rollup(args) -> int:
     _require_data_dir(args)
     cmd = [sys.executable, "-m", "synwevo_core.billing.cost_rollup", args.action, "--data", data_dir()]
     for flag, value in (("--environment", args.environment), ("--provider", args.provider),
-                        ("--account-ref", args.account_ref), ("--reason", args.reason), ("--actor", args.actor)):
+                        ("--account-ref", args.account_ref), ("--wallet", args.wallet), ("--reason", args.reason),
+                        ("--actor", args.actor)):
         if value:
             cmd += [flag, value]
     cmd += [flag for flag, on in (("--all", args.all), ("--no-record", args.no_record)) if on]
@@ -648,6 +650,7 @@ def main() -> int:
     cr.add_argument("--environment", choices=["test", "live"])
     cr.add_argument("--provider")
     cr.add_argument("--account-ref")
+    cr.add_argument("--wallet", help="rebuild：重建一个钱包的个人支出汇总（钱包的计费账户 id），代替 --provider/--account-ref")
     cr.add_argument("--reason", help="rebuild：理由（8 至 500 个字），写入审计")
     cr.add_argument("--actor", help="rebuild：操作人（写入审计；默认 operator:<系统用户>）")
     cr.set_defaults(func=cost_rollup)

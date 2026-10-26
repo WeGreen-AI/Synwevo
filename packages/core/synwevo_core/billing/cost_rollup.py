@@ -20,6 +20,12 @@ docs/billing-ledger.md ("Cost rollup") describes both. This module:
   repairs derived rows and refuses, changing nothing, while any fact of the scope is broken),
   ``prune`` and ``latch``.
 
+The personal limits' per-wallet spend rollup (billing/spend_rollup.py, cost-capacity phase 2) shares
+this machinery in WALLET SCOPES ``(environment, '', wallet id)``: ``check`` reports them in
+``VerifyReport.wallets``, ``record``/``latch`` audit and alert them as ``billing.payer_spend.*`` (the
+wallet id only), ``rebuild_wallet`` replays one wallet, and their newest global rebuild is the wallets'
+backfill (``payer_spend_rollup.BACKFILL_SCOPE``), never the provider accounts'.
+
 Broken facts fail closed. Only a write outside the product (an import with foreign keys off, hand
 SQL) can leave a malformed or orphan admission, or a value Python cannot decode (a non-UTF-8 TEXT):
 its scope refuses with ``cost_rollup_inconsistent`` and no rebuild clears it, since facts cannot be
@@ -46,6 +52,7 @@ import sqlite3
 import time
 
 from ..suite_schema import model_cost_rollup as schema
+from ..suite_schema import payer_spend_rollup as spend_schema
 from .models import BillingError, Unit, identifier, integer
 
 log = logging.getLogger("synwevo.billing.cost_rollup")
@@ -104,9 +111,12 @@ class RebuildRefused(BillingError):
 
 
 def _last_rebuild(t, scope):
-    """The newest rebuild row that covered ``scope``: its own, or a global backfill (two index seeks)."""
+    """The newest rebuild row that covered ``scope``: its own, or its family's global backfill (two index
+    seeks). A wallet scope (provider '') reads the wallets' backfill (``spend_schema.BACKFILL_SCOPE``), a
+    provider scope ('', '', ''), so neither family's backfill supersedes the other's verify results."""
     best = None
-    for key in (tuple(scope), ("", "", "")):
+    family = spend_schema.BACKFILL_SCOPE if scope[1] == "" else ("", "", "")
+    for key in (tuple(scope), family):
         row = t.execute("SELECT seq,id,environment,provider,account_ref,actor,finished_at FROM model_cost_rollup_rebuilds "
                         "INDEXED BY model_cost_rollup_rebuilds_scope WHERE " + _SCOPE + " ORDER BY seq DESC LIMIT 1",
                         key).fetchone()
@@ -673,26 +683,40 @@ class VerifyReport:
     now: int
     since: int | None
     environment: str | None = None
+    #: Provider accounts (environment, provider, account_ref): the cost admission's and velocity's rollup.
     scopes: dict = field(default_factory=dict)
     #: Store-wide problems (a delta row at rest, a missing sentinel): reported even with no scope.
     issues: list = field(default_factory=list)
+    #: Wallets (environment, '', account_id): the personal limits' spend rollup (billing/spend_rollup.py).
+    wallets: dict = field(default_factory=dict)
+
+    @property
+    def all_scopes(self) -> dict:
+        return {**self.scopes, **self.wallets}
 
     @property
     def ok(self) -> bool:
-        return not self.issues and all(not s.count for s in self.scopes.values())
+        return not self.issues and all(not s.count for s in self.all_scopes.values())
 
     @property
     def mismatched(self) -> list[tuple]:
-        return [scope for scope, s in self.scopes.items() if s.count]
+        return [scope for scope, s in self.all_scopes.items() if s.count]
 
     @property
     def facts(self) -> int:
+        """Cost admissions checked (the provider accounts')."""
         return sum(s.facts for s in self.scopes.values())
 
+    @property
+    def wallet_facts(self) -> int:
+        """Settled calls checked (the wallets')."""
+        return sum(s.facts for s in self.wallets.values())
+
     def summary(self) -> dict:
-        return {"mode": self.mode, "now": self.now, "since": self.since, "facts": self.facts, "issues": list(self.issues),
+        return {"mode": self.mode, "now": self.now, "since": self.since, "facts": self.facts,
+                "wallets": len(self.wallets), "wallet_facts": self.wallet_facts, "issues": list(self.issues),
                 "mismatched": {scope_key(scope): {"count": s.count, "first": s.differences[:5]}
-                               for scope, s in self.scopes.items() if s.count}}
+                               for scope, s in self.all_scopes.items() if s.count}}
 
 
 _SCOPE_COLUMNS = ("environment", "provider", "account_ref")
@@ -992,30 +1016,48 @@ def _scope_error(exc: BaseException) -> bool:
 
 
 def _check(c, *, environment, since, now, mode, scopes=None) -> VerifyReport:
+    from . import spend_rollup
     report = VerifyReport(mode, now, since, environment)
-    if c.execute("SELECT 1 FROM model_cost_rollup_deltas LIMIT 1").fetchone():
+    deltas = c.execute("SELECT 1 FROM model_cost_rollup_deltas LIMIT 1").fetchone() is not None
+    lost = {False: not schema.sentinels_present(c), True: not spend_schema.sentinel_present(c)}
+    if deltas:
         report.issues.append("deltas_not_empty")
-    if not schema.sentinels_present(c):
+    if any(lost.values()):
         report.issues.append("sentinel_missing")
-    damage = list(report.issues)            # store-wide: every scope's rollup may be affected
+    # Store-wide, per family (False: provider accounts, True: wallets): every scope's rollup may be affected.
+    damage = {wallet: (["deltas_not_empty"] if deltas else []) + (["sentinel_missing"] if lost[wallet] else [])
+              for wallet in (False, True)}
     if scopes is None:
         undecodable = set()
-        scopes = _scopes(c, environment, undecodable)
+        scopes = _scopes(c, environment, undecodable) + spend_rollup.wallet_scopes(c, environment, undecodable)
         if undecodable:
             # Rows in a scope no reader can name (every read binds UTF-8 text): told, never read.
             report.issues.append(UNNAMED_SCOPE)
     for scope in scopes:
+        wallet = spend_rollup.is_wallet(scope)
         try:
-            result = _check_scope(c, scope, since=since, now=now, mode=mode)
+            check = spend_rollup.check_wallet if wallet else _check_scope
+            result = check(c, scope, since=since, now=now, mode=mode)
         except Exception as exc:  # noqa: BLE001 - one scope's facts never stop the others' check
             if not _scope_error(exc):
                 raise
             result = ScopeReport(scope, 0, rebuild_seq(c, scope))
             result.differ("verify_error", error=type(exc).__name__, detail=str(exc)[:200])
-        for issue in damage:
+        for issue in damage[wallet]:
             result.differ(issue)
-        report.scopes[scope] = result
+        (report.wallets if wallet else report.scopes)[scope] = result
     return report
+
+
+def _family(scope) -> dict:
+    """The audit action, object kind and audit meta naming ``scope``: a provider account's cost rollup, or
+    a wallet's spend rollup (provider '')."""
+    if scope[1] == "":
+        return {"inconsistent": "billing.payer_spend.rollup_inconsistent", "rebuilt": "billing.payer_spend.rollup_rebuilt",
+                "object": "payer_spend_rollup", "meta": {"billing_environment": scope[0], "wallet": scope[2]}}
+    return {"inconsistent": "billing.cost.rollup_inconsistent", "rebuilt": "billing.cost.rollup_rebuilt",
+            "object": "model_cost_rollup",
+            "meta": {"billing_environment": scope[0], "provider": scope[1], "account_ref": scope[2]}}
 
 
 class CostRollup:
@@ -1052,7 +1094,7 @@ class CostRollup:
         at = int((clock or time.time)())
         statuses, alerts = {}, []
         with store.tx() as t:
-            for scope, result in report.scopes.items():
+            for scope, result in report.all_scopes.items():
                 if not result.count:
                     continue
                 current = rebuild_seq(t, scope)
@@ -1066,9 +1108,9 @@ class CostRollup:
                         "VALUES (?,?,?,?,'verify_mismatch',?,?) ON CONFLICT(id) DO NOTHING",
                         ("verify:" + scope_key(scope) + ":" + str(result.rebuild_seq), *scope, detail, at)).rowcount
                     if added:
-                        _system_audit(t, "billing.cost.rollup_inconsistent", "model_cost_rollup", scope_key(scope),
-                                      {"billing_environment": scope[0], "provider": scope[1], "account_ref": scope[2],
-                                       "source": report.mode, "differences": result.count})
+                        family = _family(scope)
+                        _system_audit(t, family["inconsistent"], family["object"], scope_key(scope),
+                                      {**family["meta"], "source": report.mode, "differences": result.count})
                         alerts.append(scope)
                 t.execute("INSERT INTO model_cost_rollup_audits(id,environment,provider,account_ref,mode,status,since,"
                           "facts,differences,rebuild_seq,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -1085,15 +1127,17 @@ class CostRollup:
                               {"billing_environment": report.environment or "", "source": report.mode,
                                "issues": list(report.issues)})
                 alerts.append(("*", "*", "*"))
-            environments = {s[0] for s in report.scopes} | ({report.environment} if report.environment else set())
+            every = report.all_scopes
+            environments = {s[0] for s in every} | ({report.environment} if report.environment else set())
             for environment in sorted(environments or {""}):
                 t.execute("INSERT INTO model_cost_rollup_audits(id,environment,provider,account_ref,mode,status,since,"
                           "facts,differences,rebuild_seq,created_at) VALUES (?,?,'','',?,?,?,?,?,?,?)",
                           (_id("cra"), environment, report.mode, status, report.since or 0,
-                           sum(s.facts for k, s in report.scopes.items() if k[0] == environment),
-                           json.dumps({"scopes": len(report.scopes), "mismatched": len(statuses),
+                           sum(s.facts for k, s in every.items() if k[0] == environment),
+                           json.dumps({"scopes": len(report.scopes), "wallets": len(report.wallets),
+                                       "mismatched": len(statuses),
                                        **({"issues": list(report.issues)} if report.issues else {})}),
-                           max([s.rebuild_seq for s in report.scopes.values()] or [0]), at))
+                           max([s.rebuild_seq for s in every.values()] or [0]), at))
             for scope in alerts:
                 store.after_commit(lambda scope=scope: _alert(store, scope, at))
         return statuses
@@ -1129,7 +1173,7 @@ class CostRollup:
             resolved = t.execute("UPDATE model_cost_rollup_faults SET resolved_at=?,resolved_by=?,rebuild_id=? WHERE "
                                  + _SCOPE + " AND resolved_at IS NULL", (at, actor, rebuild_id, *scope)).rowcount
             report = _check(t, environment=environment, since=None, now=at, mode="rebuild", scopes=[scope])
-            if not report.ok:
+            if report.scopes[scope].count:
                 differences = report.scopes[scope].differences
                 raise RebuildRefused(attempt_keys=[d["attempt_key"] for d in differences if d["check"] in FACT_CHECKS],
                                      differences=differences)
@@ -1143,6 +1187,53 @@ class CostRollup:
                           {"billing_environment": environment, "provider": provider, "account_ref": account_ref,
                            "actor": actor, "reason": reason, "facts": replayed["facts"], "resolved_faults": resolved,
                            "rebuild_seq": seq})
+        return {"id": rebuild_id, "seq": seq, "scope": list(scope), "facts": replayed["facts"],
+                "resolved_faults": resolved}
+
+    @staticmethod
+    def rebuild_wallet(store, *, account_id: str, actor: str, reason: str, environment: str | None = None,
+                       clock=None) -> dict:
+        """Replay one wallet's day rows from its settled calls, verify them and resolve the wallet's
+        faults, in ONE BEGIN IMMEDIATE: ``rebuild``'s shape for the spend rollup (billing/spend_rollup.py).
+
+        Never automatic (platform.py cost-rollup rebuild --wallet). It repairs the DERIVED day rows and
+        refuses, changing nothing, while a settled call of the wallet is malformed (its ``created_at`` not
+        a non-negative integer: ``RebuildRefused.attempt_keys`` names those calls) or when the result does
+        not verify. Calls cannot be edited, so such a wallet stays refused until the database is restored
+        from a backup taken before the write that broke it (docs/platform/model-risk.md §13). An unknown
+        wallet, or one of another ``environment``, refuses ``invalid_rebuild``."""
+        from . import spend_rollup
+        from .risk import _reason, _system_audit
+        identifier(account_id)
+        identifier(actor)
+        reason = _reason(reason)
+        at = int((clock or time.time)())
+        rebuild_id = _id("crb")
+        with store.tx() as t:
+            row = t.execute("SELECT environment FROM billing_accounts WHERE id=?", (account_id,)).fetchone()
+            if row is None or (environment is not None and row[0] != environment):
+                raise BillingError("invalid_rebuild")
+            scope = spend_rollup.wallet_scope(row[0], account_id)
+            replayed = spend_schema.replay(t, account_id)
+            if replayed["faults"]:
+                raise RebuildRefused(attempt_keys=replayed["faults"])
+            resolved = t.execute("UPDATE model_cost_rollup_faults SET resolved_at=?,resolved_by=?,rebuild_id=? WHERE "
+                                 + _SCOPE + " AND resolved_at IS NULL", (at, actor, rebuild_id, *scope)).rowcount
+            report = _check(t, environment=scope[0], since=None, now=at, mode="rebuild", scopes=[scope])
+            if report.wallets[scope].count:
+                differences = report.wallets[scope].differences
+                raise RebuildRefused(attempt_keys=[d["call"] for d in differences if d["check"] == "fact_fault"],
+                                     differences=differences)
+            t.execute("INSERT INTO model_cost_rollup_rebuilds(id,environment,provider,account_ref,actor,reason,"
+                      "finished_at) VALUES (?,?,?,?,?,?,?)", (rebuild_id, *scope, actor, reason, at))
+            seq = t.execute("SELECT seq FROM model_cost_rollup_rebuilds WHERE id=?", (rebuild_id,)).fetchone()[0]
+            t.execute("INSERT INTO model_cost_rollup_audits(id,environment,provider,account_ref,mode,status,since,facts,"
+                      "differences,rebuild_seq,created_at) VALUES (?,?,?,?,'rebuild','ok',0,?,'{}',?,?)",
+                      (_id("cra"), *scope, replayed["facts"], seq, at))
+            family = _family(scope)
+            _system_audit(t, family["rebuilt"], family["object"], scope_key(scope),
+                          {**family["meta"], "actor": actor, "reason": reason, "facts": replayed["facts"],
+                           "resolved_faults": resolved, "rebuild_seq": seq})
         return {"id": rebuild_id, "seq": seq, "scope": list(scope), "facts": replayed["facts"],
                 "resolved_faults": resolved}
 
@@ -1203,9 +1294,9 @@ class CostRollup:
                 (f"read:{exc.check}:" + scope_key(scope) + f":{exc.rebuild_seq}", *scope, "read_" + exc.check,
                  exc.check, at)).rowcount
             if added:
-                _system_audit(t, "billing.cost.rollup_inconsistent", "model_cost_rollup", scope_key(scope),
-                              {"billing_environment": scope[0], "provider": scope[1], "account_ref": scope[2],
-                               "source": "read", "check": exc.check})
+                family = _family(scope)
+                _system_audit(t, family["inconsistent"], family["object"], scope_key(scope),
+                              {**family["meta"], "source": "read", "check": exc.check})
                 store.after_commit(lambda: _alert(store, scope, at))
         return "latched" if added else "already_latched"
 
@@ -1226,6 +1317,11 @@ def _id(prefix: str) -> str:
 def _alert(store, scope, at) -> None:
     from .risk import notify_admins
     day = time.strftime("%Y-%m-%d", time.gmtime(at))
+    if scope[1] == "" and scope[0] != "*":
+        # A wallet: the alert carries the wallet id only (never its owner or amounts).
+        notify_admins(store, "billing.payer_spend.rollup_inconsistent", params={"wallet": scope[2]},
+                      dedupe_key=f"payer_spend:rollup:{scope_key(scope)}:{day}", object_id=scope_key(scope))
+        return
     notify_admins(store, "billing.cost.rollup_inconsistent", params={"provider": scope[1], "account": scope[2]},
                   dedupe_key=f"cost:rollup:{scope_key(scope)}:{day}", object_id=scope_key(scope))
 
@@ -1270,6 +1366,8 @@ def main(argv=None) -> int:
     ap.add_argument("--environment", choices=["test", "live"])
     ap.add_argument("--provider")
     ap.add_argument("--account-ref")
+    ap.add_argument("--wallet", help="rebuild: one wallet's spend rollup (its billing account id), instead of a "
+                                     "provider account (--provider/--account-ref)")
     ap.add_argument("--reason")
     ap.add_argument("--actor", help="rebuild: who runs it, for the audit (default: operator:<system user>)")
     args = ap.parse_args(argv)
@@ -1284,23 +1382,40 @@ def main(argv=None) -> int:
         else:
             report = CostRollup.verify(store, args.environment, all=args.all, mode="cli")
         print(json.dumps(report.summary(), ensure_ascii=False, indent=2, default=str))
-        print(f"{len(report.scopes)} 个提供方账户，{report.facts} 条成本事实："
+        print(f"{len(report.scopes)} 个提供方账户，{report.facts} 条成本事实；{len(report.wallets)} 个钱包，"
+              f"{report.wallet_facts} 条已结算调用："
               + ("一致。" if report.ok else f"{len(report.mismatched)} 个不一致"
                  + (f"，全库问题 {report.issues}" if report.issues else "")
                  + ("（未记录）。" if args.no_record else "，已锁定；按 docs/platform/model-risk.md §13 处理。")),
               file=sys.stderr)
         return 0 if report.ok else 1
-    missing = [flag for flag, value in (("--environment", args.environment), ("--provider", args.provider),
-                                        ("--account-ref", args.account_ref), ("--reason", args.reason)) if not value]
+    if args.wallet:
+        missing = [flag for flag, value in (("--reason", args.reason),) if not value]
+        if args.provider or args.account_ref:
+            print("--wallet 与 --provider/--account-ref 不能同时使用", file=sys.stderr)
+            return 2
+    else:
+        missing = [flag for flag, value in (("--environment", args.environment), ("--provider", args.provider),
+                                            ("--account-ref", args.account_ref), ("--reason", args.reason)) if not value]
     if missing:
         print("重建需要：" + " ".join(missing), file=sys.stderr)
         return 2
     try:
-        result = CostRollup.rebuild(store, environment=args.environment, provider=args.provider,
-                                    account_ref=args.account_ref, actor=_operator(args.actor),
-                                    reason=args.reason)
+        if args.wallet:
+            result = CostRollup.rebuild_wallet(store, account_id=args.wallet, environment=args.environment,
+                                               actor=_operator(args.actor), reason=args.reason)
+        else:
+            result = CostRollup.rebuild(store, environment=args.environment, provider=args.provider,
+                                        account_ref=args.account_ref, actor=_operator(args.actor),
+                                        reason=args.reason)
     except RebuildRefused as exc:
-        if exc.attempt_keys:
+        if exc.attempt_keys and args.wallet:
+            print("没有重建：这些已结算调用本身有问题（创建时间不是非负整数），只能来自产品之外的写入（导入、手写 SQL）。"
+                  "调用不可修改，重建不会解除；该钱包保持拒绝，直到把数据库恢复到这次写入之前的备份"
+                  "（docs/platform/model-risk.md §13 第 3 步）：", file=sys.stderr)
+            for key in exc.attempt_keys:
+                print("  " + key, file=sys.stderr)
+        elif exc.attempt_keys:
             print("没有重建：这些成本准入本身有问题（时间无效、到期超过准入后一天、找不到调用/钱包，或键不是 UTF-8 文本），"
                   "只能来自产品之外的写入（关掉外键的导入、手写 SQL）。事实不可修改，重建不会解除；该账户保持拒绝，"
                   "直到把数据库恢复到这次写入之前的备份（docs/platform/model-risk.md §13 第 3 步）：", file=sys.stderr)

@@ -294,9 +294,10 @@ def _stores_of(values):
 
 @pytest.fixture(autouse=True)
 def _cost_rollup_verified(request):
-    """After every test whose fixtures hold a Store with platform cost facts: the trigger-maintained
-    cost rollup verifies against those facts (billing/cost_rollup.py, CostRollup.check over all
-    days). Tests that break the rollup or a fact on purpose say so with cost_rollup_unchecked."""
+    """After every test whose fixtures hold a Store with platform cost facts or settled calls: the
+    trigger-maintained cost rollup and per-wallet spend rollup verify against those facts
+    (billing/cost_rollup.py, CostRollup.check over all days). Tests that break the rollup or a fact on
+    purpose say so with cost_rollup_unchecked."""
     yield
     if request.node.get_closest_marker("cost_rollup_unchecked") or request.node.stash.get(_CALL_FAILED, True):
         return
@@ -306,7 +307,8 @@ def _cost_rollup_verified(request):
 
     for store in _stores_of(request.node.funcargs.values()):
         try:
-            if not store.one("SELECT 1 AS x FROM model_cost_admissions LIMIT 1"):
+            if not (store.one("SELECT 1 AS x FROM model_cost_admissions LIMIT 1")
+                    or store.one("SELECT 1 AS x FROM payer_spend_days WHERE account_id>'' LIMIT 1")):
                 continue
         except sqlite3.Error:
             continue
