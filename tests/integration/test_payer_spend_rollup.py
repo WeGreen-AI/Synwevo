@@ -628,3 +628,28 @@ def test_the_wallet_alert_names_the_wallet_only_in_three_languages():
             assert text and set(re.findall(r"\{(\w+)\}", text)) <= {"wallet"}, (part, locale)
     assert all("{wallet}" in spec["body"][locale] for locale in LOCALES)
 
+
+# ---------------------------------------------------------------- the benchmark measures what it says
+def test_the_benchmark_measures_the_check_the_live_settlement_triggers_and_the_verify(tmp_path, monkeypatch):
+    """A tiny run of the personal-limits benchmark (scripts/bench_cost_admission.py --wallet-sizes): one
+    wallet's settled history and holds, the check with its plans, the trigger cost a live settlement pays
+    (A/B against a copy without the spend triggers), the backfill and the daily verify in a child process."""
+    import importlib.util
+    monkeypatch.delenv("SYNWEVO_DATA_DIR", raising=False)
+    monkeypatch.delenv("DOCWEAVE_DATA_DIR", raising=False)
+    path = Path(__file__).resolve().parents[2] / "scripts" / "bench_cost_admission.py"
+    spec = importlib.util.spec_from_file_location("fixture_bench_cost_admission_wallet", path)
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+    result = bench.run_wallet(3_000, samples=3, seed=7, work_parent=tmp_path, holds=30, live_pairs=40)
+    counts = result["counts"]
+    assert (counts["settled"], counts["held"]) == (3_000, 30) and 0 < counts["day_rows"] <= 20
+    assert result["check_ms"]["n"] == 3 and result["exposure"]["monthly"]["held"] != "0"
+    plans = " ".join(" ".join(p["plan"]) for p in result["query_plans"])
+    assert "payer_spend_days USING PRIMARY KEY" in plans and "billing_calls_holds" in plans
+    assert not any(name in p["sql"] for p in result["query_plans"] for name in NOT_READ)
+    live = result["triggers_live"]
+    assert live["pairs"] == 40 and live["per_transaction"] is True and "extra_stmt_us_p50" in live
+    daily = result["verify_daily"]
+    assert daily["ok"] and daily["wallet_facts"] >= 3_000 and daily["peak_rss_mb"] > 0
+    assert result["verify_all"]["ok"] and result["backfill_facts"] == 3_000
