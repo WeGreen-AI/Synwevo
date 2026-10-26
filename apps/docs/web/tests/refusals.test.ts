@@ -298,6 +298,7 @@ const FORWARDED: Record<string, string> = {
   "engine/ocr.py: \"文字识别无法加载语言数据：\" + err.strip()[-300:]": "the recognizer's own output; code-mapped as ocr_failed",
   "editor_contract.py: message": "the editor contract's own _bad(where, message), whose sentences are read above",
   "editor_contract.py: \"取值只能是 \" + \" / \".join(choices)": "an enumerated editor option: the editors offer only valid ones",
+  "licensing.py: str(refused)": "SourceUnavailable: why the AGPL source archive cannot be offered (no release manifest, a checkout git will not list). It answers the anonymous /api/source-code download link, a browser navigation, never a workbench request",
   "engine/transforms.py: \"；\".join(errs)": "the value transforms' own checks, joined, before an unchecked transform could run: a field's format is checked when it is saved (bad_format) and the Transforms editor writes only valid mapping transforms",
 };
 
