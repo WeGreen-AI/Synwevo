@@ -1,6 +1,6 @@
 # Synwevo Admin 管理能力覆盖表
 
-> 本表于2026-09-29建立，当前进度见下节。历史盘点依据是 7 个分区对 HEAD `e54b66e` 的只读代码核查：没有启动服务，没有读 `data/`、`.env`、秘密或用户内容。当时记录生产运行 `aadcb9e`，本轮未重新核实生产版本。
+> 本表于2026-09-29建立，当前进度见下节。历史盘点依据是 7 个分区对 HEAD `e54b66e` 的只读代码核查：没有启动服务，没有读 `data/`、`.env`、秘密或用户内容。当时记录生产运行 `aadcb9e`，本轮未重新核实生产版本。（2026-10-25 补注：表中的「仅本地」「未部署」「待部署」都是写入当时的状态，生产此后已多次部署；某个提交是否在线，以 `docs/quality/deployment.md` 记录的运行源码为准——`git merge-base --is-ancestor <提交> <运行源码>`。生产主机与账户的配置状态不写进本表。）
 > 本文是管理员平台唯一的覆盖表。专项约定见 [`../ai/admin-platform.md`](../ai/admin-platform.md)，设计调研见 [`admin-references.md`](admin-references.md)。行号取自 `e54b66e`，修改前先复核。旧记录里的"完成"只当线索。每完成一条链路，就在这里更新状态、证据和发布状态。
 
 ## 2026-09-30 接续核查（当前批次，覆盖下面历史快照）
@@ -186,7 +186,7 @@
 | D11 | 高 | ~~停用前不检查唯一拥有者。~~ **已修复**：停用与删除复用 `ac/ownership.py::check_ownership_continuity`（含冻结/可恢复资源、锁内继任者复核，`ac-tests/test_admin_ownership.py`）；无主组织/空间的平台交接路径见 A37（`ac/admin_ownership.py`，本批）。 |
 | D12 | 中 | **组织自定义角色的理由被丢弃。**<br>• UI 要求填写理由，但路由既不接收也不存储（`ac/organization_routes.py:191,203,217,229,241`）。<br>• 移除角色时不要求操作者持有该角色的权限（`core/org_roles.py:287-289`）。<br>**修复状态（2026-10-04，49701fe）：** 五个角色写操作要求并记录理由（8–500 字）；分配时加上和收回的角色都须在操作者权限之内，保留不动的角色不要求；分配对话框禁用够不着的角色并说明原因。 |
 | D13 | 中 | **举报复核有并发问题。**<br>• 先查后改，更新语句没有 `WHERE status='open'`（`core/messaging.py:699-721`），两人同时复核时后者覆盖前者。<br>• 其他管理者的 `conversation.reported` 待办永远停在 pending。<br>**修复状态（2026-10-04，e730e0f）：** 举报在删除消息的同一事务里先以 `WHERE status='open'` 认领，并发的第二个决定得到 409，消息不变。 |
-| D14 | 中 | **转换器内存上限高于容器上限。** `CONVERTER_MEMORY_MB` 默认 8192 MB，而 docs 容器的 `mem_limit` 是 2304m（`prod/compose.yaml:69`）。 |
+| D14 | 中 | **转换器内存上限须低于容器上限。** `CONVERTER_MEMORY_MB`（默认 8192 MB）是转换器进程自己的地址空间上限，应低于 docs 容器的 `mem_limit`（参考 compose 为 2304m，`prod/compose.yaml:69`），超限的转换才会作为一次转换失败返回；默认值与参考配置如何对齐待定，部署方在 `runtime.env` 里设置。 |
 | D15 | 中 | **扫描与上传接纳上限已统一（CR-073，本地已验证，尚未发布）。** 新文件按两者较小值提前413拒绝，UI/API/usage显示精确字节上限；分片创建/写入/完成/消费和直接服务均校验，旧回执/已接纳对象不受影响。实际扫描器限制更低仍失败即拒绝。 |
 | D16 | 中 | **服务账户重新启用不留痕。** 不写安全日志，也不像空间解冻那样返回恢复说明；从旧备份恢复时可能重新应用停用。 |
 | D17 | 中 | **`operator` 角色名不副实（已复核）。** 它没有任何能力，把管理员改成 operator 会静默移除全部管理权，而 UI 把它标为"平台运维"（`acweb/Admin.tsx:237`）。<br>**已修复（仅本地，B1-2）**：v27 迁移为无平台权限并写审计，选择器与筛选移除，兼容路由拒绝 `operator`（A3）。 |
@@ -376,7 +376,7 @@
 | B53 API 平台 | 凭据的有效权限 | 不持有秘密就能解释调用为何被拒 | 没有接口；逻辑在 `core/api_platform.py:189`、`core/machine.py:165,247`、`core/apps.py:248` | 无（调试器需要粘贴秘密） | 缺后端 | 按凭据类型和 id 复查审批、所有者、空间状态、应用启用、scope、受众，返回允许/拒绝及原因，不执行业务调用 | 目标 APM | 对象 | 中 | 只读复用 enforce_principal | 冻结空间后，解释返回 workspace_frozen，`/api/v1` 调用返回同样的原因 | 未实现 |
 | B54 API 平台 | 用户委托（OAuth 授权族） | 按用户或客户端列出；撤销单个；撤销全部（经撤销会话或停用账户） | 单个：`core/oidc.py:572` revoke_family（目前只在内部使用）；全部：`admin_routes.py:419,466` | 撤销全部在 Users 标签；单个无入口 | 列表：缺后端；撤销单个：缺界面；撤销全部：已接入 | 元数据列表；撤销单个时要理由、重认证，写 tokens_revoked 日志，不影响该用户的其他会话 | 现为 PA!；目标 `platform.users.manage` | 用户/对象 | 中 | oauth_tokens；Docs 网关每次调用都重新推导委托 | 撤销单个委托后，其访问令牌和刷新令牌分别返回 401 和 invalid_grant，该用户其他会话不受影响 | 已上线（撤销全部） |
 | B55 API 平台 | OIDC 客户端（portal-web、docweave-web、messages-web、第三方）与签名密钥（JWKS） | 列表和详情；注册、修改回调；启用停用；轮换机密客户端的密钥；撤销令牌；轮换和退役签名密钥 | `ac/cli.py:268-427`（client、keys 子命令）→ `core/oidc.py:140-186,278-322,567`；`/oidc/jwks.json` | 无（控制台只管 Docs 服务账户） | 仅命令行·有缺陷 | 缺只读列表和漂移检查；注册会替换回调列表，但事先没有差异预览；停用第一方客户端会导致所有人无法登录，需要警示；启用不写日志；D9；密钥材料永不显示 | 主机（审计 cli.client.*、cli.keys.*） | 全局 | 高 | oauth_clients、oidc_keys | 依赖方回调往返成功；错误的回调地址在 authorize 阶段被拒；轮换后 JWKS 同时含两个 kid，旧 ID 令牌仍可验证；退役当前密钥被拒（D9 已修，测试 test_oidc_provider / test_cli_governance） | 已上线 |
-| B56 API 平台 | 调用记录、契约与 SDK、调试器 | 查看和筛选调用；浏览契约；执行有边界的只读机器请求 | `ac/api_platform.py:291-332`；调用写入 `core/http.py:1030-1040` → `core/api_platform.py:237`；`dw/control_plane.py:23-115`；SDK 链接硬编码为 GitHub main 分支 | `Observability.tsx`、`Requests.tsx` | 已接入 | 不能按凭据、路由、状态类别、时间筛选，也不能导出；契约版本不显示；SDK 链接指向 main 而不是部署版本；调试器审计只记状态码；D20 | 查看：APM；调试器：APM! + 真实的 api_key 或服务账户凭据 | 全局/空间 | 中 | 每个 `/api/v1` 响应写一行 api_platform_calls；ASGI 进程内调用 | `test_api_platform.py::test_real_gateway_populates_call_log_without_content`、`::test_debugger_refuses_arbitrary_urls_paths_downloads`、`::test_debugger_uses_only_explicit_machine_and_object_scope`；`test_api_platform_races.py::test_asgi_debugger_has_real_coroutine_deadline` | 已上线 |
+| B56 API 平台 | 调用记录、契约与 SDK、调试器 | 查看和筛选调用；浏览契约；执行有边界的只读机器请求 | `ac/api_platform.py:291-332`；调用写入 `core/http.py:1030-1040` → `core/api_platform.py:237`；`dw/control_plane.py:23-115`；SDK 链接硬编码为 GitHub dev 分支（生产的部署来源） | `Observability.tsx`、`Requests.tsx` | 已接入 | 不能按凭据、路由、状态类别、时间筛选，也不能导出；契约版本不显示；SDK 链接指向 dev 的头部而不是部署的那个提交；调试器审计只记状态码；D20 | 查看：APM；调试器：APM! + 真实的 api_key 或服务账户凭据 | 全局/空间 | 中 | 每个 `/api/v1` 响应写一行 api_platform_calls；ASGI 进程内调用 | `test_api_platform.py::test_real_gateway_populates_call_log_without_content`、`::test_debugger_refuses_arbitrary_urls_paths_downloads`、`::test_debugger_uses_only_explicit_machine_and_object_scope`；`test_api_platform_races.py::test_asgi_debugger_has_real_coroutine_deadline` | 已上线 |
 | B57 Webhook | 空间的 webhook 订阅 | 增删改查、暂停/恢复；签名密钥轮换；ping；查看投递与重投 | `dw/api/v1_webhooks.py:73-145` → `dw/webhooks.py:1200-1389`；控制台代理 `dw/control_plane.py:31-37`（不含 /ping）；CLI `dw/cli_webhooks.py:108-215` | 控制台的 Webhook 标签（需要该空间 docweave.manage 凭据） | 已接入·有缺陷 | 管理员必须持有空间凭据的秘密才能操作；没有跨空间视图；D4；没有 ping 按钮；投递不能按状态筛选；D20；变更不写审计（见 G22） | APM! + 凭据；CLI 为主机 | 空间/对象 | 高 | Docs 进程的 WebhookDispatcher | `test_api_platform.py::test_webhook_real_subscription_rotation_pause_retry_and_scope`；过渡期内请求头带两个签名；ping 私网地址被拒 | 已上线 |
 | B58 Webhook | 跨空间订阅健康；部署级 webhook 端点 | 查看失败或自动停用的订阅；配置部署级端点、轮换其密钥 | CLI `webhooks list`；自动停用逻辑 `dw/webhooks.py:817-868`；部署级端点读环境变量（`:141-168`），`deliveries` 没有路由 | 无 | 仅命令行 / 仅主机 | 只含元数据的总览，接入待处理中心；部署级端点的只读状态，秘密永不显示；轮换助手 | 主机 | 全局 | 高 | Docs 进程 | 指向失败接收端的测试订阅，超过 DISABLE_AFTER_S 后显示为 disabled | 已上线（值待核实） |
 | B59 API 平台 | 紧急停止 | 冻结单个空间的全部机器访问；全局或按空间停止 Docs 机器 API | 冻结见 A43；`ac/cli.py:194-224`（`app disable docweave`） | 冻结在 Workspaces 标签；全局停止无入口 | 冻结：已接入；全局：仅命令行 | 冻结没有 API 专属的影响预览；全局开关要保证管理员恢复路径和健康检查仍然可用 | PA! / 主机 | 空间/全局 | 高 | workspaces.status；apps 表 | 冻结后返回 403 workspace_frozen；全局停用后返回 403 app_disabled | 已上线 |
@@ -451,8 +451,8 @@
 | G6 配置 | 信任边界（TRUST_PROXY、COOKIE_SECURE、CSP）；进程拓扑（ROLE、DATA_DIR 等） | 查看；修改 | `core/http.py:83,197`；`srv/run.py:53-67` | 无 | 仅主机；拓扑的修改：不适用 | 显示有效值，不安全时告警；拓扑决定后台自身运行在哪里，不从网页修改，但需要只读展示 | 主机 | 全局（每进程） | 高 | 各进程 | 响应头和 IP 记录正确 | 已上线（值待核实） |
 | G7 配置 | 会话与令牌时长；限流与背压 | 修改 | `core/sessions.py:43-52`；`core/oidc.py:37-38`；`core/http.py:46,608` | 无 | 仅主机 | 需要数据库支撑的认证策略；限流桶按进程计数，界面上必须注明"每实例" | 主机 | 全局 | 高 | 各进程的模块常量 | 新会话按新值到期；请求超限返回 429 | 已上线（值待核实） |
 | G8 配置 | 认证节流与 TTL 的代码常量 | 修改 | `ac/auth_routes.py:70-90`；`ac/registration.py:55-62`；`ac/email_login.py:34-43`；`ac/invites.py:25-33` 等 | 无 | 缺后端 | §7.11 要求这些可管理：迁入策略存储，在现有执行点读取；至少先只读展示 | 代码 | 全局 | 高 | 账户服务 | 改值后节流的阈值随之变化 | 未实现 |
-| G9 配置 | 人机验证 Turnstile | 配置、轮换、测试、查看状态 | `core/challenge.py:48,84-95,175-207` | 无 | 仅主机 / 缺界面 | 脱敏状态、连接测试、轮换；失败汇总 | 主机 | 全局 | 高 | 账户角色 | 配置后，缺少 token 返回 400 challenge_required | 已上线（2026-09-25 的记录显示生产没有配置 key；值待核实） |
-| G10 配置 | 恶意软件扫描与上传大小链 | 查看各角色的有效值和一致性；修改 | `core/malware.py:109-122`；`dw/engine/limits.py:33-36`；`prod/nginx.conf:9` | 无 | 仅主机·有缺陷 | D15；只读目录与一致性检查；扫描模式不能做成网页上的开关 | 主机；代码 | 全局（每角色） | 高 | 各角色启动时 | 超过上限的请求返回 413；EICAR 被拒 | 已上线（clamd.conf 挂载仅本地；值待核实） |
+| G9 配置 | 人机验证 Turnstile | 配置、轮换、测试、查看状态 | `core/challenge.py:48,84-95,175-207` | 无 | 仅主机 / 缺界面 | 脱敏状态、连接测试、轮换；失败汇总 | 主机 | 全局 | 高 | 账户角色 | 配置后，缺少 token 返回 400 challenge_required | 已上线（代码；生产密钥的配置状态不写进公开记录，2026-10-25 脱敏） |
+| G10 配置 | 恶意软件扫描与上传大小链 | 查看各角色的有效值和一致性；修改 | `core/malware.py:109-122`；`dw/engine/limits.py:33-36`；`prod/nginx.conf:9` | 无 | 仅主机·有缺陷 | D15；只读目录与一致性检查；扫描模式不能做成网页上的开关 | 主机；代码 | 全局（每角色） | 高 | 各角色启动时 | 超过上限的请求返回 413；EICAR 被拒 | 已上线（clamd 选项是主机侧步骤，见 operations.md §8；生产配置状态不写进公开记录，2026-10-25 脱敏） |
 | G11 配置 | Docs 处理上限 | 查看、修改 | `dw/engine/limits.py:38-66` | 无 | 仅主机·有缺陷 | D14；遇到坏值应拒绝，而不是静默使用默认值 | 主机 | 应用（Docs） | 高 | docs 进程 | 超限时被拒；capabilities 报告的值一致 | 已上线（MAX_BLOCK_CELLS 仅本地） |
 | G12 配置 | Docs 任务并发与配额 | 查看、修改 | `dw/jobs.py:399-490` | 无 | 仅主机 | 有效值目录；按空间覆盖见 B17 | 主机 | 应用（Docs） | 中 | Docs 的 job runner | 第 N+1 个任务返回 429 | 已上线（值待核实） |
 | G13 配置 | Docs 引擎与路径；SOURCE_OFFER；IMPORT_ROOTS | 查看；选择引擎；开关 | `dw/engine/pdf_engine.py:32-47`；`dw/licensing.py:76`；`dw/api/v1.py:43-56` | 无（成员可在 Docs 看到） | 仅主机 | 只读展示；装有 PyMuPDF 时必须阻止关闭 SOURCE_OFFER；IMPORT_ROOTS 永远不能从网页编辑 | 主机 / 镜像构建 | 应用（Docs） | 高 | docs 进程与镜像 | about 和 capabilities 显示的值一致 | 已上线（值待核实） |
@@ -654,7 +654,7 @@
 | 事项 | 决定 | 依据 |
 |---|---|---|
 | 管理入口 | 升级现有 `accounts.synwevo.com/admin`，保留 `?tab=` 深链接与 `/admin/api-platform`；不建 `workplace/admin`，不开新子域 | 专项约定 §1.1"优先升级现有管理员入口" |
-| 生产最高管理员 | 2026-09-29 只读核查（掩码，不含秘密）：生产共 6 个账户，**唯一**有效平台管理员是所有者本人账户（li***@outlook.com），有口令与 3 个 Passkey、无 TOTP；无 operator；无未用的初始化令牌。迁移时把它映射为最高管理员；不按邮箱或注册顺序任命任何人 | 专项约定 §4.2；`docs/quality/deployment.md` 同日记录 |
+| 生产最高管理员 | 2026-09-29 只读核查（不含秘密）：迁移时把当时已有的有效平台管理员映射为最高管理员；无 operator；无未用的初始化令牌；不按邮箱或注册顺序任命任何人。账户数、管理员身份与其登录方式不写进公开记录（2026-10-25 脱敏） | 专项约定 §4.2；`docs/quality/deployment.md` 同日记录 |
 | 最高管理员人数 | 至少 1 名由事务内不变量保证；只有 1 名时概览常驻"建议至少 2 名"提示，**不强制**（不能凭空要求第二人） | 调研 c1、c2；专项约定 §4.2 |
 | 自降级与交接 | 最高管理员不能降级或停用自己；交接顺序是"先授予接任者 → 接任者登录并完成重认证 → 由接任者撤销原管理员" | 调研 c2、c3 |
 | `operator` | 今天没有任何能力（D17）；迁移为无平台权限，从选择器移除，旧值只读显示 | 生产无 operator；D17 |
@@ -664,8 +664,8 @@
 
 ### 4.2 需要所有者决定（未决前按最保守的现状执行，不替所有者作答）
 
-1. 第二名最高管理员由谁担任（建议至少 2 名，调研 c1）。
-2. 管理员是否必须启用 MFA / Passkey，宽限期多长（当前所有者已有 Passkey，不会被锁）。
+1. 最高管理员的人选与人数（建议至少 2 名，调研 c1）。
+2. 管理员是否必须启用 MFA / Passkey，宽限期多长（启用前确认每名管理员都有可用的第二因素，不把人锁在外面；2026-10-25 删去现任管理员的登录方式）。
 3. 应急恢复的保管人、使用后通知谁、多久演练一次。
 4. `closed` 注册策略的确切语义（D3：是否也禁止邀请建号）。
 5. 组织治理：平台能否冻结或删除非本人拥有的组织、孤儿组织由谁接手、是否需要平台级邀请、谁可以创建组织、已删除组织何时清除。

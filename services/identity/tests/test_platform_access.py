@@ -504,6 +504,9 @@ def test_each_built_in_role_is_allowed_exactly_its_permissions(world, role):
     overview, mutation = c.get(CONSOLE_GET), post(c, CONSOLE_POST, {"reason": REASON})
     if "api_platform.manage" in ROLES[role]:
         assert overview.status_code == 200 and mutation.json()["error"] == "reauth_required"
+        # The SDK and API links follow dev, the branch production deploys from (main lags it).
+        links = [link["url"] for link in overview.json()["sdk_links"]]
+        assert links and all(re.match(r"https://github\.com/WeGreen-AI/Synwevo/(tree|blob)/dev/", u) for u in links), links
     else:
         for r in (overview, mutation):
             assert r.status_code == 403 and r.json()["error"] == "platform_permission_denied", (role, r.text)

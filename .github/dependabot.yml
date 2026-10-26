@@ -1,0 +1,32 @@
+# Version updates go to dev, like every change (AGENTS.md「分支与发布」): weekly, a few at a time.
+# Python versions are pinned in each module's requirements*.txt and again in the constraints file
+# infra/server/requirements.lock, which Dependabot does not edit: a Python update also needs its lock
+# line (see that file's header) before verify passes.
+# Dependabot security updates ignore target-branch and always open against the default branch, main:
+# retarget such a pull request to dev.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directories:
+      - /
+      - /packages/core
+      - /packages/auth-client/python
+      - /services/identity
+      - /apps/portal
+      - /apps/docs
+      - /apps/messages
+      - /apps/suite
+      - /infra/server
+    target-branch: dev
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 3
+  - package-ecosystem: npm
+    directory: /
+    target-branch: dev
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 3
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 2

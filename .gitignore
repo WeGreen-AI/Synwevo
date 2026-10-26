@@ -30,3 +30,12 @@ output/playwright/
 # The platform DeepSeek key the owner placed in the repository root: never committed (it goes into
 # Admin sealed storage; agent_deepseek_prompt.md section 3).
 deepseek_api.txt
+
+# Key files and local working notes that live beside the checkout: never committed. Every `*_api.txt`
+# is treated as a credential file wherever it appears.
+strip_api.txt
+*_api.txt
+/main_prompt.md
+/agent_deepseek_prompt.md
+/docs/agent-work/CLAUDE_CODE_HANDOFF_*.txt
+/docs/agent-work/.coordinator.lock.prev-*
