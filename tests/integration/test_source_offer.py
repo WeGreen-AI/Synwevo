@@ -32,13 +32,13 @@ def _client(data_dir, monkeypatch, *, mode: str, role: str) -> TestClient:
 def small_tree(tmp_path, monkeypatch):
     """TEST FIXTURE: a two-file installation as an image build leaves it — the files, then the
     release manifest the build wrote from them — so each role's archive is built in milliseconds."""
-    from synwevo_docs import licensing, source_manifest
+    from synwevo_core import source_manifest, source_offer
     root = tmp_path / "installed"
     (root / "apps" / "docs").mkdir(parents=True)
     (root / "apps" / "docs" / "x.py").write_text("# code\n", encoding="utf-8")
     (root / "LICENSE").write_text("licence text\n", encoding="utf-8")
     source_manifest.write(root, commit="0123456789abcdef0123456789abcdef01234567", commit_time=1767225600)
-    monkeypatch.setattr(licensing, "ROOT", root)
+    monkeypatch.setattr(source_offer, "ROOT", root)
     return root
 
 
@@ -58,6 +58,78 @@ def test_every_role_offers_the_source_without_a_sign_in(tmp_path, monkeypatch, s
     assert any(n.endswith("/apps/docs/x.py") for n in names) and any(n.endswith("/SOURCE_OFFER.txt") for n in names)
 
 
+def _standalone(factory: str, data_dir, monkeypatch, *, mode: str) -> TestClient:
+    """A module's own factory, as it runs without the composer: the account service with no
+    document engine mounted, the portal with Synwevo Docs stopped, Synwevo Message alone."""
+    monkeypatch.setenv("SYNWEVO_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("SYNWEVO_UI_AUTH", mode)
+    monkeypatch.delenv("SYNWEVO_ROLE", raising=False)            # each factory's own default role
+    monkeypatch.setenv("SYNWEVO_COOKIE_SECURE", "0")
+    module = importlib.import_module(factory)
+    return TestClient(module.create_app(str(data_dir), start_jobs=False))
+
+
+STANDALONE = ["synwevo_identity.app", "synwevo_portal.app", "synwevo_messages.app"]
+
+
+@pytest.mark.parametrize("mode", ["session", "basic"])
+@pytest.mark.parametrize("factory", STANDALONE)
+def test_a_module_run_on_its_own_offers_the_source_too(tmp_path, monkeypatch, small_tree, factory, mode):
+    """The account frame and the portal footer link to /api/source-code on their own origin. Only
+    the composer (synwevo_server) and Synwevo Docs mounted it, so the account service, the portal
+    and Synwevo Message run from their own factories answered that link with 404 — the offer §13
+    owes their users pointed at nothing. Each serves it now, anonymously, from synwevo_core
+    (none of them may import Synwevo Docs)."""
+    c = _standalone(factory, tmp_path / f"{factory}-{mode}", monkeypatch, mode=mode)
+    about = c.get("/api/about")
+    assert about.status_code == 200, (factory, mode, about.text)
+    assert about.json()["license"] == "AGPL-3.0-or-later" and about.json()["source_offer"] is True
+    archive = c.get("/api/source-code")
+    assert archive.status_code == 200, (factory, mode, archive.text)
+    assert archive.headers["content-type"] == "application/gzip"
+    names = tarfile.open(fileobj=io.BytesIO(archive.content), mode="r:gz").getnames()
+    assert any(n.endswith("/apps/docs/x.py") for n in names) and any(n.endswith("/SOURCE_OFFER.txt") for n in names)
+    for path in ("/api/about/", "/api/source-code/x"):
+        assert c.get(path).status_code in (401, 404), (factory, path)
+
+
+def test_every_process_mounts_the_offer_exactly_once(tmp_path, monkeypatch, small_tree):
+    """The composer mounts the router on the roles without Synwevo Docs and Docs' install on the
+    roles with it; the modules mount it in their standalone factories, never in the install()
+    the composer calls — so no composed process carries two routers for one path."""
+    def paths(routes, prefix=""):
+        # This FastAPI keeps an included router as one `_IncludedRouter` entry without a path
+        # (services/identity/tests/test_admin.py), and the schema's path table would fold two
+        # routers for one path into one entry: walk into the included routers instead.
+        for r in routes:
+            inner = getattr(r, "original_router", None)
+            if inner is not None:
+                yield from paths(inner.routes, prefix + r.include_context.prefix)
+            elif getattr(r, "path", None) is not None:
+                yield prefix + r.path
+
+    apps = {role: _client(tmp_path / f"once-{role}", monkeypatch, mode="session", role=role).app for role in ROLES}
+    for factory in STANDALONE:
+        apps[factory] = _standalone(factory, tmp_path / f"once-{factory}", monkeypatch, mode="session").app
+    for name, app in apps.items():
+        mounted = list(paths(app.router.routes))
+        assert "/api/auth/me" in mounted, f"{name}: 路由表读取方式失效了"
+        offered = sorted(p for p in mounted if p in ("/api/about", "/api/source-code"))
+        assert offered == ["/api/about", "/api/source-code"], (name, offered)
+
+
+def test_every_role_and_every_module_says_the_same_about_the_licence(tmp_path, monkeypatch, small_tree):
+    """One program, one statement: the Docs role reads the engine it has selected, every other
+    role and module the selection the same settings make (synwevo_core.source_offer), and the
+    answers are the same document."""
+    bodies = {role: _client(tmp_path / f"same-{role}", monkeypatch, mode="session", role=role).get("/api/about").json()
+              for role in ROLES}
+    for factory in STANDALONE:
+        bodies[factory] = _standalone(factory, tmp_path / f"same-{factory}", monkeypatch, mode="session").get("/api/about").json()
+    first = bodies["all"]
+    assert {name for name, body in bodies.items() if body != first} == set(), bodies
+
+
 @pytest.mark.parametrize("role", ROLES)
 def test_the_offer_opens_no_other_path(tmp_path, monkeypatch, small_tree, role):
     """Exact paths: a neighbour of the offer, and the business API beside it, still need a session."""
@@ -67,8 +139,8 @@ def test_the_offer_opens_no_other_path(tmp_path, monkeypatch, small_tree, role):
 
 
 def test_the_archive_is_rate_limited_per_address(tmp_path, monkeypatch, small_tree):
-    from synwevo_docs import licensing
-    monkeypatch.setattr(licensing, "DOWNLOADS_PER_MIN", 2)
+    from synwevo_core import source_offer
+    monkeypatch.setattr(source_offer, "DOWNLOADS_PER_MIN", 2)
     c = _client(tmp_path / "limited", monkeypatch, mode="session", role="accounts")
     assert [c.get("/api/source-code").status_code for _ in range(3)] == [200, 200, 429]
     refused = c.get("/api/source-code").json()
@@ -120,8 +192,8 @@ def test_repeats_are_answered_from_the_edge_and_the_etag(tmp_path, monkeypatch, 
     """The archive is the same bytes until the next deployment, so the edge may keep it: public,
     a bounded max-age and a strong ETag. A revalidation that still matches is a 304 with no body,
     and it does not spend the address's downloads."""
-    from synwevo_docs import licensing
-    monkeypatch.setattr(licensing, "DOWNLOADS_PER_MIN", 1)
+    from synwevo_core import source_offer
+    monkeypatch.setattr(source_offer, "DOWNLOADS_PER_MIN", 1)
     c = _client(tmp_path / "edge", monkeypatch, mode="session", role="accounts")
     first = c.get("/api/source-code")
     assert first.status_code == 200
@@ -142,8 +214,8 @@ def test_the_limit_counts_an_ipv6_64_as_one_client(tmp_path, monkeypatch, small_
     """An IPv6 subscriber is routinely given a whole /64 and picks addresses inside it freely, so a
     bucket per /128 limited nothing: 60 addresses of one /64 got 60 archives. IPv6 is counted per
     /64, IPv4 per address, and an IPv4-mapped IPv6 address as the IPv4 address it is."""
-    from synwevo_docs import licensing
-    monkeypatch.setattr(licensing, "DOWNLOADS_PER_MIN", 2)
+    from synwevo_core import source_offer
+    monkeypatch.setattr(source_offer, "DOWNLOADS_PER_MIN", 2)
     monkeypatch.setenv("SYNWEVO_TRUST_PROXY", "1")
     c = _client(tmp_path / "v6", monkeypatch, mode="session", role="accounts")
 
@@ -163,16 +235,16 @@ def test_the_limit_also_counts_the_wider_prefixes_a_site_is_given(tmp_path, monk
     holder 256× or 65,536× the allowance (review: 16 /64s of one /56, 6 requests each, 96 × 200).
     The /56 and the /48 are counted too, each with a few clients' allowance, and a refused request
     spends nothing at any level."""
-    from synwevo_docs import licensing
-    monkeypatch.setattr(licensing, "DOWNLOADS_PER_MIN", 2)
+    from synwevo_core import source_offer
+    monkeypatch.setattr(source_offer, "DOWNLOADS_PER_MIN", 2)
     monkeypatch.setenv("SYNWEVO_TRUST_PROXY", "1")
     c = _client(tmp_path / "v6-wide", monkeypatch, mode="session", role="accounts")
 
     def get(address):
         return c.get("/api/source-code", headers={"X-Forwarded-For": address})
 
-    per_56 = 2 * licensing.WIDER_PREFIX_CLIENTS[56]
-    per_48 = 2 * licensing.WIDER_PREFIX_CLIENTS[48]
+    per_56 = 2 * source_offer.WIDER_PREFIX_CLIENTS[56]
+    per_48 = 2 * source_offer.WIDER_PREFIX_CLIENTS[48]
     assert per_56 < per_48 < 2 * 256, (per_56, per_48)
     # A different /64 of the same /56 for every request: the /56 runs out, not the /64s.
     one_56 = [get(f"2001:db8:77:{i:x}::1").status_code for i in range(per_56 + 3)]
@@ -207,8 +279,8 @@ def test_an_ipv6_address_that_carries_an_ipv4_address_is_counted_as_it():
 
 
 def test_clients_behind_a_translator_each_get_their_own_downloads(tmp_path, monkeypatch, small_tree):
-    from synwevo_docs import licensing
-    monkeypatch.setattr(licensing, "DOWNLOADS_PER_MIN", 2)
+    from synwevo_core import source_offer
+    monkeypatch.setattr(source_offer, "DOWNLOADS_PER_MIN", 2)
     monkeypatch.setenv("SYNWEVO_TRUST_PROXY", "1")
     c = _client(tmp_path / "nat64", monkeypatch, mode="session", role="accounts")
 
@@ -223,12 +295,12 @@ def test_clients_behind_a_translator_each_get_their_own_downloads(tmp_path, monk
 def test_without_a_release_list_the_archive_is_refused_not_walked(tmp_path, monkeypatch):
     """An installation with neither the image's manifest nor a Git checkout cannot tell its source
     from whatever else sits in the directory, so it serves nothing rather than everything."""
-    from synwevo_docs import licensing
+    from synwevo_core import source_offer
     root = tmp_path / "bare"
     (root / "apps" / "docs").mkdir(parents=True)
     (root / "apps" / "docs" / "x.py").write_text("# code\n", encoding="utf-8")
     (root / "apps" / "docs" / "runtime.env.bak").write_text("SECRET=fixture\n", encoding="utf-8")
-    monkeypatch.setattr(licensing, "ROOT", root)
+    monkeypatch.setattr(source_offer, "ROOT", root)
     c = _client(tmp_path / "bare-data", monkeypatch, mode="session", role="accounts")
     r = c.get("/api/source-code")
     assert r.status_code == 503 and r.json()["error"] == "source_unavailable", r.text

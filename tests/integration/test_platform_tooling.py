@@ -465,7 +465,7 @@ def test_the_seed_count_of_the_random_client_runs_reaches_the_tests():
 
 
 def test_the_source_offer_contains_the_locked_installation_inputs():
-    from synwevo_docs.licensing import _archive_files
+    from synwevo_core.source_offer import _archive_files
     offered = {name for _, name in _archive_files()}
     assert {"scripts/platform.py", "requirements-dev.txt", "infra/server/requirements.txt",
             "infra/server/requirements.lock", "infra/server/requirements-build.txt"} <= offered

@@ -28,7 +28,7 @@ RUN npm run build -w @synwevo/docs-web && npm run build -w @synwevo/account-web 
 # build output — is not), and only when the context is a `git archive` of a commit with nothing
 # added or changed, as CI and the deploy receiver build from: every file must carry the commit
 # time git archive gives it. From a working tree, or from an unpacked archive that has had files
-# added or edited, it writes nothing and the offer refuses (apps/docs/synwevo_docs/source_manifest.py;
+# added or edited, it writes nothing and the offer refuses (packages/core/synwevo_core/source_manifest.py;
 # build with `git archive --format=tar HEAD | docker build -f infra/Dockerfile -t synwevo -`).
 #
 # A stage of its own, on one COPY of the whole context, because Docker's layer cache leaves
@@ -39,7 +39,7 @@ RUN npm run build -w @synwevo/docs-web && npm run build -w @synwevo/account-web 
 # other commit's build can supply it. The manifest goes to /manifest, empty when the writer refuses.
 FROM python:3.12-slim-trixie AS release
 COPY . /release
-RUN mkdir /manifest && python -P /release/apps/docs/synwevo_docs/source_manifest.py /release /manifest
+RUN mkdir /manifest && python -P /release/packages/core/synwevo_core/source_manifest.py /release /manifest
 
 # Trixie's LibreOffice 25 supports the XLOOKUP formulas in the real engine/reference suite.
 # Bookworm's 7.4 returns #NAME? for those workbooks.
@@ -91,7 +91,7 @@ COPY infra/Dockerfile infra/docker-compose.yml infra/
 # The rest of what builds, installs and runs it — the production stack, the CI workflow that builds
 # and ships this image, the build-context rules, the configuration template and the test
 # configuration — so the Corresponding Source served from this image is complete
-# (synwevo_docs.licensing.INCLUDE; filled-in *.env files are excluded by .dockerignore and the archive).
+# (synwevo_core.source_offer.INCLUDE; filled-in *.env files are excluded by .dockerignore and the archive).
 COPY infra/production/ infra/production/
 COPY .github/ .github/
 COPY .dockerignore .env.example conftest.py ./

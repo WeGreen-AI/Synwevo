@@ -14,7 +14,7 @@ statement that must stay true:
 
 * identifiers, configuration values, URLs, import paths, package names in requirements/locks;
 * comments and docstrings (the code should keep saying what it really uses);
-* the licence attribution page (`apps/docs/synwevo_docs/licensing.py` and the shell strings that
+* the licence attribution page (`packages/core/synwevo_core/source_offer.py` and the shell strings that
   translate its rows): the AGPL/MPL/Apache obligations name the components, and pretending
   otherwise would be a false attribution;
 * tests and documentation;
@@ -56,7 +56,7 @@ PYTHON_ROOTS = ["apps/docs/synwevo_docs", "apps/portal/synwevo_portal", "apps/me
 
 # Files whose every literal is an attribution or an operator-facing licence statement.
 ATTRIBUTION_FILES = {
-    "apps/docs/synwevo_docs/licensing.py": "关于与许可页：AGPL-3.0 §13 / MPL-2.0 / Apache-2.0 的归属声明必须写明组件名",
+    "packages/core/synwevo_core/source_offer.py": "关于与许可页：AGPL-3.0 §13 / MPL-2.0 / Apache-2.0 的归属声明必须写明组件名",
 }
 
 # Individual literals allowed with a reason. Keys are exact literals.

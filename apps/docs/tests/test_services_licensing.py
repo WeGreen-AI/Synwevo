@@ -10,7 +10,7 @@ import tarfile
 
 import pytest
 
-from synwevo_docs import licensing, source_manifest
+from synwevo_core import source_manifest, source_offer
 
 
 def _tree(root):
@@ -25,12 +25,12 @@ def _tree(root):
 def test_the_image_archive_is_built_once(monkeypatch, tmp_path):
     """The image's files cannot change (read-only root filesystem): one build per process."""
     _tree(tmp_path)
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    monkeypatch.setattr(source_offer, "ROOT", tmp_path)
     built = []
-    real = licensing._build_archive
-    monkeypatch.setattr(licensing, "_build_archive", lambda listing: built.append(1) or real(listing))
-    a, _ = licensing.source_archive()
-    b, _ = licensing.source_archive()
+    real = source_offer._build_archive
+    monkeypatch.setattr(source_offer, "_build_archive", lambda listing: built.append(1) or real(listing))
+    a, _ = source_offer.source_archive()
+    b, _ = source_offer.source_archive()
     assert a is b and len(built) == 1                                     # not re-tarred per request
 
 
@@ -43,24 +43,24 @@ def test_a_checkout_archive_is_reused_until_a_file_changes(monkeypatch, tmp_path
     f.write_text("# code\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
-    monkeypatch.setattr(licensing, "CHECKOUT_TTL_S", 0.0)                 # list again on every call
+    monkeypatch.setattr(source_offer, "ROOT", tmp_path)
+    monkeypatch.setattr(source_offer, "CHECKOUT_TTL_S", 0.0)                 # list again on every call
     built = []
-    real = licensing._build_archive
-    monkeypatch.setattr(licensing, "_build_archive", lambda listing: built.append(1) or real(listing))
-    a, _ = licensing.source_archive()
-    b, _ = licensing.source_archive()
+    real = source_offer._build_archive
+    monkeypatch.setattr(source_offer, "_build_archive", lambda listing: built.append(1) or real(listing))
+    a, _ = source_offer.source_archive()
+    b, _ = source_offer.source_archive()
     assert a is b and len(built) == 1                                     # unchanged: not re-tarred
     f.write_text("# changed\n", encoding="utf-8")
     os.utime(f, ns=(f.stat().st_atime_ns, f.stat().st_mtime_ns + 10_000_000))
-    c, _ = licensing.source_archive()
+    c, _ = source_offer.source_archive()
     assert len(built) == 2 and c != a
 
 
 def test_the_offer_does_not_disclose_the_installation_path(monkeypatch, tmp_path):
     _tree(tmp_path)
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
-    blob, _ = licensing.source_archive()
+    monkeypatch.setattr(source_offer, "ROOT", tmp_path)
+    blob, _ = source_offer.source_archive()
     tar = tarfile.open(fileobj=io.BytesIO(blob))
     offer = tar.extractfile([m for m in tar.getmembers() if m.name.endswith("SOURCE_OFFER.txt")][0]).read().decode()
     assert str(tmp_path) not in offer and "生成位置" not in offer

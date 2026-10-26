@@ -34,7 +34,7 @@ These terms also apply to the earlier public commits of this repository.
 
 第三方组件 / Third-party components
 -----------------------------------
-下列条目与 apps/docs/synwevo_docs/licensing.py 的 THIRD_PARTY 表逐条对应（两处都是手工维护），
+下列条目与 packages/core/synwevo_core/source_offer.py 的 THIRD_PARTY 表逐条对应（两处都是手工维护），
 apps/docs/tests/test_licensing.py 保证两者一致。
 
 ==============================================================================

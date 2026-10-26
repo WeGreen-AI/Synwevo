@@ -4,4 +4,4 @@
 docs/agent-work/evidence/** export-ignore
 # The release manifest writer learns from these two placeholders that its build context is a `git archive`
 # of a commit (which commit, and when): the image's source offer lists only that archive's files.
-apps/docs/synwevo_docs/source_manifest.py export-subst
+packages/core/synwevo_core/source_manifest.py export-subst

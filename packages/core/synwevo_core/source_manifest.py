@@ -1,6 +1,6 @@
 """The release manifest: which files of an installation are the program's source.
 
-The Corresponding Source archive (``synwevo_docs.licensing``) is anonymous, so it must hold the
+The Corresponding Source archive (``synwevo_core.source_offer``) is anonymous, so it must hold the
 files of the source release and nothing else. Walking the installation's directories cannot
 tell those apart from what else sits there — a backup of ``runtime.env``, an editor's swap file, a
 key, a ``.pgpass`` — and a list of names to leave out is never complete. So the archive is built
@@ -41,10 +41,10 @@ only from a list of files that belong to the release:
   what they like from their own server anyway. Without a manifest the image refuses to offer an
   archive rather than offer whatever its context held (build such an image from ``git archive``,
   docs/operations.md §1);
-* **in a checkout**, ``git ls-files`` (``licensing`` asks git directly).
+* **in a checkout**, ``git ls-files`` (``source_offer`` asks git directly).
 
 Standard library only: the Dockerfile runs it in a stage without the platform's packages
-(``python -P /release/apps/docs/synwevo_docs/source_manifest.py /release /manifest``: check the
+(``python -P /release/packages/core/synwevo_core/source_manifest.py /release /manifest``: check the
 context in ``/release``, write the manifest into ``/manifest``, which the final stage copies to
 ``/app``).
 """
@@ -57,7 +57,7 @@ import stat
 import sys
 from pathlib import Path
 
-#: Written at the root of the installation by the image build; read by ``licensing``.
+#: Written at the root of the installation by the image build; read by ``source_offer``.
 MANIFEST_NAME = "SOURCE_MANIFEST.json"
 FORMAT = 1
 

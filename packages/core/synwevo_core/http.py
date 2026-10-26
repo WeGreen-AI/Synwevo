@@ -320,7 +320,7 @@ def client_ip(request: Request) -> str:
 #: *can* control, not what one holder always does: VPS and cloud providers give each server its own
 #: /64 out of a shared pool, and mobile networks one /64 per connection (RFC 6459), so there a /56
 #: or a /48 is many unrelated customers. An address cannot tell the two apart; a limit that counts
-#: the wider prefixes says what that costs (``synwevo_docs.licensing.WIDER_PREFIX_CLIENTS``). Wider
+#: the wider prefixes says what that costs (``synwevo_core.source_offer.WIDER_PREFIX_CLIENTS``). Wider
 #: than a /48 is an operator's allocation and is never counted.
 IPV6_HOLDER_PREFIXES = (64, 56, 48)
 

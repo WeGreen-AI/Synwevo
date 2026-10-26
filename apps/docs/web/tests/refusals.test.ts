@@ -31,8 +31,9 @@ import { errorText } from "../src/lib/perm.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..", "..");
 const DOCS = join(ROOT, "apps/docs/synwevo_docs");
-/** Copy requests are made in the workbench and decided by the shared service in synwevo_core. */
-const SHARED_FILES = ["packages/core/synwevo_core/project_copies.py"];
+/** Copy requests are made in the workbench and decided by the shared service in synwevo_core; the
+ *  About page links to the source archive, which the shared source offer serves on every role. */
+const SHARED_FILES = ["packages/core/synwevo_core/project_copies.py", "packages/core/synwevo_core/source_offer.py"];
 
 // ------------------------------------------------------------------ reading the server
 
@@ -298,7 +299,7 @@ const FORWARDED: Record<string, string> = {
   "engine/ocr.py: \"文字识别无法加载语言数据：\" + err.strip()[-300:]": "the recognizer's own output; code-mapped as ocr_failed",
   "editor_contract.py: message": "the editor contract's own _bad(where, message), whose sentences are read above",
   "editor_contract.py: \"取值只能是 \" + \" / \".join(choices)": "an enumerated editor option: the editors offer only valid ones",
-  "licensing.py: str(refused)": "SourceUnavailable: why the AGPL source archive cannot be offered (no release manifest, a checkout git will not list). It answers the anonymous /api/source-code download link, a browser navigation, never a workbench request",
+  "packages/core/synwevo_core/source_offer.py: str(refused)": "SourceUnavailable: why the AGPL source archive cannot be offered (no release manifest, a checkout git will not list). It answers the anonymous /api/source-code download link, a browser navigation, never a workbench request",
   "engine/transforms.py: \"；\".join(errs)": "the value transforms' own checks, joined, before an unchecked transform could run: a field's format is checked when it is saved (bad_format) and the Transforms editor writes only valid mapping transforms",
 };
 

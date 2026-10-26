@@ -18,7 +18,8 @@ import os
 import tarfile
 from pathlib import Path
 
-from synwevo_docs import licensing, source_manifest
+from synwevo_core import source_manifest, source_offer
+from synwevo_docs import licensing
 
 ROOT = __import__("synwevo_core.http", fromlist=["repo_root"]).repo_root()
 
@@ -38,7 +39,7 @@ def test_agpl_obligation_follows_the_binary_not_the_engine_setting(monkeypatch):
     """Selecting pdfium changes which engine runs; it removes nothing from the image."""
     from synwevo_docs.engine import pdf_engine
     monkeypatch.setattr(pdf_engine, "ENGINE", "pdfium")
-    monkeypatch.setattr(licensing, "pymupdf_installed", lambda: True)
+    monkeypatch.setattr(source_offer, "pymupdf_installed", lambda: True)
     a = licensing.about()
     assert a["pymupdf_used_by_engine"] is False       # the engine really is pdfium
     assert a["pymupdf_installed"] is True
@@ -50,7 +51,7 @@ def test_agpl_obligation_follows_the_binary_not_the_engine_setting(monkeypatch):
 def test_no_agpl_claim_only_when_pymupdf_is_absent(monkeypatch):
     from synwevo_docs.engine import pdf_engine
     monkeypatch.setattr(pdf_engine, "ENGINE", "pdfium")
-    monkeypatch.setattr(licensing, "pymupdf_installed", lambda: False)
+    monkeypatch.setattr(source_offer, "pymupdf_installed", lambda: False)
     a = licensing.about()
     assert a["agpl_component_active"] is False
     assert "无第三方 AGPL 依赖" in a["notice"] and "不含 MuPDF" in a["notice"]
@@ -60,26 +61,46 @@ def test_no_agpl_claim_only_when_pymupdf_is_absent(monkeypatch):
 def test_pymupdf_engine_keeps_the_section_13_offer(monkeypatch):
     from synwevo_docs.engine import pdf_engine
     monkeypatch.setattr(pdf_engine, "ENGINE", "pymupdf")
-    monkeypatch.setattr(licensing, "pymupdf_installed", lambda: True)
+    monkeypatch.setattr(source_offer, "pymupdf_installed", lambda: True)
     a = licensing.about()
     assert a["pymupdf_used_by_engine"] and a["agpl_component_active"]
     assert "第 13 条" in a["notice"]
+
+
+def test_the_shared_statement_selects_the_engine_as_synwevo_docs_does(monkeypatch):
+    """The account service, the portal and Synwevo Message answer /api/about without Synwevo Docs
+    (they may not import it), so the shared module works the engine out from the same settings by
+    the same rule — and says what this process would: the same document as Docs' own answer."""
+    from synwevo_docs.engine import pdf_engine
+    for setting in ("", "pdfium", "pymupdf", "PDFium ", "something-else"):
+        if setting:
+            monkeypatch.setenv("SYNWEVO_DOCS_PDF_ENGINE", setting)
+        else:
+            for name in ("SYNWEVO_DOCS_PDF_ENGINE", "SYNWEVO_PDF_ENGINE", "DOCWEAVE_PDF_ENGINE"):
+                monkeypatch.delenv(name, raising=False)
+        selected = pdf_engine._select_engine()
+        assert source_offer.configured_pdf_engine() == selected, setting
+        monkeypatch.setattr(pdf_engine, "ENGINE", selected)
+        assert source_offer.about() == licensing.about(), setting
+    # A Docs process that switched its engine at run time says so; the others keep the settings'.
+    monkeypatch.setattr(pdf_engine, "ENGINE", "pdfium" if selected == "pymupdf" else "pymupdf")
+    assert licensing.about()["pdf_engine"] == pdf_engine.ENGINE != source_offer.about()["pdf_engine"]
 
 
 def test_archive_says_so_when_it_is_incomplete(monkeypatch, tmp_path):
     """Simulate a partial image: the business package present, everything else absent."""
     (tmp_path / "apps" / "docs" / "synwevo_docs").mkdir(parents=True)
     (tmp_path / "apps" / "docs" / "synwevo_docs" / "x.py").write_text("# code\n", encoding="utf-8")
-    monkeypatch.setattr(licensing, "ROOT", _as_built(tmp_path))
+    monkeypatch.setattr(source_offer, "ROOT", _as_built(tmp_path))
 
-    status = licensing.source_status()
+    status = source_offer.source_status()
     assert not status["complete"]
     # The shared packages and the account service are part of the running program after the
     # platform restructure, so their absence has to be reported like any other gap.
     assert "packages" in status["missing"] and "docs" in status["missing"]
     assert "services/identity" in status["missing"] and "apps/suite" in status["missing"]
 
-    blob, name = licensing.source_archive()
+    blob, name = source_offer.source_archive()
     tar = tarfile.open(fileobj=io.BytesIO(blob))
     offer = tar.extractfile([m for m in tar.getmembers() if m.name.endswith("SOURCE_OFFER.txt")][0]).read().decode()
     assert "并不完整" in offer, "缺内容时必须说出来，不能继续声称完整"
@@ -88,7 +109,7 @@ def test_archive_says_so_when_it_is_incomplete(monkeypatch, tmp_path):
 
 
 def test_archive_reports_complete_when_everything_is_present(monkeypatch, tmp_path):
-    for rel in licensing.INCLUDE:
+    for rel in source_offer.INCLUDE:
         p = tmp_path / rel
         if "." in Path(rel).name:
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -96,9 +117,9 @@ def test_archive_reports_complete_when_everything_is_present(monkeypatch, tmp_pa
         else:
             p.mkdir(parents=True, exist_ok=True)
             (p / "f.txt").write_text("x\n", encoding="utf-8")
-    monkeypatch.setattr(licensing, "ROOT", _as_built(tmp_path))
-    assert licensing.source_status()["complete"]
-    blob, _ = licensing.source_archive()
+    monkeypatch.setattr(source_offer, "ROOT", _as_built(tmp_path))
+    assert source_offer.source_status()["complete"]
+    blob, _ = source_offer.source_archive()
     tar = tarfile.open(fileobj=io.BytesIO(blob))
     offer = tar.extractfile([m for m in tar.getmembers() if m.name.endswith("SOURCE_OFFER.txt")][0]).read().decode()
     assert "包含所列全部内容" in offer and "并不完整" not in offer
@@ -160,18 +181,18 @@ def _covered(rel: str, sources: list[str]) -> bool:
 
 def test_docker_image_carries_every_path_the_offer_promises():
     """The archive is built from the files on disk, so the image must contain them — every entry
-    of licensing.INCLUDE, not a hand-picked list that can drift from it.
+    of source_offer.INCLUDE, not a hand-picked list that can drift from it.
 
     The deployed container served a backend-only archive because the Dockerfile COPYed only
     backend/ and the compiled frontend/dist. Every entry exists now that LICENSE is chosen, so a
     missing one is a failure rather than a skip: inside the CI image this test runs against the
     image's own files, and a skip there would let an image without LICENSE pass in silence.
     """
-    missing = [rel for rel in licensing.INCLUDE if not (ROOT / rel).exists()]
+    missing = [rel for rel in source_offer.INCLUDE if not (ROOT / rel).exists()]
     assert not missing, f"对应源代码包承诺的这些路径在运行目录里不存在：{missing}"
     sources = _dockerfile_copy_sources((ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8"))
     assert sources, "没有解析出任何 COPY"
-    for rel in licensing.INCLUDE:
+    for rel in source_offer.INCLUDE:
         assert _covered(rel, sources), f"Dockerfile 没有把 {rel} 放进镜像，对应源代码包会缺这一块"
 
 
@@ -185,7 +206,7 @@ def test_every_path_the_image_copies_or_installs_is_in_the_offer():
     text = (ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8")
     copied, installed = _dockerfile_copy_sources(text), _dockerfile_editable_installs(text)
     assert copied and installed, "没有解析出 COPY 或 pip install -e"
-    include = list(licensing.INCLUDE)
+    include = list(source_offer.INCLUDE)
     missing = sorted({src for src in copied + installed if not _covered(src, include)})
     assert not missing, f"镜像复制或安装了这些路径，对应源代码包却不含它们：{missing}"
 
@@ -208,12 +229,12 @@ def test_every_tracked_path_is_offered_or_excluded_with_a_reason():
                              capture_output=True).stdout.decode("utf-8").split("\0")
     tracked = [t for t in tracked if t]
     assert len(tracked) > 1000, "git ls-files 没有列出仓库文件"
-    covered = list(licensing.INCLUDE) + list(licensing.NOT_OFFERED)
+    covered = list(source_offer.INCLUDE) + list(source_offer.NOT_OFFERED)
     stray = sorted({t.split("/")[0] if "/" not in t else "/".join(t.split("/")[:2])
                     for t in tracked if not _covered(t, covered)})
     assert not stray, f"这些受版本控制的路径既不在对应源代码包里，也没有写明不提供的理由：{stray}"
-    assert all(reason.strip() for reason in licensing.NOT_OFFERED.values())
-    assert not set(licensing.INCLUDE) & set(licensing.NOT_OFFERED)
+    assert all(reason.strip() for reason in source_offer.NOT_OFFERED.values())
+    assert not set(source_offer.INCLUDE) & set(source_offer.NOT_OFFERED)
 
 
 def test_filled_in_configuration_never_enters_the_archive(monkeypatch, tmp_path):
@@ -226,8 +247,8 @@ def test_filled_in_configuration_never_enters_the_archive(monkeypatch, tmp_path)
     for rel in ("infra/production/runtime.env.example", ".env.example", "apps/docs/x.py"):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("# template\n", encoding="utf-8")
-    monkeypatch.setattr(licensing, "ROOT", _as_built(tmp_path))
-    offered = {name for _, name in licensing._archive_files()}
+    monkeypatch.setattr(source_offer, "ROOT", _as_built(tmp_path))
+    offered = {name for _, name in source_offer._archive_files()}
     assert {"infra/production/runtime.env.example", ".env.example", "apps/docs/x.py"} <= offered
     assert not {n for n in offered if n.endswith(".env") or n.split("/")[-1].startswith(".env.local")}
     dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8").split()
@@ -235,7 +256,7 @@ def test_filled_in_configuration_never_enters_the_archive(monkeypatch, tmp_path)
 
 
 def test_the_offer_holds_every_mounted_application_and_the_licence_files():
-    offered = {name for _, name in licensing._archive_files()}
+    offered = {name for _, name in source_offer._archive_files()}
     for must in ("apps/suite/synwevo_suite/app.py", "apps/suite/web/src/main.tsx",
                  "apps/messages/synwevo_messages/app.py", "apps/messages/web/src/main.tsx",
                  "apps/portal/web/src/main.tsx", "packages/ui/src/index.ts",
@@ -250,11 +271,11 @@ def test_the_offer_holds_every_mounted_application_and_the_licence_files():
 def test_no_source_file_is_left_out_for_its_size():
     """MAX_FILE used to drop large files without a word; now the offer names them, and the
     repository is kept to none."""
-    assert licensing.oversized() == []
+    assert source_offer.oversized() == []
 
 
 def test_an_oversized_file_is_named_in_the_offer(monkeypatch, tmp_path):
-    for rel in licensing.INCLUDE:
+    for rel in source_offer.INCLUDE:
         p = tmp_path / rel
         if "." in Path(rel).name:
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -263,9 +284,9 @@ def test_an_oversized_file_is_named_in_the_offer(monkeypatch, tmp_path):
             p.mkdir(parents=True, exist_ok=True)
             (p / "f.txt").write_text("x\n", encoding="utf-8")
     (tmp_path / "docs" / "big.bin").write_bytes(b"\0" * 64)
-    monkeypatch.setattr(licensing, "ROOT", _as_built(tmp_path))
-    monkeypatch.setattr(licensing, "MAX_FILE", 32)
-    blob, _ = licensing.source_archive()
+    monkeypatch.setattr(source_offer, "ROOT", _as_built(tmp_path))
+    monkeypatch.setattr(source_offer, "MAX_FILE", 32)
+    blob, _ = source_offer.source_archive()
     tar = tarfile.open(fileobj=io.BytesIO(blob))
     names = tar.getnames()
     offer = tar.extractfile([m for m in tar.getmembers() if m.name.endswith("SOURCE_OFFER.txt")][0]).read().decode()
@@ -314,8 +335,8 @@ def test_files_beside_the_source_in_a_checkout_are_never_offered(monkeypatch, tm
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "add", "-A")
     _plant(tmp_path, PLANTED)
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
-    offered = {name for _, name in licensing._archive_files()}
+    monkeypatch.setattr(source_offer, "ROOT", tmp_path)
+    offered = {name for _, name in source_offer._archive_files()}
     assert set(SOURCE) <= offered
     assert not offered & set(PLANTED), sorted(offered & set(PLANTED))
     assert "docs/evidence/shot.txt" not in offered, "git archive 不导出的文件，检出里也不提供（与镜像一致）"
@@ -327,8 +348,8 @@ def test_files_added_after_the_image_build_are_never_offered(monkeypatch, tmp_pa
     _plant(tmp_path, SOURCE)
     _as_built(tmp_path)
     _plant(tmp_path, PLANTED)
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
-    offered = {name for _, name in licensing._archive_files()}
+    monkeypatch.setattr(source_offer, "ROOT", tmp_path)
+    offered = {name for _, name in source_offer._archive_files()}
     assert set(SOURCE) <= offered and not offered & set(PLANTED), sorted(offered & set(PLANTED))
 
 
@@ -336,11 +357,11 @@ def test_without_a_release_list_nothing_is_offered(monkeypatch, tmp_path):
     """Neither a manifest nor a checkout: refuse, never fall back to walking the directory."""
     import pytest
     _plant(tmp_path, SOURCE + PLANTED)
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
-    with pytest.raises(licensing.SourceUnavailable) as refused:
-        licensing.source_archive()
+    monkeypatch.setattr(source_offer, "ROOT", tmp_path)
+    with pytest.raises(source_offer.SourceUnavailable) as refused:
+        source_offer.source_archive()
     assert "git archive" in str(refused.value)
-    status = licensing.source_status()
+    status = source_offer.source_status()
     assert status["available"] is False and status["complete"] is False
 
 
@@ -371,19 +392,19 @@ def test_a_checkout_git_refuses_to_read_says_why_and_how_to_allow_it(monkeypatch
     for i, message in enumerate((f"fatal: detected dubious ownership in repository at '{root}'",
                                  f"fatal: unsafe repository ('{root}' is owned by someone else)")):   # git 2.35.2
         _fake_git(tmp_path / f"git-{i}", monkeypatch, message)
-        monkeypatch.setattr(licensing, "ROOT", root)
-        licensing._CACHE.clear()
-        with pytest.raises(licensing.SourceUnavailable) as refused:
-            licensing.source_archive()
+        monkeypatch.setattr(source_offer, "ROOT", root)
+        source_offer._CACHE.clear()
+        with pytest.raises(source_offer.SourceUnavailable) as refused:
+            source_offer.source_archive()
         said = str(refused.value)
         assert "safe.directory" in said and "Git 检出" in said, said
         assert "也不是 Git 检出" not in said, "它就是 Git 检出，不能说不是"
         assert str(root) not in said and str(tmp_path) not in said, "匿名回答不带安装目录的绝对路径"
         # The same reason on the next request (the refusal is cached), and in the status.
-        with pytest.raises(licensing.SourceUnavailable) as again:
-            licensing.source_archive()
+        with pytest.raises(source_offer.SourceUnavailable) as again:
+            source_offer.source_archive()
         assert str(again.value) == said
-        assert licensing.source_status()["reason"] == said
+        assert source_offer.source_status()["reason"] == said
 
 
 def test_git_is_asked_in_the_c_locale_so_its_refusal_is_recognised(monkeypatch, tmp_path):
@@ -413,15 +434,15 @@ def test_git_is_asked_in_the_c_locale_so_its_refusal_is_recognised(monkeypatch, 
     monkeypatch.setenv("PATH", str(bin_dir))
     for name in ("LC_ALL", "LC_MESSAGES", "LANGUAGE"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(licensing, "ROOT", root)
+    monkeypatch.setattr(source_offer, "ROOT", root)
     for setting in ({"LANG": "zh_CN.UTF-8"}, {"LC_ALL": "de_DE.UTF-8"},
                     {"LANG": "C.UTF-8", "LC_MESSAGES": "zh_CN.UTF-8", "LANGUAGE": "zh_CN"}):
         for name, value in setting.items():
             monkeypatch.setenv(name, value)
-        licensing._CACHE.clear()
-        with pytest.raises(licensing.SourceUnavailable) as refused:
-            licensing.source_archive()
-        assert str(refused.value) == licensing.GIT_NOT_OWNER, (setting, str(refused.value))
+        source_offer._CACHE.clear()
+        with pytest.raises(source_offer.SourceUnavailable) as refused:
+            source_offer.source_archive()
+        assert str(refused.value) == source_offer.GIT_NOT_OWNER, (setting, str(refused.value))
         for name in setting:
             monkeypatch.delenv(name)
 
@@ -454,9 +475,9 @@ def test_a_translated_real_git_refusal_is_still_recognised(monkeypatch, tmp_path
     for name in ("LC_ALL", "LC_MESSAGES", "LANGUAGE"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("LANG", "zh_CN.UTF-8")
-    with pytest.raises(licensing._GitWontList) as refused:
-        licensing._git_tracked(root)
-    assert str(refused.value) == licensing.GIT_NOT_OWNER
+    with pytest.raises(source_offer._GitWontList) as refused:
+        source_offer._git_tracked(root)
+    assert str(refused.value) == source_offer.GIT_NOT_OWNER
 
 
 def test_a_checkout_without_git_says_so(monkeypatch, tmp_path):
@@ -466,9 +487,9 @@ def test_a_checkout_without_git_says_so(monkeypatch, tmp_path):
     (root / ".git").mkdir()
     (tmp_path / "empty-bin").mkdir()
     monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
-    monkeypatch.setattr(licensing, "ROOT", root)
-    with pytest.raises(licensing.SourceUnavailable) as refused:
-        licensing.source_archive()
+    monkeypatch.setattr(source_offer, "ROOT", root)
+    with pytest.raises(source_offer.SourceUnavailable) as refused:
+        source_offer.source_archive()
     assert "Git 检出" in str(refused.value) and "找不到 git" in str(refused.value), str(refused.value)
 
 
@@ -551,7 +572,7 @@ def test_git_archive_stamps_the_writer_and_the_manifest_lists_only_the_archive(m
         # Inside the image the writer is already stamped and .gitattributes is not shipped (it is
         # version-control configuration): this runs in a checkout, as the tracked-path test does.
         pytest.skip("不是 Git 检出（镜像由 git archive 构建，没有 .git）：这一项在检出里核对")
-    rel = "apps/docs/synwevo_docs/source_manifest.py"
+    rel = "packages/core/synwevo_core/source_manifest.py"
     lines = [ln for ln in (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
              if ln.strip() and not ln.startswith("#") and "source_manifest" in ln]
     assert lines == [f"{rel} export-subst"], lines
@@ -646,7 +667,7 @@ def test_the_manifest_is_written_from_one_fresh_copy_of_the_whole_context():
     assert body.index(copies[0]) < body.index(run)
     tokens = run.split()
     script = next(i for i, t in enumerate(tokens) if t.endswith("source_manifest.py"))
-    assert tokens[script] == f"{context_dir}/apps/docs/synwevo_docs/source_manifest.py", run
+    assert tokens[script] == f"{context_dir}/packages/core/synwevo_core/source_manifest.py", run
     assert tokens[script + 1].rstrip("/") == context_dir, "写清单的程序核对的是这次复制的整个上下文"
     into = tokens[script + 2].rstrip("/")
     assert into != context_dir and f"mkdir {into}" in run, "清单写到上下文之外的目录，拒绝时那里就是空的"
@@ -724,8 +745,8 @@ def test_archive_members_reveal_no_owner_and_the_archive_is_reproducible(monkeyp
     _plant(first, SOURCE)
     (first / "scripts" / "platform.py").chmod(0o755)
     _as_built(first)
-    monkeypatch.setattr(licensing, "ROOT", first)
-    blob, name = licensing.source_archive()
+    monkeypatch.setattr(source_offer, "ROOT", first)
+    blob, name = source_offer.source_archive()
     with tarfile.open(fileobj=io.BytesIO(blob)) as tar:
         members = tar.getmembers()
     assert {(m.uid, m.gid, m.uname, m.gname) for m in members} == {(0, 0, "", "")}
@@ -743,8 +764,8 @@ def test_archive_members_reveal_no_owner_and_the_archive_is_reproducible(monkeyp
     for f in second.rglob("*"):
         if f.is_file():
             os.utime(f, (1_900_000_000, 1_900_000_000))
-    monkeypatch.setattr(licensing, "ROOT", second)
-    again, _ = licensing.source_archive()
+    monkeypatch.setattr(source_offer, "ROOT", second)
+    again, _ = source_offer.source_archive()
     assert again == blob, "同一发布在另一个位置、另一个时间生成的包应当逐字节相同"
 
 
@@ -761,11 +782,11 @@ def test_repeat_requests_do_not_touch_the_tree(monkeypatch, tmp_path):
     the archive already built: ~120 ms of CPU per anonymous request. The image's release list
     cannot change (read-only root filesystem), so after the first build a request costs nothing."""
     _plant(tmp_path, SOURCE)
-    monkeypatch.setattr(licensing, "ROOT", _as_built(tmp_path))
-    first = licensing.current_archive()
+    monkeypatch.setattr(source_offer, "ROOT", _as_built(tmp_path))
+    first = source_offer.current_archive()
     calls = _count_filesystem_calls(monkeypatch)
     for _ in range(3):
-        again = licensing.current_archive()
+        again = source_offer.current_archive()
     assert again is first and calls == [], calls[:10]
 
 
@@ -779,23 +800,23 @@ def test_a_checkout_is_listed_again_after_its_ttl(monkeypatch, tmp_path):
     _plant(tmp_path, SOURCE)
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "add", "-A")
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
+    monkeypatch.setattr(source_offer, "ROOT", tmp_path)
     clock = [1000.0]
-    monkeypatch.setattr(licensing, "_now", lambda: clock[0])
-    first = licensing.current_archive()
+    monkeypatch.setattr(source_offer, "_now", lambda: clock[0])
+    first = source_offer.current_archive()
     calls = _count_filesystem_calls(monkeypatch)
-    assert licensing.current_archive() is first and calls == []        # within the TTL: nothing
-    clock[0] += licensing.CHECKOUT_TTL_S + 1
+    assert source_offer.current_archive() is first and calls == []        # within the TTL: nothing
+    clock[0] += source_offer.CHECKOUT_TTL_S + 1
     monkeypatch.undo()                                                   # real os functions again
-    monkeypatch.setattr(licensing, "ROOT", tmp_path)
-    monkeypatch.setattr(licensing, "_now", lambda: clock[0])
-    assert licensing.current_archive() is first, "没有变化就不重新打包"
+    monkeypatch.setattr(source_offer, "ROOT", tmp_path)
+    monkeypatch.setattr(source_offer, "_now", lambda: clock[0])
+    assert source_offer.current_archive() is first, "没有变化就不重新打包"
     f = tmp_path / "docs" / "a.md"
     f.write_text("changed\n", encoding="utf-8")
     os.utime(f, (1_900_000_000, 1_900_000_000))
-    assert licensing.current_archive() is first, "TTL 之内不重新列出"
-    clock[0] += licensing.CHECKOUT_TTL_S + 1
-    changed = licensing.current_archive()
+    assert source_offer.current_archive() is first, "TTL 之内不重新列出"
+    clock[0] += source_offer.CHECKOUT_TTL_S + 1
+    changed = source_offer.current_archive()
     assert changed is not first and changed.etag != first.etag
 
 
@@ -815,7 +836,7 @@ def test_notice_lists_every_third_party_component():
     """NOTICE repeats THIRD_PARTY by hand; this stops the two drifting apart — name, licence, role
     and order, not only "every name appears somewhere"."""
     notice = (ROOT / "NOTICE").read_text(encoding="utf-8")
-    block = "\n".join(f"* {name}\n    许可：{lic}\n    用途：{role}\n" for name, lic, role in licensing.THIRD_PARTY)
+    block = "\n".join(f"* {name}\n    许可：{lic}\n    用途：{role}\n" for name, lic, role in source_offer.THIRD_PARTY)
     assert block in notice, "NOTICE 的第三方组件一节必须与 THIRD_PARTY 逐条一致（名称、许可、用途、顺序）"
     assert "AGPL-3.0" in notice
 
@@ -827,7 +848,7 @@ def _tokens(text: str) -> set[str]:
 
 
 def _named() -> set[str]:
-    return set().union(*(_tokens(name) for name, _lic, _role in licensing.THIRD_PARTY))
+    return set().union(*(_tokens(name) for name, _lic, _role in source_offer.THIRD_PARTY))
 
 
 # Pins in infra/server/requirements.lock that only build or test the program (pip, setuptools and
@@ -867,7 +888,7 @@ def test_every_front_end_runtime_dependency_is_attributed():
 
     missing = sorted(d for d in direct if not covered(d))
     assert not missing, f"这些前端运行时依赖没有写进 THIRD_PARTY 与 NOTICE：{missing}"
-    catch_all = [lic for name, lic, _role in licensing.THIRD_PARTY if "package-lock.json" in name]
+    catch_all = [lic for name, lic, _role in source_offer.THIRD_PARTY if "package-lock.json" in name]
     assert len(catch_all) == 1
     allowed = {part.strip() for part in catch_all[0].split("/")}
     bundled = {path.removeprefix("node_modules/"): entry.get("license") for path, entry in packages.items()
@@ -885,7 +906,7 @@ def test_every_attribution_has_its_translation():
     web = ROOT / "apps" / "docs" / "web" / "src"
     catalogues = "".join((web / f).read_text(encoding="utf-8") for f in ("messages.server.ts", "messages.ts"))
     cjk = re.compile(r"[㐀-鿿]")
-    untranslated = sorted({text for row in licensing.THIRD_PARTY for text in row
+    untranslated = sorted({text for row in source_offer.THIRD_PARTY for text in row
                            if cjk.search(text) and f'"{text}"' not in catalogues and f"'{text}'" not in catalogues})
     assert not untranslated, f"Docs 外壳的目录缺少这些关于页文案的翻译：{untranslated}"
 
@@ -897,7 +918,7 @@ def test_the_licence_and_component_notices_have_their_translations(monkeypatch):
     catalogue = (ROOT / "apps" / "docs" / "web" / "src" / "messages.server.ts").read_text(encoding="utf-8")
     for engine, installed in (("pymupdf", True), ("pdfium", True), ("pdfium", False)):
         monkeypatch.setattr(pdf_engine, "ENGINE", engine)
-        monkeypatch.setattr(licensing, "pymupdf_installed", lambda installed=installed: installed)
+        monkeypatch.setattr(source_offer, "pymupdf_installed", lambda installed=installed: installed)
         a = licensing.about()
         for text in (a["license_notice"], a["notice"]):
             assert f'"{text}"' in catalogue, f"关于页的这句许可说明没有翻译：{text[:40]}…"
@@ -939,7 +960,7 @@ def test_the_or_later_choice_and_the_exceptions_are_stated():
     assert "AGPL-3.0-or-later" in notice and "either\nversion 3 of the License, or (at your option) any later version" in notice
     assert "Copyright (C) 2026 the Synwevo contributors" in notice
     assert "apps/docs/sdk/" in notice and "Apache-2.0" in notice and "TRADEMARKS.md" in notice
-    assert licensing.PROGRAM_LICENSE == "AGPL-3.0-or-later" and licensing.SDK_LICENSE == "Apache-2.0"
+    assert source_offer.PROGRAM_LICENSE == "AGPL-3.0-or-later" and source_offer.SDK_LICENSE == "Apache-2.0"
     for readme in ("README.md", "README.en.md"):
         text = (ROOT / readme).read_text(encoding="utf-8")
         assert "AGPL-3.0-or-later" in text and "TRADEMARKS.md" in text, readme
@@ -955,7 +976,7 @@ def test_every_platform_manifest_declares_the_program_licence():
     root_package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     manifests = [ROOT / "package.json"] + [ROOT / w / "package.json" for w in root_package["workspaces"]]
     for manifest in manifests:
-        assert json.loads(manifest.read_text(encoding="utf-8")).get("license") == licensing.PROGRAM_LICENSE, manifest
+        assert json.loads(manifest.read_text(encoding="utf-8")).get("license") == source_offer.PROGRAM_LICENSE, manifest
     # the platform's Python packages are the ones the image installs (not a glob: a checkout can hold
     # other worktrees under .claude/)
     installed = _dockerfile_editable_installs((ROOT / "infra" / "Dockerfile").read_text(encoding="utf-8"))
@@ -963,7 +984,7 @@ def test_every_platform_manifest_declares_the_program_licence():
     assert len(projects) >= 8, projects
     for project in projects:
         meta = tomllib.loads(project.read_text(encoding="utf-8"))["project"]
-        assert meta.get("license") == licensing.PROGRAM_LICENSE, project
+        assert meta.get("license") == source_offer.PROGRAM_LICENSE, project
         # A wheel or sdist built from the package states AGPL in its metadata, so it must also carry
         # the text (AGPL §4). PEP 639 licence files cannot point outside the project directory, so
         # each package holds an unmodified copy of the root LICENSE.

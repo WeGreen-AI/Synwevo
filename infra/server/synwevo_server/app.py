@@ -81,8 +81,10 @@ def create_app(data_dir: str | None = None, *, role: str | None = None,
     if not wants_app:
         # The licence and the Corresponding Source offer (AGPL-3.0 §13) belong to the whole
         # program, not to one application: every role serves them, anonymously (the gate's
-        # SOURCE_OFFER_PATHS). Where Synwevo Docs is mounted its install brings the same router.
-        from synwevo_docs.licensing import router as source_offer_router
+        # SOURCE_OFFER_PATHS). Where Synwevo Docs is mounted its install brings the same router,
+        # reporting the engine it selected; the modules' own install() functions do not mount it
+        # (their standalone factories do), so it is mounted exactly once.
+        from synwevo_core.source_offer import router as source_offer_router
         api.include_router(source_offer_router())
 
     if wants_app:

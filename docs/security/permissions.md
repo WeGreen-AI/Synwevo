@@ -538,6 +538,9 @@ blob id 直取接口 · 临时文件 · 日志导出
 数据；压缩包按客户端限速（每分钟 6 次；IPv4 按地址，IPv6 按 /64），带匹配 ETag 的重新验证返回 304 且不计数。
 相邻路径（`/api/about/`、`/api/source-code/x`）不因此匿名。压缩包只含源代码发布清单上的文件（镜像构建时
 从 `git archive` 上下文写入的清单，或检出的 `git ls-files`），两者都没有时拒绝（503），不会遍历目录。
+实现在共享包（`synwevo_core.source_offer`），每个进程挂载一次：组装时由 `synwevo_server`（有 Docs 的角色由
+Docs 的 install 挂载），账户服务、门户与 Synwevo Message 单独运行时由各自的 `create_app` 挂载，同样匿名
+（`services/identity/tests/test_source_offer.py`）。
 
 网关的每个判断——角色拒绝、精确匿名路径（探针与上面两个）、各前缀——都基于路由实际匹配的路径
 （ASGI `scope["path"]`，`synwevo_core.http.routed_path`），不基于 `request.url.path`：后者由 Starlette 从

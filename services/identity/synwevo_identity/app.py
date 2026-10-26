@@ -276,6 +276,11 @@ def create_app(data_dir: str | None = None, start_jobs: bool = True) -> FastAPI:
     api.include_router(build_session_router(plat.identity, plat.sessions, plat.audit))
     install(api, plat, start_jobs=start_jobs)
     install_probes(api, plat.store, worker=lambda: bool(api.state.mailer and api.state.mailer.alive()))
+    # The licence and the Corresponding Source offer (AGPL-3.0 §13), which every sign-in, sign-up
+    # and recovery page links to on this origin; anonymous (synwevo_core.http SOURCE_OFFER_PATHS).
+    # Here and not in install(): the composer mounts it once for the whole process.
+    from synwevo_core.source_offer import router as source_offer_router
+    api.include_router(source_offer_router())
 
     dist = web_dist()
     if mount_web(api, dist, assets_dir=ASSETS_DIR):

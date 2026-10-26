@@ -327,8 +327,9 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     def desensitized_file(blob: str, name: str = "脱敏文件"):
         return attachment(views.preview_file(blob), name)
 
-    # The licence and the Corresponding Source offer: one router, mounted on every role by the
-    # composer and reachable without a session (synwevo_docs.licensing.router).
+    # The licence and the Corresponding Source offer: the shared router (synwevo_core.source_offer),
+    # mounted once in every process and reachable without a session; here it reports the PDF engine
+    # this process has selected (synwevo_docs.licensing).
     from ..licensing import router as source_offer_router
     api.include_router(source_offer_router())
 
