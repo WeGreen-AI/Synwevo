@@ -157,6 +157,37 @@ def test_the_limit_counts_an_ipv6_64_as_one_client(tmp_path, monkeypatch, small_
     assert get("198.51.100.8") == 200
 
 
+def test_the_limit_also_counts_the_wider_prefixes_a_site_is_given(tmp_path, monkeypatch, small_tree):
+    """One /64 is one subnet, not one subscriber: an end site is routinely delegated a /56 (256
+    /64s) and a tunnel broker hands out a /48 (65,536) for free, so counting only per /64 gave one
+    holder 256× or 65,536× the allowance (review: 16 /64s of one /56, 6 requests each, 96 × 200).
+    The /56 and the /48 are counted too, each with a few clients' allowance, and a refused request
+    spends nothing at any level."""
+    from synwevo_docs import licensing
+    monkeypatch.setattr(licensing, "DOWNLOADS_PER_MIN", 2)
+    monkeypatch.setenv("SYNWEVO_TRUST_PROXY", "1")
+    c = _client(tmp_path / "v6-wide", monkeypatch, mode="session", role="accounts")
+
+    def get(address):
+        return c.get("/api/source-code", headers={"X-Forwarded-For": address})
+
+    per_56 = 2 * licensing.WIDER_PREFIX_CLIENTS[56]
+    per_48 = 2 * licensing.WIDER_PREFIX_CLIENTS[48]
+    assert per_56 < per_48 < 2 * 256, (per_56, per_48)
+    # A different /64 of the same /56 for every request: the /56 runs out, not the /64s.
+    one_56 = [get(f"2001:db8:77:{i:x}::1").status_code for i in range(per_56 + 3)]
+    assert one_56 == [200] * per_56 + [429] * 3, one_56
+    refused = get("2001:db8:77:ff::1")
+    assert refused.status_code == 429 and refused.json()["detail"]["retry_after"] >= 1
+    assert "no-store" in refused.headers["cache-control"]
+    # The /48 has spent only what the /56 was given: the refusals above took nothing.
+    other_56s = [get(f"2001:db8:77:{0x100 * (1 + i // per_56) + i % per_56:x}::1").status_code
+                 for i in range(per_48 - per_56 + 2)]
+    assert other_56s == [200] * (per_48 - per_56) + [429] * 2, other_56s
+    assert get("2001:db8:78::1").status_code == 200, "另一个 /48 是另一个站点"
+    assert get("198.51.100.9").status_code == 200, "IPv4 不受 IPv6 前缀计数影响"
+
+
 def test_without_a_release_list_the_archive_is_refused_not_walked(tmp_path, monkeypatch):
     """An installation with neither the image's manifest nor a Git checkout cannot tell its source
     from whatever else sits in the directory, so it serves nothing rather than everything."""

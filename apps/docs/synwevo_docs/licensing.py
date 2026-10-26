@@ -477,10 +477,41 @@ def _build_archive(listing: _Listing) -> Archive:
 
 
 #: Archive downloads per minute per client — an IPv4 address, or an IPv6 /64
-#: (``synwevo_core.http.address_bucket``). The offer is anonymous and the archive is tens of
-#: megabytes, so one client cannot turn it into a bandwidth pump; a person fetching the source is
-#: never near this. A revalidation answered 304 is not a download and is not counted.
+#: (``synwevo_core.http.address_buckets``). The offer is anonymous and the archive is about 15 MB,
+#: so one client cannot turn it into a bandwidth pump; a person fetching the source is never near
+#: this. A revalidation answered 304 is not a download and is not counted.
 DOWNLOADS_PER_MIN = 6
+#: How many clients' allowance each wider IPv6 prefix gets. Whoever holds a /56 or a /48 holds 256
+#: or 65,536 /64s, so per /64 alone such a holder got that many times DOWNLOADS_PER_MIN; counted
+#: at every prefix, a /48 gets at most four clients' worth. A download must fit every one of its
+#: address's buckets, and a refused one is charged to none.
+WIDER_PREFIX_CLIENTS = {56: 2, 48: 4}
+
+
+class _DownloadLimit:
+    """DOWNLOADS_PER_MIN per client, counted at each of the client's ``address_buckets``."""
+
+    def __init__(self):
+        from synwevo_core.http import IPV6_HOLDER_PREFIXES, RateBuckets
+        widths = [1] + [WIDER_PREFIX_CLIENTS[n] for n in IPV6_HOLDER_PREFIXES[1:]]
+        self._levels = [RateBuckets(DOWNLOADS_PER_MIN * w, name="source-code") for w in widths]
+        self._lock = threading.Lock()                # peek-then-take across levels is one step
+
+    def take(self, address: str) -> tuple[bool, float]:
+        """(allowed, seconds until a download would be allowed)."""
+        from synwevo_core.http import address_buckets
+        pairs = list(zip(self._levels, address_buckets(address)))
+        with self._lock:
+            waits = []
+            for bucket, key in pairs:
+                _ok, left, _wait = bucket.take(key, 0)      # cost 0: reads the bucket, spends nothing
+                if left < 1:
+                    waits.append((1 - left) * bucket.WINDOW_S / bucket.cap)
+            if waits:
+                return False, max(waits)
+            for bucket, key in pairs:
+                bucket.take(key)                          # cannot fail: every level had a token
+            return True, 0.0
 #: The archive changes only with a deployment, so an edge cache may keep it — for ten minutes, after
 #: which it revalidates (a 304 while the ETag still matches). A deployment's new source is
 #: therefore served everywhere within ten minutes. Error responses stay ``no-store`` (the gate).
@@ -510,10 +541,10 @@ def router():
     from fastapi import APIRouter
     from fastapi.responses import Response
     from synwevo_core.errors import ServiceError
-    from synwevo_core.http import RateBuckets, address_bucket, client_ip
+    from synwevo_core.http import client_ip
 
     r = APIRouter()
-    downloads = RateBuckets(DOWNLOADS_PER_MIN, name="source-code")
+    downloads = _DownloadLimit()
 
     @r.get("/api/about")
     def about_route():
@@ -530,7 +561,7 @@ def router():
         cache = {"ETag": archive.etag, "Cache-Control": ARCHIVE_CACHE_CONTROL}
         if _etag_matches(request.headers.get("if-none-match"), archive.etag):
             return Response(status_code=304, headers=cache)
-        allowed, _left, wait = downloads.take(address_bucket(client_ip(request) or "unknown"))
+        allowed, wait = downloads.take(client_ip(request) or "unknown")
         if not allowed:
             raise ServiceError(429, "too_many_attempts", "操作过于频繁，请稍后再试", {"retry_after": max(1, math.ceil(wait))})
         return Response(archive.data, media_type="application/gzip",

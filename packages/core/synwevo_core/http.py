@@ -313,25 +313,41 @@ def client_ip(request: Request) -> str:
     return (request.client.host if request.client else "") or ""
 
 
-def address_bucket(address: str) -> str:
-    """The key an address-based rate limit counts a client under: an IPv4 address as it is, an IPv6
-    address by its /64, and an IPv4-mapped IPv6 address as the IPv4 address it carries.
+#: The IPv6 prefixes one holder routinely controls, narrowest first: a /64 is one subnet, and an end
+#: site is delegated room for many — RFC 6177 (BCP 157) advises against handing it a single /64,
+#: and in practice it gets a /56 (256 /64s, a routine residential delegation) or a /48 (65,536,
+#: free from IPv6 tunnel brokers). Wider than a /48 is an operator's allocation, shared by sites.
+IPV6_HOLDER_PREFIXES = (64, 56, 48)
 
-    One IPv6 subscriber is routinely given a whole /64 (RFC 6177 recommends at least that) and
-    chooses the address inside it — privacy extensions rotate it on their own — so a bucket per
-    /128 limits nothing: 60 addresses of one /64 each got their own allowance. Anything that is
-    not an address (a test client's name, an empty string) is its own key.
+
+def address_buckets(address: str) -> tuple[str, ...]:
+    """Every key an address-based rate limit counts a client under, narrowest first: an IPv4
+    address as it is (one key); an IPv6 address by each prefix in ``IPV6_HOLDER_PREFIXES``; an
+    IPv4-mapped IPv6 address as the IPv4 address it carries.
+
+    The holder of a prefix chooses the addresses inside it — privacy extensions rotate them on
+    their own — so a bucket per /128 limits nothing (60 addresses of one /64 each got their own
+    allowance), and a bucket per /64 limits a /56 holder 256 times over and a /48 holder 65,536
+    times. A limit that means "per client" counts every one of these keys, each with its own
+    allowance. Anything that is not an address (a test client's name, an empty string) is its own
+    single key.
     """
     import ipaddress
     try:
         ip = ipaddress.ip_address(address.strip().strip("[]").split("%", 1)[0])
     except ValueError:
-        return address or "unknown"
+        return (address or "unknown",)
     if ip.version == 6:
         if ip.ipv4_mapped is not None:
-            return str(ip.ipv4_mapped)
-        return str(ipaddress.IPv6Network((ip, 64), strict=False))
-    return str(ip)
+            return (str(ip.ipv4_mapped),)
+        return tuple(str(ipaddress.IPv6Network((ip, n), strict=False)) for n in IPV6_HOLDER_PREFIXES)
+    return (str(ip),)
+
+
+def address_bucket(address: str) -> str:
+    """The narrowest of ``address_buckets``: an IPv4 address as it is, an IPv6 address by its /64,
+    an IPv4-mapped IPv6 address as the IPv4 address it carries."""
+    return address_buckets(address)[0]
 
 
 def routed_path(request: Request) -> str:
