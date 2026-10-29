@@ -424,10 +424,6 @@ export const serverMessages = {
     "en": "Legacy conversion, PDF export, actual pagination and formula fallback",
     "zh-Hant": "舊格式轉換、PDF 導出、真實分頁、公式後備計算"
   },
-  "Tesseract OCR（外部程序）+ chi_sim / eng 模型": {
-    "en": "Tesseract OCR (external program) + chi_sim / eng models",
-    "zh-Hant": "Tesseract OCR（外部程序）+ chi_sim / eng 模型"
-  },
   "扫描件 / 图片本地 OCR": {
     "en": "Local OCR for scans and images",
     "zh-Hant": "掃描件 / 圖片本地 OCR"
@@ -455,10 +451,6 @@ export const serverMessages = {
   "字体子集": {
     "en": "Font subsetting",
     "zh-Hant": "字體子集"
-  },
-  "argon2-cffi（含 argon2-cffi-bindings、cffi、pycparser）": {
-    "en": "argon2-cffi (including argon2-cffi-bindings, cffi and pycparser)",
-    "zh-Hant": "argon2-cffi（含 argon2-cffi-bindings、cffi、pycparser）"
   },
   "口令哈希（Argon2id；参数经部署机实测，见 synwevo_core/passwords.py）": {
     "en": "Password hashing (Argon2id; parameters measured on the deployment host; see synwevo_core/passwords.py)",
@@ -492,9 +484,17 @@ export const serverMessages = {
     "en": "CSV encoding detection",
     "zh-Hant": "CSV 編碼識別"
   },
-  "XLS 读取、旧格式检测": {
-    "en": "XLS reading and legacy format detection",
-    "zh-Hant": "XLS 讀取、舊格式檢測"
+  "XLS 读取": {
+    "en": "XLS reading",
+    "zh-Hant": "XLS 讀取"
+  },
+  "旧格式检测": {
+    "en": "Legacy format detection",
+    "zh-Hant": "舊格式檢測"
+  },
+  "BSD-3-Clause；早期部分代码为 David Giffin 的 BSD 式许可（含广告与致谢条款，见 NOTICE）": {
+    "en": "BSD-3-Clause; some earlier code under David Giffin's BSD-style licence (with advertising and acknowledgment clauses, see NOTICE)",
+    "zh-Hant": "BSD-3-Clause；早期部分程式碼為 David Giffin 的 BSD 式授權（含廣告與致謝條款，見 NOTICE）"
   },
   "界面": {
     "en": "User interface",
@@ -515,6 +515,134 @@ export const serverMessages = {
   "PDF 中文字体": {
     "en": "Chinese font for PDFs",
     "zh-Hant": "PDF 中文字體"
+  },
+  "Synwevo 以 AGPL-3.0-or-later 许可（见 LICENSE 与 NOTICE；apps/docs/sdk/ 下的 SDK 为 Apache-2.0；Synwevo 名称、Logo 与图标不在许可之内，见 TRADEMARKS.md）。向网络用户提供修改过的 Synwevo 时，第 13 条要求向他们提供对应源代码。": {
+    "en": "Synwevo is licensed under AGPL-3.0-or-later (see LICENSE and NOTICE; the SDKs under apps/docs/sdk/ are Apache-2.0; the Synwevo name, logos and icons are not licensed, see TRADEMARKS.md). Whoever offers a modified Synwevo to users over a network must, under section 13, offer them its Corresponding Source.",
+    "zh-Hant": "Synwevo 以 AGPL-3.0-or-later 授權（見 LICENSE 與 NOTICE；apps/docs/sdk/ 下的 SDK 為 Apache-2.0；Synwevo 名稱、Logo 與圖示不在授權之內，見 TRADEMARKS.md）。向網路使用者提供修改過的 Synwevo 時，第 13 條要求向他們提供對應原始碼。"
+  },
+  "当前部署启用了 PyMuPDF（AGPL-3.0）。按 AGPL-3.0 第 13 条，通过网络向他人提供本服务时，应向其提供本程序完整的对应源代码；本服务在 /api/source-code 提供由正在运行的文件生成的源代码包，无需登录即可下载。关闭此下载（SYNWEVO_DOCS_SOURCE_OFFER=off）的前提是：PyMuPDF 已取得 Artifex 商业许可，或已改用 pdfium 引擎（SYNWEVO_DOCS_PDF_ENGINE=pdfium）并从镜像中移除 pymupdf；并且运行的是未经修改的 Synwevo，或已通过其他途径向用户提供对应源代码。": {
+    "en": "This deployment uses PyMuPDF (AGPL-3.0). Under section 13 of AGPL-3.0, offering this service to others over a network means offering them the complete Corresponding Source of the program; this service offers a source archive built from the running files at /api/source-code, with no sign-in needed. Turning this download off (SYNWEVO_DOCS_SOURCE_OFFER=off) requires that PyMuPDF is under an Artifex commercial license, or that the pdfium engine is selected (SYNWEVO_DOCS_PDF_ENGINE=pdfium) and pymupdf removed from the image; and that the deployment runs an unmodified Synwevo or offers the Corresponding Source to its users another way.",
+    "zh-Hant": "目前部署啟用了 PyMuPDF（AGPL-3.0）。按 AGPL-3.0 第 13 條，透過網路向他人提供本服務時，應向其提供本程式完整的對應原始碼；本服務在 /api/source-code 提供由正在執行的文件生成的原始碼包，無需登入即可下載。關閉此下載（SYNWEVO_DOCS_SOURCE_OFFER=off）的前提是：PyMuPDF 已取得 Artifex 商業授權，或已改用 pdfium 引擎（SYNWEVO_DOCS_PDF_ENGINE=pdfium）並從映像中移除 pymupdf；並且執行的是未經修改的 Synwevo，或已透過其他途徑向使用者提供對應原始碼。"
+  },
+  "当前 PDF 引擎是 pdfium（pypdfium2，Apache-2.0 / BSD-3-Clause），但本部署仍然安装了 PyMuPDF：AGPL-3.0 的 MuPDF 二进制仍随镜像分发，且图片模板包装页与中文后备字体两处仍会调用它。因此 AGPL-3.0 第 13 条的源代码提供义务依然适用。要去掉这一 AGPL 依赖，镜像中就不能安装 pymupdf；目前没有经过验证的这种平台构建（apps/docs/requirements-pdfium.txt 只覆盖 Synwevo Docs，且缺少 pycrdt）。": {
+    "en": "The PDF engine is pdfium (pypdfium2, Apache-2.0 / BSD-3-Clause), but this deployment still has PyMuPDF installed: the AGPL-3.0 MuPDF binary still ships in the image, and the image-template wrapper page and the Chinese fallback font still call it. The source obligation of AGPL-3.0 section 13 therefore still applies. Removing this AGPL dependency means not installing pymupdf in the image; no such platform build has been verified yet (apps/docs/requirements-pdfium.txt covers only Synwevo Docs and lacks pycrdt).",
+    "zh-Hant": "目前 PDF 引擎是 pdfium（pypdfium2，Apache-2.0 / BSD-3-Clause），但本部署仍然安裝了 PyMuPDF：AGPL-3.0 的 MuPDF 二進位檔仍隨映像分發，且圖片模板包裝頁與中文後備字體兩處仍會呼叫它。因此 AGPL-3.0 第 13 條的原始碼提供義務依然適用。要去掉這一 AGPL 相依，映像中就不能安裝 pymupdf；目前沒有經過驗證的這種平台建置（apps/docs/requirements-pdfium.txt 只涵蓋 Synwevo Docs，且缺少 pycrdt）。"
+  },
+  "本部署未安装 PyMuPDF，镜像中不含 MuPDF 二进制，无第三方 AGPL 依赖；PDF / 图片模板的部分能力在此模式下受限。": {
+    "en": "This deployment does not have PyMuPDF installed: the image holds no MuPDF binary and there is no third-party AGPL dependency. Some PDF and image-template features are limited in this mode.",
+    "zh-Hant": "本部署未安裝 PyMuPDF，映像中不含 MuPDF 二進位檔，無第三方 AGPL 相依；PDF / 圖片模板的部分能力在此模式下受限。"
+  },
+  "Tesseract OCR（外部程序）+ tessdata_fast 模型（chi_sim / eng / osd）": {
+    "en": "Tesseract OCR (external program) + tessdata_fast models (chi_sim / eng / osd)",
+    "zh-Hant": "Tesseract OCR（外部程式）+ tessdata_fast 模型（chi_sim / eng / osd）"
+  },
+  "Pydantic 与 FastAPI 的运行时依赖": {
+    "en": "Runtime dependencies of Pydantic and FastAPI",
+    "zh-Hant": "Pydantic 與 FastAPI 的執行期相依套件"
+  },
+  "Uvicorn 的 WebSocket 与 HTTP/1.1 协议实现、命令行解析": {
+    "en": "WebSocket and HTTP/1.1 protocol implementations and command-line parsing for Uvicorn",
+    "zh-Hant": "Uvicorn 的 WebSocket 與 HTTP/1.1 協定實作、命令列解析"
+  },
+  "MIT / MIT 或 Apache-2.0 / BSD-3-Clause": {
+    "en": "MIT / MIT or Apache-2.0 / BSD-3-Clause",
+    "zh-Hant": "MIT / MIT 或 Apache-2.0 / BSD-3-Clause"
+  },
+  "异步运行时与国际化域名": {
+    "en": "Async runtime and internationalized domain names",
+    "zh-Hant": "非同步執行環境與國際化網域名稱"
+  },
+  "多文件上传": {
+    "en": "Multi-file upload",
+    "zh-Hant": "多檔案上傳"
+  },
+  "出站 HTTP 客户端（登出回调、MCP、模型调用）": {
+    "en": "Outbound HTTP clients (logout callbacks, MCP, model calls)",
+    "zh-Hant": "對外 HTTP 用戶端（登出回呼、MCP、模型呼叫）"
+  },
+  "出站 HTTPS 的根证书与系统证书库": {
+    "en": "Root certificates and the system certificate store for outbound HTTPS",
+    "zh-Hant": "對外 HTTPS 的根憑證與系統憑證庫"
+  },
+  "openpyxl 与 python-pptx 的依赖": {
+    "en": "Dependencies of openpyxl and python-pptx",
+    "zh-Hant": "openpyxl 與 python-pptx 的相依套件"
+  },
+  "Web 推送（VAPID 签名与载荷加密）": {
+    "en": "Web Push (VAPID signatures and payload encryption)",
+    "zh-Hant": "Web 推播（VAPID 簽章與酬載加密）"
+  },
+  "文档实时协同（服务端共享文档）": {
+    "en": "Live document co-editing (shared document on the server)",
+    "zh-Hant": "文件即時協作（伺服器端共享文件）"
+  },
+  "个人 Agent 调用所配置的模型提供方（Anthropic）": {
+    "en": "The personal Agent's calls to the configured model provider (Anthropic)",
+    "zh-Hant": "個人 Agent 呼叫所設定的模型提供者（Anthropic）"
+  },
+  "MCP 服务端与 Agent 的 MCP 客户端": {
+    "en": "MCP server and the Agent's MCP client",
+    "zh-Hant": "MCP 伺服器與 Agent 的 MCP 用戶端"
+  },
+  "按 JSON Schema 校验外部工具的输入": {
+    "en": "Validating external tool input against JSON Schema",
+    "zh-Hant": "依 JSON Schema 驗證外部工具的輸入"
+  },
+  "MCP 服务端的流式响应": {
+    "en": "Streamed responses of the MCP server",
+    "zh-Hant": "MCP 伺服器的串流回應"
+  },
+  "MCP SDK 的可观测性接口（未配置导出器）": {
+    "en": "Observability interface of the MCP SDK (no exporter configured)",
+    "zh-Hant": "MCP SDK 的可觀測性介面（未設定匯出器）"
+  },
+  "MCP SDK 授权模块的依赖": {
+    "en": "Dependency of the MCP SDK's authorization module",
+    "zh-Hant": "MCP SDK 授權模組的相依套件"
+  },
+  "类型标注的运行时支持": {
+    "en": "Runtime support for type annotations",
+    "zh-Hant": "型別標註的執行期支援"
+  },
+  "文档实时协同（浏览器端）": {
+    "en": "Live document co-editing (in the browser)",
+    "zh-Hant": "文件即時協作（瀏覽器端）"
+  },
+  "TOTP 绑定二维码": {
+    "en": "QR code for setting up TOTP",
+    "zh-Hant": "TOTP 綁定 QR 碼"
+  },
+  "其余前端依赖（package-lock.json 中的非开发依赖）": {
+    "en": "Other front-end dependencies (non-development entries in package-lock.json)",
+    "zh-Hant": "其餘前端相依套件（package-lock.json 中的非開發相依套件）"
+  },
+  "随界面一同打包": {
+    "en": "Bundled with the interface",
+    "zh-Hant": "隨介面一同打包"
+  },
+  "Noto Sans / Serif CJK（fonts-noto-cjk，镜像内安装）": {
+    "en": "Noto Sans / Serif CJK (fonts-noto-cjk, installed in the image)",
+    "zh-Hant": "Noto Sans / Serif CJK（fonts-noto-cjk，映像內安裝）"
+  },
+  "LibreOffice 导出 PDF 时的中文字体": {
+    "en": "Chinese fonts for PDF export by LibreOffice",
+    "zh-Hant": "LibreOffice 匯出 PDF 時的中文字型"
+  },
+  "ClamAV（生产部署的独立容器）": {
+    "en": "ClamAV (separate container in the production deployment)",
+    "zh-Hant": "ClamAV（正式部署的獨立容器）"
+  },
+  "上传文件的恶意软件扫描（经网络调用，不与本程序链接）": {
+    "en": "Malware scanning of uploads (called over the network, not linked with this program)",
+    "zh-Hant": "上傳檔案的惡意軟體掃描（經網路呼叫，不與本程式連結）"
+  },
+  "nginx（生产部署的反向代理容器）": {
+    "en": "nginx (reverse-proxy container in the production deployment)",
+    "zh-Hant": "nginx（正式部署的反向代理容器）"
+  },
+  "TLS 终止与反向代理": {
+    "en": "TLS termination and reverse proxy",
+    "zh-Hant": "TLS 終止與反向代理"
   },
   "Synwevo Docs · 文档工作台": {
     "en": "Synwevo Docs · Document workspace",

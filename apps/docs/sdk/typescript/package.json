@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Synwevo Docs machine-API client for Node.js: one dependency-free ES module with TypeScript declarations.",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "./synwevo-docs.mjs",
   "types": "./synwevo-docs.d.ts",
@@ -17,7 +18,8 @@
     "synwevo-docs.mjs",
     "synwevo-docs.d.ts",
     "synwevo-docs.d.mts",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18"

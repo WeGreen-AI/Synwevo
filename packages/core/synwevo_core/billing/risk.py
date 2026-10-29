@@ -16,8 +16,9 @@ fence commits; a refusal sends nothing and the wallet hold is released by the ga
   off in the test environment.
 
 Velocity counts provider cost (what the platform pays), not the sale price, in the cost policy's
-unit: settled exact cost, and the conservative reserved bound for usage not yet known. These
-rows are state, never money facts; nothing here moves a balance.
+unit: settled exact cost, and the conservative reserved bound for usage not yet known. It is read
+from the exact cost rollup (billing/cost_rollup.py), so no route volume can make it refuse for
+capacity. These rows are state, never money facts; nothing here moves a balance.
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ import time
 
 from ..errors import ServiceError
 from ..store import new_id
+from . import cost_rollup
 from .models import BillingError, identifier, integer
 
 log = logging.getLogger("synwevo.billing.risk")
@@ -37,8 +39,9 @@ PAYER_KINDS = ("user", "organization")
 SCOPE_KINDS = PAYER_KINDS + ("route",)
 WINDOW_MIN_S, WINDOW_MAX_S = 60, 86_400
 POLL_MIN_S, POLL_MAX_S = 60, 86_400
-# The same bound as the cost admission counters: never materialize unbounded history in a send path.
-MAX_RECORDS = 10_000
+# Class-X cost facts (not on the rollup's grid) read row by row for one payer or route: the only
+# row cap left on the velocity path (cost_rollup.MAX_EXCEPTIONS; risk_accounting_capacity).
+MAX_RECORDS = cost_rollup.MAX_EXCEPTIONS
 # Admin alerts go to the people who can act on them: holders of this platform permission.
 ALERT_PERMISSION = "platform.config.manage"
 ADMIN_TARGET = {"origin": "accounts", "path": "/admin?tab=model-risk"}
@@ -226,39 +229,11 @@ class RiskControls:
             raise BillingError("risk_route_suspended")
         if risk is None or (risk.payer_window_cost is None and risk.route_window_cost is None):
             return
-        windows = []
-        if risk.payer_window_cost is not None:
-            windows.append(risk.payer_window_s)
-        if risk.route_window_cost is not None:
-            windows.append(risk.route_window_s)
-        rows = t.execute(
-            "SELECT a.reserved_units,a.admitted_at,a.unit,u.attempt_key AS usage_key,u.cost_n,u.cost_d,u.cost_unit,"
-            "att.requested_model AS route,acc.owner AS owner "
-            "FROM model_cost_admissions a INDEXED BY model_cost_admissions_scope "
-            "JOIN billing_attempts att ON att.id=a.attempt_key JOIN billing_calls c ON c.id=att.call_key "
-            "JOIN billing_accounts acc ON acc.id=c.account_id "
-            "LEFT JOIN billing_usage u ON u.attempt_key=a.attempt_key "
-            "WHERE a.environment=? AND a.provider=? AND a.account_ref=? AND a.admitted_at>? "
-            "AND (acc.owner=? OR att.requested_model=?) LIMIT ?",
-            (self.environment, policy.provider, policy.account_ref, now - max(windows),
-             payer["owner"], route, MAX_RECORDS + 1)).fetchall()
-        if len(rows) > MAX_RECORDS:
-            raise BillingError("risk_accounting_capacity")
-        payer_total = route_total = Fraction(0)
-        for row in rows:
-            if row["unit"] != policy.unit.code or (row["usage_key"] is not None and row["cost_unit"] != policy.unit.code):
-                raise BillingError("cost_unit_mismatch")
-            if row["usage_key"] is None:
-                cost = Fraction(integer(row["reserved_units"]))
-            else:
-                try:
-                    cost = Fraction(int(row["cost_n"]), int(row["cost_d"]))
-                except (TypeError, ValueError, ZeroDivisionError):
-                    raise BillingError("invalid_cost_fact") from None
-            if row["owner"] == payer["owner"] and row["admitted_at"] > now - risk.payer_window_s:
-                payer_total += cost
-            if row["route"] == route and row["admitted_at"] > now - risk.route_window_s:
-                route_total += cost
+        # Exact totals from the trigger-maintained 1/60/3,600 s buckets plus class-X facts
+        # (billing/cost_rollup.py): bounded reads whatever the route's volume.
+        payer_total, route_total = cost_rollup.velocity(
+            t, environment=self.environment, provider=policy.provider, account_ref=policy.account_ref,
+            unit=policy.unit, owner=payer["owner"], route=route, now=now, risk=risk)
         base = {"unit": policy.unit.code, "policy_revision": policy.revision, "actor_user_id": payer["actor"]}
         if risk.payer_window_cost is not None and payer_total + amount > risk.payer_window_cost:
             raise BrakeTripped("risk_payer_brake", {**base, "scope_kind": payer["kind"], "scope_id": payer["id"],

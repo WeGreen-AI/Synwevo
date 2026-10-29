@@ -2,9 +2,11 @@
 
 One round: poll the upstream balance when due, alert on unconfirmed-usage exposure above its
 threshold, reconcile the previous UTC day once its boundary reading can exist, and audit ledger
-balances once a day. A database lease makes one process run a round at a time, whichever
-process started the monitor. Nothing runs before a cost policy is published; the balance poll,
-exposure alert and daily reconciliation also need its risk section. Every step is isolated:
+balances once a day; verify the exact cost rollup against its facts (daily from the previous
+month's first day, with a prune; hourly over the last two days). A database lease makes one
+process run a round at a time, whichever process started the monitor. Only the rollup steps run
+before a cost policy is published; the balance poll, exposure alert and daily reconciliation also
+need its risk section. Every step is isolated:
 one failure is reported by type in the round's result and never stops the others. Construction
 starts no thread; ``start()`` does.
 """
@@ -19,6 +21,7 @@ from uuid import uuid4
 from .. import workers
 from ..errors import ServiceError
 from .admission import CostAdmission
+from .cost_rollup import CostRollup
 from .cost_settings import CostSettings
 from .ledger import Ledger
 from .models import BillingError
@@ -28,6 +31,9 @@ from .upstream import (DAY, SETTLE_DELAY_S, Reconciliation, UpstreamBalance, day
 
 log = logging.getLogger("synwevo.billing.risk")
 LEASE_S = 120
+#: The bounded cost-rollup check: the last two days, at most hourly (the full one runs daily).
+ROLLUP_RECENT_S = 2 * 86_400
+ROLLUP_RECENT_EVERY_S = 3600
 
 
 @dataclass
@@ -70,13 +76,7 @@ class RiskMonitor:
         if not self._lease():
             result.busy = True
             return result
-        try:
-            policy = CostSettings(self.store, environment=self.environment, clock=self.clock).policy()
-        except (BillingError, ServiceError):
-            return result
-        result.configured = True
         now = self.clock()
-        risk = policy.risk
 
         def step(name, fn):
             try:
@@ -86,6 +86,19 @@ class RiskMonitor:
                 result.failures.append((name, type(exc).__name__))
                 log.error("risk monitor step %s failed: %s", name, type(exc).__name__)
 
+        try:
+            policy = CostSettings(self.store, environment=self.environment, clock=self.clock).policy()
+        except (BillingError, ServiceError):
+            policy = None
+        if policy is not None:
+            result.configured = True
+            self._configured_steps(step, policy, now)
+        # The cost rollup is checked even without a policy: its facts may predate the current one.
+        self._rollup_steps(step, now)
+        return result
+
+    def _configured_steps(self, step, policy, now) -> None:
+        risk = policy.risk
         if risk is not None:
             last = self.store.one("SELECT MAX(observed_at) AS at FROM model_risk_balance_readings WHERE environment=?",
                                   (self.environment,))["at"]
@@ -105,7 +118,25 @@ class RiskMonitor:
                               "AND trigger='schedule' AND created_at>=?", (self.environment, utc_day(now))):
             step("ledger_audit", lambda: Reconciliation(self.store, environment=self.environment,
                                                         clock=self.clock).ledger_audit())
-        return result
+
+    def _rollup_steps(self, step, now) -> None:
+        """Daily: verify the cost rollup (from the previous month's first day) and prune it; hourly
+        otherwise: verify the last two days. Each runs in a deferred read transaction (a WAL
+        snapshot), never under the writer lock; a mismatch latches its scope (billing/cost_rollup.py)."""
+        def done(modes, since):
+            marks = ",".join("?" * len(modes))
+            return self.store.one(f"SELECT 1 AS x FROM model_cost_rollup_audits INDEXED BY model_cost_rollup_audits_recent "
+                                  f"WHERE environment=? AND mode IN ({marks}) AND created_at>=? AND provider='' "
+                                  "AND account_ref='' LIMIT 1", (self.environment, *modes, since)) is not None
+
+        if not done(("daily",), utc_day(now)):
+            step("cost_rollup_verify", lambda: CostRollup.verify(self.store, environment=self.environment, now=now,
+                                                                 mode="daily", clock=self.clock))
+            step("cost_rollup_prune", lambda: CostRollup.prune(self.store, environment=self.environment))
+        elif not done(("recent", "daily"), now - ROLLUP_RECENT_EVERY_S + 1):
+            step("cost_rollup_verify_recent", lambda: CostRollup.verify(
+                self.store, environment=self.environment, since=now - ROLLUP_RECENT_S, now=now, mode="recent",
+                clock=self.clock))
 
     def _pending(self, policy) -> None:
         ledger = Ledger(self.store, environment=self.environment, namespace="platform-risk", clock=self.clock)

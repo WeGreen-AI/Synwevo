@@ -313,6 +313,80 @@ def client_ip(request: Request) -> str:
     return (request.client.host if request.client else "") or ""
 
 
+#: The IPv6 prefixes an address-based limit counts a client under, narrowest first. A /64 is one
+#: subnet, and an end site is given "at least one /64, and in most cases significantly more" (RFC
+#: 6177, BCP 157, which names a /56 as a home default) — in practice a /56 (256 /64s, a routine
+#: residential delegation) or a /48 (65,536, free from IPv6 tunnel brokers). That is what one holder
+#: *can* control, not what one holder always does: VPS and cloud providers give each server its own
+#: /64 out of a shared pool, and mobile networks one /64 per connection (RFC 6459), so there a /56
+#: or a /48 is many unrelated customers. An address cannot tell the two apart; a limit that counts
+#: the wider prefixes says what that costs (``synwevo_core.source_offer.WIDER_PREFIX_CLIENTS``). Wider
+#: than a /48 is an operator's allocation and is never counted.
+IPV6_HOLDER_PREFIXES = (64, 56, 48)
+
+
+def _carried_ipv4(ip):
+    """The IPv4 address an IPv6 address is a form of, or None: IPv4-mapped (``::ffff:a.b.c.d``);
+    RFC 6052's well-known NAT64 / SIIT prefix (``64:ff9b::a.b.c.d``), the form in which a
+    translator in front of an IPv6 server presents every IPv4 client; Teredo (``2001::/32``, RFC
+    4380: the client's public address, stored inverted); 6to4 (``2002:V4ADDR::/48``, RFC 3056).
+    Answering such an address takes the IPv4 address it names, so it is that client. The local-use
+    translation prefix ``64:ff9b:1::/48`` (RFC 8215) puts the IPv4 address where the operator chose
+    and is not unwrapped."""
+    import ipaddress
+    if ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped
+    if ip in ipaddress.IPv6Network("64:ff9b::/96"):
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    if ip.teredo is not None:
+        return ip.teredo[1]
+    return ip.sixtofour
+
+
+def address_buckets(address: str) -> tuple[str, ...]:
+    """Every key an address-based rate limit counts a client under, narrowest first: an IPv4
+    address as it is (one key); an IPv6 address by each prefix in ``IPV6_HOLDER_PREFIXES``; an
+    IPv6 address that is a form of an IPv4 address (IPv4-mapped, NAT64 / SIIT, Teredo, 6to4) as
+    that IPv4 address.
+
+    The holder of a prefix chooses the addresses inside it — privacy extensions rotate them on
+    their own — so a bucket per /128 limits nothing (60 addresses of one /64 each got their own
+    allowance), and a bucket per /64 limits a /56 holder 256 times over and a /48 holder 65,536
+    times. A limit that means "per client" counts every one of these keys, each with its own
+    allowance. Behind a NAT64 or SIIT front, per /64 put the whole IPv4 Internet in one bucket.
+    Anything that is not an address (a test client's name, an empty string) is its own single key.
+    """
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(address.strip().strip("[]").split("%", 1)[0])
+    except ValueError:
+        return (address or "unknown",)
+    if ip.version == 6:
+        carried = _carried_ipv4(ip)
+        if carried is not None:
+            return (str(carried),)
+        return tuple(str(ipaddress.IPv6Network((ip, n), strict=False)) for n in IPV6_HOLDER_PREFIXES)
+    return (str(ip),)
+
+
+def address_bucket(address: str) -> str:
+    """The narrowest of ``address_buckets``: an IPv4 address as it is, an IPv6 address by its /64,
+    an IPv6 form of an IPv4 address as that IPv4 address."""
+    return address_buckets(address)[0]
+
+
+def routed_path(request: Request) -> str:
+    """The path the router matches — the ASGI ``path``, already percent-decoded — exactly.
+
+    Not ``request.url.path``: Starlette rebuilds the URL from the scope and splits it again, so a
+    percent-encoded ``?`` or ``#`` in the request target ends the path there. ``/api/about%3F/x``
+    reads as ``/api/about`` while the router matches ``/api/about?/x``, and a decision taken on the
+    shorter string (an exact-path exemption, a role's prefix) is granted to whatever route takes the
+    longer one. Nothing in this deployment sets ``root_path``, so the scope path is the route path.
+    """
+    return request.scope.get("path") or "/"
+
+
 # --------------------------------------------------------------------- RFC 9457 problem details
 PROBLEM_JSON = "application/problem+json"
 PROBLEM_TITLES = {400: "请求无效", 401: "需要认证", 403: "没有权限", 404: "资源不存在",
@@ -1079,6 +1153,12 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
     # These two are the only paths a load balancer or container runtime must reach without a
     # credential, and neither handler reads tenant-scoped data.
     PROBE_PATHS = frozenset({"/healthz", "/readyz"})
+    # The licence and the Corresponding Source offer (AGPL-3.0 §13). The offer is owed to every
+    # remote user of the program — the person on the sign-in page or the public site as much as a
+    # signed-in member — so these two are served by every role (the composer mounts them) and
+    # pass the gate without a session in every mode. Exact paths, like the probes above; neither
+    # handler reads tenant-scoped data.
+    SOURCE_OFFER_PATHS = frozenset({"/api/about", "/api/source-code"})
     # The account routes an application still needs about its *own* session: who is signed in,
     # which workspace is selected, and how to leave. Credentials, MFA enrolment, invitations and
     # device management stay on the account service, so there is one place to change a password
@@ -1104,7 +1184,7 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         for the same one.
         """
         this_role = this_role_static
-        if this_role in ("all", ""):
+        if this_role in ("all", "") or path in SOURCE_OFFER_PATHS:
             return None
         if path in (MCP_METADATA_PATH, MCP_CLIENT_METADATA_PATH):
             # The MCP server is a resource server of the workplace origin: its metadata lives
@@ -1184,7 +1264,9 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
         request.state.trace_id = trace_id_of(request.headers.get("traceparent"))
         request.state.ratelimit = None
         request.state.error_code = None
-        path = request.url.path
+        # Every decision below — the role's refusals, the exact anonymous paths, the prefixes —
+        # is taken on the path the router will match, never on request.url.path (routed_path).
+        path = routed_path(request)
         token = None
 
         async def finish(resp):
@@ -1307,6 +1389,10 @@ def install(api: FastAPI, plat: Platform, *, role: str | None = None) -> None:
                     # depend on a shared password. The bodies are kept to the minimum that the
                     # contract promises; see the handlers.
                     token = set_tenant("__probe__")
+                elif path in SOURCE_OFFER_PATHS:
+                    # The licence and the source archive: anonymous in every mode and role, so the
+                    # §13 offer reaches people who are not (or cannot be) signed in.
+                    token = set_tenant("__public__")
                 elif any(path.startswith(p) for p in PLATFORM_PREFIXES + SSO_PREFIXES):
                     # Protocol endpoints authenticate themselves: /oidc/authorize reads the
                     # central session cookie and redirects to /login when there is none, and the

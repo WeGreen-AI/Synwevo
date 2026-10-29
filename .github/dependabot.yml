@@ -25,6 +25,14 @@ updates:
     target-branch: dev
     schedule: {interval: weekly}
     open-pull-requests-limit: 3
+    # Packages that only work at one shared version move together: the Tiptap extensions augment one
+    # editor type, so a single bumped extension fails typecheck (#10, #12 on 2026-10-26); likewise the
+    # Yjs stack the live editors share.
+    groups:
+      tiptap:
+        patterns: ["@tiptap/*"]
+      yjs:
+        patterns: ["yjs", "y-*", "@y/*"]
   - package-ecosystem: github-actions
     directory: /
     target-branch: dev

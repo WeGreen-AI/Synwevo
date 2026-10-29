@@ -219,7 +219,7 @@ Synwevo Docs 自己有口令（`SYNWEVO_UI_AUTH=basic`，PBKDF2 存储），`/ap
 | Tunnel Public Hostname | `dw.wegreen.ltd` → **`http://127.0.0.1:8765`**（必须写 IPv4 字面量，不要写 `localhost`，原因见下） |
 | 界面鉴权 | `SYNWEVO_UI_AUTH=basic`，用户 `wegreen`（口令仅以 PBKDF2 哈希存储） |
 | PDF 引擎 | `SYNWEVO_DOCS_PDF_ENGINE=pymupdf`（功能完整；**AGPL-3.0 网络服务义务适用**，对应源代码经 `/api/source-code` 提供） |
-| 资源限制 | `--memory=3g --memory-swap=4g`。这台机器同时运行 bdr-prod / carboy / beeurei / apexterminal 四套生产服务，限制确保 Synwevo Docs 超限时只影响自己 |
+| 资源限制 | `--memory=3g --memory-swap=4g`。这台机器同时运行其他与本项目无关的服务（名称不写进公开记录，2026-10-25 脱敏），限制确保 Synwevo Docs 超限时只影响自己 |
 | 持久化 | 宿主 `/opt/docweave-data` → 容器 `/data`（SQLite + blobs）。**用户本地的 `data/` 没有同步上去**；库中只有下述三个合成示例项目 |
 | 重启策略 | `unless-stopped`（重启机器后自动拉起） |
 | 源码位置 | `/opt/docweave`（rsync，排除 `data/`、`.env`、`.venv`、`node_modules`、`testdata/`） |

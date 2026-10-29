@@ -2,6 +2,7 @@
   "name": "synwevo",
   "private": true,
   "version": "1.0.0",
+  "license": "AGPL-3.0-or-later",
   "description": "Synwevo 平台单仓库：Synwevo Workspace、Synwevo Account、Synwevo Docs、Synwevo Message 与共享前端包",
   "workspaces": [
     "packages/ui",

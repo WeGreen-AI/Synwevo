@@ -327,19 +327,11 @@ def install(api: FastAPI, plat: Platform, *, start_jobs: bool = True) -> App:
     def desensitized_file(blob: str, name: str = "脱敏文件"):
         return attachment(views.preview_file(blob), name)
 
-    @api.get("/api/about")
-    def about():
-        from ..licensing import about as _about
-        return _about()
-
-    @api.get("/api/source-code")
-    def source_code():
-        from ..licensing import source_archive, source_offer_enabled
-        if not source_offer_enabled():
-            raise ServiceError(404, "source_offer_off", "本部署已关闭源代码下载（运营方已取得相应许可或未使用 AGPL 组件）")
-        data, name = source_archive()
-        return Response(data, media_type="application/gzip",
-                        headers={"Content-Disposition": f"attachment; filename=\"{name}\""})
+    # The licence and the Corresponding Source offer: the shared router (synwevo_core.source_offer),
+    # mounted once in every process and reachable without a session; here it reports the PDF engine
+    # this process has selected (synwevo_docs.licensing).
+    from ..licensing import router as source_offer_router
+    api.include_router(source_offer_router())
 
     @api.get("/api/capabilities")
     def capabilities():

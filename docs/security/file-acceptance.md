@@ -396,7 +396,7 @@ blob id、产物、附件下载、新上传、完成的断点上传、组织共�
 * ~~密码保护的压缩包/Office 文件是盲区~~ 2026-09-29 已补（§3.1）：开启扫描时加密的 ZIP/7z/RAR、Office（含 OpenDocument）与
   需要打开密码的 PDF 一律不接纳。仍然存在的：
   * **压缩在别的文件里的加密压缩包**：识别器在整个文件里找压缩包的头，所以不压缩地存在别处（ZIP 里存放、附加在 PDF 或可执行存根后面）的会被找到；
-    被**压缩**在文档或压缩包里的，要解压才看得见，靠 clamd 的 `AlertEncryptedArchive`（参考 compose 已配置，生产在下一次部署时按 operations.md §8 加上）。
+    被**压缩**在文档或压缩包里的，要解压才看得见，靠 clamd 的 `AlertEncryptedArchive`（参考 compose 已配置；主机侧步骤见 operations.md §8）。
     嵌在文档里的加密**文档**或 PDF（例如 DOCX 里的加密 XLSX 对象、PDF 附件里的加密 PDF）没有人报——引擎的
     `AlertEncryptedDoc` 同时会拒绝只设所有者口令的 PDF，所以不开。
   * 其他格式的加密：ARJ/ACE/CAB 等冷门压缩格式、S/MIME 或 PGP 加密的内容只靠引擎（第一版在这里写"自解压可执行文件只靠引擎"是错的——

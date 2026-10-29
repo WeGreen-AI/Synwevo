@@ -197,6 +197,25 @@ def test_verify_fails_when_the_blob_content_is_missing(instance, tmp_path, capsy
     assert "✗" in capsys.readouterr().out
 
 
+def test_verify_fails_when_the_cost_rollup_disagrees_with_its_facts(instance, tmp_path, capsys):
+    """The restored copy would refuse that provider account's paid calls: the rehearsal says so."""
+    from synwevo_core.store import Store
+    store = Store(instance)
+    with store.tx() as t:  # FIXTURE: a derived cost row with no fact behind it, written past the gate
+        t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
+        t.execute("INSERT INTO model_cost_buckets(environment,provider,account_ref,dim,member,span,start,unit,den,"
+                  "n_adm,n_res,n_cross,n_exc,bound_hi,bound_lo,rbound_hi,rbound_lo,cost_hi,cost_lo,cost_carry,cost_frac) "
+                  "VALUES ('test','fixture-provider','fixture-account','account','',86400,0,'FIXTURE-COST',0,"
+                  "1,0,0,0,0,7,0,0,0,0,0,0)")
+        t.execute("DELETE FROM model_cost_rollup_deltas")
+    _release(store)
+    snapshot = _snapshot()
+    archive = _backup(snapshot, instance, tmp_path / "b")
+    assert snapshot.verify(_args(archive=str(archive), journal_from=str(instance))) == 1
+    text = capsys.readouterr().out
+    assert "✗ 成本汇总与成本事实一致" in text and "fixture-account" in text
+
+
 def test_verify_fails_when_a_blob_is_corrupted_even_though_its_name_is_present(instance, tmp_path, capsys):
     """Name matching said "present"; the application would serve the wrong bytes."""
     snapshot = _snapshot()

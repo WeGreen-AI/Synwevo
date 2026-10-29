@@ -206,6 +206,8 @@ const SERVER = [
   { file: CORE + "messaging_bridge.py", surfaces: [], why: "discussions of a Synwevo Docs object, in Synwevo Message's shell (CI-83)" },
   { file: CORE + "machine.py", surfaces: [], why: "credential checks on Synwevo Docs' business API" },
   { file: CORE + "http.py", surfaces: [], why: "the business gate and API routing: refusals of requests this shell never makes" },
+  // AGPL-3.0 §13: the sign-in frame links to the source archive as a plain download
+  { file: CORE + "source_offer.py", surfaces: [], why: "the licence statement and the source archive: the account frame links to /api/source-code as a download (a browser navigation, which shows the server's own answer), and no page of this shell requests /api/about" },
   // B1/B2: the console calls `set_access_policy` with only `members` or `explicit` (admin_apps maps its four changes)
   // B3: `disable_for_organization` / `enable_for_organization` refuse what admin_apps `_target` refuses first, in its own words
   { file: CORE + "apps.py", surfaces: [], why: "`app` commands of the CLI; the administration console sends the access policy only as one of its two values, and its organization switch is checked by admin_apps before the service is called" },

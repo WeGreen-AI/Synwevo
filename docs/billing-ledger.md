@@ -226,6 +226,138 @@ update both cached balances atomically, reject negative wallet balance and integ
 Journal, price, order, payment, usage, settlement and audit event facts reject mutation.
 Corrections need future explicitly modeled reversal records, never editing existing facts.
 
+### Cost rollup (derived from the cost facts; D17 §6)
+
+The platform cost admission and the velocity brake read an exact rollup of the provider-cost
+facts instead of the facts themselves (`suite_schema/model_cost_rollup.py`,
+`billing/cost_rollup.py`). The facts are unchanged and stay the authority:
+`model_cost_admissions` and `billing_usage` (insert-only), `model_cost_endings` (insert-only) and
+the one-way `billing_calls.status`. Everything below is derived and can always be rebuilt from them.
+
+* **Tables.** `model_cost_buckets` (per scope = environment, provider, account_ref; dim `account`
+  per UTC day, dims `payer` (wallet owner) and `route` (requested model) per 1, 60 and 3,600 s;
+  counts, admitted and resolved bounds and exact resolved cost; `den` 0 for counts, bounds and
+  on-grid cost, `den` d for other canonical rationals over d), `model_cost_inflight` and
+  `model_cost_hold` (the open set), `model_cost_exceptions` (costs that fit neither form, read back
+  and parsed as before). Integers are two int64 limbs (base 10^15); an on-grid cost keeps its
+  fraction as an integer count of 10^-15 plus a carry. SQL never parses big text and never
+  overflows; Python rebuilds exact integers and Fractions from the limbs.
+* **Triggers.** An INSERT of an admission or a usage fact (from the Ledger, a fixture, an older
+  release or plain SQL), an ending, and a call leaving `reserved` each insert a row into the
+  transient `model_cost_rollup_deltas`; apply triggers on that table upsert the buckets and the
+  open set; the producing trigger empties it again. One producer template serves the triggers
+  and the replay, so a backfill and a live write use the same arithmetic. Everything runs in the
+  writer's transaction: the rollup commits or rolls back with the fact. No Python runs on a fact
+  write path, and there is no backlog to drain.
+* **Totality.** Derived tables have no CHECK and no NOT NULL and are written only with COALESCE
+  and upserts (their WITHOUT ROWID key columns, which SQLite keeps non-NULL, are always COALESCEd;
+  an upsert keeps its meaning even under an outer INSERT OR REPLACE/IGNORE), so no derived row can
+  make a fact INSERT raise. A malformed admission (time not an
+  integer, negative, or expiry more than a day after admission) or an orphan one (no attempt,
+  call or wallet) becomes a fault of its scope instead of a bucket. Its id names the attempt key
+  and each scope part by SQLite type and bytes (`fact:text:<hex>@text:<hex>/…`), since SQLite's
+  `||` turns a BLOB into the TEXT of the same bytes: a BLOB and a TEXT key with the same bytes, or
+  the same key in two scopes, each latch their own scope. An expiry equal to (or before) the
+  admission time is not a fault: such an admission is never in flight, for the rollup and for the
+  oracle alike.
+* **Cost classes.** A cost is canonical only as text of ASCII digits with no NUL byte: SQLite's
+  GLOB, `length()` and `CAST` stop at an embedded NUL (`'\x0099'` would glob, measure and cast as
+  `''`/0), so the SQL test rejects a NUL first (`instr(x,char(0))=0`) and agrees with the verifier's
+  full-string match; such a cost is class X and refuses `invalid_cost_fact` as before.
+* **Gate.** BEFORE INSERT/UPDATE/DELETE triggers on the four derived tables refuse with
+  `cost_rollup_derived` unless a delta row exists, i.e. unless the write comes from an apply
+  trigger. Hand-writing deltas or dropping triggers bypasses the gate; a scheduled verify finds
+  what it left, but not necessarily the next hourly one. Every round reports a delta row at rest
+  or a missing sentinel even when no scope exists, and compares a scope's whole open set, its
+  velocity rows from the horizon (all of them while the scope has no admission yet) and its day
+  rows from a lower bound: the hourly round (`cost_rollup_verify_recent`) from the start of the
+  UTC day two days back, without comparing the read path's counters with the uncapped oracle; the
+  daily round (`cost_rollup_verify`, the first round of each UTC day) from the previous month's
+  first day, with that comparison. So a value written into an older day row with its structure
+  intact, one the weekly or monthly window still sums, is found only by the next daily verify, up
+  to about 24 hours later, and until then admission reads the altered total
+  (docs/platform/model-risk.md §13). The velocity read also checks each bucket row it sums.
+* **Sentinels and marker.** Each derived table holds one sentinel row in the empty scope; meta
+  `model_cost_rollup_v1` marks the backfill and `model_cost_rollup_triggers` the version of the
+  versioned triggers' SQL (the producers and the fault mapping; 4 since the fault id names the key
+  and the scope by type and bytes). A start that finds the
+  marker, the current trigger version and all four sentinels issues no fact query. A dropped or
+  emptied derived table (sentinel gone), a missing marker or another trigger version (whose
+  triggers it drops and recreates in the same transaction) replays all facts once, inside the
+  migration's BEGIN IMMEDIATE (recorded as a global rebuild and a `backfill` audit row).
+* **Backfill and the writer lock.** That replay holds the writer lock for its whole length:
+  about 48 s per million admissions on the local benchmark machine, with the WAL growing by about
+  320 MB per million (reused afterwards, not returned). It happens on the first start of a release
+  that brings it (the first rollup release, a new trigger version) or after a derived table was
+  lost. A second process that opens the Store meanwhile does not fail at its 30 s busy_timeout:
+  opening retries its idempotent migration for up to 15 minutes (`Store`, `MIGRATION_WAIT_S`). A
+  process already running that writes meanwhile still gets `database is locked` after 30 s, which
+  is why a backfill or a large rebuild runs with the services stopped.
+  **At deploy the budget is the health check, not that wait.** The receiver
+  (`infra/production/receive.py`) stops every role and starts them with `up --wait --wait-timeout
+  180`; `docs`, `portal` and `messages` wait for `accounts` to be healthy, so `accounts` replays
+  alone. The Store opens at import, so its `/readyz` answers only after the replay, and the image's
+  HEALTHCHECK (40 s start period, then 3 failed checks 30 s apart) marks it unhealthy about two
+  minutes in: a replay longer than that, past roughly 2 million admissions at the local rate (fewer
+  on the 1-CPU `accounts` container), fails the deploy and the receiver restores the pre-deploy
+  backup (nothing is lost: the replay is one transaction). Before a release that brings a replay,
+  compare `SELECT COUNT(*) FROM model_cost_admissions` with that ceiling. Above it, or after such a
+  failed deploy (its image `synwevo:<sha>` stays on the host), migrate with the services stopped
+  in a one-off container of the new image, then submit the same deploy again; its start finds the
+  marker, version and sentinels and replays nothing. The command opens (and so migrates) the
+  Store, then verifies read-only; its exit status reports the verification, not the migration.
+  Derived from receive.py, compose.yaml and the Dockerfile; not yet rehearsed on the host.
+
+  ```bash
+  docker compose -f /opt/synwevo/config/compose.yaml stop gateway accounts docs portal messages
+  IMAGE=synwevo:<sha> docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T portal python -m synwevo_core.billing.cost_rollup verify --all --no-record </dev/null
+  ```
+* **Faults, verify, rebuild, prune.** `model_cost_rollup_faults` latches one scope (resolved once,
+  never deleted; its id names the scope as a JSON array, so scopes whose parts contain `:` never
+  share one); the risk monitor verifies hourly (two days) and daily (from the previous month);
+  `python -m synwevo_core.billing.cost_rollup verify|rebuild` in a role container (locally
+  `platform.py cost-rollup`) is the operator's tool (docs/platform/model-risk.md §13). The verifier
+  streams the facts in admission-time order and keeps only the buckets still open, writing complete
+  expected buckets to a temporary table it joins against the live ones, so its memory does not grow
+  with the facts it reads (it runs inside the portal process). It reads attempt keys as SQLite type
+  and bytes, and checks each scope on its own: a value of one scope that Python cannot read (a
+  non-UTF-8 TEXT a broken import wrote) is that scope's difference (`undecodable_key`, or
+  `verify_error` naming the column), latched, audited and alerted, and every other scope is still
+  checked; a scope whose environment, provider or account name is not UTF-8 text (a BLOB, a NULL or
+  a non-UTF-8 TEXT, in a fact or in a derived row: no read can name it, every read binds UTF-8 text)
+  is left out and reported as the store-wide issue `undecodable_scope`, audited and alerted on its
+  own (object `*`) even when other scopes differ, while the scan goes on past it. The scan seeks once
+  per distinct environment, provider and account in each table, so even the hourly two-day verify
+  does work that does not grow with the history behind them. The read path refuses such a value with
+  `cost_rollup_inconsistent` (check `undecodable`, latched after the refusal) instead of raising; a
+  class-X row whose time is not an integer refuses as check `exceptions`, like a malformed day row.
+  **Broken facts fail closed.** The product never writes a malformed or orphan admission or a
+  non-UTF-8 key; only a write outside it can (an import with foreign keys off, hand SQL). Facts are
+  immutable, so a rebuild repairs only derived rows: while any fact of the scope is broken it
+  refuses (`RebuildRefused.attempt_keys`, each key printed as itself when it is printable UTF-8 text,
+  else as its type and hex bytes such as `text:x'66FF'`, and a key over 128 bytes as its first 128
+  bytes, its length and the SHA-256 of all of them, so two keys never share a line) and changes
+  nothing. The scope stays
+  refused through restarts, rebuilds and verifies until the database is restored from a backup taken
+  before that write (docs/platform/model-risk.md §13 step 3); everything written after that backup
+  is lost and is reconciled from the provider's and the payment service's records, which is why an
+  import or hand SQL is preceded by a consistent backup and followed by `verify --all --no-record`.
+  Rebuilds and verifier results are insert-only (`model_cost_rollup_rebuilds`,
+  `model_cost_rollup_audits`). The daily prune deletes, under the gate, velocity buckets older than
+  the newest admission minus two days and open-set rows its time has passed; day buckets stay. The
+  newest admission never moves back (facts are insert-only), so a prune that read it earlier can only
+  delete less.
+  A rebuild recreates every row a read can use exactly; it may differ from the live table only
+  in rows the prune removes (so prune, rebuild, prune leaves the same rows as prune).
+
+**Backup, restore, rollback.** The SQLite backup API copies the facts and the rollup in one
+consistent snapshot, so a restored copy verifies as it was; the restore rehearsal
+(`platform.py verify-restore`) recomputes every day from the facts and fails on a difference, so
+a backup taken after a broken fact fails it and one taken before passes (the recovery above). A
+backup from before the rollup replays once when the restored store first opens. A code rollback
+leaves the tables and triggers in place: older code ignores the tables, the triggers keep them
+current under it, and a later roll-forward finds the marker and sentinels and replays nothing.
+
 ## Exact arithmetic and rounding
 
 `Unit.scale` defines smallest units: an integer `n` represents `n / 10**scale` displayed

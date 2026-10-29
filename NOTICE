@@ -1,11 +1,41 @@
-Synwevo —— 第三方组件与许可声明（NOTICE）
+Synwevo
+Copyright (C) 2026 the Synwevo contributors
+维护方 / Maintainer: WeGreen-AI — https://github.com/WeGreen-AI/Synwevo
 
-本文件列出 Synwevo 运行时使用或分发的第三方组件及其许可。
-本文件由 apps/docs/synwevo_docs/licensing.py 的 THIRD_PARTY 表生成，
-两者由 apps/docs/tests/test_licensing.py 保证一致。
+许可 / License
+--------------
+本程序是自由软件：你可以依据自由软件基金会发布的 GNU Affero 通用公共许可证第 3 版，
+或（由你选择）任何更高版本的条款，再分发和/或修改它（SPDX：AGPL-3.0-or-later）。
+发布本程序是希望它有用，但不提供任何担保，甚至不含适销性或特定用途适用性的默示担保。
+许可证全文是仓库根目录的 LICENSE（GNU AGPL 第 3 版英文原文，未经改动）；各平台 Python 包
+目录中的 LICENSE 是它的原样副本，供从该目录构建的 wheel / sdist 携带。
+这些条款同样适用于本仓库此前已公开的提交。
 
-注意：本文件不是 Synwevo 自身的许可证。Synwevo 目前没有 LICENSE 文件，
-需由项目所有者选定后添加；在此之前不要假定任何授权条款。
+This program is free software: you can redistribute it and/or modify it under the terms of
+the GNU Affero General Public License as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See the GNU Affero General Public License in the LICENSE file for more details; the LICENSE in
+each platform Python package directory is an unmodified copy of it, so a wheel or sdist built
+there carries the text.
+These terms also apply to the earlier public commits of this repository.
+
+不在上述许可之内 / Not covered by the license above
+* apps/docs/sdk/：客户端 SDK、n8n 工作流与验收脚本以 Apache-2.0 许可
+  （apps/docs/sdk/LICENSE；python/ 与 typescript/ 各带一份）。
+  The client SDKs, n8n workflows and acceptance scripts under apps/docs/sdk/ are Apache-2.0.
+* Synwevo 名称、Logo 与应用图标不以任何代码许可授权，见 TRADEMARKS.md。
+  The Synwevo name, logos and icons are not licensed; see TRADEMARKS.md.
+* 第三方组件按各自的许可，见下文。apps/docs/tessdata/ 中的 OCR 模型是第三方数据（Apache-2.0，
+  见该目录的 LICENSE 与 README）。
+  Third-party components keep their own licenses, listed below; the OCR models in
+  apps/docs/tessdata/ are third-party data under Apache-2.0 (see the LICENSE and README there).
+
+第三方组件 / Third-party components
+-----------------------------------
+下列条目与 packages/core/synwevo_core/source_offer.py 的 THIRD_PARTY 表逐条对应（两处都是手工维护），
+apps/docs/tests/test_licensing.py 保证两者一致。
 
 ==============================================================================
 
@@ -21,13 +51,37 @@ Synwevo —— 第三方组件与许可声明（NOTICE）
     许可：MPL-2.0
     用途：旧格式转换、PDF 导出、真实分页、公式后备计算
 
-* Tesseract OCR（外部程序）+ chi_sim / eng 模型
+* Tesseract OCR（外部程序）+ tessdata_fast 模型（chi_sim / eng / osd）
     许可：Apache-2.0
     用途：扫描件 / 图片本地 OCR
 
 * FastAPI / Starlette / Uvicorn / Pydantic
     许可：MIT / BSD-3-Clause
     用途：Web 服务
+
+* pydantic-core / annotated-types / annotated-doc / typing-inspection
+    许可：MIT
+    用途：Pydantic 与 FastAPI 的运行时依赖
+
+* websockets / h11 / click
+    许可：BSD-3-Clause / MIT / BSD-3-Clause
+    用途：Uvicorn 的 WebSocket 与 HTTP/1.1 协议实现、命令行解析
+
+* anyio / sniffio / idna
+    许可：MIT / MIT 或 Apache-2.0 / BSD-3-Clause
+    用途：异步运行时与国际化域名
+
+* python-multipart
+    许可：Apache-2.0
+    用途：多文件上传
+
+* httpx / httpcore / httpx2 / httpcore2
+    许可：BSD-3-Clause
+    用途：出站 HTTP 客户端（登出回调、MCP、模型调用）
+
+* certifi / truststore
+    许可：MPL-2.0 / MIT
+    用途：出站 HTTPS 的根证书与系统证书库
 
 * openpyxl
     许可：MIT
@@ -36,6 +90,10 @@ Synwevo —— 第三方组件与许可声明（NOTICE）
 * python-docx / python-pptx
     许可：MIT
     用途：DOCX / PPTX 读取与内置模板生成
+
+* et-xmlfile / XlsxWriter
+    许可：MIT / BSD-2-Clause
+    用途：openpyxl 与 python-pptx 的依赖
 
 * lxml
     许可：BSD-3-Clause
@@ -49,8 +107,8 @@ Synwevo —— 第三方组件与许可声明（NOTICE）
     许可：MIT
     用途：字体子集
 
-* argon2-cffi（含 argon2-cffi-bindings、cffi、pycparser）
-    许可：MIT
+* argon2-cffi / argon2-cffi-bindings / cffi / pycparser
+    许可：MIT / MIT / MIT-0 / BSD-3-Clause
     用途：口令哈希（Argon2id；参数经部署机实测，见 synwevo_core/passwords.py）
 
 * PyOTP
@@ -61,12 +119,16 @@ Synwevo —— 第三方组件与许可声明（NOTICE）
     许可：Apache-2.0 或 BSD-3-Clause
     用途：TOTP 种子落地加密（AES-256-GCM）、WebAuthn 签名校验
 
+* py-vapid / http-ece
+    许可：MPL-2.0 / MIT
+    用途：Web 推送（VAPID 签名与载荷加密）
+
 * webauthn（Duo）
     许可：BSD-3-Clause
     用途：Passkey / WebAuthn 注册与登录仪式（协议实现）
 
-* cbor2 / pyOpenSSL / pyasn1
-    许可：MIT / Apache-2.0 / BSD-2-Clause
+* cbor2 / pyOpenSSL / pyasn1 / pyasn1-modules
+    许可：MIT / Apache-2.0 / BSD-2-Clause / BSD-2-Clause
     用途：WebAuthn 的 COSE 与证书解析依赖
 
 * Authlib
@@ -77,11 +139,47 @@ Synwevo —— 第三方组件与许可声明（NOTICE）
     许可：MIT
     用途：CSV 编码识别
 
-* xlrd / olefile
-    许可：BSD-3-Clause / BSD-2-Clause
-    用途：XLS 读取、旧格式检测
+* xlrd
+    许可：BSD-3-Clause；早期部分代码为 David Giffin 的 BSD 式许可（含广告与致谢条款，见 NOTICE）
+    用途：XLS 读取
 
-* React / React Router / Vite / TypeScript
+* olefile
+    许可：BSD-2-Clause
+    用途：旧格式检测
+
+* pycrdt
+    许可：MIT
+    用途：文档实时协同（服务端共享文档）
+
+* anthropic / jiter / docstring-parser
+    许可：MIT
+    用途：个人 Agent 调用所配置的模型提供方（Anthropic）
+
+* mcp / mcp-types
+    许可：MIT
+    用途：MCP 服务端与 Agent 的 MCP 客户端
+
+* jsonschema / jsonschema-specifications / referencing / rpds-py / attrs
+    许可：MIT
+    用途：按 JSON Schema 校验外部工具的输入
+
+* sse-starlette
+    许可：BSD-3-Clause
+    用途：MCP 服务端的流式响应
+
+* opentelemetry-api
+    许可：Apache-2.0
+    用途：MCP SDK 的可观测性接口（未配置导出器）
+
+* PyJWT
+    许可：MIT
+    用途：MCP SDK 授权模块的依赖
+
+* typing_extensions
+    许可：PSF-2.0
+    用途：类型标注的运行时支持
+
+* react / react-dom / react-router-dom / Vite / TypeScript
     许可：MIT / Apache-2.0
     用途：界面
 
@@ -89,15 +187,53 @@ Synwevo —— 第三方组件与许可声明（NOTICE）
     许可：MIT
     用途：内置文档编辑器
 
+* Yjs / y-websocket / y-protocols / lib0 / @tiptap/y-tiptap
+    许可：MIT
+    用途：文档实时协同（浏览器端）
+
+* qrcode
+    许可：MIT
+    用途：TOTP 绑定二维码
+
+* 其余前端依赖（package-lock.json 中的非开发依赖）
+    许可：MIT / ISC
+    用途：随界面一同打包
+
 * Droid Sans Fallback（随 PyMuPDF 分发的字体）
     许可：Apache-2.0
     用途：PDF 中文字体
 
+* Noto Sans / Serif CJK（fonts-noto-cjk，镜像内安装）
+    许可：OFL-1.1
+    用途：LibreOffice 导出 PDF 时的中文字体
+
+* ClamAV（生产部署的独立容器）
+    许可：GPL-2.0-only
+    用途：上传文件的恶意软件扫描（经网络调用，不与本程序链接）
+
+* nginx（生产部署的反向代理容器）
+    许可：BSD-2-Clause
+    用途：TLS 终止与反向代理
+
 ==============================================================================
 
+第三方致谢 / Third-party acknowledgments
+  xlrd 的许可分两部分：主体为 BSD-3-Clause（Stephen John Machin, Lingfo Pty Ltd）；部分早期代码
+  沿用 David Giffin 的 BSD 式许可，其第 4 条要求任何形式的再分发都保留以下致谢。
+  xlrd carries two licences: BSD-3-Clause for the bulk of the work, and for some earlier work a
+  BSD-style licence by David Giffin whose clause 4 asks every redistribution, in any form, to keep
+  this acknowledgment:
+
+    This product includes software developed by David Giffin <david@giffin.org>.
+
 关于 AGPL-3.0：
+  Synwevo 本身以 AGPL-3.0-or-later 许可。向网络用户提供修改过的 Synwevo 时，第 13 条要求
+  向他们提供对应源代码。部署的每个源站（账户、公开站点与工作空间、Docs、消息）都在
+  /api/source-code 提供它，无需登录：压缩包由正在运行的文件生成，含 LICENSE、NOTICE 与
+  TRADEMARKS.md。公开站点与工作空间的页脚、每个登录与注册页的页脚，以及 Docs 的「关于与许可」页
+  都链接到它；「关于与许可」页同时显示本程序的许可。
   PyMuPDF 以 AGPL-3.0（或 Artifex 商业许可）分发，其 wheel 中内含 MuPDF 原生二进制。
-  只要镜像中安装了 pymupdf，无论 SYNWEVO_DOCS_PDF_ENGINE 选的是哪个引擎，
-  AGPL-3.0 第 13 条的「向网络用户提供对应源代码」义务都适用。
-  本服务通过 /api/source-code 提供对应源代码。
-  若要真正不含 AGPL 依赖，请按 apps/docs/requirements-pdfium.txt 构建，且不安装 pymupdf。
+  只要镜像中安装了 pymupdf，无论 SYNWEVO_DOCS_PDF_ENGINE 选的是哪个引擎，它的 AGPL-3.0 义务都适用。
+  默认构建（infra/Dockerfile、CI 与 scripts/platform.py setup）都安装 pymupdf。
+  目前没有经过验证的不含 AGPL 组件的平台构建：apps/docs/requirements-pdfium.txt 只覆盖
+  Synwevo Docs，缺少实时协同需要的 pycrdt，也没有任何构建从它安装。

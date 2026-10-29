@@ -291,7 +291,8 @@ def test_monitor_round_runs_each_due_job_once_under_one_lease(platform):
     p.ticks[0] = DAY0 + 700
     monitor = RiskMonitor(p.store, environment="test", transport=p.transport, clock=p.clock)
     first = monitor.run_once()
-    assert not first.failures and first.ran == ["balance", "pending_exposure", "daily", "ledger_audit"]
+    assert not first.failures and first.ran == ["balance", "pending_exposure", "daily", "ledger_audit",
+                                                "cost_rollup_verify", "cost_rollup_prune"]
     second = monitor.run_once()
     assert second.ran == ["pending_exposure"] and len(p.seen) == 1
     assert RiskMonitor(p.store, environment="test", transport=p.transport, clock=p.clock).run_once().busy

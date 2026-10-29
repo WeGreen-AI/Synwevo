@@ -4,7 +4,7 @@
 openpyxl==3.1.5
 python-docx==1.2.0
 python-pptx==1.0.2
-pymupdf==1.28.2          # AGPL-3.0 or Artifex commercial licence – see docs/DEPENDENCIES.md (omit: requirements-pdfium.txt)
+pymupdf==1.28.2          # AGPL-3.0 or Artifex commercial licence – every build installs it; see docs/DEPENDENCIES.md §6
 pypdfium2==5.13.0        # Apache-2.0 / BSD-3 – AGPL-free PDF reading engine (SYNWEVO_DOCS_PDF_ENGINE=pdfium)
 fonttools==4.65.0        # PDF font subsetting
 lxml==6.1.3

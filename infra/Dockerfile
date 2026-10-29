@@ -23,6 +23,24 @@ COPY services/identity/web/ services/identity/web/
 # messages-assets），否则同名的 /assets 会互相遮盖——这正是"页面能开但样式没了"的来源。
 RUN npm run build -w @synwevo/docs-web && npm run build -w @synwevo/account-web && npm run build -w @synwevo/workspace-web && npm run build -w @synwevo/messages-web && npm run build -w @synwevo/suite-web
 
+# The release manifest: every file the build context delivered, recorded before anything is built.
+# /api/source-code offers only the files on it (anything appearing in /app later — a backup, a key,
+# build output — is not), and only when the context is a `git archive` of a commit with nothing
+# added or changed, as CI and the deploy receiver build from: every file must carry the commit
+# time git archive gives it. From a working tree, or from an unpacked archive that has had files
+# added or edited, it writes nothing and the offer refuses (packages/core/synwevo_core/source_manifest.py;
+# build with `git archive --format=tar HEAD | docker build -f infra/Dockerfile -t synwevo -`).
+#
+# A stage of its own, on one COPY of the whole context, because Docker's layer cache leaves
+# modification times out of a COPY's cache key: the final stage's per-directory COPYs come back from
+# an earlier build whenever their content is unchanged (packages/, most deploys), with that build's
+# times, and the check refused every such build on a builder that keeps its cache — the deploy
+# receiver's. This COPY's key covers every file, the writer's export-subst stamp among them, so no
+# other commit's build can supply it. The manifest goes to /manifest, empty when the writer refuses.
+FROM python:3.12-slim-trixie AS release
+COPY . /release
+RUN mkdir /manifest && python -P /release/packages/core/synwevo_core/source_manifest.py /release /manifest
+
 # Trixie's LibreOffice 25 supports the XLOOKUP formulas in the real engine/reference suite.
 # Bookworm's 7.4 returns #NAME? for those workbooks.
 FROM python:3.12-slim-trixie
@@ -66,8 +84,20 @@ COPY infra/server/ infra/server/
 COPY scripts/ scripts/
 COPY tests/ tests/
 COPY docs/ docs/
-COPY README.md NOTICE pyproject.toml package.json package-lock.json requirements-dev.txt ./
+# LICENSE, NOTICE and TRADEMARKS.md travel with the program: the image and the /api/source-code archive
+# built from it carry the licence text, not only a reference to the repository.
+COPY LICENSE NOTICE TRADEMARKS.md README.md README.en.md pyproject.toml package.json package-lock.json requirements-dev.txt ./
 COPY infra/Dockerfile infra/docker-compose.yml infra/
+# The rest of what builds, installs and runs it — the production stack, the CI workflow that builds
+# and ships this image, the build-context rules, the configuration template and the test
+# configuration — so the Corresponding Source served from this image is complete
+# (synwevo_core.source_offer.INCLUDE; filled-in *.env files are excluded by .dockerignore and the archive).
+COPY infra/production/ infra/production/
+COPY .github/ .github/
+COPY .dockerignore .env.example conftest.py ./
+# The release manifest the release stage above wrote (nothing, when it refused): after the last COPY
+# from the build context, before anything the build produces here.
+COPY --from=release /manifest/ ./
 COPY --from=ui /ui/apps/docs/web/dist apps/docs/web/dist
 COPY --from=ui /ui/services/identity/web/dist services/identity/web/dist
 COPY --from=ui /ui/apps/portal/web/dist apps/portal/web/dist
@@ -79,8 +109,6 @@ RUN pip install --no-cache-dir --no-deps --no-build-isolation \
       -e packages/core -e packages/auth-client/python \
       -e services/identity -e apps/portal -e apps/docs -e apps/messages -e apps/suite -e infra/server \
     && pip check
-# LICENSE is deliberately absent: this project has not chosen one yet, and COPY of a missing
-# file fails the build. The source archive reports it as missing rather than pretending.
 # The data directory is the volume, owned by the unprivileged user the server runs as. HOST and
 # DATA_DIR above describe the container itself; infra/docker-compose.yml pins them again so an
 # operator's .env cannot move the database out of the volume or bind the container's loopback.

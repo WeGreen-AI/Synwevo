@@ -16,8 +16,9 @@ import pytest
 
 from synwevo_core.billing import AttemptTicket, BillingError, Ledger, Rate, Unit, Usage
 from synwevo_core.billing.admission import CostAdmission, CostPolicy
-from synwevo_core.billing.risk import RiskControls
+from synwevo_core.billing.risk import RiskControls, RiskPolicy
 from synwevo_core.store import Store
+from synwevo_core.suite_schema.model_cost_rollup import sentinels_present
 from tests.integration.test_billing_ledger import (
     COST_UNIT, START, UNIT, balance, context, cost_price, evidence, fixture_authorize,
     fixture_verify, fund, money, sale_price,
@@ -468,7 +469,9 @@ def test_local_stop_schema_is_additive_on_an_existing_database(funded):
     assert reopened.all("SELECT * FROM model_cost_endings") == []
     names = {r["name"] for r in reopened.all("SELECT name FROM sqlite_master WHERE type='trigger' "
                                              "AND tbl_name='model_cost_endings'")}
-    assert names == {"model_cost_endings_valid_insert", "model_cost_endings_no_update", "model_cost_endings_no_delete"}
+    # The fourth closes the stopped call's hold row in the cost rollup (suite_schema/model_cost_rollup.py).
+    assert names == {"model_cost_endings_valid_insert", "model_cost_endings_no_update", "model_cost_endings_no_delete",
+                     "model_cost_endings_rollup"}
 
 
 def test_admission_expiry_cannot_outlive_the_longest_hold(funded):
@@ -672,6 +675,8 @@ def seed_capacity_facts(money, *, count, admitted_at):
 def test_accounting_capacity_counts_current_windows_and_old_unknown_still_open(funded, old_unknown):
     # Old: admitted before every current window with its hold still open. 2034-05-01 is a Monday,
     # so the day, the week and the month all start then and the old rows come from the pending index.
+    # 10,000 open unknowns are the most the open set can hold in band: the next admission is refused
+    # by max_unknown (unknown_count+1 > 10,000), not by a scan cap (cost rollup, D17 §6).
     admission = CostAdmission(funded[1], current_policy=lambda: policy(max_unknown=10_000, max_inflight=10_000))
     now = utc("2034-05-01T00:00:00")
     funded[3][0] = now
@@ -681,7 +686,7 @@ def test_accounting_capacity_counts_current_windows_and_old_unknown_still_open(f
     snapshot = admission.snapshot()
     assert snapshot["records"] == snapshot["unknown_count"] == 10_000
     _, refused = prepare(funded, "over-capacity")
-    with pytest.raises(BillingError, match="cost_accounting_capacity"):
+    with pytest.raises(BillingError, match="cost_unknown_limit"):
         send(admission, refused, amount=0)
     assert len(funded[0].all("SELECT attempt_key FROM model_cost_admissions")) == 10_000
     assert funded[0].all("PRAGMA foreign_key_check") == []
@@ -822,6 +827,10 @@ def test_reopening_store_preserves_or_rebuilds_only_unknown_pending(funded, rebu
         assert reopened.all("SELECT * FROM model_cost_admissions ORDER BY attempt_key") == facts
         assert reopened.all("SELECT * FROM billing_usage ORDER BY attempt_key") == usage
         assert reopened.one("SELECT value FROM meta WHERE key='model_cost_pending_projection_v1'") == {"value": "1"}
+        # The cost rollup's marker and its four sentinels: a routine start replays nothing.
+        assert reopened.one("SELECT value FROM meta WHERE key='model_cost_rollup_v1'") == {"value": "1"}
+        with reopened.conn() as c:
+            assert sentinels_present(c)
         assert reopened.all("PRAGMA foreign_key_check") == []
         reopened_ledger = Ledger(reopened, environment="test", namespace=ledger.namespace, clock=lambda: ticks[0])
         snapshot = CostAdmission(reopened_ledger, current_policy=policy).snapshot()
@@ -846,8 +855,38 @@ def test_admission_insert_with_existing_usage_never_creates_pending(funded):
         store.execute("INSERT INTO model_cost_pending SELECT attempt_key,environment,provider,account_ref,admitted_at "
                       "FROM model_cost_admissions WHERE attempt_key=?", (ticket.attempt_key,))
     assert exact(CostAdmission(ledger, current_policy=policy).snapshot(), "daily") == 19
+    # The same INSERT resolved its rollup bucket at once: bound 20 replaced by the exact cost 19.
+    day = store.one("SELECT * FROM model_cost_buckets WHERE environment='test' AND dim='account'")
+    assert (day["start"], day["n_adm"], day["n_res"], day["n_cross"], day["n_exc"]) == (START - START % 86400, 1, 1, 0, 0)
+    assert (day["bound_hi"], day["bound_lo"], day["rbound_hi"], day["rbound_lo"]) == (0, 20, 0, 20)
+    assert (day["cost_hi"], day["cost_lo"], day["cost_carry"], day["cost_frac"]) == (0, 19, 0, 0)
+    assert store.all("SELECT * FROM model_cost_inflight WHERE environment='test'") == []
+    assert store.all("SELECT * FROM model_cost_hold WHERE environment='test'") == []
     reopened = Store(store.root)
     assert reopened.all("SELECT * FROM model_cost_pending") == []
+
+
+#: Cost, fact, call and attempt tables: the admission path may SEARCH them, never SCAN them.
+PROTECTED = ("model_cost_admissions", "model_cost_pending", "model_cost_endings", "model_cost_buckets",
+             "model_cost_inflight", "model_cost_hold", "model_cost_exceptions", "billing_usage", "billing_calls",
+             "billing_attempts", "billing_accounts")
+
+
+def assert_bounded_plans(c, statements):
+    """Every traced cost statement SEARCHes a primary key or index; none SCANs a protected table."""
+    queries = [sql for sql in statements if sql.lstrip().upper().startswith(("SELECT", "WITH"))
+               and any(table in sql.lower() for table in PROTECTED)]
+    assert queries
+    for sql in queries:
+        details = [row[3].lower() for row in c.execute("EXPLAIN QUERY PLAN " + sql)]
+        names = set(PROTECTED)
+        for table, alias in re.findall(r"\b(?:FROM|JOIN)\s+(" + "|".join(PROTECTED) + r")(?:\s+(?:AS\s+)?([a-z_]\w*))?",
+                                       sql, re.IGNORECASE):
+            if alias.lower() not in ("", "where", "join", "left", "inner", "on", "indexed", "union", "order", "limit"):
+                names.add(alias.lower())
+        assert any(d.startswith("search ") and ("index" in d or "primary key" in d) for d in details), (sql, details)
+        assert not any(re.match(r"scan\s+(?:" + "|".join(map(re.escape, names)) + r")\b", d) for d in details), (sql, details)
+    return queries
 
 
 def test_historical_pending_query_uses_scope_index_without_scanning_settled_history(funded):
@@ -855,7 +894,7 @@ def test_historical_pending_query_uses_scope_index_without_scanning_settled_hist
     template = seed_capacity_facts(funded, count=10_000, admitted_at=START)
     ledger.settle_trusted_usage(template.attempt_key, evidence(template, usage=Usage(0, 0, 0)))
     # Fixture-only bulk settled history: copy a real zero-cost usage fact to the
-    # distinct capacity attempts. Real schema triggers maintain every pending row.
+    # distinct capacity attempts. Real schema triggers maintain every pending and rollup row.
     with store.tx() as t:
         t.execute("UPDATE billing_attempts SET status='settled' WHERE id LIKE 'fixture-capacity-attempt-%'")
         t.execute("INSERT INTO billing_usage(attempt_key,facts,outcome,cost_n,cost_d,cost_unit,charge,"
@@ -866,44 +905,111 @@ def test_historical_pending_query_uses_scope_index_without_scanning_settled_hist
                   "WHERE a.id LIKE 'fixture-capacity-attempt-%'", (template.attempt_key,))
     assert store.one("SELECT COUNT(*) AS n FROM billing_usage")["n"] == 10_000
     assert store.all("SELECT * FROM model_cost_pending") == []
-    admission = CostAdmission(ledger, current_policy=policy)
+    risk = RiskPolicy(allowlist_only=False, payer_window_s=86_400, payer_window_cost=10**9, route_window_s=3600,
+                      route_window_cost=10**9, balance_warn=None, balance_close=None, balance_poll_s=60,
+                      reconcile_tolerance=0, pending_alert=None)
+    admission = CostAdmission(ledger, current_policy=lambda: policy(risk=risk))
     # Admitted in the previous month with its hold still open at the snapshot: found through
-    # the pending projection's index, never by scanning settled history.
+    # the open set's indexes, never by scanning settled history.
     ticks[0] = utc("2034-04-30T23:50:00")                         # 2034-05-01: a Monday and a month start
     _, old_unknown = prepare(funded, "old-indexed-unknown", deadline_seconds=800)
     send(admission, old_unknown, amount=7)
     ticks[0] = utc("2034-05-01T00:00:00")
     _, current = prepare(funded, "current-indexed-unknown")
-    send(admission, current, amount=3)
     statements = []
     with store.conn() as c:
         c.set_trace_callback(statements.append)
         try:
+            send(admission, current, amount=3)                    # counters and velocity, inside dispatch
             snapshot = admission.snapshot()
         finally:
             c.set_trace_callback(None)
         # Inspect the SQL actually used by the service, not a parallel test query.
-        cost_queries = {sql for sql in statements if sql.lstrip().upper().startswith(("SELECT", "WITH"))
-                        and "model_cost_admissions" in sql.lower()}
-        assert cost_queries
-        for sql in cost_queries:
-            assert "UNION ALL" in sql.upper() and "model_cost_pending" in sql.lower()
-            details = [row[3].lower() for row in c.execute("EXPLAIN QUERY PLAN " + sql)]
-            assert any("search " in detail and "model_cost_pending_scope" in detail
-                       and all(term in detail for term in ("environment=?", "provider=?", "account_ref=?", "admitted_at<?"))
-                       for detail in details), details
-            assert any("search " in detail and "model_cost_admissions_scope" in detail
-                       and "admitted_at>?" in detail for detail in details), details
-            sources = {"model_cost_admissions", "model_cost_pending", "billing_usage"}
-            for table, alias in re.findall(
-                r"\b(?:FROM|JOIN)\s+(model_cost_admissions|model_cost_pending|billing_usage)"
-                r"(?:\s+(?:AS\s+)?([a-z_]\w*))?", sql, re.IGNORECASE,
-            ):
-                sources.add(table.lower())
-                if alias.lower() not in ("", "where", "join", "left", "inner", "on", "indexed", "union"):
-                    sources.add(alias.lower())
-            assert not any(re.match(r"scan\s+(?:" + "|".join(map(re.escape, sources)) + r")\b", detail)
-                           for detail in details), details
-    assert snapshot["records"] == snapshot["unknown_count"] == 2
+        queries = assert_bounded_plans(c, statements)
+    used = " ".join(queries).lower()
+    for index in ("model_cost_buckets", "model_cost_inflight_open", "model_cost_hold_open",
+                  "model_cost_exceptions_scope", "model_cost_pending_scope", "model_cost_admissions_scope"):
+        assert index in used, index
+    assert not any("union all" in sql.lower() and "model_cost_admissions_scope" in sql.lower()
+                   and "admitted_at>=" in sql.lower() for sql in queries)    # no window scan of admissions
+    assert snapshot["records"] == 2 and snapshot["unknown_count"] == 2
     assert snapshot["unknown_reserved_units"] == 10 and snapshot["inflight"] == 1
     assert exact(snapshot, "daily") == exact(snapshot, "weekly") == exact(snapshot, "monthly") == 3
+    assert snapshot["rows_read"] < 20
+
+
+def _vm_steps(store, admission, ticket, amount):
+    """FIXTURE measurement: SQLite VM instructions spent inside admit (not the Ledger's own work)."""
+    steps = [0]
+
+    def count():
+        steps[0] += 1
+        return 0
+
+    def admit(t, a):
+        t.set_progress_handler(count, 1)
+        try:
+            admission.admit(t, a, amount=amount, expires_at=admission.ledger._now() + 120)
+        finally:
+            t.set_progress_handler(None, 0)
+
+    admission.ledger.dispatch(ticket, admission=admit)
+    return steps[0]
+
+
+def test_admission_work_is_flat_in_settled_history(funded):
+    """VM steps of admit (counters, velocity and the rollup triggers) with 10,000 and with 100,000
+    settled admissions this month, in two provider accounts of one store measured identically."""
+    store, ledger, _, ticks = funded
+    now = utc("2034-05-20T12:00:00")
+    month = utc("2034-05-01T00:00:00")
+    risk = RiskPolicy(allowlist_only=False, payer_window_s=86_400, payer_window_cost=10**12, route_window_s=86_400,
+                      route_window_cost=10**12, balance_warn=None, balance_close=None, balance_poll_s=60,
+                      reconcile_tolerance=0, pending_alert=None)
+    big = 10**12
+    admissions = {}
+    for total in (10_000, 100_000):
+        account = f"fixture-flat-{total}"
+        admissions[total] = CostAdmission(ledger, current_policy=lambda account=account: policy(
+            account_ref=account, daily_budget=big, weekly_budget=big, monthly_budget=big, unknown_budget=big, risk=risk))
+        ticks[0] = now - 7200
+        _, source = prepare(funded, f"flat-template-{total}")
+        send(admissions[total], source, amount=20)
+        ledger.settle_trusted_usage(source.attempt_key, evidence(source))
+        # Spread over the month before the velocity windows: inside the cost windows' day rows. (The
+        # velocity reads are bounded by their bucket structure instead, at most 143 rows a window
+        # however dense the route: test_cost_rollup.py measures them at 12,000 rows.)
+        last = now - 86_400 - 7200
+        clone_settled(store, source.attempt_key, range(total - 1), lambda i: month + (i * 7919) % (last - month),
+                      prefix=f"fixture-flat-{total}")
+    measured = {}
+    for step, offset in (("warm-up", -60), ("measured", 0)):
+        for total, admission in admissions.items():
+            ticks[0] = now + offset
+            _, ticket = prepare(funded, f"flat-{step}-{total}")
+            measured[total] = _vm_steps(store, admission, ticket, 5)
+    assert store.one("SELECT COUNT(*) AS n FROM billing_usage")["n"] == 110_000
+    assert abs(measured[100_000] - measured[10_000]) < 0.1 * measured[10_000], measured
+
+
+def clone_settled(store, source, indexes, at, *, prefix):
+    """FIXTURE: settled copies of one real metered call, written with plain bulk SQL."""
+    call = store.one("SELECT call_key FROM billing_attempts WHERE id=?", (source,))["call_key"]
+    with store.tx() as t:
+        t.execute("CREATE TEMP TABLE IF NOT EXISTS fixture_flat(i INTEGER PRIMARY KEY, at INTEGER NOT NULL)")
+        t.execute("DELETE FROM fixture_flat")
+        t.executemany("INSERT INTO fixture_flat VALUES (?,?)", [(i, at(i)) for i in indexes])
+        t.execute("INSERT INTO billing_calls(id,run_key,logical_call_id,context,account_id,price_id,hold_units,deadline,"
+                  "status,created_at) SELECT ?||'-call-'||i,run_key,?||'-'||i,context,account_id,price_id,0,deadline,"
+                  "'settled',created_at FROM fixture_flat, billing_calls WHERE id=?", (prefix, prefix, call))
+        t.execute("INSERT INTO billing_attempts(id,call_key,attempt_id,owner,fence,lease_until,environment,provider,"
+                  "requested_model,cost_price_id,status,created_at,dispatched_at) SELECT ?||'-attempt-'||i,?||'-call-'||i,"
+                  "?||'-'||i,owner,?||'-fence-'||i,lease_until,environment,provider,requested_model,cost_price_id,"
+                  "'settled',created_at,dispatched_at FROM fixture_flat, billing_attempts WHERE id=?",
+                  (prefix, prefix, prefix, prefix, source))
+        t.execute("INSERT INTO model_cost_admissions SELECT ?||'-attempt-'||i,environment,provider,account_ref,unit,"
+                  "reserved_units,policy_revision,limits_json,at,at+120 FROM fixture_flat, model_cost_admissions "
+                  "WHERE attempt_key=?", (prefix, source))
+        t.execute("INSERT INTO billing_usage SELECT ?||'-attempt-'||i,facts,outcome,cost_n,cost_d,cost_unit,charge,"
+                  "absorbed_n,absorbed_d,late,created_at FROM fixture_flat, billing_usage WHERE attempt_key=?",
+                  (prefix, source))

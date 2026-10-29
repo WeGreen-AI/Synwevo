@@ -21,7 +21,7 @@
   },
   "risk": {
     "allowlisted_payer_kind": "user",
-    "allowlisted_payer_id": "u_3f48e19e364e",
+    "allowlisted_payer_id": "u_<redacted 2026-10-25: the platform administrator's account id>",
     "limits_remain_enforced": true
   },
   "payments": {

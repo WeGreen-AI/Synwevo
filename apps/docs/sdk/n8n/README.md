@@ -90,3 +90,12 @@ The compatibility entry point above delegates service orchestration to
 orchestration in `n8n_run.py` / `n8n_receiver.py` in that same integration directory. The external
 client and workflow files import no backend packages. The shared synthetic kit stays in
 `apps/docs/sdk/acceptance/make_kit.py` unchanged.
+
+## License
+
+Copyright 2026 the Synwevo contributors. These workflow files and their build scripts are
+licensed under the Apache License, Version 2.0 (SPDX: `Apache-2.0`); the full text is in
+[`apps/docs/sdk/LICENSE`](../LICENSE). Everything under `apps/docs/sdk/` is Apache-2.0, so a
+workflow can be copied into a closed-source setup. The Synwevo server itself is
+AGPL-3.0-or-later (see the repository's `LICENSE` and `NOTICE`), and the Synwevo name, logos and
+icons are not licensed by either (see `TRADEMARKS.md`).

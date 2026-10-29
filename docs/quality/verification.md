@@ -769,11 +769,11 @@ services/identity/tests/test_notifications.py ......                       [100%
 ### 16.24 机构邮箱注册（CUHK）：根因定位与在产品内能修的部分（CI-24）
 
 **生产现场（2026-09-26 只读、脱敏查询；不含本地部分、不含正文）**：`link.cuhk.edu.hk` 与 `cuhk.edu.hk` 的 MX 都是
-Trend Micro Email Security（`*.in.tmes.trendmicro.com`）。生产库里唯一一次 CUHK 注册（2026-09-25 16:09:20Z）：账户已建（`pending`）、
-验证令牌已签（24 h）、outbox 行 `sent`（1 次尝试，16:09:37Z）；mailcow 队列 `E0C8450BA22` 由 rspamd 以 `hikosphere.com s=mailcow2026`
-签 DKIM，16:09:45Z 中继到 `mail.smtp2go.com:587` 得到 `250 OK id=1xA8Ua-…`；令牌到期前从未被使用；同一来源 3 分钟后改用消费邮箱注册并在
-1 分钟内完成验证。发件信箱在此后没有收到任何退信/DSN。DNS：`hikosphere.com` SPF 为 `ip4:149.28.18.222 include:_spf.mx.cloudflare.net ~all`
-（不含 SMTP2GO 出口），DKIM `mailcow2026` 已发布且与 rspamd 持有的公钥一致（对齐），DMARC `p=none`。
+Trend Micro Email Security（`*.in.tmes.trendmicro.com`）。生产库里当时唯一一次 CUHK 注册（2026-09-25）：账户已建（`pending`）、
+验证令牌已签（24 h）、outbox 行 `sent`（1 次尝试）；mailcow 由 rspamd 以 `hikosphere.com s=mailcow2026`
+签 DKIM，随即中继到 `mail.smtp2go.com:587` 得到 `250 OK`；令牌到期前从未被使用；注册者随后改用另一个邮箱完成了注册。
+发件信箱在此后没有收到任何退信/DSN。DNS：发信域 SPF 当时不含 SMTP2GO 出口，DKIM `mailcow2026` 已发布且与 rspamd 持有的公钥一致（对齐）。
+（2026-10-25 脱敏：删去注册者的精确时间、队列与中继编号、改用其他邮箱的细节，以及 SPF/DMARC 记录原文。）
 
 **结论**：不是前端正则、不是服务端语法校验、不是注册策略、不是限流、不是发信失败——应用与中继链完整；最终裁决发生在 SMTP2GO 之后的
 收件网关（延迟/隔离/垃圾箱，或拒收退给 SMTP2GO 的回信地址），只在 SMTP2GO 的 Activity 报表里可见（需要账户持有人查看，见
@@ -2015,7 +2015,7 @@ P6（关闭的页面在进程崩溃前几秒的修改）仍是 §14 记录的已
 浏览器：一次性测试服务器（127.0.0.1:38991，scratch 数据）桌面与 390 px，简/英/繁：指派 → 已指派卡片 → 撤销对话框（列出失去访问的人、邀请与令牌数、冻结随撤销结束、不删除数据）→ 待认领卡片回来 → 再指派；
 对话框打开后新增成员被拒并原地刷新；无横向溢出（截图 `scratchpad/unclaim/fix/live/`）。
 
-未验证：生产（待部署；生产的历史数据当前为待认领，已于 2026-09-29 手工撤销）。
+未验证：生产（写入时待部署，2026-10-04 随 `aadcb9e..b8cb31a` 部署；生产的历史数据当时为待认领，已于 2026-09-29 手工撤销）。
 
 ### 16.4 真实外部邮箱与真实业务样本（接续项）
 

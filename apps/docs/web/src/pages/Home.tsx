@@ -346,7 +346,7 @@ export default function Home() {
               </div>
             </>
           )}
-          <div className="tiny muted mt16">{tr("所有文件都在本服务的服务器上处理，不发送到外部服务。")}</div>
+          <div className="tiny muted mt16">{tr("Synwevo Docs 的解析、转换、文字识别与生成都在本服务的服务器上完成。只有使用个人 Agent 时，对话与你选择发送的文件内容会发送给所配置的模型提供方。")}</div>
         </div>
       </div>
       {copyFor && <CopyRequestDialog project={copyFor} onClose={() => { setCopyFor(null); load(); }} />}

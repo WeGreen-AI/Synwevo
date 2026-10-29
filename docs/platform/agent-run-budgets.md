@@ -258,19 +258,44 @@ unknown: the gateway settles it as known zero usage (`docs/deepseek-provider.md`
 answers"). Connection expiry is still not proof of zero cost or permission to resend; an
 admission may not expire later than one day (the longest hold) after it is admitted.
 
-The current implementation materializes at most 10,000 relevant admissions per provider
-account (current calendar periods plus unknowns that can still be open, i.e. admitted within
-the last day), using an overflow probe and refusing new work at capacity. Recent facts and
-older pending ones use disjoint indexed ranges, bounded before joining usage; an unknown whose
-hold ended before the current periods is final at its bound and never scanned again. `model_cost_pending` is a derived pending projection, inserted
-with admission and removed only with trusted usage in the same transaction. Store backfills
-it once under a migration marker; ordinary reopen does not rescan settled history. This is a
-declared fail-closed accounting limit, not a throughput claim.
+The counters come from an exact, trigger-maintained **cost rollup** (`billing/cost_rollup.py`,
+`suite_schema/model_cost_rollup.py`; docs/billing-ledger.md, "Cost rollup"), not from
+the admission history. SQL triggers on the cost facts keep, inside the writer's own transaction,
+per-UTC-day buckets of each provider account (admitted and resolved bounds, exact resolved cost),
+the payer and route velocity buckets of the risk brake (1, 60 and 3,600 s), and the open set (an
+admission still in flight, or whose call is still reserved without a recorded local stop). Costs
+are summed exactly: integers in two int64 limbs; a cost on the 10^-15 grid (every production
+tariff) also keeps its fraction on that grid; another canonical rational is summed per
+denominator; anything else (a numerator or denominator beyond 2^63-1, a non-canonical text) is
+kept as an exception row and parsed exactly as before. An admission reads at most 31 day rows
+per unit and denominator, the open set, the exceptions in the periods and one index-only count
+of today's pending rows; nothing grows with the month's settled volume. The only row limits left
+refuse with `cost_accounting_capacity`: more than 10,000 open rows (impossible in band, because
+admission enforces `unknown_count+1 <= max_unknown <= 10,000`) or more than 10,000 exception
+facts in the periods (the Ledger writes one only for a reduced cost beyond 2^63-1).
+`model_cost_pending` remains the derived pending projection (inserted with admission, removed
+only with trusted usage); the rollup checks today's pending count against today's buckets.
+
+The rollup is verified, never trusted blindly. A read-path check (bucket structure, a stale open
+row, the number of exception rows, today's pending parity, a negative absorbed amount) refuses with `cost_rollup_inconsistent`
+and is latched after the refusing transaction rolls back. The risk monitor recomputes the rollup
+from the facts in a read snapshot hourly (last two days) and daily (from the previous month's
+first day), and the restore rehearsal checks every day. A mismatch, a malformed or orphan
+admission (a `fact:` fault), a value the read cannot decode or a latched read-path check opens a
+fault for that provider account only: its paid calls refuse with `cost_rollup_inconsistent`. When
+the derived rows were changed, an operator runs `python -m synwevo_core.billing.cost_rollup rebuild
+--environment … --provider … --account-ref … --reason …` in a role container
+(docs/platform/model-risk.md §13; locally `platform.py cost-rollup`), which replays that account's
+facts, verifies the result and resolves its faults in one transaction (or changes nothing). A broken
+cost fact fails closed: facts are immutable and only a write outside the product can break one, so
+the rebuild names it and refuses, and the account stays refused until the database is restored from
+a backup taken before that write. The administrators are told (`billing.cost.rollup_inconsistent`);
+the rebuild is audited (`billing.cost.rollup_rebuilt`). Recovery is never automatic.
 The internal snapshot exposes consistent counters only; it grants no dispatch authority and
 is not a public Admin API. Disabling admission stops new calls while existing usage recording,
 wallet release and settlement remain available.
 
-Aggregate rollups for larger workloads, RPM/TPM, fair queues, upstream balance alerts and an audited unknown-cost investigation
+RPM/TPM, fair queues, upstream balance alerts and an audited unknown-cost investigation
 surface remain separate requirements. The default deployed factory still does not enable this
 paid route. Isolated admission tests are not evidence of live provider capacity or live billing.
 
@@ -404,7 +429,9 @@ The get operation takes `{}` and returns `environment`, `timezone: "UTC"`, and `
 three decimal-integer-string budgets, `usage_state`, `periods`, and the latest 20 immutable policy
 revisions. Available period values contain UTC `start`/exclusive `end`, and integer-string `spent`,
 `held`, `remaining`; remaining is floored at zero and is not wallet balance. Bounded indexed reads
-consider at most 10,000 relevant calls. Overflow or missing settlement evidence returns
+consider at most 10,000 relevant calls (**phase 2**, next change: per-wallet day rows fed by a
+trigger when a call settles, with the cost rollup's gate and faults, so this limit stops growing
+with a heavy person's month; until then it applies as written). Overflow or missing settlement evidence returns
 `usage_state: "capacity"|"inconsistent"` with `periods: null`, never invented zero usage, and refuses
 new calls. Configuration remains editable so the person can still disable their limits.
 

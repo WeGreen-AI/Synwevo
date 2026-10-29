@@ -13,6 +13,11 @@
     python scripts/platform.py verify-restore FILE   # 在隔离副本上核验备份能恢复
     python scripts/platform.py restore FILE --into DIR [--force]
                                                      # 恢复并补上备份之后的撤销（安全日志）
+    python scripts/platform.py cost-rollup verify [--all] [--environment test|live]
+                                                     # 核对模型成本汇总与成本事实（不一致会锁定该账户）
+    python scripts/platform.py cost-rollup rebuild --environment E --provider P --account-ref A --reason "…"
+                                                     # 从事实重建一个提供方账户的成本汇总（审计、校验后才生效；成本
+                                                     # 事实本身有问题时拒绝；生产在角色容器里运行，见 docs/platform/model-risk.md §13）
 
 `setup` runs with any Python ≥ 3.12 on a clean checkout: it imports nothing from this repository,
 because nothing from this repository is installed until it has run. Every other command needs
@@ -561,6 +566,28 @@ def restart(args) -> int:
     return up(args)
 
 
+def cost_rollup(args) -> int:
+    """Verify the exact cost rollup against its facts, or rebuild one provider account's rollup.
+
+    Never automatic: the hourly and daily checks only verify and latch (billing/cost_rollup.py). A
+    rebuild replays that account's facts, verifies the result and resolves its faults in one
+    transaction, or changes nothing. A broken fact is named and refuses the rebuild: facts cannot be
+    edited, so that account stays refused until the database is restored from a backup taken before
+    the write that broke it (docs/platform/model-risk.md §13).
+    Works on the configured data directory; a test or rehearsal points SYNWEVO_DATA_DIR elsewhere.
+    Run as its own module (like backup's snapshot tool): this file's name would shadow the
+    standard library's `platform` for anything imported in-process.
+    """
+    _require_data_dir(args)
+    cmd = [sys.executable, "-m", "synwevo_core.billing.cost_rollup", args.action, "--data", data_dir()]
+    for flag, value in (("--environment", args.environment), ("--provider", args.provider),
+                        ("--account-ref", args.account_ref), ("--reason", args.reason), ("--actor", args.actor)):
+        if value:
+            cmd += [flag, value]
+    cmd += [flag for flag, on in (("--all", args.all), ("--no-record", args.no_record)) if on]
+    return subprocess.run(cmd, cwd=str(ROOT)).returncode
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -613,6 +640,17 @@ def main() -> int:
                     help="原撤销日志丢失时使用：会话、令牌、旧 API key 全部作废，机密/服务客户端停用；"
                          "保留公开交互客户端。无法补回备份后的成员与账户撤权历史，恢复后需人工核对")
     rt.set_defaults(func=restore)
+
+    cr = sub.add_parser("cost-rollup", help="核对或重建模型成本汇总（成本准入与速率刹车读取的精确汇总）")
+    cr.add_argument("action", choices=["verify", "rebuild"])
+    cr.add_argument("--all", action="store_true", help="verify：核对全部日期（默认从上个月 1 日起）")
+    cr.add_argument("--no-record", action="store_true", help="verify：只报告，不记录、不锁定")
+    cr.add_argument("--environment", choices=["test", "live"])
+    cr.add_argument("--provider")
+    cr.add_argument("--account-ref")
+    cr.add_argument("--reason", help="rebuild：理由（8 至 500 个字），写入审计")
+    cr.add_argument("--actor", help="rebuild：操作人（写入审计；默认 operator:<系统用户>）")
+    cr.set_defaults(func=cost_rollup)
 
     args = ap.parse_args()
     if args.cmd != "setup" and _needs_venv():

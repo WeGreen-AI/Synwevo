@@ -51,10 +51,29 @@ SMTP 的已授权配置方式仍见第 6 节，不能为本轮自动获取 VPS �
 
 ```bash
 cp .env.example .env            # 按需修改；密钥不要写进文件，用 CLI 创建
-docker compose -f infra/docker-compose.yml up -d --build    # 监听 127.0.0.1:8765，数据卷 ./data
+# 从 git archive 构建：镜像只含受版本控制的文件，并记下源代码发布清单（/api/source-code 只打包清单上的文件）。
+# 未提交的修改用 `git stash create` 生成的临时提交带上（工作树干净时它不输出，退回 HEAD）。
+rev=$(git stash create); git archive --format=tar "${rev:-HEAD}" | docker build -f infra/Dockerfile -t synwevo:local -
+docker compose -f infra/docker-compose.yml up -d             # 监听 127.0.0.1:8765，数据卷 ./data
 docker compose -f infra/docker-compose.yml exec synwevo python -m synwevo_docs.cli apikey create --name ci --tenant <工作空间ID> --scopes read,write
 curl -s localhost:8765/readyz
 ```
+
+`docker compose … up -d --build` 仍可用，但它从工作树构建：上下文不是 `git archive`，构建日志会提示没有写入
+源代码发布清单，这样的镜像对 `/api/source-code` 返回 503（分不清源代码与工作树里的其他文件时不提供，
+而不是把备份、密钥一起发出去）。对外提供服务时请用上面的 `git archive` 构建。
+
+也可以先把 `git archive` 的发布包（例如代码托管平台按提交生成的 tar.gz）解包到目录，再在该目录里
+`docker build -f infra/Dockerfile .`（部署接收器与 CI 就是这样做的）——但解包之后不要在目录里新增或改动文件。
+提交号盖在 `source_manifest.py` 里，只能证明这一个文件来自 `git archive`；构建还核对上下文里**每个**文件的修改时间
+都是该提交的时间（`git archive` 给每个文件的时间，tar 解包与 `docker build` 都保留它）。有一个对不上——解包后放进去的
+证书、密钥、备份，或改过的源文件——构建日志就列出它们、不写发布清单，镜像对 `/api/source-code` 返回 503。
+要改代码就提交后重新 `git archive`；不能用会丢弃文件时间的方式解包或复制（`tar -m`、不带 `-p` 的 `cp -r`）。
+这项核对在镜像的单独阶段里进行，对象是一次复制进来的**整个**构建上下文，而不是最后阶段按目录复制的层：Docker 的层缓存
+不看文件时间，内容没变的目录（多数部署里的 `packages/`）会从更早的构建原样取回、带着那次的时间。所以上下文里多出来的
+任何文件——即使镜像并不复制它——也会让构建不写清单（部署接收器自己的 `.archive-sha256` 由 `.dockerignore` 挡在上下文外）。
+同一提交、内容完全相同的重新构建会沿用上一次的结果，拒绝也一样：如果是解包丢了文件时间而被拒，正确解包后用
+`docker build --no-cache` 重新构建。
 
 镜像内含 LibreOffice、Tesseract（chi_sim/eng）与 Noto CJK 字体。对外请在宿主机用反向代理：界面走你自己的认证，
 `/api/v1` 由 API 密钥鉴权（示例配置见 ports.md 第 3 节）。
@@ -83,6 +102,11 @@ export SYNWEVO_DATA_DIR=/srv/synwevo/data
 成功以本副本进程的 `/readyz` 为准，端口被其他进程占用会失败。生产单进程按需设置鉴权与对外 URL 后，
 用 `.venv/bin/python -m synwevo_server.run` 启动；拆分部署的发行者与回调配置见
 [integration/ports.md](integration/ports.md)。
+
+从检出运行时，`/api/source-code` 按 `git ls-files` 打包。服务若以另一个账户运行、而仓库属于运营方账户，
+git（2.35.2 起）会以 “dubious ownership” 拒绝读取，`/api/source-code` 返回 503 并说明原因。确认信任该目录后，
+以**运行服务的账户**执行 `git config --global --add safe.directory <安装目录>`（或用 `--system` 写入系统配置）；
+服务不替你跳过这项检查，也不读取 `GIT_*` 环境变量。
 
 绑定非本机地址时必须先决定界面鉴权方式（`SYNWEVO_UI_AUTH=basic` 并 `python -m synwevo_identity.cli ui-user add`，或 `proxy`），
 否则服务会拒绝启动并打印处理方式——这是为了避免「以为有代理其实裸奔」。
@@ -140,6 +164,8 @@ blob 目录自行拼成备份。`verify-restore` 在隔离目录核验，并读�
 1. 备份（见上）。
 2. 更新代码与依赖，重新构建前端。
 3. 启动：迁移在进程启动时自动执行（`Store._migrate`，前进式、可重复执行）。实际版本以 `synwevo_core.store.SCHEMA_VERSION` 与 CLI 输出为准。
+   带成本汇总重放的版本（首次上线、触发器版本变化）在启动时按成本准入数重放（本机约每百万条 48 秒）；生产部署只给第一个角色约
+   2 分钟健康检查时间，约 200 万条以上须先停服务、用新镜像迁移再部署（`docs/billing-ledger.md` “Backfill and the writer lock”）。
 4. 用 `python -m synwevo_docs.cli info` 确认 schema 版本，`/readyz` 确认就绪。
 
 迁移测试用隔离夹具验证；生产升级前须用自己的受保护备份完成恢复演练。
@@ -278,14 +304,14 @@ SMTP2GO 账户或收件人能看：
 
 排查时把地址的本地部分遮掉；不要导出正文或令牌。`docker logs` 只保留最近三份 10 MB，超过两周的记录要看 SMTP2GO。
 
-2026-09-26 核对的发信域状态（`hikosphere.com`）：SPF `v=spf1 ip4:149.28.18.222 include:_spf.mx.cloudflare.net ~all`
-**没有** SMTP2GO 出口；DKIM `mailcow2026._domainkey` 已发布且与 rspamd 持有的公钥一致；DMARC `p=none`。
-`wegreen.ltd` 也已有 mailcow 签发并发布的 `mailcow2026` DKIM。要提高机构网关的接受率，按顺序做（都是 DNS/供应商侧，不改代码）：
+核对发信域时看三项（都是公开 DNS，用 `dig TXT` 即可）：SPF 是否包含实际的出口（本链路是 SMTP2GO 中继）、
+DKIM 选择器（本部署是 `mailcow2026._domainkey`）是否发布且与 rspamd 持有的公钥一致、DMARC 的策略与 `rua`。
+某一天的记录快照不写在这里，查询结果以 DNS 为准（2026-10-25 删去 2026-09-26 的快照）。要提高机构网关的接受率，按顺序做（都是 DNS/供应商侧，不改代码）：
 
 1. SMTP2GO 后台验证发件域 `hikosphere.com`（按其给出的 CNAME 记录发布），这样回信地址（Return-Path）与 DKIM 都与 From 对齐，
    退信也会回到可查的地方；同时给事务邮件关闭「链接跟踪 / 打开跟踪」，否则 SMTP2GO 重写正文会破坏 mailcow 的签名，机构网关还会再重写一次链接。
 2. SPF 加 `include:spf.smtp2go.com`（若 SMTP2GO 使用自己的回信域，这一条不影响 DMARC，但让 From 域的 SPF 记录与实际出口一致）。
-3. DMARC 先保持 `p=none` 并把 `rua` 指向能看到的报表；对齐验证一周无失败后再考虑 `quarantine`。
+3. DMARC 从 `p=none` 起步并把 `rua` 指向能看到的报表；对齐验证一周无失败后升到 `quarantine`，再到 `reject`。
 4. 评估把 From 改到产品域 `wegreen.ltd`（链接域与发件域一致是常见评分项）：需要 mailcow 里该域的信箱或 send-as 授权，
    再改 `smtp.env` 的 `SYNWEVO_MAIL_FROM` 并重启 `accounts`。
 
@@ -371,7 +397,7 @@ VPS 上编辑 `/opt/synwevo/runtime.env` 追加上表变量，`docker compose re
 | 不做 | 不把用户文件送往 VirusTotal 等外部平台；不提供跳过扫描的按钮；不用测试密钥或关闭检查让流水线变绿 |
 | 加密文件（§8.7） | 开启扫描时，设有密码的压缩包、Office 文档和要密码才能打开的 PDF 一律不接纳（400/410 `encrypted_file`，不是恶意软件、不进隔离区）。顶层的加密由应用自己识别；clamd 加 `AlertEncryptedArchive yes` 后，**嵌在文档或压缩包里的**加密压缩包也会以 `Heuristics.Encrypted.*` 报出（应用同样当作"加密、不接纳"）。只开这一项：`AlertEncrypted`/`AlertEncryptedDoc` 会把只设权限密码、不需要密码就能打开的 PDF 也报出来 |
 
-**clamd 选项 `AlertEncryptedArchive yes`（主机侧，随下一次部署执行；参考 compose 已加挂载）。** 官方镜像只接受挂载进来的
+**clamd 选项 `AlertEncryptedArchive yes`（主机侧一次性步骤；参考 compose 已加挂载）。** 官方镜像只接受挂载进来的
 配置文件，所以用同一标签镜像自带的 `clamd.conf` 加一行，挂到 `/etc/clamav/clamd.conf`（只读）。**先建文件再合并 compose**：
 文件不存在时 Docker 会在那个位置建一个目录，clamd 起不来。换镜像标签时按同样步骤重新生成。
 
@@ -436,7 +462,7 @@ docker compose -f /opt/synwevo/config/compose.yaml exec -T docs python -m synwev
 | 项 | 值 |
 |---|---|
 | 启用 | `runtime.env` 同时设置 `SYNWEVO_TURNSTILE_SITE_KEY` 与 `SYNWEVO_TURNSTILE_SECRET`（只设一个则 accounts 拒绝启动）；`SYNWEVO_TURNSTILE_HOSTNAMES` 默认 `SYNWEVO_ISSUER` 的主机 |
-| 创建 Widget | Cloudflare 仪表盘 → Turnstile → Add widget → 主机名 `accounts.wegreen.ltd`，模式 Managed；由持有 Cloudflare 账户的人完成，密钥不经聊天或提交 |
+| 创建 Widget | Cloudflare 仪表盘 → Turnstile → Add widget → 主机名 `accounts.synwevo.com`（域名迁移前为 `accounts.wegreen.ltd`），模式 Managed；由持有 Cloudflare 账户的人完成，密钥不经聊天或提交 |
 | 生效 | `docker compose restart accounts`；核对 `GET /api/auth/state` 的 `challenge.site_key`（无 secret）、注册页出现组件、审计 `auth.challenge result=ok` |
 | 故障 | siteverify 不可达时注册/找回/验证码登录返回 503 `challenge_unavailable`（`Retry-After: 30`），不放行；已登录业务、未触发风险的口令登录、机器接口不受影响。审计 `auth.challenge result=error` 记录原因 |
 | 回滚 | 删除两个变量并重启；页面不再加载 Cloudflare 脚本，CSP 回到默认 |

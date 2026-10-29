@@ -29,7 +29,7 @@
 |---|---|---|
 | 1 | 成本策略启用（`enabled`） | `cost_admission_disabled` |
 | 2 | 单次调用的保守成本上界 ≤ `max_call_cost` | `cost_call_limit_exceeded` |
-| 3 | 平台日/周/月成本、未知用量金额、在途与未知数量（既有） | `cost_*` |
+| 3 | 平台日/周/月成本、未知用量金额、在途与未知数量（既有）；该提供方账户的成本汇总无未处理故障且通过读取时的一致性检查 | `cost_*`（含 `cost_rollup_inconsistent`） |
 | 4 | 平台总闸未关闭 | `risk_breaker_open` |
 | 5 | 放行名单模式开启时付款方在名单中 | `risk_not_allowlisted` |
 | 6 | 付款方、模型路线没有生效中的暂停 | `risk_payer_suspended` / `risk_route_suspended` |
@@ -44,7 +44,14 @@
 未知，到期后只按上界留在成本窗口里。上游返回的 HTTP 错误（429、402、400、500 等）不是未知：网关立即按“已知零用量”结算、
 不售出、立即释放冻结（`docs/deepseek-provider.md`“Error answers”，含依据与假设）。因此未知数量不会无限累积。
 
-`risk_accounting_capacity`：窗口内记录超过 10,000 条时拒绝（不在发送路径上读无界历史）。策略、计数或状态不可读时拒绝，不放行。
+第 3、7 行读的是**精确成本汇总**（`billing/cost_rollup.py`，触发器在写入事实的同一事务里维护；`docs/billing-ledger.md`
+“Cost rollup”），不再逐行读取窗口内的准入记录，所以记录多少都不会因“容量”拒绝：成本窗口最多读 31 个日汇总行，速率窗口最多读
+143 个（1 秒、60 秒、3,600 秒）汇总行。仍按行读取的只有“例外”成本（分子或分母超过 2^63−1、非规范文本，生产价目不会产生）。
+`risk_accounting_capacity`：付款方或路线在最大速率窗口内的**例外成本记录**超过 10,000 条时拒绝；`cost_accounting_capacity`：
+仍敞口的调用超过 10,000 条（在准入规则下不可能，只可能来自带外写入）或成本窗口内例外记录超过 10,000 条时拒绝。
+`cost_rollup_inconsistent`：该提供方账户的成本汇总有未处理的故障（校验发现与事实不一致、事实本身损坏或孤立、读取时的结构/
+敞口/当日待确认数/已吸收金额检查失败），或这次读取的检查失败；只影响这一个提供方账户，处理见 §13。
+策略、计数或状态不可读时拒绝，不放行。
 Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成 `billing_<code>`）。这些代码是稳定契约，界面文字归对话界面：
 `apps/suite/web/src/apps/agent/refusals.ts`（chat-ux 工作包）按代码与词干分类——`billing_cost_call_limit_exceeded` → 单次上限；
 `billing_risk_*` 中含 `allowlist` → 分阶段开放、含 `breaker` → 服务暂不可用、含 `brake` → 自动暂停、含 `suspend` → 已暂停，其余
@@ -72,7 +79,8 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 ## 3. 自动刹车
 
 - 计量的是**平台付出的提供方成本**：窗口内已结算调用取精确成本（分数），用量未知的调用取保守预留上界；按准入时刻
-  `admitted_at` 落入窗口。付款方按付费钱包的所有者统计（个人或组织付款方），路线按请求的模型路线统计。
+  `admitted_at` 落入窗口。付款方按付费钱包的所有者统计（个人或组织付款方），路线按请求的模型路线统计。数值来自成本汇总的
+  1/60/3,600 秒桶（窗口 `(now−w, now]` 拆成互不重叠的三段，精确相加），与逐行相加结果相同。
 - 一次调用会使窗口合计超过阈值时：拒绝这次调用，并在拒绝事务回滚**之后**锁定暂停（`CostAdmission.after_refusal`，网关调用；
   写在拒绝事务里会随之回滚）。锁定写入 `model_risk_suspensions`、系统审计 `billing.risk.brake_triggered`、安全日志
   `model_dispatch_suspended`（先写日志再提交），并在提交后通知平台管理员与该付款调用的发起人（三语言）。
@@ -127,7 +135,9 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 
 `RiskMonitor` 由计量 Agent 组合（portal 角色，受治理的 DeepSeek 路径）与计量恢复线程一同启动、在关闭时停止；每 60 秒一轮，
 数据库租约（120 秒）保证多个进程同一时刻只有一个执行。一轮：到期则读余额 → 暴露提醒 → 前一 UTC 日的定时对账（每日一次）
-→ 账本审计（每日一次）。每一步独立，失败只按异常类型记录，不影响其他步骤。
+→ 账本审计（每日一次）→ 成本汇总校验：每个 UTC 日一次从上个月 1 日起全面校验并清理过期的速率桶与敞口行（`cost_rollup_verify`、
+`cost_rollup_prune`），其余时间每小时校验最近两天（`cost_rollup_verify_recent`）。成本汇总的步骤即使还没有发布成本策略也会执行；
+校验在只读快照里进行，不占写锁。每一步独立，失败只按异常类型记录，不影响其他步骤。
 
 ## 9. 告警
 
@@ -144,6 +154,7 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 | `billing.risk.ledger_audit` | 管理员 | 账本审计发现差异 | 每条结果一次 |
 | `billing.risk.pending_exposure` | 管理员 | 用量待确认的预留成本 > `pending_alert` | 每个 UTC 日一次 |
 | `billing.risk.payment_webhook_failed` | 管理员 | 支付渠道调用 `alert_payment_webhook_failure(store, environment=, provider=, code=)` | 每渠道每代码每 UTC 日一次 |
+| `billing.cost.rollup_inconsistent` | 管理员 | 成本汇总与事实不一致，某提供方账户被锁定（§13） | 每个提供方账户每 UTC 日一次 |
 
 `alert_payment_webhook_failure` 是给支付渠道工作包的挂钩：只接受渠道名与稳定代码，从不接受载荷、签名或客户信息。
 
@@ -173,6 +184,9 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 
 ## 12. 未实现与边界
 
+- 个人支出上限（`PayerBudgets`）仍按行读取最多 10,000 条调用；改用同样的汇总是下一阶段（第二阶段），本次不含。
+- 成本汇总的重建只有命令行（`platform.py cost-rollup rebuild`），没有管理端接口。
+
 - 网关在上游 402 时调用 `trip_platform_breaker` 的接线属于网关工作包；本包提供并测试了该函数与关闭后的拒绝。
 - 支付回调失败的告警已接线：`services/identity/synwevo_identity/payments.py` 在收件箱事件以 `failed`/`rejected`
   结束（含 `process_pending` 重放）以及签名、载荷、环境校验失败时调用 `alert_payment_webhook_failure`
@@ -182,3 +196,105 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 - 对账按准入时刻归属调用，不把跨边界的结算分摊到两个窗口；差异靠容差与人工复核。
 - 暂停不会自动到期；总闸不会自动重新开启。
 - 浏览器验收（三语言、390px、键盘、读屏）尚未在真实浏览器中完成；类型检查、构建与前端单元测试已通过。
+
+## 13. 成本汇总不一致：处理步骤（runbook）
+
+成本准入（§1 第 3 行）与自动刹车（§3）读的是触发器维护的精确成本汇总。它与事实不一致时，只锁定那一个提供方账户
+（`environment` + `provider` + `account_ref`）：该账户的付费调用以 `cost_rollup_inconsistent` 拒绝，没有发起、没有扣费；其他账户不受影响。
+管理员收到 `billing.cost.rollup_inconsistent`，系统审计里有同名记录（含差异数量与来源：每日/每小时校验、读取时的检查）。
+全库问题（静止时 `model_cost_rollup_deltas` 有行、哨兵行丢失）即使还没有任何账户也会报告（审计对象 `*`，运行记录 `mismatch`）；
+环境、提供方或账户名不是 UTF-8 文本（BLOB、NULL 或非 UTF-8 的 TEXT）的事实或派生行（`undecodable_scope`，只能来自产品之外的写入
+或绕过闸门的写入）也这样报告，同时有其他账户不一致时也单独审计、告警（审计对象 `*`）：没有任何读取能用到这些行，
+其他账户照常核对、锁定，处理同第 3 步。一个账户的事实读不出来，只记为该账户的差异（`verify_error`），不会让其他账户漏检。
+
+**在哪里运行。** 生产只有角色容器（只读根文件系统，宿主机上没有工作区虚拟环境），命令以模块形式在容器里运行：容器设置了
+`SYNWEVO_DATA_DIR=/data`，它就是 `--data` 的默认值；stdin 接 `/dev/null`（`exec -T` 没有终端）。核对在正在运行的 `portal` 容器里
+（`exec`）；重建持有写锁，在一次性容器里运行（`run --rm --no-deps`：同一镜像、数据卷与内存上限，服务停着也能运行）。下面的
+`<account_ref>`、`<reason>`（8–500 字）换成实际值；`--actor <操作人>` 可写明是谁（默认 `operator:<容器用户>`）。
+本机开发用 `python scripts/platform.py cost-rollup …`，参数相同。
+
+1. **看差异，不改任何东西**：
+
+   ```bash
+   docker compose -f /opt/synwevo/config/compose.yaml exec -T portal python -m synwevo_core.billing.cost_rollup verify --all --no-record </dev/null
+   ```
+
+   输出每个不一致账户的前几条差异（哪个桶、期望值、实际值；或哪个敞口行多了/少了；或哪条成本准入本身有问题）。
+2. **汇总被改动：重建**。`bucket` / `inflight_*` / `hold_*` / `exceptions` / `structure` / `counters` 说明有人绕过了闸门（手写了
+   `model_cost_rollup_deltas`、关闭过触发器）或程序有缺陷：保留第 1 步的输出，排查来源后重建。事实多时先停服务（见下），重建后再启动：
+
+   ```bash
+   docker compose -f /opt/synwevo/config/compose.yaml stop accounts docs portal messages
+   docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T portal python -m synwevo_core.billing.cost_rollup rebuild --environment live --provider deepseek --account-ref <account_ref> --reason "<reason>" </dev/null
+   docker compose -f /opt/synwevo/config/compose.yaml up -d --wait accounts docs portal messages
+   ```
+
+   重建在一个事务里从事实重放、校验并解除该账户的故障；校验不通过，或该账户有任何一条成本事实本身有问题（第 3 步）时，
+   什么也不改。重建写入 `billing.cost.rollup_rebuilt` 审计。
+3. **成本事实本身有问题：恢复到问题写入之前的备份**。`fact_fault`（准入时间不是整数或为负、到期超过准入后一天、找不到调用或钱包）、
+   `undecodable_key`（attempt key 不是 UTF-8 文本）、写明某列无法解码（`Could not decode`）的 `verify_error`，以及读取时锁定的
+   `read_undecodable`：产品自己从不写出这样的事实，它只能来自产品之外的写入（关掉外键的导入、手写 SQL）。成本事实不可修改
+   （`immutable_cost_admission`），所以第 2 步的重建拒绝，并逐行列出这些准入（可打印的 attempt key 原样给出，其余给出 SQLite 类型与
+   十六进制字节，例如 `text:x'66FF'`、`blob:x'6B'`；超过 128 字节的键给出前 128 字节、总长度与全部字节的 SHA-256，两条键不会显示成同一行，
+   便于在库里找到那次写入），什么也不改。该账户保持拒绝（失败即关闭）：重启、重建、
+   调用结束、之后的校验都不会解除，也没有别的命令能解除。
+
+   恢复办法只有一个：把数据库恢复到那次写入**之前**取的备份。
+   - 确定问题写入的时间（导入或操作记录；触发器记下的 `fact_*` 故障行的 `detected_at` 就是写入时刻，校验或读取发现的故障是它最晚的时刻），
+     选在它之前最近的一份备份，先在隔离目录演练。
+     问题写入之后取的备份，演练里「成本汇总与成本事实一致」一项失败（✗）；之前取的通过。演练只读 `.tar.gz` 归档，在一次性容器里
+     以 uid 1000 运行（与服务相同）；`/opt/synwevo/backups/` 里有两种备份，命令以 root 在主机上运行：
+     - **归档**（`synwevo-<时间>.tar.gz`）：一次性容器取的一致备份（`docs/operations.md` §10 第 3 步），所在目录是
+       `install -d -m 0700 -o 1000 -g 1000` 建的，直接演练：
+
+       ```bash
+       W=/opt/synwevo/backups/<归档所在目录>
+       docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T -e TMPDIR=/backup -v "$W":/backup docs python apps/docs/scripts/snapshot.py verify --archive /backup/<归档文件> --journal-from /data </dev/null
+       ```
+
+     - **接收器备份**（目录名是取备份的 UTC 时间，如 `20261025T094600Z`；`/opt/synwevo/current.json` 的 `backup` 是最近一份）：
+       每次部署前接收器停下服务后取的离线副本（`infra/production/receive.py` `promote()`）。目录是 root 所有、0700，里面是数据目录原样复制的
+       `data/` 和 `manifest.json`，没有归档：uid 1000 的容器既读不进这个目录（`PermissionError`），也不能把 `data/` 当归档读
+       （`IsADirectoryError`）。先把 `data/` 复制进一个 uid 1000 所有的新目录（备份本身不动；要有与 `data/` 同样大的空间），用同一镜像的
+       `snapshot.py create` 从这份副本做出归档，再演练这份归档：
+
+       ```bash
+       B=/opt/synwevo/backups/<接收器备份目录>
+       W=/opt/synwevo/backups/restore-$(date -u +%Y%m%dT%H%M%SZ)
+       install -d -m 0700 -o 1000 -g 1000 "$W"
+       cp -a "$B/data" "$W/data"
+       chown -R 1000:1000 "$W/data"
+       docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T -e TMPDIR=/backup -v "$W":/backup docs python apps/docs/scripts/snapshot.py create --data /backup/data --out /backup </dev/null
+       docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T -e TMPDIR=/backup -v "$W":/backup docs python apps/docs/scripts/snapshot.py verify --archive /backup/<上一步写出的 synwevo-….tar.gz> --journal-from /data </dev/null
+       ```
+
+       这份归档记下的拍摄时间是做归档的时刻，不是部署时刻：部署之后的撤权在报告里列为「早于备份时间、备份却没有回执的预写撤销」，
+       备份里没有它们的回执，照样重放。`$W` 里是含密钥的副本，与其他备份同等保护。
+   - 停服务，按 `docs/operations.md` §2「恢复」带安全日志恢复演练通过的那份归档（接收器备份恢复的就是 `$W` 里做出的归档；备份之后的
+     撤权会重放），核对后再启动，然后执行第 4 步。不要把接收器备份的 `data/` 拷回 `/opt/synwevo/data`：那是接收器在发布公开之前失败时
+     自己的回滚，公开之后要走带安全日志的恢复（`infra/production/README.md`「Backup, upgrade and rollback」）——拷回会用备份里较旧的
+     安全日志盖掉正在使用的那份，备份之后的撤权不再重放，会话也不会结束。
+   - 备份之后写入的一切都会丢失，包括这段时间的成本与计费事实（准入、用量、钱包流水）：按提供方账单与支付记录核对这段时间。
+     所以任何导入或手写 SQL 之前先取一份一致备份（`docs/operations.md` §2、§10 第 3 步的一次性容器），做完立即执行第 1 步：
+     发现问题时，要恢复的就是刚取的那份备份，丢失的只有这一次写入。
+
+   准入到期等于准入时刻（违反 I1 的下界）不算有问题：汇总与对照计算对它一致，校验不报告。
+4. **确认**（记录这次校验）：
+
+   ```bash
+   docker compose -f /opt/synwevo/config/compose.yaml exec -T portal python -m synwevo_core.billing.cost_rollup verify --all </dev/null
+   ```
+
+   一致后付费调用随即恢复。
+
+**时长、写锁与内存。** 重建持有写锁，时长随该账户的成本事实数增长（重放加全量校验：本机 20 万条约 15 秒、100 万条约
+90 秒，见 `docs/agent-work/evidence/2026-10-25-cost-rollup/`）；其间别的写入等待，等待上限 30 秒（busy_timeout），超过即失败，
+所以事实多时先停服务（第 2 步）。校验不占写锁（只读快照）。校验与重建按准入时间流式读取事实，内存不随事实数增长
+（本机 100 万条：每日校验进程峰值约 120 MB，其中解释器与导入约 100 MB；重建约 110 MB），可以在 `portal` 容器（1536 MB）里运行。
+
+不要用删除故障行、改汇总表、改写事实或关闭触发器来“恢复”：汇总表的写入会被闸门拒绝（`cost_rollup_derived`），故障行与成本事实不可删除、
+不可修改。绕过闸门的写入（手写 `model_cost_rollup_deltas`、关闭触发器）由定时校验发现并重新锁定，但不一定是下一次每小时校验（§8）：
+每小时一轮（`cost_rollup_verify_recent`）核对全库问题（静止时有 delta 行、哨兵行丢失）、全部敞口行、速率窗口内（最新准入前两天起）的
+速率桶和从两天前那个 UTC 日零点起的日桶，不比较读取结果与对照计算；每日一轮（`cost_rollup_verify`，每个 UTC 日的第一轮）从上个月
+1 日起核对日桶，并做这项比较。所以写进更早日桶、结构完好的改动（本周、本月的准入窗口仍在累加这些桶）要到下一次每日校验才被发现，
+最长约 24 小时；在那之前该账户的成本准入读的是被改过的周、月累计。恢复从来不是自动的。

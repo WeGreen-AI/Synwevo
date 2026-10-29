@@ -6,6 +6,10 @@ services:
   # 再 `up -d`，不要让两个进程同时打开同一个 SQLite 库。
   # 数据卷是 bind mount（`../data:/data`），所以改名不会产生第二套空卷。
   synwevo:
+    # 镜像用 `git archive --format=tar HEAD | docker build -f infra/Dockerfile -t synwevo:local -` 构建
+    # （docs/operations.md 第 1 节）：只含受版本控制的文件，并带 /api/source-code 需要的源代码发布清单。
+    # `up --build` 从工作树构建同名镜像；那样的镜像没有清单，拒绝提供源代码下载。
+    image: synwevo:local
     build:
       context: ..
       dockerfile: infra/Dockerfile
