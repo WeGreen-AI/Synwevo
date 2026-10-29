@@ -15,7 +15,7 @@
     "./vite": "./vite/brand-icons.ts"
   },
   "peerDependencies": {
-    "react": ">=19",
+    "react": "^19.3.1",
     "react-dom": ">=19"
   },
   "repository": {
