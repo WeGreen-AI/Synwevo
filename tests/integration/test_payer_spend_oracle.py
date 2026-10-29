@@ -25,7 +25,9 @@ implementations are compared on seeded random histories written to real, isolate
 * **rollup** — ``PayerBudgets._exposure`` and ``PayerBudgets.check``, plus the real ``Ledger`` paths
   that call ``check`` (``reserve_call`` with the hold, ``dispatch`` with 0): their outcome must be
   what the oracle's numbers decide, unless an earlier check of the same path refused first
-  (insufficient funds, the run's own budget, a fence).
+  (insufficient funds, the run's own budget, a fence). The product's own uncapped
+  ``spend_rollup.reference_exposure`` (what the verifier compares the day rows with) must equal the
+  oracle without its hold cap as well.
 
 A history: two environments x two owners, so four wallets; the clock starts near one of the
 calendar anchors (Sunday->Monday 2034-01-02, month end->2034-02-01 where the week start precedes the
@@ -52,8 +54,8 @@ rollup equals the oracle on every field of every period, legacy equals both unde
 hold 12,000 settled calls (legacy refuses, rollup equals the oracle) and 10,000 then 10,001
 reserved calls.
 
-Defaults: ``SYNWEVO_PAYER_ORACLE_SEEDS`` (80) seeds x ``SYNWEVO_PAYER_ORACLE_STEPS`` (10) steps and
-``SYNWEVO_PAYER_ORACLE_FAULT_SEEDS`` (20) fault histories. A disagreement reports its seed, step,
+Defaults: ``SYNWEVO_PAYER_ORACLE_SEEDS`` (300) seeds x ``SYNWEVO_PAYER_ORACLE_STEPS`` (12) steps and
+``SYNWEVO_PAYER_ORACLE_FAULT_SEEDS`` (60) fault histories (about a tenth of a second each). A disagreement reports its seed, step,
 operation and the trace, so it can become a deterministic test.
 """
 from __future__ import annotations
@@ -73,6 +75,7 @@ from types import SimpleNamespace
 import pytest
 
 from synwevo_core.billing import BillingError, ChargeContext, Ledger, Usage
+from synwevo_core.billing import spend_rollup
 from synwevo_core.billing.cost_rollup import CostRollup
 from synwevo_core.billing.payer_budgets import PayerBudgets
 from synwevo_core.identity import Identity
@@ -81,9 +84,9 @@ from tests.integration.legacy_cost_counters import LegacyPayerBudgets
 from tests.integration.test_billing_ledger import (COST_UNIT, START, UNIT, cost_price, evidence, fixture_authorize,
                                                     fixture_verify, fund, sale_price)
 
-SEEDS = list(range(1, int(os.environ.get("SYNWEVO_PAYER_ORACLE_SEEDS") or 80) + 1))
-FAULT_SEEDS = int(os.environ.get("SYNWEVO_PAYER_ORACLE_FAULT_SEEDS") or 20)
-STEPS = int(os.environ.get("SYNWEVO_PAYER_ORACLE_STEPS") or 10)
+SEEDS = list(range(1, int(os.environ.get("SYNWEVO_PAYER_ORACLE_SEEDS") or 300) + 1))
+FAULT_SEEDS = int(os.environ.get("SYNWEVO_PAYER_ORACLE_FAULT_SEEDS") or 60)
+STEPS = int(os.environ.get("SYNWEVO_PAYER_ORACLE_STEPS") or 12)
 
 DAY = 86_400
 CAP = 10_000                      # the 0bcce176 candidate cap and the addendum's reserved-call cap
@@ -157,8 +160,9 @@ class Expect:
     comparable: bool = True   # legacy computed the same thing (no settled call with a malformed created_at)
 
 
-def oracle_exposure(facts: list[Fact], at: int) -> Expect:
-    """Addendum §1 (semantics) and §4 (the refusal order) over the wallet's facts."""
+def oracle_exposure(facts: list[Fact], at: int, cap: int | None = CAP) -> Expect:
+    """Addendum §1 (semantics) and §4 (the refusal order) over the wallet's facts; ``cap=None`` is the
+    uncapped read (what ``reference_exposure`` computes)."""
     windows = oracle_windows(at)
     earliest = min(start for start, _ in windows.values())
     settled = [f for f in facts if f.status == "settled"]
@@ -167,7 +171,7 @@ def oracle_exposure(facts: list[Fact], at: int) -> Expect:
     candidates = len(reserved) + sum(1 for f in settled if not malformed(f) and f.created_at >= earliest)
     if broken:
         return Expect("payer_budget_inconsistent", "fault", candidates=candidates, comparable=False)
-    if len(reserved) > CAP:
+    if cap is not None and len(reserved) > cap:
         return Expect("payer_budget_capacity", "holds", candidates=candidates)
     if any(f.amount is None and f.created_at >= earliest for f in settled):
         return Expect("payer_budget_inconsistent", "unpaid", candidates=candidates)
@@ -355,7 +359,7 @@ def expect_check(w: World, t, env: str, k: int, amount: int, at: int | None = No
 
 
 #: Refusals a Ledger path raises before it asks the payer budgets (reserve_call / dispatch at 0bcce176).
-PRE_PAYER = {"insufficient_funds", "run_budget_exceeded", "wallet_frozen", "invalid_hold_deadline", "idempotency_conflict",
+PRE_PAYER = {"insufficient_funds", "balance_cache_inconsistent", "run_budget_exceeded", "wallet_frozen", "invalid_hold_deadline", "idempotency_conflict",
              "run_expired", "dispatch_fenced", "run_time_too_short", "usage_pending", "call_not_found"}
 
 
@@ -496,6 +500,11 @@ def op_settle(w: World, op: dict) -> None:
     ticket = info["ticket"]
     if ticket is None:
         return
+    if op.get("late"):
+        with w.store.tx() as t:
+            row = t.execute("SELECT status,deadline FROM billing_calls WHERE id=?", (op["call"],)).fetchone()
+        if row[0] == "reserved":
+            w.clock[0] = max(w.now, row[1] + 1)
     ledger.expire_due()
     got = outcome(lambda: ledger.settle_trusted_usage(ticket.attempt_key, evidence(ticket, usage=Usage(op["charge"], 0, 0)),
                                                       outcome=op["outcome"]))
@@ -529,6 +538,7 @@ def op_sql_settle(w: World, op: dict) -> None:
     with w.store.tx() as t:
         f = settlement_facts(w, op["call"], info["env"], info["k"], min(op["amount"], balance(t, w.wallets[(info["env"], info["k"])])),
                              w.now)
+    info["settling"] = True
     write_parts(w, f, now_parts, foreign_keys=op["order"] != "journal_last")
     STATS["sql_settle:" + op["order"]] += 1
     if later:
@@ -598,7 +608,7 @@ def op_reopen(w: World, op: dict) -> None:
 
 
 def rebuild_wallet(w: World, env: str, account: str) -> dict:
-    return CostRollup.rebuild_wallet(w.store, environment=env, wallet=account, actor="fixture-payer-oracle",
+    return CostRollup.rebuild_wallet(w.store, environment=env, account_id=account, actor="fixture-payer-oracle",
                                      reason="independent payer-spend oracle", clock=lambda: w.now)
 
 
@@ -653,17 +663,20 @@ def choose_op(w: World, rng: random.Random, anchor: int, kind: str | None = None
         hold = rng.choice((0, 0, 1, 1, 2**40, 2**62, rng.randint(0, 10**6), rng.randint(0, 10**12)))
         return {"kind": kind, "env": env, "k": k, "hold": hold, "ttl": rng.choice((1, 60, 3600, DAY - 1, DAY, rng.randint(1, DAY)))}
     if kind in ("attempt", "settle"):
-        candidates = [c for c in reserved if c["kind"] == "api" and (c["ticket"] is None) == (kind == "attempt")]
+        candidates = [c for c in reserved if c["kind"] == "api" and not c.get("settling")
+                      and (c["ticket"] is None) == (kind == "attempt")]
         if not candidates and kind == "settle":
             candidates = [c for c, i in w.calls.items() if i["ticket"] is not None]
             candidates = [{"id": c} for c in candidates]
         if not candidates:
             return choose_op(w, rng, anchor, "reserve")
         call = rng.choice(candidates)["id"]
-        charge = rng.choice((0, 1, 7, 2**40, rng.randint(0, 10**6), rng.randint(0, 10**12)))
+        charge = rng.choice((0, 1, 7, 10**12, rng.randint(0, 10**6), rng.randint(0, 10**12)))
         op = {"kind": kind, "call": call, "charge": charge, "outcome": rng.choice(("completed",) * 5 + ("platform_fault",))}
         if kind == "attempt":
             op["settle"] = rng.random() < 0.6
+        else:
+            op["late"] = rng.random() < 0.4
         return op
     if kind == "sql_call":
         created = rng.choice((w.now, w.now - 1, w.now + 1, anchor - 1, anchor, anchor + 1, anchor - DAY, anchor - 7 * DAY,
@@ -673,7 +686,7 @@ def choose_op(w: World, rng: random.Random, anchor: int, kind: str | None = None
                 "created_at": created, "deadline": created + rng.randint(1, DAY), "status": status,
                 "amount": pick_amount(rng, INT64), "arrival": rng.choice(("now", "now", "now", "later", "never"))}
     if kind == "sql_settle":
-        candidates = [c for c in reserved if c["ticket"] is None]
+        candidates = [c for c in reserved if c["ticket"] is None and not c.get("settling")]
         if not candidates:
             return choose_op(w, rng, anchor, "sql_call")
         return {"kind": kind, "call": rng.choice(candidates)["id"], "order": rng.choice(sorted(ORDERS)),
@@ -686,7 +699,7 @@ def choose_op(w: World, rng: random.Random, anchor: int, kind: str | None = None
         return {"kind": kind, "call": rng.choice(reserved)["id"]}
     if kind == "expire":
         with w.store.tx() as t:
-            row = t.execute("SELECT MIN(deadline) FROM billing_calls c JOIN billing_runs r ON r.id=c.run_key "
+            row = t.execute("SELECT MIN(c.deadline) FROM billing_calls c JOIN billing_runs r ON r.id=c.run_key "
                             "WHERE c.status='reserved' AND r.namespace=? AND typeof(c.deadline)='integer'",
                             (API_NAMESPACE,)).fetchone()
         at = max(w.now, (row[0] if row and row[0] is not None else w.now)) + rng.choice((0, 1, 3600))
@@ -739,7 +752,7 @@ def check_verify(w: World, spec: dict) -> None:
     if report.issues:
         raise Mismatch("verify:issues", report.summary(), spec)
     for scope in report.mismatched:
-        result = report.scopes[scope]
+        result = report.all_scopes[scope]
         ids = broken.get(tuple(scope))
         if not ids or result.count != len(ids) or any(
                 d.get("check") != "fact_fault" or not any(i in json.dumps(d, default=str) for i in ids)
@@ -768,6 +781,7 @@ def check_rebuild(w: World, env: str, k: int, spec: dict) -> None:
     except _Discard:
         pass
     got = seen["got"]
+    STATS["rebuild_rolled_back:" + ("refused" if seen["faulted"] else "ok")] += 1
     if seen["faulted"]:
         if got[:2] != ("refused", "cost_rollup_rebuild_refused"):
             raise Mismatch("rebuild:not_refused", {"got": _short(got)}, spec)
@@ -806,6 +820,8 @@ def compare_all(w: World, rng: random.Random, spec: dict) -> None:
                     raise Mismatch("windows", {"product": windows, "oracle": oracle_windows(at)}, here)
                 compare_exposure("rollup", here, expect, outcome(lambda: pb._exposure(t, account, windows)))
                 compare_legacy(here, expect, outcome(lambda: legacy._exposure(t, account, windows)))
+                compare_exposure("reference", here, oracle_exposure(facts, at, cap=None),
+                                 outcome(lambda: spend_rollup.reference_exposure(t, account=account, windows=windows)))
                 amount = rng.choice((0, 1, rng.randint(0, 10**6)))
                 expected = oracle_check(expect, policy, amount)
                 got = outcome(lambda: pb.check(t, account, amount=amount, at=at))
@@ -937,6 +953,8 @@ def exposure_of(w: World, env: str, k: int, at: int) -> tuple:
         assert windows == oracle_windows(at)
         rollup = outcome(lambda: pb._exposure(t, account, windows))
         legacy = outcome(lambda: LegacyPayerBudgets()._exposure(t, account, windows))
+        compare_exposure("reference", {"env": env, "k": k, "at": at}, oracle_exposure(wallet_facts(t, account), at, cap=None),
+                         outcome(lambda: spend_rollup.reference_exposure(t, account=account, windows=windows)))
         check = outcome(lambda: pb.check(t, account, amount=1, at=at))
     return expect, rollup, legacy, ("ok", None) if check[0] == "ok" else check[:2]
 
@@ -958,11 +976,11 @@ def test_12000_settled_calls_this_month_legacy_refuses_capacity_and_the_rollup_e
         compare_exposure("rollup", here, expect, rollup)
         compare_legacy(here, expect, legacy)
         assert check == oracle_check(expect, w.budgets(env)._policy(w.store._c(), w.users[k], UNIT.code), 1)
-        if at >= anchor + DAY:
+        if at < anchor + 35 * DAY:    # the calls are in or ahead of the periods: no upper bound (addendum §1)
             assert expect.candidates == 12_004 > CAP and legacy[:2] == ("refused", "payer_budget_capacity")
             assert rollup[1]["monthly"]["spent"] == 12_000 * 7 and rollup[1]["monthly"]["held"] == 33 + 2**40
-        else:
-            assert expect.candidates == 4 and legacy[0] == "ok"
+        else:                         # June: the calls are before every period start, only the holds remain
+            assert expect.candidates == 4 and legacy[0] == "ok" and rollup[1]["monthly"]["spent"] == 0
     STATS["capacity:settled"] += 1
 
 
@@ -1013,8 +1031,10 @@ def test_zz_the_generated_histories_covered_the_cases():
               "legacy:deviation", "sql_settle:journal_last", "sql_settle:status_first", "sql_settle:status_last",
               "sql_settle:product", "late_settlement:JS", "late_settlement:J", "late_settlement:T", "settle:completed",
               "settle:completed:late", "settle:platform_fault", "clock:back", "reopen:marker", "reopen:drop", "rebuild:ok",
-              "rebuild:refused", "verify:fact_fault", "expired", "malformed:text:settled", "malformed:negative:settled",
-              "capacity:settled", "capacity:holds")
+              "rebuild_rolled_back:ok", "rebuild_rolled_back:refused", "verify:fact_fault", "expired",
+              "malformed:text:settled", "malformed:real:settled", "malformed:negative:settled", "malformed:blob:settled",
+              "fault_history:latched", "capacity:settled", "capacity:holds")
     missing = [key for key in needed if not STATS[key]]
     exceeded = sum(v for key, v in STATS.items() if key.endswith("_budget_exceeded"))
+    print("payer-spend oracle coverage:", json.dumps(dict(sorted(STATS.items()))))
     assert not missing and exceeded, {"missing": missing, "budget_refusals": exceeded, "stats": dict(sorted(STATS.items()))}

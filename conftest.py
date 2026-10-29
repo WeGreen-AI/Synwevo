@@ -32,7 +32,8 @@ TOOL_SETTINGS = frozenset({"SOFFICE", "TESSERACT", "TESSDATA", "CJK_FONTS", "CJK
 # `required` silently turned into a skip.
 TEST_RUN_SETTINGS = frozenset({"SYNWEVO_SHEET_CLIENTS", "SYNWEVO_SHEET_FUZZ_SEEDS",
                                "SYNWEVO_COST_EQUIVALENCE_SEEDS", "SYNWEVO_COST_EQUIVALENCE_FAULT_SEEDS",
-                               "SYNWEVO_COST_EQUIVALENCE_STEPS"})
+                               "SYNWEVO_COST_EQUIVALENCE_STEPS", "SYNWEVO_PAYER_ORACLE_SEEDS",
+                               "SYNWEVO_PAYER_ORACLE_FAULT_SEEDS", "SYNWEVO_PAYER_ORACLE_STEPS"})
 
 
 def _scrub_ambient_configuration() -> list[str]:
