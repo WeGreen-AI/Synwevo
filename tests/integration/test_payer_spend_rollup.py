@@ -1240,3 +1240,8 @@ def test_the_store_wide_alert_names_the_issues_and_the_runbook_section_in_three_
             assert rendered.startswith(ROLLUP_SOURCE_WORDS[source][locale]) and "{" not in rendered, (source, locale)
             assert "spend_sentinel_missing, undecodable_scope" in rendered
         assert len({ROLLUP_SOURCE_WORDS[source][locale] for source in ROLLUP_SOURCE_WORDS}) == 4
+        # A row written before the source was recorded, or by a mode the table does not know, reads as a
+        # plain check: the body never opens with an empty subject.
+        for params in ({"issues": "spend_sentinel_missing"}, {"issues": "spend_sentinel_missing", "source": "restore"}):
+            rendered = _fmt(body, _localised_params(params, locale))
+            assert rendered.startswith(ROLLUP_SOURCE_WORDS["verify"][locale]) and "{" not in rendered, (params, locale)

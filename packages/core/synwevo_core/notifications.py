@@ -1127,8 +1127,10 @@ def _localised_params(params: dict, loc: str) -> dict:
         out["outcome"] = OUTCOME_WORDS[out["outcome"]][loc]
     if "risk" in out and out["risk"] in RISK_WORDS:
         out["risk"] = RISK_WORDS[out["risk"]][loc]
-    if "source" in out and out["source"] in ROLLUP_SOURCE_WORDS:
-        out["source"] = ROLLUP_SOURCE_WORDS[out["source"]][loc]
+    if "source" in out or "issues" in out:
+        # The store-wide rollup alert: a row written before the source was recorded, or by a mode the
+        # table does not know, reads as a plain check — never as an empty subject.
+        out["source"] = ROLLUP_SOURCE_WORDS.get(out.get("source"), ROLLUP_SOURCE_WORDS["verify"])[loc]
     return out
 
 
