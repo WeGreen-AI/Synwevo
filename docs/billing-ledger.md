@@ -384,9 +384,12 @@ settled calls created at or after the period's start (no upper bound, any journa
   `fault` delta (`malformed_settled_call`) that the cost rollup's fault mapping latches unchanged, with
   id `fact_fault_id(call id, (environment, '', wallet id))`. The wallet scope `(environment, '',
   wallet id)` never meets a provider scope: `identifier()` refuses '' as a provider.
-* **Read.** One fault probe, the day rows from the earliest period start (at most 31, plus any future
-  days; a broken structure refuses as `SpendRollupInconsistent`, code `payer_budget_inconsistent`,
-  which the gateway hands to `after_refusal` and which latches the wallet), the reserved holds through
+* **Read.** One fault probe, the table's sentinel (lost: `payer_budget_inconsistent`, not latched;
+  it goes only with a write past the gate or with the table, and the next start replays every wallet's
+  rows, so nothing is left to rebuild), the day rows from the earliest period start (at most 31, plus
+  any future days; a broken structure refuses as `SpendRollupInconsistent`, code
+  `payer_budget_inconsistent`, which the gateway hands to `after_refusal` whether the reservation or the
+  dispatch read it, and which latches the wallet), the reserved holds through
   `billing_calls_holds` (more than 10,000 refuse `payer_budget_capacity`), then an unpaid settled call
   in the periods (`payer_budget_inconsistent`, not latched: it clears when the fact arrives). It
   never reads the settlements, the journal or `billing_calls_payer_period` (kept for the verifier and
@@ -398,14 +401,19 @@ settled calls created at or after the period's start (no upper bound, any journa
   recorded as a rebuild and a `backfill` audit in scope `('', '@wallets', '')`. Wallet scopes read
   their newest global rebuild there (provider scopes at `('', '', '')`), so neither family's backfill
   supersedes the other's verify results. Store open never refuses: a malformed settled call becomes a
-  fault of its wallet. The replay
+  fault of its wallet. Until that start, every wallet's read refuses on the lost sentinel (above) and
+  the verifier reports it store-wide (`spend_sentinel_missing`: audited each run and alerted, deduplicated
+  per day, as object `*`; no wallet latched); a dropped table is different: its triggers still name it, so every reservation
+  and settlement raises until the services restart (docs/platform/model-risk.md §13). The replay
   takes about 1 s per 200,000 settled calls on the local benchmark machine (about 7 s per million,
   `docs/agent-work/evidence/2026-10-26-payer-spend-rollup/`).
 * **Verify, rebuild.** `CostRollup.check` adds wallet scopes (a loose index scan of the day rows' key
   and of `billing_calls_payer_period`, one seek per wallet) to its report (`VerifyReport.wallets`):
   each wallet's settled calls are streamed from the lower bound, its day rows recomputed and compared
-  both ways, malformed calls named (`fact_fault`, `fact_fault_missing`), and outside the hourly run the
-  read compared with the uncapped `reference_exposure`. Mismatches latch the wallet (audit
+  both ways, malformed calls named (`fact_fault`, `fact_fault_missing`; in a bounded run also those
+  outside the streamed days, through the faults their writes latched and each re-read from its call: a
+  negative or REAL creation time sorts below every window), and outside the hourly run the read
+  compared with the uncapped `reference_exposure`. Mismatches latch the wallet (audit
   `billing.payer_spend.rollup_inconsistent`, alert with the wallet id only); `CostRollup.rebuild_wallet`
   (`cost_rollup rebuild --wallet <id> --reason …`) has `rebuild`'s shape and refuses while a settled
   call of the wallet is malformed (docs/platform/model-risk.md §13, "钱包"). One wallet's

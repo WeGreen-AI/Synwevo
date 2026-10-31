@@ -159,3 +159,33 @@ def test_a_tampered_spend_row_refuses_the_actual_send_and_the_gateway_latches_it
     assert [(f['code'],f['environment'],f['provider'],f['account_ref']) for f in faults]==[('read_structure',*scope)]
     assert [a['object_id'] for a in g.store.all("SELECT object_id FROM audit_events "
                                                 "WHERE action='billing.payer_spend.rollup_inconsistent'")]==[cost_rollup.scope_key(scope)]
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_a_day_row_broken_before_the_turn_refuses_the_reservation_and_the_gateway_still_latches_its_wallet(governed):
+    """The realistic case of the test above: the row was broken before the turn, so the first read of it is
+    PayerBudgets.check inside Ledger.reserve_call, not the dispatch. The reservation refuses fail-closed (no call
+    row, nothing sent, nothing charged) and the gateway hands that payer_* refusal to after_refusal once the
+    reservation rolled back: the wallet is latched (read_structure) and audited at once, not only by the next
+    scheduled verify (hourly when the row is within two days, otherwise up to a day later)."""
+    from synwevo_core.billing import cost_rollup
+    g=governed;configure(g);fund(g);tid=start(g)
+    ledger=g.provider.gateway.ledger
+    wallet=g.store.one("SELECT id FROM billing_accounts WHERE kind='wallet' AND owner=? AND environment='test'",
+                       (g.user['id'],))['id']
+    now=int(ledger._now())
+    with g.store.tx() as t:   # FIXTURE: a day row written past the gate (a hand-written delta opens it)
+        t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
+        t.execute('INSERT INTO payer_spend_days(account_id,start,n_set,n_paid,amt_hi,amt_lo) VALUES (?,?,1,1,0,?)',
+                  (wallet,now-now%86400,10**15))
+        t.execute('DELETE FROM model_cost_rollup_deltas')
+    g.agent._run(tid)
+    turn=g.store.one('SELECT * FROM agent_turns WHERE id=?',(tid,))
+    assert (turn['status'],turn['error_code'])==('failed','billing_payer_budget_inconsistent')
+    assert g.seen==[] and g.store.all('SELECT * FROM billing_calls')==[] and g.store.all('SELECT * FROM billing_settlements')==[]
+    assert g.store.all("SELECT * FROM agent_metered_calls WHERE metering_state<>'released'")==[]
+    scope=(ledger.environment,'',wallet)
+    faults=g.store.all('SELECT * FROM model_cost_rollup_faults WHERE resolved_at IS NULL')
+    assert [(f['code'],f['environment'],f['provider'],f['account_ref']) for f in faults]==[('read_structure',*scope)]
+    assert [a['object_id'] for a in g.store.all("SELECT object_id FROM audit_events "
+                                                "WHERE action='billing.payer_spend.rollup_inconsistent'")]==[cost_rollup.scope_key(scope)]

@@ -605,6 +605,10 @@ def test_the_command_line_verifies_and_rebuilds_one_wallet(money):
 
     verified = run("verify", "--all")
     assert verified.returncode == 0, verified.stderr
+    for flags in (("--wallet", wallet(money)), ("--provider", "fixture-provider"), ("--account-ref", "fixture-account"),
+                  ("--reason", "fixture operator reason"), ("--actor", "fixture-operator")):
+        ignored = run("verify", "--all", *flags)      # a rebuild-only flag on verify is refused, never ignored
+        assert ignored.returncode == 2 and flags[0] in ignored.stderr and "{" not in ignored.stdout, (flags, ignored.stderr)
     refused = run("rebuild", "--wallet", wallet(money))
     assert refused.returncode == 2 and "--reason" in refused.stderr
     unknown = run("rebuild", "--wallet", "fixture-no-such-wallet", "--reason", "fixture operator rebuild rehearsal")
@@ -653,3 +657,104 @@ def test_the_benchmark_measures_the_check_the_live_settlement_triggers_and_the_v
     daily = result["verify_daily"]
     assert daily["ok"] and daily["wallet_facts"] >= 3_000 and daily["peak_rss_mb"] > 0
     assert result["verify_all"]["ok"] and result["backfill_facts"] == 3_000
+
+
+# ---------------------------------------------------------------- review fixes: the bounded verifies, a lost sentinel
+@pytest.mark.cost_rollup_unchecked
+@pytest.mark.parametrize("created_at", ["soon", 1.5, -DAY], ids=["text", "real", "negative"])
+def test_the_bounded_verifies_name_a_malformed_settled_call_outside_their_window_and_alert_once(money, created_at):
+    """The hourly run streams the settled calls of two days, the daily one from the previous month's first day. A
+    settled call whose created_at is a negative integer or a small REAL sorts below that bound (a TEXT or BLOB
+    sorts above every integer); the trigger latched it when it was written, and the bounded runs still name it
+    (through that fault, re-read from the call) and alert the administrators once, like the unbounded run."""
+    store, ledger, _, ticks = money
+    fund(money, 1_000)
+    configure(money)
+    template = settled_template(money)
+    key = "fixture-below-call-0"
+    history(store, template, [(created_at, 3)], prefix="fixture-below")
+    target = scope(money)
+    assert store.one("SELECT code FROM model_cost_rollup_faults WHERE id=?",
+                     (rollup().fact_fault_id(key, target),))["code"] == "fact_malformed_settled_call"
+    now = ticks[0]
+    for kwargs in (dict(since=now - 2 * DAY, now=now, mode="recent"), dict(now=now, mode="daily"),
+                   dict(all=True, now=now)):
+        report = rollup().CostRollup.check(store, **kwargs)
+        assert set(report.mismatched) == {target}, kwargs
+        assert report.wallets[target].differences == [{"check": "fact_fault", "call": key}], kwargs
+    recorded = rollup().CostRollup.verify(store, since=now - 2 * DAY, now=now, mode="recent", clock=lambda: now)
+    assert recorded.mismatched == [target]
+    faults = store.all("SELECT code FROM model_cost_rollup_faults WHERE resolved_at IS NULL ORDER BY code")
+    assert [f["code"] for f in faults] == ["fact_malformed_settled_call", "verify_mismatch"]
+    audits = store.all("SELECT object_id,meta FROM audit_events WHERE action='billing.payer_spend.rollup_inconsistent'")
+    assert [a["object_id"] for a in audits] == [rollup().scope_key(target)]
+    assert json.loads(audits[0]["meta"])["source"] == "recent"
+    # The daily run after it finds the same, already latched: no second fault, audit or alert.
+    rollup().CostRollup.verify(store, now=now, mode="daily", clock=lambda: now)
+    assert store.one("SELECT COUNT(*) AS n FROM model_cost_rollup_faults WHERE resolved_at IS NULL")["n"] == 2
+    assert store.one("SELECT COUNT(*) AS n FROM audit_events WHERE action='billing.payer_spend.rollup_inconsistent'")["n"] == 1
+    with pytest.raises(BillingError, match="cost_rollup_rebuild_refused") as caught:
+        rollup().CostRollup.rebuild_wallet(store, account_id=target[2], actor="fixture-operator",
+                                           reason="fixture rebuild over a malformed call")
+    assert caught.value.attempt_keys == [key]
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_a_lost_sentinel_refuses_every_wallet_unlatched_and_the_next_start_restores_service_by_itself(money):
+    """The sentinel row goes only with a write past the gate (or with the whole table). Until the next start
+    replays, every wallet's read refuses payer_budget_inconsistent (fail closed: the day rows may be gone with it)
+    without latching, the verifier reports it once store-wide and latches no wallet, and the start that replays
+    restores service with no rebuild to run (docs/platform/model-risk.md §13, wallets)."""
+    store, ledger, users, ticks = money
+    fund(money, 1_000)
+    fund(money, 1_000, user=1, order="other-user")
+    configure(money)
+    configure(money, user=1)
+    settled_template(money)
+    settle(money, dispatch(money, reserve(money, ctx=context(money, user=1, run="other-settled"), amount=3),
+                           attempt="other"), usage=Usage(1, 0, 0))
+    ticket = _prepare(money, _call(money, "prepared-before"))
+    original = store.all("SELECT * FROM payer_spend_days ORDER BY account_id,start")
+    assert tamper(store, "DELETE FROM payer_spend_days WHERE account_id='' AND start=0") == 1
+    targets = {scope(money), scope(money, 1)}
+    for user in (0, 1):
+        assert view(money, user)["usage_state"] == "inconsistent"
+    with pytest.raises(BillingError, match="^payer_budget_inconsistent$") as refused:
+        _call(money, "while-the-sentinel-is-lost")
+    assert not isinstance(refused.value, rollup().RollupInconsistent)        # refused, not a latched read
+    with pytest.raises(BillingError, match="^payer_budget_inconsistent$") as refused:
+        ledger.dispatch(ticket)
+    CostAdmission(ledger, current_policy=policy).after_refusal(refused.value)  # what the gateway does: no latch
+    assert store.all("SELECT * FROM model_cost_rollup_faults") == []
+    now = ticks[0]
+    for kwargs in (dict(since=now - 2 * DAY, now=now, mode="recent"), dict(now=now, mode="daily"),
+                   dict(all=True, now=now)):
+        report = rollup().CostRollup.check(store, **kwargs)
+        assert (report.issues, report.mismatched, report.ok) == (["spend_sentinel_missing"], [], False), kwargs
+        assert set(report.wallets) == targets
+    rollup().CostRollup.verify(store, since=now - 2 * DAY, now=now, mode="recent", clock=lambda: now)
+    rollup().CostRollup.verify(store, now=now, mode="daily", clock=lambda: now)
+    assert store.all("SELECT * FROM model_cost_rollup_faults") == []
+    assert store.all("SELECT * FROM audit_events WHERE action='billing.payer_spend.rollup_inconsistent'") == []
+    audits = store.all("SELECT object_id,meta FROM audit_events WHERE action='billing.cost.rollup_inconsistent'")
+    assert [a["object_id"] for a in audits] == ["*", "*"]
+    assert all(json.loads(a["meta"])["issues"] == ["spend_sentinel_missing"] for a in audits)
+    assert [r["status"] for r in store.all("SELECT status FROM model_cost_rollup_audits WHERE mode IN ('recent','daily')")] == [
+        "mismatch", "mismatch"]
+    backfills = store.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE provider='@wallets'")["n"]
+    reopened = Store(store.root)                        # the next start replays: the sentinel and the rows are back
+    again = Ledger(reopened, environment="test", namespace=ledger.namespace, authorize=fixture_authorize,
+                   verify_payment=fixture_verify, clock=lambda: ticks[0], max_hold_seconds=1000)
+    again.payer_budgets = PayerBudgets(again)
+    restarted = (reopened, again, users, ticks)
+    assert reopened.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE provider='@wallets'")["n"] == backfills + 1
+    assert reopened.all("SELECT * FROM payer_spend_days ORDER BY account_id,start") == original
+    for user in (0, 1):
+        assert view(restarted, user)["usage_state"] == "available"
+    assert _call(restarted, "after-the-restart")       # admits again: nothing was latched, nothing to rebuild
+    again.dispatch(ticket)
+    assert reopened.all("SELECT * FROM model_cost_rollup_faults") == []
+    assert reopened.all("SELECT * FROM model_cost_rollup_rebuilds WHERE actor<>'system:backfill'") == []
+    report = rollup().CostRollup.verify(reopened, now=now, mode="daily", clock=lambda: now)
+    assert report.ok and report.issues == []
+    rollup().assert_consistent(reopened)

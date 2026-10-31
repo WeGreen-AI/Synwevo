@@ -248,6 +248,16 @@ def fact_fault_id(key, scope) -> str:
     return f"fact:{parts[0]}@{parts[1]}/{parts[2]}/{parts[3]}"
 
 
+_FAULT_KEY = re.compile(r"\Afact:(text|blob|null|integer|real):([0-9A-F]*)@")
+
+
+def fact_fault_key(fault_id: str) -> tuple[str, bytes] | None:
+    """The broken fact's key, as (SQLite type, bytes), from an id ``fault_id_sql`` or ``fact_fault_id``
+    made; None for any other id (a verifier's or a read path's latch)."""
+    found = _FAULT_KEY.match(fault_id)
+    return (found[1], bytes.fromhex(found[2])) if found else None
+
+
 _TYPE_PREFIX = re.compile(r"(?:text|blob|null|integer|real)(?::|$)")
 
 

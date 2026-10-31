@@ -63,6 +63,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -866,20 +867,27 @@ def run_history(root: Path, seed: int, *, steps: int, fault: bool) -> World:
 
 
 # ================================================================================= tests
+#: SHA-256 of the 0bcce176 ``_exposure`` body as ``_exposure_body`` extracts it: pinned, so the fixture is checked
+#: where the commit is not reachable too (the CI verify image runs the suite from a git archive, without history).
+BASE_EXPOSURE_SHA256 = "d6086ae4bed484a5336aeed3422a0cab891e55b31311b9b3a595c64ea314db60"
+
+
+def _exposure_body(src: str) -> str:
+    return re.search(r"    def _exposure\(self, t, account, windows\):\n(.*?)(?=\n    def |\Z)", src, re.S).group(1).rstrip()
+
+
 def test_legacy_fixture_is_verbatim():
-    """The fixture's ``_exposure`` is the 0bcce176 method, byte for byte (its CAPACITY too)."""
+    """The fixture's ``_exposure`` is the 0bcce176 method, byte for byte (its CAPACITY too): against the pinned
+    SHA-256 of that commit's body always, and against ``git show`` of the commit wherever the history is present
+    (never a skip: a drift of the fixture must fail in the CI image as well)."""
     root = Path(__file__).resolve().parents[2]
+    copy = _exposure_body((root / "tests/integration/legacy_cost_counters.py").read_text().split("class LegacyPayerBudgets")[1])
+    assert hashlib.sha256(copy.encode()).hexdigest() == BASE_EXPOSURE_SHA256
+    assert LegacyPayerBudgets.CAPACITY == PayerBudgets.CAPACITY == CAP
     shown = subprocess.run(["git", "-C", str(root), "show", f"{BASE_COMMIT}:packages/core/synwevo_core/billing/payer_budgets.py"],
                            capture_output=True, text=True)
-    if shown.returncode != 0:
-        pytest.skip(f"{BASE_COMMIT} is not in this checkout")
-
-    def body(src):
-        return re.search(r"    def _exposure\(self, t, account, windows\):\n(.*?)(?=\n    def |\Z)", src, re.S).group(1).rstrip()
-
-    copy = (root / "tests/integration/legacy_cost_counters.py").read_text()
-    assert body(copy.split("class LegacyPayerBudgets")[1]) == body(shown.stdout)
-    assert LegacyPayerBudgets.CAPACITY == PayerBudgets.CAPACITY == CAP
+    if shown.returncode == 0:                           # with the history: the pinned hash is that commit's own body
+        assert copy == _exposure_body(shown.stdout)
 
 
 @pytest.mark.parametrize("at", sorted({a + d for _, a in ANCHORS for d in (-1, 0, 1)}

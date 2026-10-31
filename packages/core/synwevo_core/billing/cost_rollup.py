@@ -88,6 +88,11 @@ FACT_CHECKS = ("fact_fault", "undecodable_key")
 #: The store-wide issue for rows in a scope no read can name (a part that is a BLOB, a NULL or a
 #: non-UTF-8 TEXT): reported, audited and alerted, never read (``_scopes``).
 UNNAMED_SCOPE = "undecodable_scope"
+#: The store-wide issue for the wallets' lost sentinel (``payer_spend_rollup.SENTINEL``): every wallet's
+#: read refuses on it until the next start replays the day rows, so no wallet carries it as a latch.
+SPEND_SENTINEL = "spend_sentinel_missing"
+#: Issues no scope's latch carries: ``record`` audits and alerts them store-wide whatever else differs.
+UNCARRIED = (UNNAMED_SCOPE, SPEND_SENTINEL)
 
 
 class RollupInconsistent(BillingError):
@@ -1022,11 +1027,15 @@ def _check(c, *, environment, since, now, mode, scopes=None) -> VerifyReport:
     lost = {False: not schema.sentinels_present(c), True: not spend_schema.sentinel_present(c)}
     if deltas:
         report.issues.append("deltas_not_empty")
-    if any(lost.values()):
+    if lost[False]:
         report.issues.append("sentinel_missing")
+    if lost[True]:
+        report.issues.append(SPEND_SENTINEL)
     # Store-wide, per family (False: provider accounts, True: wallets): every scope's rollup may be affected.
-    damage = {wallet: (["deltas_not_empty"] if deltas else []) + (["sentinel_missing"] if lost[wallet] else [])
-              for wallet in (False, True)}
+    # The wallets' lost sentinel is no wallet's difference: every wallet's read refuses while it is lost and
+    # the next start replays the day rows, so a latch per wallet would only leave N rebuilds for one start.
+    damage = {False: (["deltas_not_empty"] if deltas else []) + (["sentinel_missing"] if lost[False] else []),
+              True: ["deltas_not_empty"] if deltas else []}
     if scopes is None:
         undecodable = set()
         scopes = _scopes(c, environment, undecodable) + spend_rollup.wallet_scopes(c, environment, undecodable)
@@ -1118,11 +1127,11 @@ class CostRollup:
                            result.rebuild_seq, at))
             status = ("mismatch" if report.issues or "mismatch" in statuses.values()
                       else "superseded" if statuses else "ok")
-            if report.issues and (not statuses or UNNAMED_SCOPE in report.issues):
+            if report.issues and (not statuses or any(issue in UNCARRIED for issue in report.issues)):
                 # A store-wide problem no scope's latch carries: any when no scope differs (a delta row at
-                # rest before any fact; the first fact write empties the deltas), and rows in scopes no
-                # read can name whatever else differs (no scope's fault covers them). Reported and alerted
-                # all the same.
+                # rest before any fact; the first fact write empties the deltas), and the uncarried ones
+                # (rows in scopes no read can name, the wallets' lost sentinel) whatever else differs.
+                # Reported and alerted all the same.
                 _system_audit(t, "billing.cost.rollup_inconsistent", "model_cost_rollup", "*",
                               {"billing_environment": report.environment or "", "source": report.mode,
                                "issues": list(report.issues)})
@@ -1364,16 +1373,24 @@ def main(argv=None) -> int:
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--no-record", action="store_true")
     ap.add_argument("--environment", choices=["test", "live"])
-    ap.add_argument("--provider")
-    ap.add_argument("--account-ref")
+    ap.add_argument("--provider", help="rebuild: the provider account's provider (with --account-ref)")
+    ap.add_argument("--account-ref", help="rebuild: the provider account's reference (with --provider)")
     ap.add_argument("--wallet", help="rebuild: one wallet's spend rollup (its billing account id), instead of a "
                                      "provider account (--provider/--account-ref)")
-    ap.add_argument("--reason")
+    ap.add_argument("--reason", help="rebuild: why, for the audit (8 to 500 characters)")
     ap.add_argument("--actor", help="rebuild: who runs it, for the audit (default: operator:<system user>)")
     args = ap.parse_args(argv)
     if not args.data or not (Path(args.data) / "docweave.sqlite3").is_file():
         # Never open (and so create) an empty store: a mistyped path is reported, not initialized.
         print(f"没有数据库：{args.data or '（未指定 --data，也没有 SYNWEVO_DATA_DIR）'}", file=sys.stderr)
+        return 2
+    given = [flag for flag, value in (("--wallet", args.wallet), ("--provider", args.provider),
+                                      ("--account-ref", args.account_ref), ("--reason", args.reason),
+                                      ("--actor", args.actor)) if value]
+    if args.action == "verify" and given:
+        # Never silently ignored: a store-wide result read as one wallet's or one account's would mislead.
+        print("verify 核对整个库（只有 --environment、--all、--no-record 适用），不接受 " + " ".join(given)
+              + "；按钱包或提供方账户的操作只有 rebuild。", file=sys.stderr)
         return 2
     store = Store(args.data)
     if args.action == "verify":

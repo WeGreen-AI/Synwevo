@@ -441,7 +441,8 @@ their index; nothing grows with the person's settled volume. The only row bound 
 10,000 still-reserved calls of the wallet (`usage_state: "capacity"`, refusing
 `payer_budget_capacity`); holds end at settlement, release or a deadline at most a day away. A
 settled call in the periods without its settlement or journal entry (cleared when the fact
-arrives), a day row with a broken structure, or an open fault of the wallet returns
+arrives), the day table's lost sentinel (cleared by the next start, which replays every wallet's
+rows), a day row with a broken structure, or an open fault of the wallet returns
 `usage_state: "inconsistent"` and refuses `payer_budget_inconsistent`; with both, `periods` is
 `null`, never invented zero usage, and new calls are refused. Configuration remains editable so
 the person can still disable their limits.
@@ -449,10 +450,12 @@ the person can still disable their limits.
 The day rows share the cost rollup's machinery. They are derived (a direct write refuses
 `cost_rollup_derived`) and verified with it: hourly over the last two days, daily from the previous
 month's first day (also comparing the read with the uncapped reference), in the restore rehearsal
-over every day. A mismatch, a latched read (a broken day row found by a dispatch) or a settled call
+over every day. A mismatch, a latched read (a broken day row found by a reservation or a dispatch; the
+gateway hands either refusal to `after_refusal` once its transaction rolled back) or a settled call
 whose creation time is not a non-negative integer (only a write outside the product leaves one;
-the earlier read raised on a text time, counted a fractional one and ignored a negative one) opens
-a fault of that wallet only (scope `(environment, '', wallet id)`): its paid calls refuse until an
+the earlier read raised on a text time, counted a fractional one and ignored a negative one; the
+bounded hourly and daily runs name it too, through the fault its write latched, whatever its time)
+opens a fault of that wallet only (scope `(environment, '', wallet id)`): its paid calls refuse until an
 operator runs `python -m synwevo_core.billing.cost_rollup rebuild --wallet <id> --reason …`
 (docs/platform/model-risk.md §13), which replays its settled calls, verifies them and resolves its
 faults in one transaction, or refuses and changes nothing while a settled call of it is broken (that

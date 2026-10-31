@@ -6,9 +6,12 @@ and alerts are the cost rollup's (``billing/cost_rollup.py``), in the WALLET SCO
 ``(environment, '', account_id)``. This module:
 
 * ``exposure`` — what ``PayerBudgets._exposure`` returns, in a fixed order: (1) an open fault of the
-  wallet refuses ``payer_budget_inconsistent``; (2) the day rows from the earliest period start (at
-  most 31, plus any future days) must have their structure, else ``SpendRollupInconsistent`` (code
-  ``payer_budget_inconsistent``, latched after the refusal like the cost rollup's read-path checks);
+  wallet refuses ``payer_budget_inconsistent``; (2) the day rows: the table's sentinel must be present
+  (else ``payer_budget_inconsistent``, not latched: it goes only with a write past the gate or with the
+  table, and the next start replays every wallet's rows and clears it), and the rows from the earliest
+  period start (at most 31, plus any future days) must have their structure, else
+  ``SpendRollupInconsistent`` (code ``payer_budget_inconsistent``, latched after the refusal like the
+  cost rollup's read-path checks);
   (3) the still-reserved holds, through ``billing_calls_holds``, more than ``CAPACITY`` of them refuse
   ``payer_budget_capacity``; (4) a settled call in the periods without its settlement or journal entry
   refuses ``payer_budget_inconsistent`` (not latched: it clears when the fact arrives); (5) spent per
@@ -18,7 +21,10 @@ and alerts are the cost rollup's (``billing/cost_rollup.py``), in the WALLET SCO
   its 10,000-row cap, plus the contract's deviation (a settled call whose ``created_at`` is not a
   non-negative integer refuses its wallet). The verifier compares against it; so does the
   equivalence property test.
-* ``wallet_scopes`` / ``check_wallet`` — the verifier's part for wallets (``CostRollup.check``).
+* ``wallet_scopes`` / ``check_wallet`` — the verifier's part for wallets (``CostRollup.check``). The
+  bounded runs (hourly, daily) stream a window of settled calls; a malformed one outside it (a negative
+  or REAL ``created_at`` sorts below every window) is still named, through the fault its write latched
+  and re-read from the call, so every such wallet is reported and alerted by the next scheduled run.
 
 Semantics kept from the earlier read (``PayerBudgets`` before phase 2): held = every reserved call's
 hold, whatever its creation time, namespace or deadline, the same in every period; spent[p] = the
@@ -31,6 +37,7 @@ from datetime import datetime, timedelta, timezone
 import sqlite3
 
 from ..suite_schema import payer_spend_rollup as schema
+from ..suite_schema.model_cost_rollup import fact_fault_key
 from . import cost_rollup
 from .cost_rollup import RollupInconsistent, ScopeReport, key_label, rebuild_seq
 from .models import BillingError
@@ -65,8 +72,9 @@ def is_wallet(scope) -> bool:
 class SpendRollupInconsistent(RollupInconsistent):
     """A read-path detection on a wallet's day rows (``structure``, or ``undecodable``: a value the read
     cannot decode). Its code is the personal limits' ``payer_budget_inconsistent``: the gateway hands
-    every ``payer_*`` refusal to ``after_refusal``, which latches it as a fault of the wallet scope
-    (``CostRollup.latch``) unless a newer rebuild of that wallet has happened since."""
+    the refusal of a reservation (``Ledger.reserve_call``, the first read of a turn) and of a dispatch
+    alike to ``after_refusal`` once that transaction rolled back, which latches it as a fault of the
+    wallet scope (``CostRollup.latch``) unless a newer rebuild of that wallet has happened since."""
 
     def __init__(self, scope: tuple, check: str, rebuild_seq: int):
         BillingError.__init__(self, "payer_budget_inconsistent")
@@ -103,8 +111,13 @@ def _exposure(t, scope, account, windows, capacity) -> dict:
     # 1. Faults: a malformed settled call, a verifier mismatch or a latched read of this wallet.
     if cost_rollup._open_fault(t, scope):
         raise BillingError("payer_budget_inconsistent")
-    # 2. Day rows from the earliest period start (a TEXT or BLOB start sorts after every integer, so a
-    # row written past the gate with one is selected and refused here, never compared in Python).
+    # 2. Day rows. The sentinel first: it goes only with a write past the gate or with the table, and
+    # the rows may have gone with it, so every wallet refuses until the next start replays them (not
+    # latched: that start clears it, with no rebuild to run). Then the rows from the earliest period
+    # start (a TEXT or BLOB start sorts after every integer, so a row written past the gate with one is
+    # selected and refused here, never compared in Python).
+    if not schema.sentinel_present(t):
+        raise BillingError("payer_budget_inconsistent")
     rows = t.execute("SELECT start," + ",".join(schema.VALUES) + " FROM payer_spend_days "
                      "WHERE account_id=? AND start>=?", (account, E)).fetchall()
     if not all(_structure(r) for r in rows):
@@ -195,12 +208,25 @@ def _expected_row(n_set, n_paid, amount) -> dict:
     return {"n_set": n_set, "n_paid": n_paid, "amt_hi": amount // B, "amt_lo": amount % B}
 
 
+def _malformed_settled_call(c, key) -> bool:
+    """Whether the call ``key`` (SQLite type, bytes) is settled with a malformed ``created_at``: one primary
+    key seek, whatever the key's type (a TEXT Python cannot decode is bound as its bytes cast to TEXT)."""
+    kind, raw = key
+    where, args = {"text": ("id=CAST(? AS TEXT)", (raw,)), "blob": ("id=?", (raw,))}.get(kind, ("id IS NULL", ()))
+    return c.execute(f"SELECT 1 FROM billing_calls WHERE {where} AND status='settled' AND "
+                     "(typeof(created_at)<>'integer' OR created_at<0)", args).fetchone() is not None
+
+
 def check_wallet(c, scope, *, since, now, mode) -> ScopeReport:
     """Recompute one wallet's day rows from its settled calls (streamed, from ``since``'s UTC day; all
     days when None) and compare both directions; name each malformed settled call (``fact_fault``, and
-    ``fact_fault_missing`` when its fault row is missing). Outside the hourly ``recent`` mode, also
-    compare ``exposure`` with the uncapped ``reference_exposure`` at ``now`` (not when the rollup refused
-    with ``payer_budget_capacity``, its documented bound, nor while the wallet has an open fault)."""
+    ``fact_fault_missing`` when its fault row is missing), in a bounded run also those outside the
+    streamed days, found through the faults their writes latched (one index seek, bounded by those
+    faults, which only a write outside the product leaves) and each re-read from its call. Outside the
+    hourly ``recent`` mode, also compare ``exposure`` with the uncapped ``reference_exposure`` at ``now``
+    (not when the rollup refused with ``payer_budget_capacity``, its documented bound, nor while the
+    wallet has an open fault, nor while the table's sentinel is lost: every wallet's read refuses on that
+    until the next start replays, and it is the run's store-wide issue, not a wallet's difference)."""
     environment, _, account = scope
     lo = None if since is None else since - since % DAY
     report = ScopeReport(scope, 0, rebuild_seq(c, scope))
@@ -224,6 +250,14 @@ def check_wallet(c, scope, *, since, now, mode) -> ScopeReport:
         if r["paid"]:
             day[1] += 1
             day[2] += r["amount"]
+    if lo is not None:
+        streamed = set(fact_faults)
+        for r in c.execute("SELECT id FROM model_cost_rollup_faults INDEXED BY model_cost_rollup_faults_open WHERE "
+                           "environment=? AND provider=? AND account_ref=? AND resolved_at IS NULL AND code=?",
+                           (*scope, "fact_" + schema.MALFORMED_CODE)):
+            key = fact_fault_key(r["id"])
+            if key is not None and key not in streamed and _malformed_settled_call(c, key):
+                fact_faults.append(key)
     for key in fact_faults:
         report.differ("fact_fault", call=key_label(*key))
         if c.execute("SELECT 1 FROM model_cost_rollup_faults WHERE id=?",
@@ -240,7 +274,7 @@ def check_wallet(c, scope, *, since, now, mode) -> ScopeReport:
             report.differ("day", start=r["start"], expected=want, found=found)
     for start, want in sorted(expected.items()):
         report.differ("day", start=start, expected=_expected_row(*want), found=None)
-    if mode != "recent" and not report.open_faults and not fact_faults:
+    if mode != "recent" and not report.open_faults and not fact_faults and schema.sentinel_present(c):
         win = periods(now)
         outcome = {}
         for name, fn, kwargs in (("rollup", exposure, {"environment": environment}), ("reference", reference_exposure, {})):
