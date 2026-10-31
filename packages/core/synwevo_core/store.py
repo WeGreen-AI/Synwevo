@@ -830,8 +830,9 @@ class Store:
         self._local = threading.local()
         self._write_lock = threading.RLock()     # serialises writers inside this process; SQLite locks across processes
         #: What the suite-schema migrations of THIS open replayed, {module: what its migrate step returned}
-        #: (suite_schema.apply): normally empty; the wallets' spend rollup backfill when its sentinel, marker
-        #: or trigger version was missing (suite_schema/payer_spend_rollup.py), so a command that opens the
+        #: (suite_schema.apply): normally empty; the cost rollup's backfill (suite_schema/model_cost_rollup.py)
+        #: or the wallets' spend rollup backfill (suite_schema/payer_spend_rollup.py) when its sentinel(s),
+        #: marker or trigger version was missing, each {facts, faults, missing}, so a command that opens the
         #: Store and then verifies (billing/cost_rollup.main) can say that its own open replayed the rows.
         self.replays: dict = {}
         if self.read_only:

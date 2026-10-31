@@ -10,7 +10,7 @@ added when missing), ``INDEXES`` (``(name, table, columns)``), ``rebuild(c)`` (a
 table rebuild run outside any transaction, for the one change ``ALTER TABLE`` cannot make) and
 ``migrate(c)`` (a step inside the module's BEGIN IMMEDIATE; what it returns, if anything, is kept
 by the Store as ``Store.replays[module]``: a replay of derived rows the opening process should
-know about, such as the wallets' spend rollup backfill).
+know about, such as the cost rollup's or the wallets' spend rollup's backfill).
 """
 from __future__ import annotations
 

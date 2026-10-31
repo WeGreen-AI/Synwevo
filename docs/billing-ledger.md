@@ -269,7 +269,8 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   trigger. Hand-writing deltas or dropping triggers bypasses the gate; a scheduled verify finds
   what it left, but not necessarily the next hourly one. Every round reports a delta row at rest
   or a missing sentinel even when no scope exists (the store-wide issues: audited as object `*` and
-  alerted with their own wording, `billing.cost.rollup_issues`, which names them), and compares a scope's whole open set, its
+  alerted with their own wording, `billing.cost.rollup_issues`, which names them and says which check found
+  them, once per distinct issue set per UTC day), and compares a scope's whole open set, its
   velocity rows from the horizon (all of them while the scope has no admission yet) and its day
   rows from a lower bound: the hourly round (`cost_rollup_verify_recent`) from the start of the
   UTC day two days back, without comparing the read path's counters with the uncapped oracle; the
@@ -285,7 +286,9 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   marker, the current trigger version and all four sentinels issues no fact query. A dropped or
   emptied derived table (sentinel gone), a missing marker or another trigger version (whose
   triggers it drops and recreates in the same transaction) replays all facts once, inside the
-  migration's BEGIN IMMEDIATE (recorded as a global rebuild and a `backfill` audit row).
+  migration's BEGIN IMMEDIATE (recorded as a global rebuild and a `backfill` audit row, and reported to
+  the opening process as `Store.replays["model_cost_rollup"]`: what was missing, the facts replayed and
+  the broken ones, which the verify command turns into `cost_rollup_replayed_on_open`, "Backfill" below).
 * **Backfill and the writer lock.** That replay holds the writer lock for its whole length:
   about 48 s per million admissions on the local benchmark machine, with the WAL growing by about
   320 MB per million (reused afterwards, not returned). It happens on the first start of a release
@@ -306,11 +309,14 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   failed deploy (its image `synwevo:<sha>` stays on the host), migrate with the services stopped
   in a one-off container of the new image, then submit the same deploy again; its start finds the
   marker, version and sentinels and replays nothing. The command opens (and so migrates) the
-  Store, then verifies read-only. When that open replayed the wallets' day rows (`payer_spend_days`:
-  the first release that brings them, a new trigger version, a lost sentinel) the command says so
-  first, carries the store-wide issue `spend_rollup_replayed_on_open` and exits 1, because the rows it
-  compared are the ones its open just wrote: run it once more for the read-only verification, whose
-  exit status then reports the verification alone.
+  Store, then verifies read-only. When that open replayed either family (the provider accounts'
+  rollup: its marker, trigger version or one of the four sentinels missing; the wallets' day rows,
+  `payer_spend_days`: the first release that brings them, a new trigger version, a lost sentinel) the
+  command says so first, carries the store-wide issue (`cost_rollup_replayed_on_open`,
+  `spend_rollup_replayed_on_open`) and exits 1, because the rows it compared are the ones its open just
+  wrote: run it once more for the read-only verification, whose exit status then reports the
+  verification alone. A rebuild's flags are checked before the open, so a mistyped rebuild replays
+  nothing.
   Derived from receive.py, compose.yaml and the Dockerfile; not yet rehearsed on the host.
 
   ```bash
@@ -410,7 +416,8 @@ settled calls created at or after the period's start (no upper bound, any journa
   supersedes the other's verify results. Store open never refuses: a malformed settled call becomes a
   fault of its wallet. Until that start, every wallet's read refuses on the lost sentinel (above) and
   the verifier reports it store-wide (`spend_sentinel_missing`: read once per run, audited each run as
-  object `*` and alerted as `billing.cost.rollup_issues`, deduplicated per day) and compares no wallet's
+  object `*` and alerted as `billing.cost.rollup_issues`, once per distinct issue set per UTC day, worded
+  by the check that found it) and compares no wallet's
   day rows or read while it is lost, whether the rows are still there or went with it (the table emptied
   past the gate, one wallet's rows deleted with the sentinel): the replay rewrites every wallet's rows,
   so no wallet is latched and none needs a rebuild after the restart; a malformed settled call is still
@@ -418,8 +425,10 @@ settled calls created at or after the period's start (no upper bound, any journa
   replay (`rebuild_wallet`) never does and refuses while it is lost, since a sentinel brought back with
   one wallet's rows alone would make every other wallet's read count nothing and the next start replay
   nothing. The verify command's own open is such a start: it replays, says so
-  (`spend_rollup_replayed_on_open`, from `Store.replays`) and exits 1 rather than print 一致 over rows it
-  just wrote (docs/platform/model-risk.md §13, "钱包"). A dropped table is different: its triggers still name it, so every reservation
+  (`spend_rollup_replayed_on_open`, from `Store.replays`; the provider accounts' family the same way,
+  `cost_rollup_replayed_on_open`) and exits 1 rather than print 一致 over rows it just wrote
+  (docs/platform/model-risk.md §13, "钱包"); that issue set is alerted even on a day the scheduled round
+  already alerted the lost sentinel. A dropped table is different: its triggers still name it, so every reservation
   and settlement raises until the services restart (docs/platform/model-risk.md §13). The replay
   takes about 1 s per 200,000 settled calls on the local benchmark machine (about 7 s per million,
   `docs/agent-work/evidence/2026-10-26-payer-spend-rollup/`).

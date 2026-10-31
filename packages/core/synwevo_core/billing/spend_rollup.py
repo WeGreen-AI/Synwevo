@@ -35,7 +35,8 @@ and alerts are the cost rollup's (``billing/cost_rollup.py``), in the WALLET SCO
   are still named: the facts are intact and their faults the triggers'. That start is the only repair:
   the verify command's own open is one, and the command says so (``spend_rollup_replayed_on_open``, exit
   1) instead of calling rows it just wrote consistent; the store-wide issues are alerted with their own
-  wording (``billing.cost.rollup_issues``, the issue names), never as one account's.
+  wording (``billing.cost.rollup_issues``: the issue names and which check found them, once per distinct
+  issue set per UTC day), never as one account's.
 
 Semantics kept from the earlier read (``PayerBudgets`` before phase 2): held = every reserved call's
 hold, whatever its creation time, namespace or deadline, the same in every period; spent[p] = the

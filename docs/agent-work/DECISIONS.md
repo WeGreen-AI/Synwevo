@@ -276,6 +276,13 @@ Docs另提供严格extract_context契约，现有成员导入/Extract截取语�
    `cost-rollup verify` 打开数据库时若重放了钱包日行（哨兵、标记或触发器版本缺失，`Store.replays`），先说明、记为全库问题
    `spend_rollup_replayed_on_open`、退出码 1，从不对自己刚写出的日行说「一致」；全库问题（对象 `*`）的告警改用自己的措辞
    `billing.cost.rollup_issues`（列出问题名与手册章节），不再套用提供方账户的模板。）
+   （2026-11-01 四次评审修正：全库问题的告警按问题组合每 UTC 日去重（去重键带排序后的问题名），不再按日一次——此前定时核对告警了
+   `spend_sentinel_missing` 之后，同一天运维的命令行核对（打开时重放，`spend_rollup_replayed_on_open`）的告警被吞掉；告警正文开头
+   写明是哪次核对发现的（每日/每小时定时核对、命令行，`source` 取核对报告的 mode），不再一律写「定时核对」。提供方账户一族同样：
+   `model_cost_rollup.migrate` 返回与钱包一族相同的 `{facts, faults, missing}`（`Store.replays["model_cost_rollup"]`），
+   `cost-rollup verify` 打开时重放了它就先说明、记为全库问题 `cost_rollup_replayed_on_open`、退出码 1——此前四张派生表的哨兵行丢失时
+   命令静默重放（写锁、回填审计，`--no-record` 也写）后打印「一致」退出码 0；提供方一族的读取与重建语义不变（第一阶段照旧，
+   哨兵行丢失时按账户重建不拒绝，记为后续）。重建的参数在打开数据库之前检查：写错的重建此前先打开（可能在写锁内重放）再退出码 2。）
 
 ## D19 开源：main 为公开镜像，dev 为受保护的开发与部署分支（2026-10-25）
 

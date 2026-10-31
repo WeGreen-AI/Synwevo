@@ -470,7 +470,8 @@ after the restart; a malformed settled call is still named (docs/billing-ledger.
 `spend_sentinel_missing`): a one-wallet replay never writes the sentinel back, since a sentinel over
 incomplete rows would make every other wallet's read count nothing. The verify command's own open
 replays like a start and says so (`spend_rollup_replayed_on_open`, exit 1); the store-wide issues are
-alerted with their own wording (`billing.cost.rollup_issues`).
+alerted with their own wording (`billing.cost.rollup_issues`: which check found them, once per distinct
+issue set per UTC day).
 
 The set operation requires `unit_code`, `expected_revision`, explicit `enabled`, and
 `daily_budget`, `weekly_budget`, `monthly_budget` as nonnegative int64 decimal strings.

@@ -27,9 +27,10 @@ wallet id only), ``rebuild_wallet`` replays one wallet (and refuses while the ta
 only a start's full replay restores it, never a one-wallet replay), and their newest global rebuild is
 the wallets' backfill (``payer_spend_rollup.BACKFILL_SCOPE``), never the provider accounts'. Store-wide
 issues (``VerifyReport.issues``) are audited as object ``*`` and alerted with their own wording
-(``billing.cost.rollup_issues``, the issue names); the verify command adds ``spend_rollup_replayed_on_open``
-when its own open replayed the wallets (``Store.replays``) and then exits 1, never printing 一致 over rows
-it just wrote.
+(``billing.cost.rollup_issues``: the issue names and which check found them, once per distinct issue set per
+UTC day); the verify command adds ``cost_rollup_replayed_on_open`` / ``spend_rollup_replayed_on_open`` when its
+own open replayed the provider accounts / the wallets (``Store.replays``) and then exits 1, never printing 一致
+over rows it just wrote; a rebuild's flags are checked before that open.
 
 Broken facts fail closed. Only a write outside the product (an import with foreign keys off, hand
 SQL) can leave a malformed or orphan admission, or a value Python cannot decode (a non-UTF-8 TEXT):
@@ -98,12 +99,15 @@ UNNAMED_SCOPE = "undecodable_scope"
 #: latch and ``spend_rollup.check_wallet`` compares no day rows while it is lost (``_check`` reads it once
 #: per run and passes it down); the malformed settled calls are still named.
 SPEND_SENTINEL = "spend_sentinel_missing"
-#: The store-wide issue the verify command (``main``) adds when its own open replayed every wallet's day rows
-#: (``Store.replays``: their sentinel, marker or trigger version was missing): the rows it then compares are the
-#: ones that open just wrote, not what the services read before, so the command says so and exits 1.
+#: The store-wide issues the verify command (``main``) adds when its own open replayed a family's derived rows
+#: (``Store.replays``: its sentinel(s), marker or trigger version was missing): every provider account's
+#: rollup (``model_cost_rollup.migrate``) or every wallet's day rows (``payer_spend_rollup.migrate``). The rows
+#: it then compares are the ones that open just wrote, not what the services read before, so the command says
+#: so and exits 1.
+COST_REPLAYED = "cost_rollup_replayed_on_open"
 SPEND_REPLAYED = "spend_rollup_replayed_on_open"
 #: Issues no scope's latch carries: ``record`` audits and alerts them store-wide whatever else differs.
-UNCARRIED = (UNNAMED_SCOPE, SPEND_SENTINEL, SPEND_REPLAYED)
+UNCARRIED = (UNNAMED_SCOPE, SPEND_SENTINEL, COST_REPLAYED, SPEND_REPLAYED)
 
 
 class RollupInconsistent(BillingError):
@@ -1118,7 +1122,7 @@ class CostRollup:
         for the scopes with differences."""
         from .risk import _system_audit
         at = int((clock or time.time)())
-        statuses, alerts = {}, []
+        statuses, alerts, source = {}, [], report.mode
         with store.tx() as t:
             for scope, result in report.all_scopes.items():
                 if not result.count:
@@ -1166,7 +1170,7 @@ class CostRollup:
                                        **({"issues": list(report.issues)} if report.issues else {})}),
                            max([s.rebuild_seq for s in every.values()] or [0]), at))
             for scope, issues in alerts:
-                store.after_commit(lambda scope=scope, issues=issues: _alert(store, scope, at, issues))
+                store.after_commit(lambda scope=scope, issues=issues: _alert(store, scope, at, issues, source=source))
         return statuses
 
     @staticmethod
@@ -1350,13 +1354,22 @@ def _id(prefix: str) -> str:
     return f"{prefix}_{secrets.token_hex(10)}"
 
 
-def _alert(store, scope, at, issues=()) -> None:
+def _alert(store, scope, at, issues=(), source=None) -> None:
+    from ..notifications import ROLLUP_SOURCE_WORDS
     from .risk import notify_admins
     day = time.strftime("%Y-%m-%d", time.gmtime(at))
     if scope[0] == "*":
-        # Store-wide (``record``): no account's or wallet's; its own wording names the issues.
-        notify_admins(store, "billing.cost.rollup_issues", params={"issues": ", ".join(issues)},
-                      dedupe_key=f"cost:rollup:{scope_key(scope)}:{day}", object_id=scope_key(scope))
+        # Store-wide (``record``): no account's or wallet's; its own wording names the issues and which check
+        # found them (``source``: the report's mode, worded by the catalogue; any other mode reads as a plain
+        # check). Deduplicated per DISTINCT ISSUE SET per UTC day, never per day alone: after the scheduled
+        # round alerted one set (the wallets' lost sentinel), the operator's recorded CLI verify the same day
+        # (whose open replayed: another set) is still delivered, as is any later different finding that day;
+        # the same set found again that day is the one alert. The per-account and per-wallet keys below are
+        # per scope and day, as before.
+        names = ",".join(sorted(set(issues)))
+        notify_admins(store, "billing.cost.rollup_issues",
+                      params={"issues": ", ".join(issues), "source": source if source in ROLLUP_SOURCE_WORDS else "verify"},
+                      dedupe_key=f"cost:rollup:{scope_key(scope)}:{day}:{names}", object_id=scope_key(scope))
         return
     if scope[1] == "":
         # A wallet: the alert carries the wallet id only (never its owner or amounts).
@@ -1386,25 +1399,69 @@ def _operator(explicit) -> str:
         return f"operator:uid-{os.getuid()}"
 
 
-_MISSING = {"sentinel": "哨兵行丢失", "marker": "缺少标记 payer_spend_rollup_v1", "triggers": "触发器版本不同"}
+#: What a family's open can have found missing (``Store.replays[...]["missing"]``), as the command says it.
+_MISSING = {"sentinel": "哨兵行丢失", "marker": "缺少标记 {marker}", "triggers": "触发器版本不同"}
+#: The two rollup families a Store open can replay (suite_schema.apply, in this order), as the command names them:
+#: the suite-schema module (the ``Store.replays`` key), the store-wide issue the verify then carries, the marker,
+#: what the replay rewrote and counts, the scope a rebuild clears, and what a lost sentinel means for it.
+_FAMILIES = (
+    {"module": "model_cost_rollup", "issue": COST_REPLAYED, "marker": schema.MARKER, "scope": "提供方账户",
+     "what": "全部提供方账户的成本汇总，即日桶、速率桶、敞口与例外行", "rows": "汇总行", "facts": "成本准入",
+     "lost": "派生表的哨兵行只会随绕过闸门的写入或整张表丢失；丢失到这次重放之前读取不查它（派生行若随之丢失，准入按空汇总计），"
+             "由定时校验把每个提供方账户记为 sentinel_missing 并锁定，这次重放不解除这些故障（按账户 rebuild 解除）。"
+             "这次重放已恢复哨兵行；按 docs/platform/model-risk.md §13 找出那次写入。"},
+    {"module": "payer_spend_rollup", "issue": SPEND_REPLAYED, "marker": spend_schema.MARKER, "scope": "钱包",
+     "what": "全部钱包的个人支出日行", "rows": "日行", "facts": "已结算调用",
+     "lost": "哨兵行只会随绕过闸门的写入或整张表丢失；丢失期间每个钱包的付费调用都以 payer_budget_inconsistent 拒绝，"
+             "按钱包的重建拒绝。这次重放已恢复它；按 docs/platform/model-risk.md §13「钱包」找出那次写入。"},
+)
 
 
-def _say_replayed(replayed: dict, action: str) -> None:
-    """This process's open replayed every wallet's day rows (``Store.replays``): said first, so what follows is
+def _say_replayed(family: dict, replayed: dict, action: str) -> None:
+    """This process's open replayed one family's derived rows (``Store.replays``): said first, so what follows is
     read as running over rows this process just wrote, never as the state the services read before."""
     import sys
-    why = "、".join(_MISSING.get(name, name) for name in replayed["missing"])
+    why = "、".join(_MISSING.get(name, name).format(marker=family["marker"]) for name in replayed["missing"])
     faults = f"，{len(replayed['faults'])} 条畸形" if replayed["faults"] else ""
-    print(f"打开数据库时重放了全部钱包的个人支出日行（{why}；{replayed['facts']} 条已结算调用{faults}），等于一次服务启动："
-          + ("下面核对的是这次重放写出的日行，不是此前服务读到的，记为全库问题 "
-             f"{SPEND_REPLAYED}，退出码 1。" if action == "verify" else
-             f"下面的重建在这次重放之后运行，按钱包的重建只解除该钱包的故障（{SPEND_REPLAYED}）。"),
+    print(f"打开数据库时重放了{family['what']}（{why}；{replayed['facts']} 条{family['facts']}{faults}），等于一次服务启动："
+          + (f"下面核对的是这次重放写出的{family['rows']}，不是此前服务读到的，记为全库问题 "
+             f"{family['issue']}，退出码 1。" if action == "verify" else
+             f"下面的重建在这次重放之后运行，按{family['scope']}的重建只解除该{family['scope']}的故障（{family['issue']}）。"),
           file=sys.stderr)
     if "sentinel" in replayed["missing"]:
-        print("哨兵行只会随绕过闸门的写入或整张表丢失；丢失期间每个钱包的付费调用都以 payer_budget_inconsistent 拒绝，"
-              "按钱包的重建拒绝。这次重放已恢复它；按 docs/platform/model-risk.md §13「钱包」找出那次写入。", file=sys.stderr)
+        print(family["lost"], file=sys.stderr)
     else:
         print("（首次启用或触发器版本升级的回填，属预期；再运行一次 verify 即为只读核对。）", file=sys.stderr)
+
+
+def _rebuild_flags(args) -> str | None:
+    """The rebuild's flags, checked BEFORE the Store is opened (an open migrates, and may replay a whole family
+    under the writer lock): the refusal to print and exit 2 with, or None. The same checks the rebuild itself
+    makes first (which flags, the identifiers, the reason's length), so a mistyped command never opens the
+    store, replays nothing and writes nothing."""
+    from .risk import _reason
+    if args.wallet is not None and (args.provider is not None or args.account_ref is not None):
+        return "--wallet 与 --provider/--account-ref 不能同时使用"
+    if args.wallet is not None:
+        required = (("--reason", args.reason),)
+    else:
+        required = (("--environment", args.environment), ("--provider", args.provider),
+                    ("--account-ref", args.account_ref), ("--reason", args.reason))
+    missing = [flag for flag, value in required if value is None]
+    if missing:
+        return "重建需要：" + " ".join(missing)
+    for flag, value in (("--wallet", args.wallet), ("--provider", args.provider), ("--account-ref", args.account_ref),
+                        ("--actor", args.actor)):
+        if value is not None:
+            try:
+                identifier(value)
+            except BillingError as exc:
+                return f"没有重建：{flag} {exc.code}"
+    try:
+        _reason(args.reason)
+    except Exception as exc:  # noqa: BLE001 - the reason's length (a ServiceError, missing_reason): printed, not raised
+        return f"没有重建：--reason {getattr(exc, 'code', None) or type(exc).__name__}"
+    return None
 
 
 def _verdict(report, no_record: bool) -> str:
@@ -1424,10 +1481,12 @@ def main(argv=None) -> int:
     ``docker compose -f /opt/synwevo/config/compose.yaml exec -T portal python -m synwevo_core.billing.cost_rollup
     verify --all --no-record </dev/null``. Locally ``python scripts/platform.py cost-rollup …`` runs the same.
 
-    Opening the Store migrates it. When that open replayed every wallet's day rows (their sentinel, marker or
-    trigger version was missing: ``Store.replays``), the command says so first; a verify then carries the
-    store-wide issue ``spend_rollup_replayed_on_open`` (recorded, audited and alerted like the others unless
-    --no-record) and exits 1, since the rows it compared are the ones its open just wrote."""
+    Opening the Store migrates it. When that open replayed a family's derived rows (every provider account's
+    rollup, or every wallet's day rows: its sentinel(s), marker or trigger version was missing, ``Store.replays``),
+    the command says so first; a verify then carries the store-wide issue (``cost_rollup_replayed_on_open``,
+    ``spend_rollup_replayed_on_open``; recorded, audited and alerted like the others unless --no-record, the
+    alert worded as the command line's finding) and exits 1, since the rows it compared are the ones its open
+    just wrote. A rebuild's flags are checked before the open, so a mistyped rebuild replays nothing (exit 2)."""
     import argparse
     import sys
     from pathlib import Path
@@ -1454,39 +1513,34 @@ def main(argv=None) -> int:
         return 2
     given = [flag for flag, value in (("--wallet", args.wallet), ("--provider", args.provider),
                                       ("--account-ref", args.account_ref), ("--reason", args.reason),
-                                      ("--actor", args.actor)) if value]
+                                      ("--actor", args.actor)) if value is not None]
     if args.action == "verify" and given:
         # Never silently ignored: a store-wide result read as one wallet's or one account's would mislead.
         print("verify 核对整个库（只有 --environment、--all、--no-record 适用），不接受 " + " ".join(given)
               + "；按钱包或提供方账户的操作只有 rebuild。", file=sys.stderr)
         return 2
+    if args.action == "rebuild":
+        # Before the open: a mistyped rebuild must not migrate (and so maybe replay a whole family under the
+        # writer lock) only to exit 2.
+        refusal = _rebuild_flags(args)
+        if refusal:
+            print(refusal, file=sys.stderr)
+            return 2
     store = Store(args.data)
-    replayed = store.replays.get("payer_spend_rollup")
-    if replayed:
-        _say_replayed(replayed, args.action)
+    replayed = [(family, store.replays[family["module"]]) for family in _FAMILIES if store.replays.get(family["module"])]
+    for family, replay in replayed:
+        _say_replayed(family, replay, args.action)
     if args.action == "verify":
         report = CostRollup.check(store, args.environment, all=args.all, mode="cli")
-        if replayed:
-            report.issues.append(SPEND_REPLAYED)
+        report.issues.extend(family["issue"] for family, _ in replayed)
         if not args.no_record:
             CostRollup.record(store, report)
         print(json.dumps(report.summary(), ensure_ascii=False, indent=2, default=str))
         print(f"{len(report.scopes)} 个提供方账户，{report.facts} 条成本事实；{len(report.wallets)} 个钱包，"
               f"{report.wallet_facts} 条已结算调用：" + _verdict(report, args.no_record), file=sys.stderr)
         return 0 if report.ok else 1
-    if args.wallet:
-        missing = [flag for flag, value in (("--reason", args.reason),) if not value]
-        if args.provider or args.account_ref:
-            print("--wallet 与 --provider/--account-ref 不能同时使用", file=sys.stderr)
-            return 2
-    else:
-        missing = [flag for flag, value in (("--environment", args.environment), ("--provider", args.provider),
-                                            ("--account-ref", args.account_ref), ("--reason", args.reason)) if not value]
-    if missing:
-        print("重建需要：" + " ".join(missing), file=sys.stderr)
-        return 2
     try:
-        if args.wallet:
+        if args.wallet is not None:
             result = CostRollup.rebuild_wallet(store, account_id=args.wallet, environment=args.environment,
                                                actor=_operator(args.actor), reason=args.reason)
         else:
@@ -1500,7 +1554,7 @@ def main(argv=None) -> int:
                   "只有一次服务启动（或本命令的打开）才从全部已结算调用重放每个钱包的日行并恢复哨兵行；按钱包重放只会带回"
                   "这一个钱包的行，其他钱包会被当作没有支出。重启服务或运行 verify（docs/platform/model-risk.md §13「钱包」），"
                   "不要按钱包重建。", file=sys.stderr)
-        elif exc.attempt_keys and args.wallet:
+        elif exc.attempt_keys and args.wallet is not None:
             print("没有重建：这些已结算调用本身有问题（创建时间不是非负整数），只能来自产品之外的写入（导入、手写 SQL）。"
                   "调用不可修改，重建不会解除；该钱包保持拒绝，直到把数据库恢复到这次写入之前的备份"
                   "（docs/platform/model-risk.md §13 第 3 步）：", file=sys.stderr)

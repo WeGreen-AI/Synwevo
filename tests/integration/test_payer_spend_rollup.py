@@ -1047,9 +1047,12 @@ def test_the_command_line_verify_says_when_its_own_open_replayed_the_wallets_and
     emptied past the gate) its open replays every wallet's day rows before the check runs, as a start would. It
     must say so instead of printing 一致 over rows it just wrote: the replay-on-open line, the store-wide issue
     ``spend_rollup_replayed_on_open`` in the summary and exit 1, with and without --no-record (recorded: a
-    ``mismatch`` run row, a ``*`` audit and the store-wide alert naming the issue); the rows are then complete
-    and identical to a fresh start's. A healthy store verifies as before (exit 0, 一致). ``rebuild --wallet``
-    from the command line never meets the lost sentinel: its own open restored it first, and says so."""
+    ``mismatch`` run row, a ``*`` audit and the store-wide alert naming the issue, delivered even after the
+    scheduled round alerted the lost sentinel that day, since one alert goes per distinct issue set per UTC day,
+    and worded as the command line's finding); the rows are then complete and identical to a fresh start's. A
+    healthy store verifies as before (exit 0, 一致). A mistyped rebuild exits 2 before the open, so it replays
+    nothing. ``rebuild --wallet`` from the command line never meets the lost sentinel: its own open restored it
+    first, and says so."""
     import os
     import subprocess
     import sys
@@ -1088,52 +1091,152 @@ def test_the_command_line_verify_says_when_its_own_open_replayed_the_wallets_and
     assert store.one("SELECT COUNT(*) AS n FROM notifications WHERE user_id=?", (recipient,))["n"] == 0
     for user in (0, 1):
         assert view(money, user)["usage_state"] == "available"
-    # 2. Recorded: the same, plus the run row, the * audit and the store-wide alert naming the issue.
+    # 2. Recorded, after the services' scheduled daily round alerted the lost sentinel (the real clock, as both
+    # run in production, so the same UTC day): the same, plus the run row, the * audit and the store-wide alert
+    # naming the issue — a SECOND alert, since one goes per distinct issue set per UTC day, not one per day,
+    # worded as the command line's finding, never as a scheduled check's.
     assert tamper(store, "DELETE FROM payer_spend_days") == len(original)
+    rollup().CostRollup.verify(store, now=ticks[0], mode="daily")
     code, summary, err = run("verify", "--all")
     assert code == 1 and summary["issues"] == [issue] and issue in err and "：一致。" not in err, (summary, err)
     assert backfills() == base + 2 and rows() == original
     runs = store.all("SELECT status,differences FROM model_cost_rollup_audits WHERE mode='cli'")
     assert [r["status"] for r in runs] == ["mismatch"] and json.loads(runs[0]["differences"])["issues"] == [issue]
-    audits = store.all("SELECT object_id,meta FROM audit_events WHERE action='billing.cost.rollup_inconsistent'")
-    assert [(a["object_id"], json.loads(a["meta"])["issues"]) for a in audits] == [("*", [issue])]
+    audits = store.all("SELECT object_id,meta FROM audit_events WHERE action='billing.cost.rollup_inconsistent' ORDER BY seq")
+    assert [(a["object_id"], json.loads(a["meta"])["issues"]) for a in audits] == [("*", ["spend_sentinel_missing"]), ("*", [issue])]
     assert store.all("SELECT * FROM model_cost_rollup_faults") == []
     alerts = store.all("SELECT * FROM notifications WHERE user_id=? ORDER BY seq", (recipient,))
-    assert [(a["kind"], a["object_id"]) for a in alerts] == [("billing.cost.rollup_issues", rollup().scope_key(("*",) * 3))]
-    from synwevo_core.notifications import Notifier
-    for locale in ("zh-Hans", "zh-Hant", "en"):
-        rendered = Notifier(store).render(alerts[0], locale)
-        assert issue in rendered["title"] and issue in rendered["body"] and "*" not in rendered["body"], rendered
+    star = rollup().scope_key(("*",) * 3)
+    assert [(a["kind"], a["object_id"], json.loads(a["params"])) for a in alerts] == [
+        ("billing.cost.rollup_issues", star, {"issues": "spend_sentinel_missing", "source": "daily"}),
+        ("billing.cost.rollup_issues", star, {"issues": issue, "source": "cli"})]
+    from synwevo_core.notifications import LOCALES, ROLLUP_SOURCE_WORDS, Notifier
+    for locale in LOCALES:
+        scheduled, mine = (Notifier(store).render(a, locale) for a in alerts)
+        assert issue in mine["title"] and issue in mine["body"] and "*" not in mine["body"] and "{" not in mine["body"], mine
+        assert mine["body"].startswith(ROLLUP_SOURCE_WORDS["cli"][locale]) and "cost-rollup verify" in mine["body"], mine
+        assert not any(word in mine["body"] for word in ("定时", "定時", "scheduled")), mine
+        assert scheduled["body"].startswith(ROLLUP_SOURCE_WORDS["daily"][locale]), scheduled
     # A fresh start replays nothing more and finds the same rows; the healthy verify is 一致 again.
     reopened = Store(store.root)
     assert backfills() == base + 2 and reopened.all("SELECT * FROM payer_spend_days ORDER BY account_id,start") == original
     healthy = run("verify", "--all", "--no-record")
     assert healthy[0] == 0 and healthy[1]["issues"] == [] and "：一致。" in healthy[2] and issue not in healthy[2], healthy
-    # 3. rebuild --wallet from the command line: its open restored the sentinel and every row first (and says
-    # so), then the one-wallet rebuild runs over complete rows.
+    # 3. The rebuild's flags are checked BEFORE the open: a mistyped rebuild while the table is emptied replays
+    # nothing (no backfill row, no replay line, the sentinel still absent) and writes nothing; exit 2 at once.
     assert tamper(store, "DELETE FROM payer_spend_days") == len(original)
+    for args in (("--wallet", wallet(money)), ("--wallet", ""), (),
+                 ("--environment", "test", "--provider", "fixture-provider"),
+                 ("--wallet", wallet(money), "--account-ref", "fixture-account", "--reason", "fixture rebuild with both"),
+                 ("--wallet", wallet(money), "--reason", "short"),
+                 ("--wallet", wallet(money) + "\t", "--reason", "fixture rebuild of a wallet id with a tab")):
+        code, result, err = run("rebuild", *args)
+        assert code == 2 and result is None and "重放" not in err and issue not in err, (args, err)
+    assert backfills() == base + 2 and rows() == []
+    assert store.all("SELECT * FROM model_cost_rollup_rebuilds WHERE actor<>'system:backfill'") == []
+    # 4. rebuild --wallet from the command line: its open restored the sentinel and every row first (and says
+    # so), then the one-wallet rebuild runs over complete rows.
     code, result, err = run("rebuild", "--wallet", wallet(money), "--reason", "fixture rebuild after the sentinel was lost")
     assert code == 0 and result["facts"] == 7 and issue in err, (result, err)
     assert backfills() == base + 3 and rows() == original
     rollup().assert_consistent(store)
 
 
+@pytest.mark.cost_rollup_unchecked
+def test_store_wide_alerts_go_once_per_distinct_issue_set_per_utc_day_and_say_which_check_found_them(money):
+    """``billing.cost.rollup_issues`` is deduplicated per distinct issue set per UTC day, never per day alone:
+    after the scheduled rounds alerted ``spend_sentinel_missing``, the operator's recorded CLI verify the same
+    day (whose open replayed: ``spend_rollup_replayed_on_open``) is a second alert, the same set recorded again
+    that day is still one, and the next day alerts again. The body says which check found the issues (the
+    report's mode: the daily or hourly scheduled round, the command line) in three languages; mail rendering
+    equals the inbox's. The per-wallet alert keeps its own key (the wallet and the day)."""
+    from synwevo_core.notifications import LOCALES, ROLLUP_SOURCE_WORDS, Notifier
+    store, ledger, users, ticks = money
+    recipient = users[2]
+    make_platform_admin(store, recipient)             # FIXTURE: the alert recipient (platform_fixture)
+    two_wallets_with_history(money, "fixture-alert-sets")
+    now = ticks[0]
+    at = utc("2026-11-01T10:00:00")
+    star = rollup().scope_key(("*",) * 3)
+
+    def alerts(reader=store):
+        rows = reader.all("SELECT * FROM notifications WHERE user_id=? ORDER BY seq", (recipient,))
+        return [(r["kind"], r["dedupe_key"], json.loads(r["params"])) for r in rows]
+
+    assert tamper(store, "DELETE FROM payer_spend_days WHERE account_id='' AND start=0") == 1
+    # The scheduled daily and hourly rounds that day: one issue set, one alert, however many runs.
+    rollup().CostRollup.verify(store, now=now, mode="daily", clock=lambda: at)
+    rollup().CostRollup.verify(store, since=now - 2 * DAY, now=now, mode="recent", clock=lambda: at + 3600)
+    rollup().CostRollup.verify(store, now=now, mode="daily", clock=lambda: at + 7200)
+    first = alerts()
+    assert [(kind, params) for kind, _, params in first] == [
+        ("billing.cost.rollup_issues", {"issues": "spend_sentinel_missing", "source": "daily"})]
+    assert first[0][1].startswith(f"cost:rollup:{star}:2026-11-01") and "spend_sentinel_missing" in first[0][1]
+    # The operator's CLI verify the same day: its open replayed (the restart here), so the check it records
+    # carries spend_rollup_replayed_on_open, as cost_rollup.main does: a different set, a second alert; the same
+    # set recorded again that day is still that one; the next UTC day alerts again.
+    restarted = restart(money)
+    reopened = restarted[0]
+    assert reopened.one("SELECT 1 AS x FROM payer_spend_days WHERE account_id='' AND start=0")
+    for offset in (10_000, 10_100, DAY):
+        report = rollup().CostRollup.check(reopened, all=True, now=now, mode="cli")
+        assert report.issues == [] and report.ok
+        report.issues.append(rollup().SPEND_REPLAYED)
+        rollup().CostRollup.record(reopened, report, clock=lambda: at + offset)
+        count = 2 if offset < DAY else 3
+        assert len(alerts(reopened)) == count, (offset, alerts(reopened))
+    second = alerts(reopened)
+    assert [(kind, params) for kind, _, params in second[1:]] == [
+        ("billing.cost.rollup_issues", {"issues": "spend_rollup_replayed_on_open", "source": "cli"})] * 2
+    assert second[1][1] != first[0][1] and "spend_rollup_replayed_on_open" in second[1][1]
+    assert second[1][1].startswith(f"cost:rollup:{star}:2026-11-01") and second[2][1].startswith(f"cost:rollup:{star}:2026-11-02")
+    assert len({key for _, key, _ in second}) == 3
+    # Worded by source, in three languages, with no leftover braces; the mail rendering equals the inbox's.
+    rows = reopened.all("SELECT * FROM notifications WHERE user_id=? ORDER BY seq", (recipient,))
+    for row, source in ((rows[0], "daily"), (rows[1], "cli")):
+        for locale in LOCALES:
+            rendered = Notifier(reopened).render(row, locale)
+            external = Notifier(reopened).render_external(row, locale, {})
+            assert (external["title"], external["body"]) == (rendered["title"], rendered["body"])
+            assert rendered["body"].startswith(ROLLUP_SOURCE_WORDS[source][locale]), (source, locale, rendered["body"])
+            assert "{" not in rendered["title"] and "{" not in rendered["body"] and "*" not in rendered["body"]
+            assert json.loads(row["params"])["issues"] in rendered["title"]
+            if source == "cli":
+                assert not any(word in rendered["body"] for word in ("定时", "定時", "scheduled")), rendered["body"]
+    # A wallet's own alert is still keyed by the wallet and the day (a tampered day row latches that wallet).
+    assert tamper(reopened, "UPDATE payer_spend_days SET n_set=n_set+1 WHERE account_id=?", (wallet(money),)) >= 1
+    rollup().CostRollup.verify(reopened, now=now, mode="daily", clock=lambda: at + 20_000)
+    mine = [(kind, key) for kind, key, _ in alerts(reopened) if kind == "billing.payer_spend.rollup_inconsistent"]
+    assert mine == [("billing.payer_spend.rollup_inconsistent",
+                     f"payer_spend:rollup:{rollup().scope_key(scope(money))}:2026-11-01")]
+    assert len(alerts(reopened)) == 4
+
+
 def test_the_store_wide_alert_names_the_issues_and_the_runbook_section_in_three_languages():
     """The ``*`` alert of ``CostRollup.record`` (a delta row at rest, a lost sentinel of either family, a scope no
-    read can name, the verify command's replay on open) has its own wording: the issue names, the runbook
-    section, never "provider account *". The per-account template is unchanged."""
-    from synwevo_core.notifications import CATALOGUE, LOCALES, _fmt
+    read can name, the verify command's replay on open of either family) has its own wording: which check found
+    the issues (``source``: the report's mode, localised: the daily or hourly scheduled round, the command line,
+    or a plain check), the issue names, the runbook section, never "provider account *". The per-account
+    template is unchanged."""
+    from synwevo_core.notifications import CATALOGUE, LOCALES, ROLLUP_SOURCE_WORDS, _fmt, _localised_params
     spec = CATALOGUE["billing.cost.rollup_issues"]
     assert spec["category"] == "platform" and spec["severity"] == "action" and spec["email"] == "immediate"
     account = CATALOGUE["billing.cost.rollup_inconsistent"]
+    assert set(ROLLUP_SOURCE_WORDS) == {"daily", "recent", "cli", "verify"}
+    assert all(set(words) == set(LOCALES) and all(words.values()) for words in ROLLUP_SOURCE_WORDS.values())
     for locale in LOCALES:
         assert "{provider}" in account["title"][locale] and "{account}" in account["body"][locale]
-        for part in ("title", "body"):
+        for part, placeholders in (("title", {"issues"}), ("body", {"issues", "source"})):
             text = spec[part][locale]
-            assert text and set(re.findall(r"\{(\w+)\}", text)) == {"issues"}, (part, locale)
+            assert text and set(re.findall(r"\{(\w+)\}", text)) == placeholders, (part, locale)
             assert "*" not in text and "platform.py" not in text, (part, locale)
         body = spec["body"][locale]
-        assert "model-risk.md §13" in body
-        assert not any(word in body for word in ("提供方账户", "供應商帳戶", "provider account")), body
-        rendered = _fmt(body, {"issues": "spend_sentinel_missing, undecodable_scope"})
-        assert "spend_sentinel_missing, undecodable_scope" in rendered
+        assert body.startswith("{source}") and "model-risk.md §13" in body
+        assert "cost_rollup_replayed_on_open" in body and "spend_rollup_replayed_on_open" in body
+        assert not any(word in body for word in ("提供方账户", "供應商帳戶", "provider account", "定时核对", "定時核對", "scheduled")), body
+        for source in ROLLUP_SOURCE_WORDS:
+            params = _localised_params({"issues": "spend_sentinel_missing, undecodable_scope", "source": source}, locale)
+            rendered = _fmt(body, params)
+            assert rendered.startswith(ROLLUP_SOURCE_WORDS[source][locale]) and "{" not in rendered, (source, locale)
+            assert "spend_sentinel_missing, undecodable_scope" in rendered
+        assert len({ROLLUP_SOURCE_WORDS[source][locale] for source in ROLLUP_SOURCE_WORDS}) == 4

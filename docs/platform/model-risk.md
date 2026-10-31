@@ -156,7 +156,7 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 | `billing.risk.payment_webhook_failed` | 管理员 | 支付渠道调用 `alert_payment_webhook_failure(store, environment=, provider=, code=)` | 每渠道每代码每 UTC 日一次 |
 | `billing.cost.rollup_inconsistent` | 管理员 | 成本汇总与事实不一致，某提供方账户被锁定（§13） | 每个提供方账户每 UTC 日一次 |
 | `billing.payer_spend.rollup_inconsistent` | 管理员 | 个人支出汇总与已结算调用不一致，某钱包被锁定（§13「钱包」），只给出钱包 id | 每个钱包每 UTC 日一次 |
-| `billing.cost.rollup_issues` | 管理员 | 不属于某一个账户或钱包的全库问题（§13：静止时有 delta 行、哨兵行丢失、读不出名字的范围、verify 打开时重放了钱包日行），自己的措辞，列出问题名 | 每 UTC 日一次 |
+| `billing.cost.rollup_issues` | 管理员 | 不属于某一个账户或钱包的全库问题（§13：静止时有 delta 行、哨兵行丢失、读不出名字的范围、verify 打开时重放了提供方账户的汇总或钱包日行），自己的措辞，开头写明是哪次核对发现的（每日或每小时定时核对、命令行），列出问题名 | 每种问题组合每 UTC 日一次（同一天里不同的问题组合各告警一次） |
 
 `alert_payment_webhook_failure` 是给支付渠道工作包的挂钩：只接受渠道名与稳定代码，从不接受载荷、签名或客户信息。
 
@@ -214,6 +214,16 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 （`exec`）；重建持有写锁，在一次性容器里运行（`run --rm --no-deps`：同一镜像、数据卷与内存上限，服务停着也能运行）。下面的
 `<account_ref>`、`<reason>`（8–500 字）换成实际值；`--actor <操作人>` 可写明是谁（默认 `operator:<容器用户>`）。
 本机开发用 `python scripts/platform.py cost-rollup …`，参数相同。
+
+**本命令打开数据库时的重放。** 核对与重建都先打开数据库（带迁移的打开），等于一次服务启动：派生表的哨兵行、标记 `model_cost_rollup_v1`
+或触发器版本缺失时，打开就从全部成本准入重放每个提供方账户的汇总（持有写锁；记为 `('', '', '')` 的 `backfill` 审计与一条
+`system:backfill` 重建记录，`--no-record` 也不例外，因为这是迁移而不是核对）；钱包日行表同理（见「钱包」）。命令先说明这一点
+（原因、重放的事实数、畸形事实数），核对结果记为全库问题 `cost_rollup_replayed_on_open`（钱包为 `spend_rollup_replayed_on_open`）、
+退出码 1——它核对的是自己刚写出的汇总行，不是此前服务读到的；记录时与其他全库问题一样审计（对象 `*`）、告警（开头写明是命令行发现的，
+当天即使定时核对已经告警过别的问题组合也会送达）；再运行一次即为只读核对。哨兵行只会随绕过闸门的写入或整张表丢失：丢失到这次重放之前，
+读取本身不查哨兵行，由定时校验把每个提供方账户记为 `sentinel_missing` 并锁定；重放不解除这些故障，之后按第 2 步逐个重建，并找出那次写入。
+重建的参数（`--environment`、`--provider`、`--account-ref`、`--reason`，或 `--wallet`、`--reason`；理由 8–500 字，标识不能为空）在打开
+数据库**之前**检查：写错了只提示、退出码 2，什么也不重放、不写。
 
 1. **看差异，不改任何东西**：
 
@@ -335,7 +345,7 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 哨兵行被删除、标记或触发器版本不同不需要按钱包重建：下一次启动在迁移的 BEGIN IMMEDIATE 里从全部已结算调用重放一次
 （记为 `('', '@wallets', '')` 的 `backfill` 审计与一条重建记录），重放期间持有写锁（时长见 docs/billing-ledger.md「Per-wallet spend」）。
 哨兵行丢失到那次启动之前，每个钱包的读取都以 `payer_budget_inconsistent` 拒绝（失败即关闭：日行可能随之丢失），但不锁定：
-校验把它记为全库问题 `spend_sentinel_missing`（每轮校验读一次哨兵，审计对象 `*`，每轮记录一次，告警 `billing.cost.rollup_issues` 按日去重），
+校验把它记为全库问题 `spend_sentinel_missing`（每轮校验读一次哨兵，审计对象 `*`，每轮记录一次，告警 `billing.cost.rollup_issues` 按问题组合每 UTC 日一次，开头写明是哪次核对发现的），
 在它丢失期间不比较任何钱包的日行、也不比较读取结果与对照计算——日行还在、随哨兵一起没了（表被清空）、或只少了某个钱包的行，
 都一样，因为那次启动会重写每个钱包的日行；只有畸形的已结算调用照常点名（`fact_fault`，其故障本来就由触发器锁定）。
 所以不给任何钱包开故障，启动重放之后不需要逐个重建。
@@ -343,6 +353,7 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 **校验或告警报告 `spend_sentinel_missing` 时：重启服务，或运行第 1 步的 verify。** 本命令打开数据库时就会重放全部钱包的日行（等于一次启动），
 并先说明这一点：核对结果记为全库问题 `spend_rollup_replayed_on_open`、退出码 1——它核对的是自己刚写出的日行，不是此前服务读到的；
 再运行一次即为只读核对（首次启用或触发器版本升级后的第一次 verify 也这样报告，原因写明是标记或触发器版本，属预期）。
+这是与 `spend_sentinel_missing` 不同的问题组合：当天定时核对已经告警过哨兵行丢失，本命令记录时的告警照样送达（开头写明是命令行发现的）。
 **不要 `rebuild --wallet`：哨兵行丢失期间它拒绝**（`cost_rollup_rebuild_refused`，原因 `spend_sentinel_missing`），什么也不改——
 按钱包重放只会带回这一个钱包的行，若把哨兵行一起写回，其他钱包的读取从此只见哨兵不见行、支出按 0 计（个人上限被绕过），
 下次启动也不再重放；只有启动（或本命令打开时）的全量重放写回哨兵行。之后按第 1 步核对，并找出那次绕过闸门的写入
