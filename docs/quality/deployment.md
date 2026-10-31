@@ -1,6 +1,40 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-10-26 10:37 UTC — d6d4a0b4, licences, the AGPL source offer and the exact cost rollup
+## Current release · 2026-10-31 15:47 UTC — 7976ce8b, Dependabot updates (the Tiptap group and Vite 8.3.5)
+
+**Running source: `7976ce8b16923249811ed5d66418e8d58f9017a6`** (origin/dev, the merge of PR #19). Pipeline run 41203569315
+(push to dev): verify 14:24→15:45 UTC, deploy 15:45→15:47 UTC through the restricted SSH command; receiver backup
+`/opt/synwevo/backups/20261031T154716Z`. Minutes earlier the same day, run 41203552880 deployed 8b5e3464 (PR #18) at
+14:27 UTC with backup `20261031T142636Z`: the two merges were made one minute apart, their runs completed in order, and the
+deploy guard admits a newer source after an older one, so both deployed.
+
+**What it ships over d6d4a0b4:** dependency updates only. PR #18: the Tiptap group, 3.31.3→3.32.0 for the editor
+packages and y-tiptap 3.0.10 (the group Dependabot was given on 2026-10-26, so the extensions move together). PR #19:
+Vite 8.3.0→8.3.5 with its rolldown, postcss, nanoid and source-map-js transitive updates. Each passed the full verify on
+its own pull request (1h20m and 1h35m). Dependabot's react-only bump (#20) was closed: react-dom requires the exact
+react version, so the identity web tests failed in 1m18s; PR #21 (merged 17:52 UTC, f92fe542) groups react with
+react-dom and their type packages and sets `versioning-strategy: increase-if-necessary`, so manifest ranges — including
+the shared packages' peer ranges, which the default strategy had rewritten from `>=19` to `^19.3.1` — are no longer
+changed by an update. Its own push run verifies and deploys next; nothing in it reaches the application.
+
+**Post-deploy checks (17:55 UTC, read-only):** `/readyz` 200 on synwevo.com, workplace, accounts, docwave and message;
+accounts, docs, portal and messages all on `synwevo:7976ce8b…` and healthy, gateway healthy; no traceback or error line
+in the last 60 minutes of any role. 8b5e3464 was checked the same way at 14:30 UTC: the four roles on its image and
+healthy, gateway recreated, backup present, no error line.
+
+**Known, not fixed — Dependabot's pip job:** the weekly Python version-update job fails before opening anything
+(run 40794860449, 2026-10-29: "Could not open constraint file infra/server/requirements.lock"). Dependabot fetches only
+the `-r`/`-c` files whose names end in `.txt` or `.in`, so the lock that `requirements-dev.txt` and
+`infra/server/requirements.txt` constrain with is never in its checkout, and no Python dependency has ever received an
+update pull request. Renaming the lock touches the requirements files, `infra/Dockerfile`, the source-offer manifest,
+the guards, three tests and the dependency docs; it is recorded in BACKLOG (`dependabot-pip`) for the owner's decision
+rather than done unasked.
+
+**For the owner:** unchanged from the 2026-10-26 record below — the Cloudflare cache rule for `/api/source-code`, the
+copyright holder, the DeepSeek route renewal, the card-only payment settings, counsel review of the 2026-10-25 terms, and
+the open-source audit's account hardening.
+
+## 2026-10-26 10:37 UTC — d6d4a0b4 (historical; superseded above), licences, the AGPL source offer and the exact cost rollup
 
 **Running source: `d6d4a0b498c5051e65b72f942593214f36738b8b`** (origin/dev). Pipeline run 40298661682 (push to dev):
 verify 09:20→10:33 UTC, deploy 10:33→10:37 UTC through the restricted SSH command; receiver backup
