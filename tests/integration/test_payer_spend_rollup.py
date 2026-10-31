@@ -834,8 +834,12 @@ def test_the_table_emptied_past_the_gate_before_the_verify_latches_no_wallet_and
     assert [json.loads(a["meta"])["issues"] for a in audits] == [["spend_sentinel_missing"]] * 2
     assert [r["status"] for r in store.all("SELECT status FROM model_cost_rollup_audits WHERE mode IN ('recent','daily')")] == [
         "mismatch", "mismatch"]
-    alerts = store.all("SELECT kind,object_id FROM notifications WHERE user_id=? ORDER BY seq", (recipient,))
-    assert [(a["kind"], a["object_id"]) for a in alerts] == [("billing.cost.rollup_inconsistent", rollup().scope_key(("*",) * 3))]
+    alerts = store.all("SELECT * FROM notifications WHERE user_id=? ORDER BY seq", (recipient,))
+    assert [(a["kind"], a["object_id"]) for a in alerts] == [("billing.cost.rollup_issues", rollup().scope_key(("*",) * 3))]
+    from synwevo_core.notifications import Notifier
+    rendered = Notifier(store).render(alerts[0], "zh-Hans")       # its own wording: the issue, never "提供方账户 *"
+    assert "spend_sentinel_missing" in rendered["title"] and "spend_sentinel_missing" in rendered["body"]
+    assert "*" not in rendered["body"] and "§13" in rendered["body"]
     backfills = store.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE provider='@wallets'")["n"]
     # The next start replays every wallet's rows: service is back, nothing was latched, nothing to rebuild.
     restarted = restart(money)
@@ -904,3 +908,232 @@ def test_a_malformed_settled_call_is_still_named_while_the_sentinel_and_the_rows
         rollup().CostRollup.rebuild_wallet(reopened, account_id=target[2], actor="fixture-operator",
                                            reason="fixture rebuild over a malformed call")
     assert caught.value.attempt_keys == [key]
+
+
+# ---------------------------------------------------------------- no partial replay restores the sentinel (2026-11-01, review 3)
+def spend_schema():
+    from synwevo_core.suite_schema import payer_spend_rollup
+    return payer_spend_rollup
+
+
+def values_of(rows, account) -> list[dict]:
+    return [{k: r[k] for k in ("start", "n_set", "n_paid", "amt_hi", "amt_lo")} for r in rows if r["account_id"] == account]
+
+
+def two_wallets_with_history(money, prefix):
+    """FIXTURE: two funded, configured wallets; the first with the template and six cloned settled calls over the
+    last three days, the second with one real settlement. Returns the day rows before any damage."""
+    store, ledger, users, ticks = money
+    fund(money, 1_000)
+    fund(money, 1_000, user=1, order="other-user")
+    configure(money)
+    configure(money, user=1)
+    template = settled_template(money)
+    settle(money, dispatch(money, reserve(money, ctx=context(money, user=1, run="other-settled"), amount=3),
+                           attempt="other"), usage=Usage(1, 0, 0))
+    history(store, template, [(ticks[0] - k * 50_000, k + 1) for k in range(6)], prefix=prefix,
+            steps=ORDERS["status_first"])
+    return store.all("SELECT * FROM payer_spend_days ORDER BY account_id,start")
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_rebuild_wallet_refuses_while_the_sentinel_is_lost_and_a_one_wallet_replay_never_writes_it(money):
+    """The table emptied past the gate: the sentinel and every row gone. A rebuild of one wallet that replayed
+    would bring the sentinel back with that wallet's rows alone; every other wallet's read would then find the
+    sentinel present and no rows and count nothing (its personal limits silently bypassed until the next verify
+    latched it), and the next start would replay nothing. So ``rebuild_wallet`` refuses while the sentinel is
+    lost (``RebuildRefused``, reason ``spend_sentinel_missing``) and writes nothing; the one-wallet replay itself
+    never writes the sentinel (only ``migrate``'s full replay does), so "sentinel present, rows incomplete" is
+    unreachable; every wallet keeps refusing until the restart, which restores them all (D18 item 7,
+    docs/platform/model-risk.md §13 wallets)."""
+    store, ledger, users, ticks = money
+    original = two_wallets_with_history(money, "fixture-refused")
+    target, other = scope(money), scope(money, 1)
+    assert tamper(store, "DELETE FROM payer_spend_days") == len(original) > 3
+    before = (store.all("SELECT * FROM model_cost_rollup_rebuilds ORDER BY seq"),
+              store.all("SELECT * FROM model_cost_rollup_audits ORDER BY rowid"),
+              store.one("SELECT COUNT(*) AS n FROM audit_events")["n"])
+    with pytest.raises(BillingError, match="^cost_rollup_rebuild_refused$") as caught:
+        rollup().CostRollup.rebuild_wallet(store, account_id=target[2], actor="fixture-operator",
+                                           reason="fixture rebuild while the sentinel is lost")
+    refused = caught.value
+    assert isinstance(refused, rollup().RebuildRefused)
+    assert (refused.reason, refused.attempt_keys, refused.differences) == ("spend_sentinel_missing", [], [])
+    # Nothing was written: no sentinel, no row, no rebuild row, no audit, no fault.
+    assert store.all("SELECT * FROM payer_spend_days") == []
+    assert (store.all("SELECT * FROM model_cost_rollup_rebuilds ORDER BY seq"),
+            store.all("SELECT * FROM model_cost_rollup_audits ORDER BY rowid"),
+            store.one("SELECT COUNT(*) AS n FROM audit_events")["n"]) == before
+    assert store.all("SELECT * FROM model_cost_rollup_faults") == []
+    # Every wallet still refuses, unlatched; the verify still reports the sentinel only.
+    for user in (0, 1):
+        assert view(money, user)["usage_state"] == "inconsistent"
+    with pytest.raises(BillingError, match="^payer_budget_inconsistent$"):
+        _call(money, "while-the-sentinel-is-lost")
+    with pytest.raises(BillingError, match="^payer_budget_inconsistent$"):
+        reserve(money, ctx=context(money, user=1, run="other-while-lost"), amount=1)
+    report = rollup().CostRollup.check(store, all=True, now=ticks[0])
+    assert (report.issues, report.mismatched) == (["spend_sentinel_missing"], [])
+    # The one-wallet replay the rebuild uses, called as itself in a transaction of its own: it rewrites that
+    # wallet's rows and never the sentinel, so the reads keep refusing and the next start still replays all.
+    with store.tx() as t:
+        replayed = spend_schema().replay(t, target[2])
+    assert replayed == {"facts": 7, "faults": []}
+    assert not store.one("SELECT 1 AS x FROM payer_spend_days WHERE account_id='' AND start=0")
+    assert days(store, target[2]) == values_of(original, target[2]) and days(store, other[2]) == []
+    for user in (0, 1):
+        assert view(money, user)["usage_state"] == "inconsistent"
+    backfills = store.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE provider='@wallets'")["n"]
+    restarted = restart(money)
+    reopened = restarted[0]
+    assert reopened.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE provider='@wallets'")["n"] == backfills + 1
+    assert reopened.all("SELECT * FROM payer_spend_days ORDER BY account_id,start") == original
+    for user in (0, 1):
+        assert view(restarted, user)["usage_state"] == "available"
+    assert _call(restarted, "after-the-restart")
+    assert reserve(restarted, ctx=context(restarted, user=1, run="other-after-the-restart"), amount=1)
+    assert reopened.all("SELECT * FROM model_cost_rollup_faults") == []
+    assert reopened.all("SELECT * FROM model_cost_rollup_rebuilds WHERE actor<>'system:backfill'") == []
+    rollup().assert_consistent(reopened)
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_one_wallets_rows_gone_with_the_sentinel_present_latch_that_wallet_only_and_one_rebuild_restores_it(money):
+    """Rows-only damage: one wallet's day rows deleted past the gate, the sentinel still present. The sentinel
+    says nothing about it, so the verify compares that wallet's rows (``day … found: None``) and latches it alone
+    (no store-wide issue, the other wallet stays available); a restart replays nothing (sentinel, marker and
+    trigger version are current) and ``rebuild --wallet`` is the repair: it replays that wallet, resolves its
+    fault and leaves rows identical to the originals."""
+    store, ledger, users, ticks = money
+    original = two_wallets_with_history(money, "fixture-rows-only")
+    target, other = scope(money), scope(money, 1)
+    assert tamper(store, "DELETE FROM payer_spend_days WHERE account_id=?", (target[2],)) > 1
+    assert store.one("SELECT 1 AS x FROM payer_spend_days WHERE account_id='' AND start=0")
+    now = ticks[0]
+    for kwargs in (dict(since=now - 2 * DAY, now=now, mode="recent"), dict(now=now, mode="daily"),
+                   dict(all=True, now=now)):
+        report = rollup().CostRollup.check(store, **kwargs)
+        assert (report.issues, report.mismatched) == ([], [target]), kwargs
+        differences = report.wallets[target].differences
+        checks = {d["check"] for d in differences}
+        assert "day" in checks and checks <= {"day", "exposure"}, kwargs      # exposure: the daily comparison
+        assert all(d["found"] is None for d in differences if d["check"] == "day"), kwargs
+        assert report.wallets[other].differences == [], kwargs
+    recorded = rollup().CostRollup.verify(store, since=now - 2 * DAY, now=now, mode="recent", clock=lambda: now)
+    assert recorded.mismatched == [target]
+    faults = store.all("SELECT code,account_ref FROM model_cost_rollup_faults WHERE resolved_at IS NULL")
+    assert [(f["code"], f["account_ref"]) for f in faults] == [("verify_mismatch", target[2])]
+    assert view(money)["usage_state"] == "inconsistent" and view(money, 1)["usage_state"] == "available"
+    with pytest.raises(BillingError, match="^payer_budget_inconsistent$"):
+        _call(money, "while-latched")
+    assert reserve(money, ctx=context(money, user=1, run="other-still-works"), amount=1)
+    backfills = store.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE provider='@wallets'")["n"]
+    restarted = restart(money)
+    reopened = restarted[0]
+    assert reopened.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE provider='@wallets'")["n"] == backfills
+    assert view(restarted, 0)["usage_state"] == "inconsistent"          # the latch stays: nothing was replayed
+    result = rollup().CostRollup.rebuild_wallet(reopened, account_id=target[2], actor="fixture-operator",
+                                                reason="fixture repair of one wallet's lost rows")
+    assert (result["facts"], result["resolved_faults"], result["scope"]) == (7, 1, list(target))
+    assert reopened.all("SELECT * FROM payer_spend_days ORDER BY account_id,start") == original
+    assert view(restarted, 0)["usage_state"] == "available"
+    assert _call(restarted, "after-the-rebuild")
+    rollup().assert_consistent(reopened)
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_the_command_line_verify_says_when_its_own_open_replayed_the_wallets_and_never_claims_consistency(money):
+    """``cost-rollup verify`` opens the Store with migrations on, so with the wallets' sentinel lost (the table
+    emptied past the gate) its open replays every wallet's day rows before the check runs, as a start would. It
+    must say so instead of printing 一致 over rows it just wrote: the replay-on-open line, the store-wide issue
+    ``spend_rollup_replayed_on_open`` in the summary and exit 1, with and without --no-record (recorded: a
+    ``mismatch`` run row, a ``*`` audit and the store-wide alert naming the issue); the rows are then complete
+    and identical to a fresh start's. A healthy store verifies as before (exit 0, 一致). ``rebuild --wallet``
+    from the command line never meets the lost sentinel: its own open restored it first, and says so."""
+    import os
+    import subprocess
+    import sys
+
+    store, ledger, users, ticks = money
+    recipient = users[2]
+    make_platform_admin(store, recipient)             # FIXTURE: the alert recipient (platform_fixture)
+    original = two_wallets_with_history(money, "fixture-cli-replay")
+    env = {**os.environ, "SYNWEVO_DATA_DIR": str(store.root), "SYNWEVO_PLATFORM_REEXEC": ""}
+    script = str(Path(__file__).resolve().parents[2] / "scripts" / "platform.py")
+    issue = "spend_rollup_replayed_on_open"
+
+    def run(*args):
+        done = subprocess.run([sys.executable, script, "cost-rollup", *args], env=env, capture_output=True,
+                              text=True, timeout=120)
+        printed = json.loads(done.stdout[done.stdout.index("{"):]) if "{" in done.stdout else None
+        return done.returncode, printed, done.stderr
+
+    def backfills():
+        return store.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE provider='@wallets'")["n"]
+
+    def rows():
+        return store.all("SELECT * FROM payer_spend_days ORDER BY account_id,start")
+
+    healthy = run("verify", "--all", "--no-record")
+    assert healthy[0] == 0 and healthy[1]["issues"] == [] and "：一致。" in healthy[2] and issue not in healthy[2], healthy
+    base = backfills()
+    # 1. --no-record: the line, the issue, exit 1; nothing recorded; the rows restored by that open.
+    assert tamper(store, "DELETE FROM payer_spend_days") == len(original)
+    code, summary, err = run("verify", "--all", "--no-record")
+    assert code == 1 and summary["issues"] == [issue] and summary["mismatched"] == {}, (summary, err)
+    assert issue in err and "：一致。" not in err and "哨兵" in err and "重放" in err and "§13" in err, err
+    assert backfills() == base + 1 and rows() == original
+    assert store.all("SELECT * FROM model_cost_rollup_audits WHERE mode='cli'") == []
+    assert store.all("SELECT * FROM model_cost_rollup_faults") == []
+    assert store.one("SELECT COUNT(*) AS n FROM notifications WHERE user_id=?", (recipient,))["n"] == 0
+    for user in (0, 1):
+        assert view(money, user)["usage_state"] == "available"
+    # 2. Recorded: the same, plus the run row, the * audit and the store-wide alert naming the issue.
+    assert tamper(store, "DELETE FROM payer_spend_days") == len(original)
+    code, summary, err = run("verify", "--all")
+    assert code == 1 and summary["issues"] == [issue] and issue in err and "：一致。" not in err, (summary, err)
+    assert backfills() == base + 2 and rows() == original
+    runs = store.all("SELECT status,differences FROM model_cost_rollup_audits WHERE mode='cli'")
+    assert [r["status"] for r in runs] == ["mismatch"] and json.loads(runs[0]["differences"])["issues"] == [issue]
+    audits = store.all("SELECT object_id,meta FROM audit_events WHERE action='billing.cost.rollup_inconsistent'")
+    assert [(a["object_id"], json.loads(a["meta"])["issues"]) for a in audits] == [("*", [issue])]
+    assert store.all("SELECT * FROM model_cost_rollup_faults") == []
+    alerts = store.all("SELECT * FROM notifications WHERE user_id=? ORDER BY seq", (recipient,))
+    assert [(a["kind"], a["object_id"]) for a in alerts] == [("billing.cost.rollup_issues", rollup().scope_key(("*",) * 3))]
+    from synwevo_core.notifications import Notifier
+    for locale in ("zh-Hans", "zh-Hant", "en"):
+        rendered = Notifier(store).render(alerts[0], locale)
+        assert issue in rendered["title"] and issue in rendered["body"] and "*" not in rendered["body"], rendered
+    # A fresh start replays nothing more and finds the same rows; the healthy verify is 一致 again.
+    reopened = Store(store.root)
+    assert backfills() == base + 2 and reopened.all("SELECT * FROM payer_spend_days ORDER BY account_id,start") == original
+    healthy = run("verify", "--all", "--no-record")
+    assert healthy[0] == 0 and healthy[1]["issues"] == [] and "：一致。" in healthy[2] and issue not in healthy[2], healthy
+    # 3. rebuild --wallet from the command line: its open restored the sentinel and every row first (and says
+    # so), then the one-wallet rebuild runs over complete rows.
+    assert tamper(store, "DELETE FROM payer_spend_days") == len(original)
+    code, result, err = run("rebuild", "--wallet", wallet(money), "--reason", "fixture rebuild after the sentinel was lost")
+    assert code == 0 and result["facts"] == 7 and issue in err, (result, err)
+    assert backfills() == base + 3 and rows() == original
+    rollup().assert_consistent(store)
+
+
+def test_the_store_wide_alert_names_the_issues_and_the_runbook_section_in_three_languages():
+    """The ``*`` alert of ``CostRollup.record`` (a delta row at rest, a lost sentinel of either family, a scope no
+    read can name, the verify command's replay on open) has its own wording: the issue names, the runbook
+    section, never "provider account *". The per-account template is unchanged."""
+    from synwevo_core.notifications import CATALOGUE, LOCALES, _fmt
+    spec = CATALOGUE["billing.cost.rollup_issues"]
+    assert spec["category"] == "platform" and spec["severity"] == "action" and spec["email"] == "immediate"
+    account = CATALOGUE["billing.cost.rollup_inconsistent"]
+    for locale in LOCALES:
+        assert "{provider}" in account["title"][locale] and "{account}" in account["body"][locale]
+        for part in ("title", "body"):
+            text = spec[part][locale]
+            assert text and set(re.findall(r"\{(\w+)\}", text)) == {"issues"}, (part, locale)
+            assert "*" not in text and "platform.py" not in text, (part, locale)
+        body = spec["body"][locale]
+        assert "model-risk.md §13" in body
+        assert not any(word in body for word in ("提供方账户", "供應商帳戶", "provider account")), body
+        rendered = _fmt(body, {"issues": "spend_sentinel_missing, undecodable_scope"})
+        assert "spend_sentinel_missing, undecodable_scope" in rendered

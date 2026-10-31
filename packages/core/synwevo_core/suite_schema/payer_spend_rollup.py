@@ -39,10 +39,16 @@ replays every settled call once (``migrate``), as does another trigger version (
 wallet's read refuses on the missing sentinel (``billing/spend_rollup.exposure``; not latched, nothing to
 rebuild after the replay) and the verifier reports it once, store-wide (``spend_sentinel_missing``, read
 once per run), comparing no wallet's day rows, which that replay rewrites whether they went with the
-sentinel or not (a malformed settled call is still named: its fault is the triggers'); a DROPPED table
-makes every reservation and settlement of every wallet raise, since the triggers name it: the services
-are restarted at once then. Rollback: older code ignores the table and its triggers keep it current, so
-a later roll-forward replays nothing.
+sentinel or not (a malformed settled call is still named: its fault is the triggers'). Only that full
+replay writes the sentinel back: ``replay(c, account)`` (``CostRollup.rebuild_wallet``) rewrites one
+wallet's rows and never the sentinel, and the rebuild refuses while it is lost (``RebuildRefused``, reason
+``spend_sentinel_missing``), since a sentinel brought back with one wallet's rows alone would make every
+other wallet's read count nothing and the next start replay nothing. The verify command's own open
+(``billing/cost_rollup.main``) is such a start: it replays, says so (``spend_rollup_replayed_on_open``,
+from ``Store.replays``) and exits 1, never 一致 over rows it just wrote. A DROPPED table makes every
+reservation and settlement of every wallet raise, since the triggers name it: the services are restarted
+at once then. Rollback: older code ignores the table and its triggers keep it current, so a later
+roll-forward replays nothing.
 """
 from __future__ import annotations
 
@@ -164,6 +170,11 @@ def replay(c, account: str | None = None) -> dict:
     """Recompute the day rows of ``account`` (every wallet when None) from the settled calls, through
     the same producer and apply triggers as a live write. The caller owns the BEGIN IMMEDIATE.
 
+    Only the full replay writes the sentinel. A one-wallet replay that did would leave "sentinel present,
+    rows incomplete" when the table had been emptied: every other wallet's read would then count nothing
+    and the next start would replay nothing. So the sentinel goes back only with every wallet's rows, and
+    ``CostRollup.rebuild_wallet`` refuses while it is lost instead of replaying.
+
     Returns {"facts": settled calls replayed, "faults": [the malformed calls' ids, each read as its
     SQLite type and bytes and named by ``key_label``]}."""
     c.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('gate')")
@@ -176,7 +187,8 @@ def replay(c, account: str | None = None) -> dict:
     facts = c.execute(produce_spend(1, where, order=" ORDER BY c.rowid"), args).rowcount
     rows = c.execute("SELECT DISTINCT typeof(attempt_key),CAST(attempt_key AS BLOB) FROM model_cost_rollup_deltas "
                      "WHERE kind='fault'").fetchall()
-    _write_sentinel(c)
+    if account is None:
+        _write_sentinel(c)
     c.execute("DELETE FROM model_cost_rollup_deltas")
     return {"facts": facts, "faults": sorted(key_label(kind, raw) for kind, raw in rows)}
 
@@ -186,16 +198,22 @@ def triggers_current(c) -> bool:
     return row is not None and row[0] == TRIGGERS_VERSION
 
 
-def migrate(c) -> None:
-    """Backfill once, inside apply()'s BEGIN IMMEDIATE; a routine start issues no fact query.
+def migrate(c) -> dict | None:
+    """Backfill once, inside apply()'s BEGIN IMMEDIATE; a routine start issues no fact query (None).
 
     Otherwise (another trigger version, a missing marker or a lost sentinel): recreate the versioned
     triggers (DROP and CREATE in this transaction, so no fact is written between), replay every settled
-    call in rowid order, and record the run as a rebuild and a ``backfill`` audit in BACKFILL_SCOPE.
+    call in rowid order, record the run as a rebuild and a ``backfill`` audit in BACKFILL_SCOPE, and
+    return {"facts", "faults", "missing": which of "triggers", "marker", "sentinel" were not current}.
+    The Store keeps that as ``Store.replays["payer_spend_rollup"]``, so a command that opens the Store
+    and then verifies (``billing/cost_rollup.main``) can say that its own open replayed every wallet.
     Store open never refuses: a malformed settled call becomes a fault of its wallet."""
-    if (triggers_current(c) and c.execute("SELECT 1 FROM meta WHERE key=?", (MARKER,)).fetchone()
-            and sentinel_present(c)):
-        return
+    missing = [name for name, present in (
+        ("triggers", triggers_current(c)),
+        ("marker", c.execute("SELECT 1 FROM meta WHERE key=?", (MARKER,)).fetchone() is not None),
+        ("sentinel", sentinel_present(c))) if not present]
+    if not missing:
+        return None
     for name, sql in VERSIONED.items():
         c.execute(f"DROP TRIGGER IF EXISTS {name}")
         c.execute(sql)
@@ -210,3 +228,4 @@ def migrate(c) -> None:
                json.dumps({"faults": result["faults"][:20], "fault_count": len(result["faults"])}), seq, now))
     c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)", (MARKER, "1"))
     c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)", (TRIGGERS_KEY, TRIGGERS_VERSION))
+    return {"facts": result["facts"], "faults": result["faults"], "missing": missing}

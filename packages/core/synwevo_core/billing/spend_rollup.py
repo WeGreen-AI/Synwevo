@@ -8,7 +8,9 @@ and alerts are the cost rollup's (``billing/cost_rollup.py``), in the WALLET SCO
 * ``exposure`` — what ``PayerBudgets._exposure`` returns, in a fixed order: (1) an open fault of the
   wallet refuses ``payer_budget_inconsistent``; (2) the day rows: the table's sentinel must be present
   (else ``payer_budget_inconsistent``, not latched: it goes only with a write past the gate or with the
-  table, and the next start replays every wallet's rows and clears it), and the rows from the earliest
+  table, and only a start's full replay restores it, with every wallet's rows; ``CostRollup.rebuild_wallet``
+  refuses meanwhile and a one-wallet replay never writes it, so the sentinel never stands over incomplete
+  rows, which every read would count as no spend), and the rows from the earliest
   period start (at most 31, plus any future days) must have their structure, else
   ``SpendRollupInconsistent`` (code ``payer_budget_inconsistent``, latched after the refusal like the
   cost rollup's read-path checks);
@@ -30,7 +32,10 @@ and alerts are the cost rollup's (``billing/cost_rollup.py``), in the WALLET SCO
   once per run by ``cost_rollup._check`` and passed down), and compares no wallet's day rows or read:
   every wallet's read already refuses on it and the next start's replay rewrites every row, so a
   difference here would only latch wallets the restart then leaves refused. The malformed settled calls
-  are still named: the facts are intact and their faults the triggers'.
+  are still named: the facts are intact and their faults the triggers'. That start is the only repair:
+  the verify command's own open is one, and the command says so (``spend_rollup_replayed_on_open``, exit
+  1) instead of calling rows it just wrote consistent; the store-wide issues are alerted with their own
+  wording (``billing.cost.rollup_issues``, the issue names), never as one account's.
 
 Semantics kept from the earlier read (``PayerBudgets`` before phase 2): held = every reserved call's
 hold, whatever its creation time, namespace or deadline, the same in every period; spent[p] = the
@@ -119,7 +124,8 @@ def _exposure(t, scope, account, windows, capacity) -> dict:
         raise BillingError("payer_budget_inconsistent")
     # 2. Day rows. The sentinel first: it goes only with a write past the gate or with the table, and
     # the rows may have gone with it, so every wallet refuses until the next start replays them (not
-    # latched: that start clears it, with no rebuild to run). Then the rows from the earliest period
+    # latched: that start clears it, with no rebuild to run; a one-wallet rebuild refuses meanwhile, as
+    # it must never bring the sentinel back over incomplete rows). Then the rows from the earliest period
     # start (a TEXT or BLOB start sorts after every integer, so a row written past the gate with one is
     # selected and refused here, never compared in Python).
     if not schema.sentinel_present(t):

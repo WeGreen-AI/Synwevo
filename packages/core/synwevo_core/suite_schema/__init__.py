@@ -6,8 +6,11 @@ applied by the store on every start. Everything is additive (`CREATE … IF NOT 
 `ADD COLUMN`): older code ignores these tables, so a rollback needs no data restore.
 
 Each module may define ``SCHEMA`` (SQL script), ``COLUMNS`` (``(table, column, declaration)``
-added when missing), ``INDEXES`` (``(name, table, columns)``) and ``rebuild(c)`` (an idempotent
-table rebuild run outside any transaction, for the one change ``ALTER TABLE`` cannot make).
+added when missing), ``INDEXES`` (``(name, table, columns)``), ``rebuild(c)`` (an idempotent
+table rebuild run outside any transaction, for the one change ``ALTER TABLE`` cannot make) and
+``migrate(c)`` (a step inside the module's BEGIN IMMEDIATE; what it returns, if anything, is kept
+by the Store as ``Store.replays[module]``: a replay of derived rows the opening process should
+know about, such as the wallets' spend rollup backfill).
 """
 from __future__ import annotations
 
@@ -18,7 +21,10 @@ import importlib
 MODULES = ("runs", "forms", "tables", "dataprep", "approvals", "extract", "agent", "agent_files", "flows", "billing", "model_gateway", "model_prices", "model_quotes", "model_cost_admission", "model_cost_rollup", "model_cost_policy", "model_provider", "payer_budgets", "payer_spend_rollup", "model_consents", "model_traffic", "model_risk", "webhooks", "payments", "org_billing", "wallet_usage", "agent_safety", "mcp")
 
 
-def apply(c) -> None:
+def apply(c) -> dict:
+    """Apply every module; returns ``{module: what its migrate step returned}`` for the steps that
+    returned something (see the module docstring)."""
+    reported = {}
     for name in MODULES:
         try:
             mod = importlib.import_module(f"{__name__}.{name}")
@@ -50,8 +56,11 @@ def apply(c) -> None:
                 if set(cols) <= have:
                     c.execute(f"CREATE INDEX IF NOT EXISTS {iname} ON {table}({', '.join(cols)})")
             if migrate is not None:
-                migrate(c)
+                result = migrate(c)
+                if result is not None:
+                    reported[name] = result
             c.execute("COMMIT")
         except BaseException:
             c.execute("ROLLBACK")
             raise
+    return reported

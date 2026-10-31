@@ -441,8 +441,8 @@ their index; nothing grows with the person's settled volume. The only row bound 
 10,000 still-reserved calls of the wallet (`usage_state: "capacity"`, refusing
 `payer_budget_capacity`); holds end at settlement, release or a deadline at most a day away. A
 settled call in the periods without its settlement or journal entry (cleared when the fact
-arrives), the day table's lost sentinel (cleared by the next start, which replays every wallet's
-rows), a day row with a broken structure, or an open fault of the wallet returns
+arrives), the day table's lost sentinel (cleared only by the next start, which replays every wallet's
+rows; a rebuild of one wallet refuses meanwhile), a day row with a broken structure, or an open fault of the wallet returns
 `usage_state: "inconsistent"` and refuses `payer_budget_inconsistent`; with both, `periods` is
 `null`, never invented zero usage, and new calls are refused. Configuration remains editable so
 the person can still disable their limits.
@@ -466,6 +466,11 @@ decides (fault, day rows, holds, unpaid). While the day table's sentinel is lost
 that store-wide only (`spend_sentinel_missing`) and compares no wallet's day rows, whether they went
 with it or not, since the next start replays them all: no wallet is latched and none needs a rebuild
 after the restart; a malformed settled call is still named (docs/billing-ledger.md "Per-wallet spend").
+`rebuild --wallet` refuses while the sentinel is lost (`cost_rollup_rebuild_refused`, reason
+`spend_sentinel_missing`): a one-wallet replay never writes the sentinel back, since a sentinel over
+incomplete rows would make every other wallet's read count nothing. The verify command's own open
+replays like a start and says so (`spend_rollup_replayed_on_open`, exit 1); the store-wide issues are
+alerted with their own wording (`billing.cost.rollup_issues`).
 
 The set operation requires `unit_code`, `expected_revision`, explicit `enabled`, and
 `daily_budget`, `weekly_budget`, `monthly_budget` as nonnegative int64 decimal strings.

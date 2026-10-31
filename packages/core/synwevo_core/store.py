@@ -829,6 +829,11 @@ class Store:
         self.read_only = not migrate
         self._local = threading.local()
         self._write_lock = threading.RLock()     # serialises writers inside this process; SQLite locks across processes
+        #: What the suite-schema migrations of THIS open replayed, {module: what its migrate step returned}
+        #: (suite_schema.apply): normally empty; the wallets' spend rollup backfill when its sentinel, marker
+        #: or trigger version was missing (suite_schema/payer_spend_rollup.py), so a command that opens the
+        #: Store and then verifies (billing/cost_rollup.main) can say that its own open replayed the rows.
+        self.replays: dict = {}
         if self.read_only:
             return
         self.root.mkdir(parents=True, exist_ok=True)
@@ -984,7 +989,7 @@ class Store:
         # capability layer's run records and event outbox, then each application's own tables.
         # Additive only; rollback: older code never reads them.
         from .suite_schema import apply as apply_suite_schema
-        apply_suite_schema(c)
+        self.replays = apply_suite_schema(c)
         # A44 (additive, no version step): a deleted workspace's recovery deadline and the status
         # a recovery returns to (workspace_lifecycle.py). No CHECK change, no table rebuild.
         # Rollback: older code never reads them; a deleted workspace stays hidden there

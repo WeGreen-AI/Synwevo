@@ -270,6 +270,12 @@ Docs另提供严格extract_context契约，现有成员导入/Extract截取语�
    随日行一起丢失（表被清空）或连同某个钱包的行丢失都一样；此前只挡住了读取结果的比较，有已结算调用的钱包仍被记为 `day … found: None`
    而锁定、重启后仍拒绝；畸形已结算调用照常点名。）
    `cost-rollup verify` 拒绝 rebuild 专用参数而不是忽略；对照夹具 `LegacyPayerBudgets._exposure` 按固定 SHA-256 校验，没有 Git 历史时不再跳过。
+   （2026-11-01 三次评审修正：按钱包的重放不再写回哨兵行，只有启动的全量重放写；哨兵行丢失期间 `rebuild --wallet` 拒绝
+   （`cost_rollup_rebuild_refused`，原因 `spend_sentinel_missing`，什么也不改）——此前一次按钱包重建会把哨兵行连同这一个钱包的行写回，
+   其他钱包的读取从此只见哨兵不见行、支出按 0 计（个人上限被绕过，探针里耗尽的日预算被放行），直到下次校验把它们逐个锁定，下次启动也不再重放。
+   `cost-rollup verify` 打开数据库时若重放了钱包日行（哨兵、标记或触发器版本缺失，`Store.replays`），先说明、记为全库问题
+   `spend_rollup_replayed_on_open`、退出码 1，从不对自己刚写出的日行说「一致」；全库问题（对象 `*`）的告警改用自己的措辞
+   `billing.cost.rollup_issues`（列出问题名与手册章节），不再套用提供方账户的模板。）
 
 ## D19 开源：main 为公开镜像，dev 为受保护的开发与部署分支（2026-10-25）
 

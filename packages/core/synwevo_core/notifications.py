@@ -274,6 +274,19 @@ CATALOGUE: dict[str, dict] = {
         "zh-Hans": "提供方账户 {account} 的成本汇总与成本事实不一致，该账户的付费调用已暂停，被拒绝的请求没有发送，也不会扣费。请按运维手册 docs/platform/model-risk.md §13 在角色容器里查看差异：汇总被改动时核实后重建；成本事实本身有问题时重建会拒绝，需从那次写入之前的备份恢复。",
         "zh-Hant": "供應商帳戶 {account} 的成本彙總與成本事實不一致，該帳戶的付費呼叫已暫停，被拒絕的請求沒有傳送，也不會扣費。請依維運手冊 docs/platform/model-risk.md §13 在角色容器裡檢視差異：彙總被改動時核實後重建；成本事實本身有問題時重建會拒絕，需從那次寫入之前的備份還原。",
         "en": "The cost rollup of provider account {account} disagrees with the cost facts, so paid calls on that account are paused; refused requests were not sent and are not charged. Follow the runbook in docs/platform/model-risk.md §13: see the differences in a role container; rebuild once they are understood when the rollup was changed, or restore the backup from before the write when a cost fact itself is broken (a rebuild refuses then)."}},
+    # ---- a store-wide problem of the rollups (billing/cost_rollup.py ``record``, audit object ``*``): no one
+    # account's or wallet's, so no latch carries it; ``issues`` names them: deltas_not_empty (a delta row at
+    # rest), sentinel_missing / spend_sentinel_missing (a derived table's sentinel row lost with a write past
+    # the gate; the wallets' refuses every wallet until a start, or the verify command's open, replays them
+    # all), undecodable_scope (rows in a scope no read can name), spend_rollup_replayed_on_open (the verify
+    # command's own open replayed every wallet's day rows). Names only; the details are in the audit and the
+    # command's output. The per-account and per-wallet alerts above and below keep their own wording.
+    "billing.cost.rollup_issues": {"category": "platform", "severity": "action", "email": "immediate", "title": {
+        "zh-Hans": "模型成本汇总的全库问题：{issues}", "zh-Hant": "模型成本彙總的全庫問題：{issues}",
+        "en": "Store-wide problems of the model cost rollup: {issues}"}, "body": {
+        "zh-Hans": "定时核对发现不属于某一个账户或钱包的问题：{issues}。静止时的 delta 行、读不出名字的范围说明有写入绕过了闸门；钱包日行表的哨兵行丢失时，每个钱包的付费调用都以 payer_budget_inconsistent 拒绝（被拒绝的请求没有发送，也不会扣费），直到服务重启或运行核对命令从全部已结算调用重放每个钱包的日行，按钱包的重建会拒绝。请按运维手册 docs/platform/model-risk.md §13（全库问题，「钱包」一节）在角色容器里核对，并找出那次写入。",
+        "zh-Hant": "定時核對發現不屬於某一個帳戶或錢包的問題：{issues}。靜止時的 delta 行、讀不出名字的範圍說明有寫入繞過了閘門；錢包日行表的哨兵行遺失時，每個錢包的付費呼叫都以 payer_budget_inconsistent 拒絕（被拒絕的請求沒有傳送，也不會扣費），直到服務重啟或執行核對命令從全部已結算呼叫重放每個錢包的日行，按錢包的重建會拒絕。請依維運手冊 docs/platform/model-risk.md §13（全庫問題，「錢包」一節）在角色容器裡核對，並找出那次寫入。",
+        "en": "A scheduled check found problems that belong to no single account or wallet: {issues}. A delta row at rest or a scope no read can name means a write bypassed the gate; while the wallets' day table has lost its sentinel row, every wallet's paid calls refuse payer_budget_inconsistent (refused requests were not sent and are not charged) until the services restart or the verify command runs, which replays every wallet's day rows from the settled calls; a rebuild of one wallet refuses meanwhile. Follow the runbook in docs/platform/model-risk.md §13 (store-wide problems, the wallets section) in a role container to check and find that write."}},
     # ---- the per-wallet spend rollup disagrees with its settled calls (billing/spend_rollup.py, cost-capacity
     # phase 2): that wallet's paid calls refuse (personal limits cannot be counted) until an operator rebuilds
     # it, or, when a settled call itself is broken, restores the backup from before that write. The wallet id

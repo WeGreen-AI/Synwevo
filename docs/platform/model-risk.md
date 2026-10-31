@@ -156,6 +156,7 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 | `billing.risk.payment_webhook_failed` | 管理员 | 支付渠道调用 `alert_payment_webhook_failure(store, environment=, provider=, code=)` | 每渠道每代码每 UTC 日一次 |
 | `billing.cost.rollup_inconsistent` | 管理员 | 成本汇总与事实不一致，某提供方账户被锁定（§13） | 每个提供方账户每 UTC 日一次 |
 | `billing.payer_spend.rollup_inconsistent` | 管理员 | 个人支出汇总与已结算调用不一致，某钱包被锁定（§13「钱包」），只给出钱包 id | 每个钱包每 UTC 日一次 |
+| `billing.cost.rollup_issues` | 管理员 | 不属于某一个账户或钱包的全库问题（§13：静止时有 delta 行、哨兵行丢失、读不出名字的范围、verify 打开时重放了钱包日行），自己的措辞，列出问题名 | 每 UTC 日一次 |
 
 `alert_payment_webhook_failure` 是给支付渠道工作包的挂钩：只接受渠道名与稳定代码，从不接受载荷、签名或客户信息。
 
@@ -202,7 +203,8 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 成本准入（§1 第 3 行）与自动刹车（§3）读的是触发器维护的精确成本汇总。它与事实不一致时，只锁定那一个提供方账户
 （`environment` + `provider` + `account_ref`）：该账户的付费调用以 `cost_rollup_inconsistent` 拒绝，没有发起、没有扣费；其他账户不受影响。
 管理员收到 `billing.cost.rollup_inconsistent`，系统审计里有同名记录（含差异数量与来源：每日/每小时校验、读取时的检查）。
-全库问题（静止时 `model_cost_rollup_deltas` 有行、哨兵行丢失）即使还没有任何账户也会报告（审计对象 `*`，运行记录 `mismatch`）；
+全库问题（静止时 `model_cost_rollup_deltas` 有行、哨兵行丢失）即使还没有任何账户也会报告（审计对象 `*`，运行记录 `mismatch`，
+告警 `billing.cost.rollup_issues`：自己的措辞，列出问题名与本节，不套用某个提供方账户的模板）；
 环境、提供方或账户名不是 UTF-8 文本（BLOB、NULL 或非 UTF-8 的 TEXT）的事实或派生行（`undecodable_scope`，只能来自产品之外的写入
 或绕过闸门的写入）也这样报告，同时有其他账户不一致时也单独审计、告警（审计对象 `*`）：没有任何读取能用到这些行，
 其他账户照常核对、锁定，处理同第 3 步。一个账户的事实读不出来，只记为该账户的差异（`verify_error`），不会让其他账户漏检。
@@ -314,7 +316,8 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 
 1. **看差异**：与上面第 1 步相同的 `verify --all --no-record`；钱包在输出里以 `["test","","<钱包 id>"]` 出现，差异是 `day`
    （哪一天、期望值、实际值）、`structure`、`exposure`（读取结果与无上限的对照计算不同）或 `fact_fault`（哪一条已结算调用本身有问题）。
-2. **汇总被改动（`day` / `structure` / `exposure`，或读取时锁定的 `read_structure`）：重建该钱包**，在一次性容器里运行（钱包的已结算调用多时先停服务，同上）：
+2. **汇总被改动（`day` / `structure` / `exposure`，或读取时锁定的 `read_structure`）：重建该钱包**，在一次性容器里运行（钱包的已结算调用多时先停服务，同上；
+   哨兵行丢失时不能按钱包重建，见下）：
 
    ```bash
    docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T portal python -m synwevo_core.billing.cost_rollup rebuild --wallet <钱包 id> --reason "<reason>" </dev/null
@@ -329,12 +332,20 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
    当作数字计入、忽略负数时间。）
 4. **确认**：与上面第 4 步相同。
 
-哨兵行被删除、标记或触发器版本不同不需要运维：下一次启动在迁移的 BEGIN IMMEDIATE 里从全部已结算调用重放一次
+哨兵行被删除、标记或触发器版本不同不需要按钱包重建：下一次启动在迁移的 BEGIN IMMEDIATE 里从全部已结算调用重放一次
 （记为 `('', '@wallets', '')` 的 `backfill` 审计与一条重建记录），重放期间持有写锁（时长见 docs/billing-ledger.md「Per-wallet spend」）。
 哨兵行丢失到那次启动之前，每个钱包的读取都以 `payer_budget_inconsistent` 拒绝（失败即关闭：日行可能随之丢失），但不锁定：
-校验把它记为全库问题 `spend_sentinel_missing`（每轮校验读一次哨兵，审计对象 `*`，每轮记录一次，告警按日去重），
+校验把它记为全库问题 `spend_sentinel_missing`（每轮校验读一次哨兵，审计对象 `*`，每轮记录一次，告警 `billing.cost.rollup_issues` 按日去重），
 在它丢失期间不比较任何钱包的日行、也不比较读取结果与对照计算——日行还在、随哨兵一起没了（表被清空）、或只少了某个钱包的行，
 都一样，因为那次启动会重写每个钱包的日行；只有畸形的已结算调用照常点名（`fact_fault`，其故障本来就由触发器锁定）。
 所以不给任何钱包开故障，启动重放之后不需要逐个重建。
+
+**校验或告警报告 `spend_sentinel_missing` 时：重启服务，或运行第 1 步的 verify。** 本命令打开数据库时就会重放全部钱包的日行（等于一次启动），
+并先说明这一点：核对结果记为全库问题 `spend_rollup_replayed_on_open`、退出码 1——它核对的是自己刚写出的日行，不是此前服务读到的；
+再运行一次即为只读核对（首次启用或触发器版本升级后的第一次 verify 也这样报告，原因写明是标记或触发器版本，属预期）。
+**不要 `rebuild --wallet`：哨兵行丢失期间它拒绝**（`cost_rollup_rebuild_refused`，原因 `spend_sentinel_missing`），什么也不改——
+按钱包重放只会带回这一个钱包的行，若把哨兵行一起写回，其他钱包的读取从此只见哨兵不见行、支出按 0 计（个人上限被绕过），
+下次启动也不再重放；只有启动（或本命令打开时）的全量重放写回哨兵行。之后按第 1 步核对，并找出那次绕过闸门的写入
+（哨兵行只会随这样的写入或整张表丢失）。
 **表被删除则必须立即重启服务**：触发器还在、指着不存在的表，到下一次启动之前每个钱包的预留与每次结算都以 `no such table` 出错
 （不是拒绝，网关给不出类型化的拒绝；已派发的调用要到重启之后才能结算），校验同样出错而不锁定。

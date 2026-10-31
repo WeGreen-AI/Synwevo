@@ -268,7 +268,8 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   `cost_rollup_derived` unless a delta row exists, i.e. unless the write comes from an apply
   trigger. Hand-writing deltas or dropping triggers bypasses the gate; a scheduled verify finds
   what it left, but not necessarily the next hourly one. Every round reports a delta row at rest
-  or a missing sentinel even when no scope exists, and compares a scope's whole open set, its
+  or a missing sentinel even when no scope exists (the store-wide issues: audited as object `*` and
+  alerted with their own wording, `billing.cost.rollup_issues`, which names them), and compares a scope's whole open set, its
   velocity rows from the horizon (all of them while the scope has no admission yet) and its day
   rows from a lower bound: the hourly round (`cost_rollup_verify_recent`) from the start of the
   UTC day two days back, without comparing the read path's counters with the uncapped oracle; the
@@ -305,7 +306,11 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   failed deploy (its image `synwevo:<sha>` stays on the host), migrate with the services stopped
   in a one-off container of the new image, then submit the same deploy again; its start finds the
   marker, version and sentinels and replays nothing. The command opens (and so migrates) the
-  Store, then verifies read-only; its exit status reports the verification, not the migration.
+  Store, then verifies read-only. When that open replayed the wallets' day rows (`payer_spend_days`:
+  the first release that brings them, a new trigger version, a lost sentinel) the command says so
+  first, carries the store-wide issue `spend_rollup_replayed_on_open` and exits 1, because the rows it
+  compared are the ones its open just wrote: run it once more for the read-only verification, whose
+  exit status then reports the verification alone.
   Derived from receive.py, compose.yaml and the Dockerfile; not yet rehearsed on the host.
 
   ```bash
@@ -386,7 +391,9 @@ settled calls created at or after the period's start (no upper bound, any journa
   wallet id)` never meets a provider scope: `identifier()` refuses '' as a provider.
 * **Read.** One fault probe, the table's sentinel (lost: `payer_budget_inconsistent`, not latched;
   it goes only with a write past the gate or with the table, and the next start replays every wallet's
-  rows, so nothing is left to rebuild), the day rows from the earliest period start (at most 31, plus
+  rows, so nothing is left to rebuild; `rebuild_wallet` refuses meanwhile, `cost_rollup_rebuild_refused`
+  with reason `spend_sentinel_missing`, and a one-wallet replay never writes the sentinel, so it never
+  stands over incomplete rows, which every read would count as no spend), the day rows from the earliest period start (at most 31, plus
   any future days; a broken structure refuses as `SpendRollupInconsistent`, code
   `payer_budget_inconsistent`, which the gateway hands to `after_refusal` whether the reservation or the
   dispatch read it, and which latches the wallet), the reserved holds through
@@ -402,12 +409,17 @@ settled calls created at or after the period's start (no upper bound, any journa
   their newest global rebuild there (provider scopes at `('', '', '')`), so neither family's backfill
   supersedes the other's verify results. Store open never refuses: a malformed settled call becomes a
   fault of its wallet. Until that start, every wallet's read refuses on the lost sentinel (above) and
-  the verifier reports it store-wide (`spend_sentinel_missing`: read once per run, audited each run and
-  alerted, deduplicated per day, as object `*`) and compares no wallet's day rows or read while it is
-  lost, whether the rows are still there or went with it (the table emptied past the gate, one wallet's
-  rows deleted with the sentinel): the replay rewrites every wallet's rows, so no wallet is latched and
-  none needs a rebuild after the restart; a malformed settled call is still named (its fault is the
-  triggers'). A dropped table is different: its triggers still name it, so every reservation
+  the verifier reports it store-wide (`spend_sentinel_missing`: read once per run, audited each run as
+  object `*` and alerted as `billing.cost.rollup_issues`, deduplicated per day) and compares no wallet's
+  day rows or read while it is lost, whether the rows are still there or went with it (the table emptied
+  past the gate, one wallet's rows deleted with the sentinel): the replay rewrites every wallet's rows,
+  so no wallet is latched and none needs a rebuild after the restart; a malformed settled call is still
+  named (its fault is the triggers'). Only that full replay writes the sentinel back: a one-wallet
+  replay (`rebuild_wallet`) never does and refuses while it is lost, since a sentinel brought back with
+  one wallet's rows alone would make every other wallet's read count nothing and the next start replay
+  nothing. The verify command's own open is such a start: it replays, says so
+  (`spend_rollup_replayed_on_open`, from `Store.replays`) and exits 1 rather than print 一致 over rows it
+  just wrote (docs/platform/model-risk.md §13, "钱包"). A dropped table is different: its triggers still name it, so every reservation
   and settlement raises until the services restart (docs/platform/model-risk.md §13). The replay
   takes about 1 s per 200,000 settled calls on the local benchmark machine (about 7 s per million,
   `docs/agent-work/evidence/2026-10-26-payer-spend-rollup/`).
@@ -420,7 +432,8 @@ settled calls created at or after the period's start (no upper bound, any journa
   compared with the uncapped `reference_exposure` (neither the rows nor the read while the table's
   sentinel is lost, above: only the malformed calls are named then). Mismatches latch the wallet (audit
   `billing.payer_spend.rollup_inconsistent`, alert with the wallet id only); `CostRollup.rebuild_wallet`
-  (`cost_rollup rebuild --wallet <id> --reason …`) has `rebuild`'s shape and refuses while a settled
+  (`cost_rollup rebuild --wallet <id> --reason …`) has `rebuild`'s shape and refuses while the table's
+  sentinel is lost (above) or while a settled
   call of the wallet is malformed (docs/platform/model-risk.md §13, "钱包"). One wallet's
   daily verify streams its settled calls from the previous month's first day: about 1.7 s for 200,000
   and 12 s for a million (the hourly two-day run 0.1-0.8 s), in a read snapshot with a flat ~107 MB process peak; the check
