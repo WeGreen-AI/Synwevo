@@ -320,3 +320,4 @@
 | 上游 429 自动重试；工具等待与 3600 秒运行时限（D-11） | 见 D17 设计 §6 | P4 | 未开始 |
 | sdk-cli-signals | Python SDK CLI `--cancel-on-interrupt`：被 SIGTERM 结束时不发取消（TS CLI 会）；作为脚本里的后台作业继承被忽略的 SIGINT 时不响应 Ctrl-C；取消请求本身慢或服务端不可达时，第一次 Ctrl-C 后阻塞在 cancel_job 且无输出（第二次 Ctrl-C 约 1 秒退出）。测试侧同一现象已由 8615036d 修正（本机镜像以 `&` 后台启动时 SIGINT 被忽略，CI 不受影响） | P4 | 未开始 |
 | dependabot-pip | Dependabot 的 pip 版本更新作业每周失败，从未开出过 Python 依赖 PR（2026-10-29 运行 40794860449："Could not open constraint file infra/server/requirements.lock"）：Dependabot 只抓取 `-r`/`-c` 引用中以 `.txt`/`.in` 结尾的文件，`requirements-dev.txt` 与 `infra/server/requirements.txt` 用 `-c` 约束的锁文件从不在它的检出里。可选：改名锁文件（同步改 requirements 文件、`infra/Dockerfile`、源码提供清单、守卫、三个测试与依赖文档），或撤下 pip 生态只保留安全告警 | P4 | 待所有者决定 |
+| cost-rollup-provider-replay | 成本汇总第一阶段（提供方账户族，已上线 d6d4a0b4）与第二阶段修正前形状相同：`model_cost_rollup.replay` 按作用域重放时也写回四个哨兵，`rebuild` 没有哨兵丢失拒绝；暴露面比钱包族小（读侧不因哨兵丢失拒绝；核对会逐作用域比较并锁定），第二阶段第四轮修正后 CLI 会报告该族打开时的重放。待决定是否把拒绝语义对齐到第二阶段（哨兵丢失时按作用域重建拒绝、只有启动重放写哨兵） | P3 | 待决定 |

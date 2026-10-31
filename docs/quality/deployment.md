@@ -1,12 +1,13 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-10-31 15:47 UTC — 7976ce8b, Dependabot updates (the Tiptap group and Vite 8.3.5)
+## Current release · 2026-10-31 19:23 UTC — f92fe542, Dependabot updates (the Tiptap group, Vite 8.3.5, the react grouping)
 
-**Running source: `7976ce8b16923249811ed5d66418e8d58f9017a6`** (origin/dev, the merge of PR #19). Pipeline run 41203569315
-(push to dev): verify 14:24→15:45 UTC, deploy 15:45→15:47 UTC through the restricted SSH command; receiver backup
-`/opt/synwevo/backups/20261031T154716Z`. Minutes earlier the same day, run 41203552880 deployed 8b5e3464 (PR #18) at
-14:27 UTC with backup `20261031T142636Z`: the two merges were made one minute apart, their runs completed in order, and the
-deploy guard admits a newer source after an older one, so both deployed.
+**Running source: `f92fe5424550ad2a887c9c5886d9f53bb2a984e8`** (origin/dev, the merge of PR #21). Pipeline run 41226651904
+(push to dev): verify 17:52→19:21 UTC, deploy 19:21→19:23 UTC through the restricted SSH command; receiver backup
+`/opt/synwevo/backups/20261031T192312Z`. Earlier the same day the pipeline deployed 8b5e3464 (PR #18, run 41203552880,
+14:27 UTC, backup `20261031T142636Z`) and 7976ce8b (PR #19, run 41203569315, verify 14:24→15:45, deploy 15:45→15:47 UTC,
+backup `20261031T154716Z`): those two merges were made one minute apart, their runs completed in order, and the deploy
+guard admits a newer source after an older one, so both deployed.
 
 **What it ships over d6d4a0b4:** dependency updates only. PR #18: the Tiptap group, 3.31.3→3.32.0 for the editor
 packages and y-tiptap 3.0.10 (the group Dependabot was given on 2026-10-26, so the extensions move together). PR #19:
@@ -15,12 +16,13 @@ its own pull request (1h20m and 1h35m). Dependabot's react-only bump (#20) was c
 react version, so the identity web tests failed in 1m18s; PR #21 (merged 17:52 UTC, f92fe542) groups react with
 react-dom and their type packages and sets `versioning-strategy: increase-if-necessary`, so manifest ranges — including
 the shared packages' peer ranges, which the default strategy had rewritten from `>=19` to `^19.3.1` — are no longer
-changed by an update. Its own push run verifies and deploys next; nothing in it reaches the application.
+changed by an update. Nothing in #21 reaches the application: its deploy rebuilt the image from the same code.
 
-**Post-deploy checks (17:55 UTC, read-only):** `/readyz` 200 on synwevo.com, workplace, accounts, docwave and message;
-accounts, docs, portal and messages all on `synwevo:7976ce8b…` and healthy, gateway healthy; no traceback or error line
-in the last 60 minutes of any role. 8b5e3464 was checked the same way at 14:30 UTC: the four roles on its image and
-healthy, gateway recreated, backup present, no error line.
+**Post-deploy checks (read-only):** f92fe542 at 19:35 UTC — `/readyz` 200 on synwevo.com, workplace, accounts, docwave
+and message; accounts, docs, portal and messages all on `synwevo:f92fe542…` and healthy, gateway healthy; no traceback or
+error line in the last 15 minutes of any role. 7976ce8b was checked the same way at 17:55 UTC (four roles on its image and
+healthy, 0 error lines in 60 minutes) and 8b5e3464 at 14:30 UTC (four roles on its image and healthy, gateway recreated,
+backup present, no error line).
 
 **Known, not fixed — Dependabot's pip job:** the weekly Python version-update job fails before opening anything
 (run 40794860449, 2026-10-29: "Could not open constraint file infra/server/requirements.lock"). Dependabot fetches only
