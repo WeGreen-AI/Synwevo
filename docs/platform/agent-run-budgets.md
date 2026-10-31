@@ -462,7 +462,10 @@ faults in one transaction, or refuses and changes nothing while a settled call o
 wallet stays refused until the database is restored from a backup taken before that write). The
 administrators are told (`billing.payer_spend.rollup_inconsistent`, the wallet id only); the rebuild
 is audited (`billing.payer_spend.rollup_rebuilt`). When several refusals apply, the check order
-decides (fault, day rows, holds, unpaid).
+decides (fault, day rows, holds, unpaid). While the day table's sentinel is lost, the verifier reports
+that store-wide only (`spend_sentinel_missing`) and compares no wallet's day rows, whether they went
+with it or not, since the next start replays them all: no wallet is latched and none needs a rebuild
+after the restart; a malformed settled call is still named (docs/billing-ledger.md "Per-wallet spend").
 
 The set operation requires `unit_code`, `expected_revision`, explicit `enabled`, and
 `daily_budget`, `weekly_budget`, `monthly_budget` as nonnegative int64 decimal strings.

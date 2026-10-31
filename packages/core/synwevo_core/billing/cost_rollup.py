@@ -89,7 +89,9 @@ FACT_CHECKS = ("fact_fault", "undecodable_key")
 #: non-UTF-8 TEXT): reported, audited and alerted, never read (``_scopes``).
 UNNAMED_SCOPE = "undecodable_scope"
 #: The store-wide issue for the wallets' lost sentinel (``payer_spend_rollup.SENTINEL``): every wallet's
-#: read refuses on it until the next start replays the day rows, so no wallet carries it as a latch.
+#: read refuses on it until the next start replays every wallet's day rows, so no wallet carries it as a
+#: latch and ``spend_rollup.check_wallet`` compares no day rows while it is lost (``_check`` reads it once
+#: per run and passes it down); the malformed settled calls are still named.
 SPEND_SENTINEL = "spend_sentinel_missing"
 #: Issues no scope's latch carries: ``record`` audits and alerts them store-wide whatever else differs.
 UNCARRIED = (UNNAMED_SCOPE, SPEND_SENTINEL)
@@ -1033,7 +1035,9 @@ def _check(c, *, environment, since, now, mode, scopes=None) -> VerifyReport:
         report.issues.append(SPEND_SENTINEL)
     # Store-wide, per family (False: provider accounts, True: wallets): every scope's rollup may be affected.
     # The wallets' lost sentinel is no wallet's difference: every wallet's read refuses while it is lost and
-    # the next start replays the day rows, so a latch per wallet would only leave N rebuilds for one start.
+    # the next start replays every wallet's day rows (which may have gone with it), so a latch per wallet
+    # would only leave N rebuilds for one start. Read once above, in this snapshot (it cannot change between
+    # wallets), it is passed to check_wallet, which then compares no day rows and names only malformed calls.
     damage = {False: (["deltas_not_empty"] if deltas else []) + (["sentinel_missing"] if lost[False] else []),
               True: ["deltas_not_empty"] if deltas else []}
     if scopes is None:
@@ -1045,8 +1049,10 @@ def _check(c, *, environment, since, now, mode, scopes=None) -> VerifyReport:
     for scope in scopes:
         wallet = spend_rollup.is_wallet(scope)
         try:
-            check = spend_rollup.check_wallet if wallet else _check_scope
-            result = check(c, scope, since=since, now=now, mode=mode)
+            if wallet:
+                result = spend_rollup.check_wallet(c, scope, since=since, now=now, mode=mode, sentinel=not lost[True])
+            else:
+                result = _check_scope(c, scope, since=since, now=now, mode=mode)
         except Exception as exc:  # noqa: BLE001 - one scope's facts never stop the others' check
             if not _scope_error(exc):
                 raise

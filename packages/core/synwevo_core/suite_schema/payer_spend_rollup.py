@@ -37,9 +37,12 @@ The sentinel ``('', 0, 0, 0, 0, 0)`` is lost when the table is dropped or emptie
 replays every settled call once (``migrate``), as does another trigger version (meta
 ``payer_spend_rollup_triggers``) or a missing marker (``payer_spend_rollup_v1``). Until that start every
 wallet's read refuses on the missing sentinel (``billing/spend_rollup.exposure``; not latched, nothing to
-rebuild after the replay), and a DROPPED table makes every reservation and settlement of every wallet
-raise, since the triggers name it: the services are restarted at once then. Rollback: older code
-ignores the table and its triggers keep it current, so a later roll-forward replays nothing.
+rebuild after the replay) and the verifier reports it once, store-wide (``spend_sentinel_missing``, read
+once per run), comparing no wallet's day rows, which that replay rewrites whether they went with the
+sentinel or not (a malformed settled call is still named: its fault is the triggers'); a DROPPED table
+makes every reservation and settlement of every wallet raise, since the triggers name it: the services
+are restarted at once then. Rollback: older code ignores the table and its triggers keep it current, so
+a later roll-forward replays nothing.
 """
 from __future__ import annotations
 

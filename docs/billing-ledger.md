@@ -402,8 +402,12 @@ settled calls created at or after the period's start (no upper bound, any journa
   their newest global rebuild there (provider scopes at `('', '', '')`), so neither family's backfill
   supersedes the other's verify results. Store open never refuses: a malformed settled call becomes a
   fault of its wallet. Until that start, every wallet's read refuses on the lost sentinel (above) and
-  the verifier reports it store-wide (`spend_sentinel_missing`: audited each run and alerted, deduplicated
-  per day, as object `*`; no wallet latched); a dropped table is different: its triggers still name it, so every reservation
+  the verifier reports it store-wide (`spend_sentinel_missing`: read once per run, audited each run and
+  alerted, deduplicated per day, as object `*`) and compares no wallet's day rows or read while it is
+  lost, whether the rows are still there or went with it (the table emptied past the gate, one wallet's
+  rows deleted with the sentinel): the replay rewrites every wallet's rows, so no wallet is latched and
+  none needs a rebuild after the restart; a malformed settled call is still named (its fault is the
+  triggers'). A dropped table is different: its triggers still name it, so every reservation
   and settlement raises until the services restart (docs/platform/model-risk.md §13). The replay
   takes about 1 s per 200,000 settled calls on the local benchmark machine (about 7 s per million,
   `docs/agent-work/evidence/2026-10-26-payer-spend-rollup/`).
@@ -413,7 +417,8 @@ settled calls created at or after the period's start (no upper bound, any journa
   both ways, malformed calls named (`fact_fault`, `fact_fault_missing`; in a bounded run also those
   outside the streamed days, through the faults their writes latched and each re-read from its call: a
   negative or REAL creation time sorts below every window), and outside the hourly run the read
-  compared with the uncapped `reference_exposure`. Mismatches latch the wallet (audit
+  compared with the uncapped `reference_exposure` (neither the rows nor the read while the table's
+  sentinel is lost, above: only the malformed calls are named then). Mismatches latch the wallet (audit
   `billing.payer_spend.rollup_inconsistent`, alert with the wallet id only); `CostRollup.rebuild_wallet`
   (`cost_rollup rebuild --wallet <id> --reason …`) has `rebuild`'s shape and refuses while a settled
   call of the wallet is malformed (docs/platform/model-risk.md §13, "钱包"). One wallet's

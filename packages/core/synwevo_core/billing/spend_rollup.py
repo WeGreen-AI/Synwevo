@@ -25,6 +25,12 @@ and alerts are the cost rollup's (``billing/cost_rollup.py``), in the WALLET SCO
   bounded runs (hourly, daily) stream a window of settled calls; a malformed one outside it (a negative
   or REAL ``created_at`` sorts below every window) is still named, through the fault its write latched
   and re-read from the call, so every such wallet is reported and alerted by the next scheduled run.
+  While the table's sentinel is lost (alone, or with the day rows: the table emptied past the gate, or a
+  wallet's rows deleted with it) the run reports that once, store-wide (``spend_sentinel_missing``; read
+  once per run by ``cost_rollup._check`` and passed down), and compares no wallet's day rows or read:
+  every wallet's read already refuses on it and the next start's replay rewrites every row, so a
+  difference here would only latch wallets the restart then leaves refused. The malformed settled calls
+  are still named: the facts are intact and their faults the triggers'.
 
 Semantics kept from the earlier read (``PayerBudgets`` before phase 2): held = every reserved call's
 hold, whatever its creation time, namespace or deadline, the same in every period; spent[p] = the
@@ -217,7 +223,7 @@ def _malformed_settled_call(c, key) -> bool:
                      "(typeof(created_at)<>'integer' OR created_at<0)", args).fetchone() is not None
 
 
-def check_wallet(c, scope, *, since, now, mode) -> ScopeReport:
+def check_wallet(c, scope, *, since, now, mode, sentinel: bool) -> ScopeReport:
     """Recompute one wallet's day rows from its settled calls (streamed, from ``since``'s UTC day; all
     days when None) and compare both directions; name each malformed settled call (``fact_fault``, and
     ``fact_fault_missing`` when its fault row is missing), in a bounded run also those outside the
@@ -225,8 +231,16 @@ def check_wallet(c, scope, *, since, now, mode) -> ScopeReport:
     faults, which only a write outside the product leaves) and each re-read from its call. Outside the
     hourly ``recent`` mode, also compare ``exposure`` with the uncapped ``reference_exposure`` at ``now``
     (not when the rollup refused with ``payer_budget_capacity``, its documented bound, nor while the
-    wallet has an open fault, nor while the table's sentinel is lost: every wallet's read refuses on that
-    until the next start replays, and it is the run's store-wide issue, not a wallet's difference)."""
+    wallet has an open fault).
+
+    ``sentinel``: whether the table's sentinel is present, read ONCE per run by ``cost_rollup._check`` in
+    the run's read snapshot (where it cannot change between wallets) and passed down, never re-read per
+    wallet. While it is lost the day rows are neither compared nor checked for structure and the read is
+    not compared with the reference: every wallet's read already refuses on it, the run reports it
+    store-wide (``spend_sentinel_missing``) and the next start's replay rewrites every wallet's rows, so a
+    difference here would only latch a wallet that the restart then leaves refused (an emptied table, or
+    one wallet's rows gone with the sentinel, once latched every such wallet). The settled calls are still
+    streamed and the malformed ones named: their facts are intact and their faults the triggers'."""
     environment, _, account = scope
     lo = None if since is None else since - since % DAY
     report = ScopeReport(scope, 0, rebuild_seq(c, scope))
@@ -263,18 +277,21 @@ def check_wallet(c, scope, *, since, now, mode) -> ScopeReport:
         if c.execute("SELECT 1 FROM model_cost_rollup_faults WHERE id=?",
                      (cost_rollup.fact_fault_id(key, scope),)).fetchone() is None:
             report.differ("fact_fault_missing", call=key_label(*key))
-    for r in c.execute("SELECT start," + ",".join(schema.VALUES) + " FROM payer_spend_days WHERE account_id=?"
-                       + ("" if lo is None else " AND start>=?"), (account,) if lo is None else (account, lo)):
-        if not _structure(r):
-            report.differ("structure", start=r["start"])
-        found = {v: r[v] for v in schema.VALUES}
-        want = expected.pop(r["start"], None)
-        want = None if want is None else _expected_row(*want)
-        if want != found or not all(type(v) is int for v in found.values()):
-            report.differ("day", start=r["start"], expected=want, found=found)
-    for start, want in sorted(expected.items()):
-        report.differ("day", start=start, expected=_expected_row(*want), found=None)
-    if mode != "recent" and not report.open_faults and not fact_faults and schema.sentinel_present(c):
+    if sentinel:
+        # The day rows, both directions; not while the sentinel is lost (the docstring): ``expected`` is
+        # then only what the next start replays.
+        for r in c.execute("SELECT start," + ",".join(schema.VALUES) + " FROM payer_spend_days WHERE account_id=?"
+                           + ("" if lo is None else " AND start>=?"), (account,) if lo is None else (account, lo)):
+            if not _structure(r):
+                report.differ("structure", start=r["start"])
+            found = {v: r[v] for v in schema.VALUES}
+            want = expected.pop(r["start"], None)
+            want = None if want is None else _expected_row(*want)
+            if want != found or not all(type(v) is int for v in found.values()):
+                report.differ("day", start=r["start"], expected=want, found=found)
+        for start, want in sorted(expected.items()):
+            report.differ("day", start=start, expected=_expected_row(*want), found=None)
+    if sentinel and mode != "recent" and not report.open_faults and not fact_faults:
         win = periods(now)
         outcome = {}
         for name, fn, kwargs in (("rollup", exposure, {"environment": environment}), ("reference", reference_exposure, {})):
