@@ -1,6 +1,29 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-11-01 02:50 UTC — ae16da28, cost-capacity phase 2 (exact per-wallet spend rollup)
+## Current release · 2026-11-01 06:24 UTC — 383142a5, Dependabot updates (rolldown 1.2.15, react-router-dom 7.18.5; the Tiptap group at 04:35 UTC)
+
+**Running source: `383142a52aac417d576177933bdf07e359014155`** (origin/dev, the merge of PR #27). Pipeline run 41267068260
+(push to dev): verify 04:32→06:21 UTC, deploy 06:21→06:24 UTC through the restricted SSH command; receiver backup
+`/opt/synwevo/backups/20261101T062338Z`. Earlier the same day run 41267049090 deployed 1e533a24 (PR #25, the Tiptap group,
+11 updates) at 04:35 UTC with backup `20261101T043445Z` (verify 02:54→04:32). The three Dependabot merges were made within
+one minute; GitHub cancelled the queued run of the middle one (8386c65e, PR #26) as superseded, so its change deployed with
+383142a5.
+
+**What it ships over ae16da28:** dependency updates only — the Tiptap group (PR #25), rolldown 1.2.10→1.2.15 (PR #26, a
+dev dependency) and react-router-dom 7.18.4→7.18.5 (PR #27). Each passed the full verify on its own pull request
+(1h24m–1h37m) before the merge, and the merged trees again on their push runs.
+
+**Post-deploy checks (read-only):** 383142a5 at 06:30 UTC — `/readyz` 200 on synwevo.com, workplace, accounts, docwave and
+message; accounts, docs, portal and messages all on `synwevo:383142a5…` and healthy, gateway healthy; no traceback or error
+line in the first 10 minutes. 1e533a24 was checked the same way at 04:50 UTC (four roles on its image and healthy, backup
+present, no error line in 20 minutes).
+
+**Observation — verify duration:** this push run's verify took 1h49m (04:32→06:21), the longest so far (phase 2 added
+about 1,500 tests, and the hosted runners were shared with three pull-request verifies at the time); the job's limit is
+120 minutes. Recorded in BACKLOG (`verify-duration`) so the limit or the suite's layout is changed before a run is
+cancelled by it.
+
+## 2026-11-01 02:50 UTC — ae16da28 (historical; superseded above), cost-capacity phase 2 (exact per-wallet spend rollup)
 
 **Running source: `ae16da2814adc96de1b92531f8f0d7e6c374ae14`** (origin/dev, the merge of PR #24). Pipeline run 41260820005
 (push to dev): verify 01:22→02:47 UTC, deploy 02:47→02:50 UTC through the restricted SSH command; receiver backup
