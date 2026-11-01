@@ -1,6 +1,43 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-10-31 19:23 UTC — f92fe542, Dependabot updates (the Tiptap group, Vite 8.3.5, the react grouping)
+## Current release · 2026-11-01 02:50 UTC — ae16da28, cost-capacity phase 2 (exact per-wallet spend rollup)
+
+**Running source: `ae16da2814adc96de1b92531f8f0d7e6c374ae14`** (origin/dev, the merge of PR #24). Pipeline run 41260820005
+(push to dev): verify 01:22→02:47 UTC, deploy 02:47→02:50 UTC through the restricted SSH command; receiver backup
+`/opt/synwevo/backups/20261101T024941Z`.
+
+**What it ships over f92fe542 (decision D18 item 7):** the per-person spending limits (`PayerBudgets._exposure`) read
+exact, trigger-maintained per-wallet day rows (`payer_spend_days`) instead of summing up to 10,000 reserved and settled
+calls inside the writer lock; settled volume no longer refuses, and the only remaining bound is 10,000 open holds. The rows
+reuse the cost rollup's deltas, gate, faults, rebuilds and audits in the wallet scope, and the Store backfills them once on
+its first open. Fail-closed throughout: a malformed settled call latches its wallet (restored from a backup); a broken day
+row refuses and latches at reservation time; a lost sentinel refuses every wallet until the next start's full replay
+(never latched; `rebuild --wallet` refuses meanwhile, and a per-wallet replay never writes the sentinel); the CLI verify
+reports when its own open replayed either family and exits 1; store-wide alerts (`billing.cost.rollup_issues`) go once per
+distinct issue set per UTC day and say which check found them. Verified by an independent oracle (391 tests, no
+disagreement), the equivalence property test with wallet histories, three review lenses and four adversarial
+verification rounds on the fixes: no money defect on the product path, 17 ordinary refusal cases byte-for-byte unchanged.
+Benchmark: `check` p95 0.06–0.07 ms at 200k and 1M settled calls; triggers 11–12 µs per settlement.
+
+**Post-deploy checks (02:52 UTC, read-only):** `/readyz` 200 on synwevo.com, workplace, accounts, docwave and message;
+accounts, docs, portal and messages all on `synwevo:ae16da28…` and healthy, gateway healthy; no traceback or error line in
+the first 10 minutes. Rollup: `payer_spend_days` present with its sentinel; marker `payer_spend_rollup_v1` = 1 and trigger
+version 1; the eight phase-2 triggers installed (three gate triggers, the apply trigger, the four producers); one
+`system:backfill` rebuild row and one `backfill` audit with status ok in scope `('', '@wallets', '')` over the 38 settled
+calls (3 day rows, 1 wallet, 0 reserved); 0 open faults; the scheduled hourly and daily verifies before the deploy all ok;
+`PRAGMA quick_check` ok. The first hourly verify after the deploy adds the wallet scopes to its report.
+
+**Also today:** Dependabot opened #25 (the Tiptap group, 11 updates), #26 (rolldown 1.2.15) and #27 (react-router-dom
+7.18.5) at 01:13 UTC with the OLD configuration — Dependabot reads `.github/dependabot.yml` from the default branch
+`main`, which has not received #21 yet, so the react group and `increase-if-necessary` take effect only after the next
+dev→main sync. All three passed verify (1h24m–1h37m) and are merged next, each deploying through the pipeline.
+
+**For the owner:** unchanged — the Cloudflare cache rule for `/api/source-code`, the copyright holder, the DeepSeek route
+renewal, the card-only payment settings, counsel review of the 2026-10-25 terms, the open-source audit's account hardening,
+and the `dependabot-pip` and `cost-rollup-provider-replay` decisions in BACKLOG. With phase 2 live, the cost-capacity
+prerequisite for taking the paid Agent out of allow-list mode (`allowlist_only=false`) is met; that switch stays yours.
+
+## 2026-10-31 19:23 UTC — f92fe542 (historical; superseded above), Dependabot updates (the Tiptap group, Vite 8.3.5, the react grouping)
 
 **Running source: `f92fe5424550ad2a887c9c5886d9f53bb2a984e8`** (origin/dev, the merge of PR #21). Pipeline run 41226651904
 (push to dev): verify 17:52→19:21 UTC, deploy 19:21→19:23 UTC through the restricted SSH command; receiver backup
