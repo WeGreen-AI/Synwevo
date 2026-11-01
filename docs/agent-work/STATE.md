@@ -8,13 +8,16 @@
 
 ## 实际发布与CI
 
-- **生产当前为 `d6d4a0b498c5051e65b72f942593214f36738b8b`**（2026-10-26 10:37Z，流水线运行 40298661682：许可证与 AGPL 源码提供、成本核算上限第一阶段（精确汇总，D18）；同日此前经流水线部署 bce8336f 脱敏、a84f21ba/57b44340/2b832b91 依赖与分组配置；备份 `/opt/synwevo/backups/20261026T103644Z`；五域 /readyz 200、四角色同镜像且 healthy、无错误日志；三个域名 `/api/source-code` 同一 15,062,993 字节源码包；成本汇总回填 ok、0 个未处理故障；记录 `docs/quality/deployment.md` 当前段）。
+- **生产当前为 `383142a52aac417d576177933bdf07e359014155`**（2026-11-01 06:24Z，流水线运行 41267068260：Dependabot 依赖更新 PR #26 rolldown、#27 react-router-dom；同日 04:35Z 运行 41267049090 部署 1e533a24（PR #25 Tiptap 分组）；备份 `/opt/synwevo/backups/20261101T062338Z`、`20261101T043445Z`；五域 /readyz 200、四角色同镜像且 healthy、无错误日志。应用代码与 ae16da28（2026-11-01 02:50Z，成本核算上限第二阶段，PR #24，决定 D18 第 7 项；只读核验：日行表与哨兵在、标记 v1 与触发器版本 1、八个触发器、`('', '@wallets', '')` 回填审计 ok、0 个未处理故障、quick_check ok）相同，只多了依赖更新。verify 时长已达 1h49m（上限 120 分钟），见 BACKLOG `verify-duration`。）
 - 流水线：仓库公开后 Actions 托管运行器免费；verify 上限 120 分钟（MCP 合入后全量运行时测试约 68 分钟）。不要重跑早于已部署版本的旧运行；部署守卫也会拒绝。
-- 已合入 dev 的开源与流程 PR：#2 切换、#3 脱敏、#5 记录、#13 许可证、#14 依赖分组、#15 成本核算上限；Dependabot #6–#9 已合入，#10–#12（Tiptap 单包升级）关闭待分组 PR。下一步：dev→main 同步；成本核算上限第二阶段（个人支出上限 `payer_budgets.py`）。
+- 已合入 dev 的开源与流程 PR：#2 切换、#3 脱敏、#5 记录、#13 许可证、#14 依赖分组、#15 成本核算上限、#16 记录、#21 Dependabot react 分组；Dependabot #6–#9、#18（Tiptap 分组）、#19（Vite）已合入，#10–#12（Tiptap 单包）与 #20（react 不带 react-dom，verify 失败）已关闭。dev→main 同步 PR #17 已于 2026-10-29 00:33Z 合入（main e98c382a = dev 0bcce176）。Dependabot 的 pip 作业每周失败（约束锁文件不在其抓取范围，见 BACKLOG `dependabot-pip`）。下一步：成本核算上限第二阶段 PR 进 dev → verify → 合并 → 部署 → 核验记录；之后再做一次 dev→main 同步。
 - 待所有者：① Admin 支付设置仍为 v3（card + wechat_pay + alipay），请重新发布仅含银行卡的版本；② DeepSeek 路线 2026-10-15 已过期，付费 Agent 调用被拒（公开状态如实显示“模型服务暂停”），请在 Admin 续期；③ 2026-10-25 条款与定价文本请法律顾问复核；④ DeepSeek 训练与保留书面答复未取得；⑤ 开源审计：把本机密钥文件移出检出目录，开启 secret scanning / push protection / 私密漏洞报告，按审计直接告知所有者的步骤加固管理员账户；成本核算上限上线前保持付费 Agent 放行名单模式。
 
 ## 当前工作包与下一条动作
 
+- 下一动作（2026-11-01 06:35Z 更新）：Dependabot #25/#26/#27 已合入并经流水线部署核验（1e533a24、383142a5）。接下来：dev→main 同步 PR（main 上的 Dependabot 配置才会生效：Dependabot 读默认分支 main 的 `.github/dependabot.yml`，#21 的 react 分组与 `increase-if-necessary` 在同步前不起作用）；再按 BACKLOG 选下一包（authz-6、CR-012 遗留、金额显示精度、A40），`cost-rollup-provider-replay` 与 `dependabot-pip` 待所有者决定。付费 Agent 公开放量（`allowlist_only=false`）的前提已满足，开关由所有者决定。
+- 下一动作（2026-10-31 23:00Z 更新）：成本核算上限第二阶段在 `cost-phase2` 已过三轮修正与对抗式核验（4310c577、a42a0f83、4525df07：预约时读到坏日行即锁定；有界核对能点名窗口外的坏事实；日行表被清空只作为全库问题报告、重启重放即恢复、单钱包重建不再写回哨兵、哨兵丢失时 rebuild 拒绝；CLI 核对会报告自己打开时的重放并以 1 退出；全库告警有独立措辞），第三轮核验确认无金额缺陷、无失败开放路径；剩余 3 项低级（全库告警按 UTC 日去重会吞掉当日第二组问题；提供方族 CLI 打开时静默重放；rebuild 参数校验在打开库之后）正在第四轮修正（wf_282fa827-fd4），通过后开 PR 进 dev。
+- 下一动作（2026-10-31 18:00Z 更新）：**成本核算上限第二阶段（个人支出上限按钱包日行精确汇总）在 worktree `cost-phase2`（分支 `claude/cost-phase2`，基于 dev 0bcce176）已完成实现、独立预言机测试（391 项，无分歧）、三视角对抗式审查（无金额缺陷；6 项运维缺口已在 4310c577 以先失败测试修正）与本地全部检查（五守卫、typecheck、工作区测试、定向计费测试与等价性测试均通过）**；修正提交本身的二次审查（wf_cc043309-fb0）进行中，通过后 `gh pr create --base dev`，verify 通过后合并、部署、只读核验（标记与触发器版本、`('', '@wallets', '')` 回填审计 ok、0 故障、quick_check）并记录，然后关闭 BACKLOG cost-capacity 行并做 dev→main 同步。实现代理在 2026-10-26 的工作流 wf_dd7b1e22-e8a 中断后由 wf_d468999e-87b 续做；本机 3.12 验证 venv 改放 `~/.cache/synwevo-verify-venv312`（scratchpad 下的会被 macOS 清理）。
 - 下一动作（2026-10-25 09:55Z 更新）：**311508fe 已部署并核验**（D17 + B3，CR-132–CR-135）。进行中：Node 22 账户前端日期断言修正（wf_17830410-6c4）→ 本地 Node 22/23 双跑 → 推送 → Actions verify + deploy。之后按 BACKLOG：成本容量 `_MAX_RECORDS`、authz-6（密钥与定价分权）、卡住的 usage_pending 管理视图、金额显示精度、A40 组织创建策略。
 - 下一动作（2026-10-25 02:10Z 更新）：**D17 发送即运行 + B3 Message 按组织开关**在 `claude/agent-billing` a42bc4a7 已合并两轮审查修正（CR-132–CR-135，决定 D16/D17）；Python 3.12 全量（suite+messages 1355、identity 2040、integration 1552、docs 1681；负载 40 时 3 项超时，单独重跑通过）与前端 786 项通过。进行中：最终对抗式复核与真实服务端浏览器验收重跑（wf_bc8f2bda）。之后：Docker 运行时镜像全量（3g/2cpu）→ 推送 main → 经 receive.py 部署 → 核验并记录。部署后所有现有用户首次发送会看到一次开始卡片（新条款与定价版本）。
 - **CI阻断修复已发布**：e7c1f05 verify/deploy成功并核验上线（见上）。
@@ -67,4 +70,4 @@
 - 历史调查及状态变更保留在EVIDENCE/BACKLOG，不将旧暂停或旧发布状态作为当前事实。
 - 接续在本实施树读取MASTER_PROMPT、STATE、BACKLOG、EVIDENCE、CODE_REVIEW，核对实际Git/CI/生产和锁，复用配置与副作用记录；不重建、不重放、不绕过门禁。交接快照 `CLAUDE_CODE_HANDOFF_2026-10-11.txt` 只在主检出、不是第二份状态真相。
 
-保存时间：2026-10-11T16:00:35.052329+00:00
+保存时间：2026-11-01T06:31:09.236754+00:00

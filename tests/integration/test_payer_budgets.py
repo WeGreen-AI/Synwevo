@@ -184,18 +184,8 @@ def test_reservation_admission_failure_rolls_back_hold_and_event(money, monkeypa
     assert money[0].all('SELECT * FROM billing_calls') == money[0].all('SELECT * FROM billing_events') == []
 
 
-def test_only_current_month_and_pending_ranges_are_queried(money):
-    fund(money); configure(money); reserve(money)
-    sql=[]
-    with money[0].conn() as c:
-        c.set_trace_callback(sql.append)
-        try:view(money)
-        finally:c.set_trace_callback(None)
-    query=next(s for s in sql if s.startswith('WITH candidates'))
-    plan=money[0].all('EXPLAIN QUERY PLAN '+query)
-    detail=' '.join(row['detail'] for row in plan)
-    assert 'billing_calls_holds' in detail and 'billing_calls_payer_period' in detail
-    assert 'MATERIALIZE candidates' in detail
+# The query-plan test of the bounded read moved to test_payer_spend_rollup.py (test 9): the check reads the
+# per-wallet day rows' key and the holds index, and does the same work with 1,000 or 50,000 settled calls.
 
 
 def test_final_release_frees_period_budget_but_late_usage_cannot_secretly_charge(money):

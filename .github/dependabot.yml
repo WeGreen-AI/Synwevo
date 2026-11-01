@@ -25,14 +25,21 @@ updates:
     target-branch: dev
     schedule: {interval: weekly}
     open-pull-requests-limit: 3
+    # Manifests keep their ranges: Dependabot updates the lock file and raises a range only when the
+    # new version falls outside it. The default strategy rewrote the shared packages' peer ranges
+    # (">=19" became "^19.3.1" in packages/ui and packages/auth-client/web, #20 on 2026-10-29).
+    versioning-strategy: increase-if-necessary
     # Packages that only work at one shared version move together: the Tiptap extensions augment one
     # editor type, so a single bumped extension fails typecheck (#10, #12 on 2026-10-26); likewise the
-    # Yjs stack the live editors share.
+    # Yjs stack the live editors share, and react with react-dom, which refuses to load at a version
+    # other than react's (#20 on 2026-10-29).
     groups:
       tiptap:
         patterns: ["@tiptap/*"]
       yjs:
         patterns: ["yjs", "y-*", "@y/*"]
+      react:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
   - package-ecosystem: github-actions
     directory: /
     target-branch: dev

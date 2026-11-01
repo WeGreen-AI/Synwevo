@@ -582,6 +582,11 @@ class MeteredDeepSeek:
                 with self.store.tx() as transaction:
                     if release_unreserved_call(transaction, key):
                         exc.not_dispatched = True
+                # The refusing reservation has rolled back: a personal-limit read that found a broken
+                # day row latches its wallet now, as the same refusal from a dispatch does above.
+                after_refusal = getattr(self.cost_admission, "after_refusal", None)
+                if after_refusal is not None:
+                    after_refusal(exc)
             raise
 
     def _observe(self, key, ticket, route, attempt, *, completed, claim=None, ending=None, input_bound=None):

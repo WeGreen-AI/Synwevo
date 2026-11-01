@@ -155,6 +155,8 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 | `billing.risk.pending_exposure` | 管理员 | 用量待确认的预留成本 > `pending_alert` | 每个 UTC 日一次 |
 | `billing.risk.payment_webhook_failed` | 管理员 | 支付渠道调用 `alert_payment_webhook_failure(store, environment=, provider=, code=)` | 每渠道每代码每 UTC 日一次 |
 | `billing.cost.rollup_inconsistent` | 管理员 | 成本汇总与事实不一致，某提供方账户被锁定（§13） | 每个提供方账户每 UTC 日一次 |
+| `billing.payer_spend.rollup_inconsistent` | 管理员 | 个人支出汇总与已结算调用不一致，某钱包被锁定（§13「钱包」），只给出钱包 id | 每个钱包每 UTC 日一次 |
+| `billing.cost.rollup_issues` | 管理员 | 不属于某一个账户或钱包的全库问题（§13：静止时有 delta 行、哨兵行丢失、读不出名字的范围、verify 打开时重放了提供方账户的汇总或钱包日行），自己的措辞，开头写明是哪次核对发现的（每日或每小时定时核对、命令行），列出问题名 | 每种问题组合每 UTC 日一次（同一天里不同的问题组合各告警一次） |
 
 `alert_payment_webhook_failure` 是给支付渠道工作包的挂钩：只接受渠道名与稳定代码，从不接受载荷、签名或客户信息。
 
@@ -184,7 +186,6 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 
 ## 12. 未实现与边界
 
-- 个人支出上限（`PayerBudgets`）仍按行读取最多 10,000 条调用；改用同样的汇总是下一阶段（第二阶段），本次不含。
 - 成本汇总的重建只有命令行（`platform.py cost-rollup rebuild`），没有管理端接口。
 
 - 网关在上游 402 时调用 `trip_platform_breaker` 的接线属于网关工作包；本包提供并测试了该函数与关闭后的拒绝。
@@ -202,7 +203,8 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 成本准入（§1 第 3 行）与自动刹车（§3）读的是触发器维护的精确成本汇总。它与事实不一致时，只锁定那一个提供方账户
 （`environment` + `provider` + `account_ref`）：该账户的付费调用以 `cost_rollup_inconsistent` 拒绝，没有发起、没有扣费；其他账户不受影响。
 管理员收到 `billing.cost.rollup_inconsistent`，系统审计里有同名记录（含差异数量与来源：每日/每小时校验、读取时的检查）。
-全库问题（静止时 `model_cost_rollup_deltas` 有行、哨兵行丢失）即使还没有任何账户也会报告（审计对象 `*`，运行记录 `mismatch`）；
+全库问题（静止时 `model_cost_rollup_deltas` 有行、哨兵行丢失）即使还没有任何账户也会报告（审计对象 `*`，运行记录 `mismatch`，
+告警 `billing.cost.rollup_issues`：自己的措辞，列出问题名与本节，不套用某个提供方账户的模板）；
 环境、提供方或账户名不是 UTF-8 文本（BLOB、NULL 或非 UTF-8 的 TEXT）的事实或派生行（`undecodable_scope`，只能来自产品之外的写入
 或绕过闸门的写入）也这样报告，同时有其他账户不一致时也单独审计、告警（审计对象 `*`）：没有任何读取能用到这些行，
 其他账户照常核对、锁定，处理同第 3 步。一个账户的事实读不出来，只记为该账户的差异（`verify_error`），不会让其他账户漏检。
@@ -212,6 +214,17 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 （`exec`）；重建持有写锁，在一次性容器里运行（`run --rm --no-deps`：同一镜像、数据卷与内存上限，服务停着也能运行）。下面的
 `<account_ref>`、`<reason>`（8–500 字）换成实际值；`--actor <操作人>` 可写明是谁（默认 `operator:<容器用户>`）。
 本机开发用 `python scripts/platform.py cost-rollup …`，参数相同。
+
+**本命令打开数据库时的重放。** 核对与重建都先打开数据库（带迁移的打开），等于一次服务启动：派生表的哨兵行、标记 `model_cost_rollup_v1`
+或触发器版本缺失时，打开就从全部成本准入重放每个提供方账户的汇总（持有写锁；记为 `('', '', '')` 的 `backfill` 审计与一条
+`system:backfill` 重建记录，`--no-record` 也不例外，因为这是迁移而不是核对）；钱包日行表同理（见「钱包」）。命令先说明这一点
+（原因、重放的事实数、畸形事实数），核对结果记为全库问题 `cost_rollup_replayed_on_open`（钱包为 `spend_rollup_replayed_on_open`）、
+退出码 1——它核对的是自己刚写出的汇总行，不是此前服务读到的；记录时与其他全库问题一样审计（对象 `*`）、告警（开头写明是命令行发现的，
+当天即使定时核对已经告警过别的问题组合也会送达）；再运行一次即为只读核对。哨兵行只会随绕过闸门的写入或整张表丢失：丢失到这次重放之前，
+读取本身不查哨兵行，由定时校验把每个提供方账户记为 `sentinel_missing` 并锁定；重放不解除这些故障，之后按第 2 步逐个重建，并找出那次写入。
+重建的参数（`--environment`、`--provider`、`--account-ref`、`--reason`，或 `--wallet`、`--reason`；理由 8–500 字，标识不能为空）在打开
+数据库**之前**检查是否齐全与格式：缺参数、标识为空或格式错误只提示、退出码 2，什么也不重放、不写。标识格式正确但不存在
+（或环境不符）的重建要打开数据库才能判断：打开时的重放照常发生并照常提示，然后以 `invalid_rebuild` 退出码 2。
 
 1. **看差异，不改任何东西**：
 
@@ -298,3 +311,53 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 速率桶和从两天前那个 UTC 日零点起的日桶，不比较读取结果与对照计算；每日一轮（`cost_rollup_verify`，每个 UTC 日的第一轮）从上个月
 1 日起核对日桶，并做这项比较。所以写进更早日桶、结构完好的改动（本周、本月的准入窗口仍在累加这些桶）要到下一次每日校验才被发现，
 最长约 24 小时；在那之前该账户的成本准入读的是被改过的周、月累计。恢复从来不是自动的。
+
+### 钱包：个人支出汇总不一致
+
+个人日、周、月支出上限（`PayerBudgets`，docs/platform/agent-run-budgets.md「Personal spending limits」）读的是触发器维护的
+**每个钱包按 UTC 日的已结算支出**（`payer_spend_days`，`billing/spend_rollup.py`；成本容量第二阶段，决定 D18）。它与已结算的调用、
+结算记录、账本分录不一致时，只锁定那一个钱包（范围 `(environment, '', <钱包 id>)`，提供方为空）：该钱包的付费调用以
+`payer_budget_inconsistent` 拒绝，没有发起、没有扣费；Agent 设置里该单位的用量状态显示为 `inconsistent`，个人上限仍可修改或关闭；
+其他钱包与平台成本准入不受影响。管理员收到 `billing.payer_spend.rollup_inconsistent`（只带钱包 id，不带本人、上限或金额），
+系统审计里有同名记录。日行写入被闸门拒绝（`cost_rollup_derived`）；校验与平台成本汇总同一轮运行（每小时两天、每日从上月 1 日、
+恢复演练全部），故障、重建、审计也在同一组表里（`model_cost_rollup_faults` 等，提供方列为空）。
+
+不锁定、会自己消失的情况：某个已结算调用还缺结算记录或账本分录（`n_paid < n_set`），且在当前周期内。这时同样拒绝
+`payer_budget_inconsistent`，但缺的事实写入后立即恢复，不需要运维处理；长期存在说明结算写入中断，按账本手册核对。
+
+1. **看差异**：与上面第 1 步相同的 `verify --all --no-record`；钱包在输出里以 `["test","","<钱包 id>"]` 出现，差异是 `day`
+   （哪一天、期望值、实际值）、`structure`、`exposure`（读取结果与无上限的对照计算不同）或 `fact_fault`（哪一条已结算调用本身有问题）。
+2. **汇总被改动（`day` / `structure` / `exposure`，或读取时锁定的 `read_structure`）：重建该钱包**，在一次性容器里运行（钱包的已结算调用多时先停服务，同上；
+   哨兵行丢失时不能按钱包重建，见下）：
+
+   ```bash
+   docker compose -f /opt/synwevo/config/compose.yaml run --rm --no-deps -T portal python -m synwevo_core.billing.cost_rollup rebuild --wallet <钱包 id> --reason "<reason>" </dev/null
+   ```
+
+   重建在一个事务里从该钱包的已结算调用重放、校验并解除它的故障；校验不通过或有第 3 步的问题时什么也不改。
+   重建写入 `billing.payer_spend.rollup_rebuilt` 审计。`--environment` 可省略（取钱包所在环境），写了就必须一致；
+   不存在的钱包以 `invalid_rebuild` 拒绝。
+3. **已结算调用本身有问题（`fact_fault`，故障代码 `fact_malformed_settled_call`）**：调用的创建时间不是非负整数（文本、小数或负数），
+   产品自己从不写出，只可能来自产品之外的写入。调用不可修改，重建会拒绝并逐条列出这些调用，什么也不改；该钱包保持拒绝，
+   直到把数据库恢复到那次写入之前的备份，做法同上面第 3 步。（这是相对旧读取的有意偏差：旧代码遇到文本时间会出错、把小数时间
+   当作数字计入、忽略负数时间。）
+4. **确认**：与上面第 4 步相同。
+
+哨兵行被删除、标记或触发器版本不同不需要按钱包重建：下一次启动在迁移的 BEGIN IMMEDIATE 里从全部已结算调用重放一次
+（记为 `('', '@wallets', '')` 的 `backfill` 审计与一条重建记录），重放期间持有写锁（时长见 docs/billing-ledger.md「Per-wallet spend」）。
+哨兵行丢失到那次启动之前，每个钱包的读取都以 `payer_budget_inconsistent` 拒绝（失败即关闭：日行可能随之丢失），但不锁定：
+校验把它记为全库问题 `spend_sentinel_missing`（每轮校验读一次哨兵，审计对象 `*`，每轮记录一次，告警 `billing.cost.rollup_issues` 按问题组合每 UTC 日一次，开头写明是哪次核对发现的），
+在它丢失期间不比较任何钱包的日行、也不比较读取结果与对照计算——日行还在、随哨兵一起没了（表被清空）、或只少了某个钱包的行，
+都一样，因为那次启动会重写每个钱包的日行；只有畸形的已结算调用照常点名（`fact_fault`，其故障本来就由触发器锁定）。
+所以不给任何钱包开故障，启动重放之后不需要逐个重建。
+
+**校验或告警报告 `spend_sentinel_missing` 时：重启服务，或运行第 1 步的 verify。** 本命令打开数据库时就会重放全部钱包的日行（等于一次启动），
+并先说明这一点：核对结果记为全库问题 `spend_rollup_replayed_on_open`、退出码 1——它核对的是自己刚写出的日行，不是此前服务读到的；
+再运行一次即为只读核对（首次启用或触发器版本升级后的第一次 verify 也这样报告，原因写明是标记或触发器版本，属预期）。
+这是与 `spend_sentinel_missing` 不同的问题组合：当天定时核对已经告警过哨兵行丢失，本命令记录时的告警照样送达（开头写明是命令行发现的）。
+**不要 `rebuild --wallet`：哨兵行丢失期间它拒绝**（`cost_rollup_rebuild_refused`，原因 `spend_sentinel_missing`），什么也不改——
+按钱包重放只会带回这一个钱包的行，若把哨兵行一起写回，其他钱包的读取从此只见哨兵不见行、支出按 0 计（个人上限被绕过），
+下次启动也不再重放；只有启动（或本命令打开时）的全量重放写回哨兵行。之后按第 1 步核对，并找出那次绕过闸门的写入
+（哨兵行只会随这样的写入或整张表丢失）。
+**表被删除则必须立即重启服务**：触发器还在、指着不存在的表，到下一次启动之前每个钱包的预留与每次结算都以 `no such table` 出错
+（不是拒绝，网关给不出类型化的拒绝；已派发的调用要到重启之后才能结算），校验同样出错而不锁定。

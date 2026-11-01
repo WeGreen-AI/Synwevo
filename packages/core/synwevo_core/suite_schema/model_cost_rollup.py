@@ -33,7 +33,8 @@ so nothing here can make a fact INSERT raise. Each derived table holds a SENTINE
 Rollback: older code ignores these tables; the triggers keep them current under it, so a later
 roll-forward finds a consistent rollup and replays nothing. The producer triggers carry a version
 (meta ``model_cost_rollup_triggers``): a start that finds another one recreates them and replays
-the facts once, inside the migration's BEGIN IMMEDIATE (``migrate``).
+the facts once, inside the migration's BEGIN IMMEDIATE (``migrate``, which tells the opening process
+what it replayed through ``Store.replays``; the verify command then says so, ``billing/cost_rollup``).
 """
 from __future__ import annotations
 
@@ -246,6 +247,16 @@ def fact_fault_id(key, scope) -> str:
         kind, raw = _typed_py(value)
         parts.append(f"{kind}:{raw.hex().upper()}")
     return f"fact:{parts[0]}@{parts[1]}/{parts[2]}/{parts[3]}"
+
+
+_FAULT_KEY = re.compile(r"\Afact:(text|blob|null|integer|real):([0-9A-F]*)@")
+
+
+def fact_fault_key(fault_id: str) -> tuple[str, bytes] | None:
+    """The broken fact's key, as (SQLite type, bytes), from an id ``fault_id_sql`` or ``fact_fault_id``
+    made; None for any other id (a verifier's or a read path's latch)."""
+    found = _FAULT_KEY.match(fault_id)
+    return (found[1], bytes.fromhex(found[2])) if found else None
 
 
 _TYPE_PREFIX = re.compile(r"(?:text|blob|null|integer|real)(?::|$)")
@@ -463,20 +474,29 @@ def triggers_current(c) -> bool:
     return row is not None and row[0] == TRIGGERS_VERSION
 
 
-def migrate(c) -> None:
-    """Backfill once, inside apply()'s BEGIN IMMEDIATE; a routine start issues no fact query.
+def migrate(c) -> dict | None:
+    """Backfill once, inside apply()'s BEGIN IMMEDIATE; a routine start issues no fact query (None).
 
     A database whose versioned triggers carry another TRIGGERS_VERSION gets them recreated (DROP and
     CREATE in this same transaction, so no fact is written between) and replays once, since its rows
-    were derived by other SQL. Store open never refuses: a malformed or orphan admission becomes a
-    per-scope fault. The replay holds the writer lock for its whole length (about 48 s per million
-    admissions measured locally); other processes opening the Store meanwhile wait for it (Store's
-    migration wait), a running writer waits its busy_timeout. A deploy gives the first role only its
-    health budget (about two minutes) for it: a store past about two million admissions is migrated
-    with the services stopped before such a release (docs/billing-ledger.md, "Backfill")."""
+    were derived by other SQL; a missing marker or a lost sentinel (a dropped or emptied derived table)
+    replays with the triggers it has. Returns {"facts", "faults", "missing": which of "triggers",
+    "marker", "sentinel" were not current}, the shape ``payer_spend_rollup.migrate`` returns, kept by
+    the Store as ``Store.replays["model_cost_rollup"]`` so a command that opens the Store and then
+    verifies (``billing/cost_rollup.main``) can say that its own open replayed every provider account.
+    Store open never refuses: a malformed or orphan admission becomes a per-scope fault. The replay
+    holds the writer lock for its whole length (about 48 s per million admissions measured locally);
+    other processes opening the Store meanwhile wait for it (Store's migration wait), a running writer
+    waits its busy_timeout. A deploy gives the first role only its health budget (about two minutes)
+    for it: a store past about two million admissions is migrated with the services stopped before
+    such a release (docs/billing-ledger.md, "Backfill")."""
     current = triggers_current(c)
-    if current and c.execute("SELECT 1 FROM meta WHERE key=?", (MARKER,)).fetchone() and sentinels_present(c):
-        return
+    missing = [name for name, present in (
+        ("triggers", current),
+        ("marker", c.execute("SELECT 1 FROM meta WHERE key=?", (MARKER,)).fetchone() is not None),
+        ("sentinel", sentinels_present(c))) if not present]
+    if not missing:
+        return None
     if not current:
         for name, sql in VERSIONED.items():
             c.execute(f"DROP TRIGGER IF EXISTS {name}")
@@ -492,3 +512,4 @@ def migrate(c) -> None:
                json.dumps({"faults": result["faults"][:20], "fault_count": len(result["faults"])}), seq, now))
     c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)", (MARKER, "1"))
     c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)", (TRIGGERS_KEY, TRIGGERS_VERSION))
+    return {"facts": result["facts"], "faults": result["faults"], "missing": missing}

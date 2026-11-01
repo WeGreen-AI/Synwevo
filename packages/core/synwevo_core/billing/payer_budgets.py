@@ -3,11 +3,14 @@
 Current UTC periods count settled charges by original reservation time plus every still-held
 call, including earlier periods. A new namespace, price or policy version cannot reset spend.
 All money admission runs under the ledger writer transaction; views create no money facts.
+
+Settled spend is read from per-wallet day rows that triggers keep exact (billing/spend_rollup.py,
+cost-capacity phase 2): no read grows with a person's settled volume, and the only row bound left
+is CAPACITY still-reserved calls (``payer_budget_capacity``).
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
+from . import spend_rollup
 from .models import BillingError, identifier, integer
 
 
@@ -37,34 +40,16 @@ class PayerBudgets:
             "AND unit=? ORDER BY revision DESC LIMIT 1", (self.environment, user_id, code)).fetchone()
 
     def _windows(self, at):
-        today = datetime.fromtimestamp(at, timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        week = today - timedelta(days=today.weekday())
-        month = today.replace(day=1)
-        following = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
-        return {name: (int(start.timestamp()), int(end.timestamp())) for name, start, end in (
-            ("daily", today, today + timedelta(days=1)), ("weekly", week, week + timedelta(days=7)),
-            ("monthly", month, following))}
+        return spend_rollup.periods(at)
 
     def _exposure(self, t, account, windows):
         if account is None:
             return {name: {"start": start, "end": end, "spent": 0, "held": 0}
                     for name, (start, end) in windows.items()}
-        # Disjoint indexed ranges, bounded before the settlement join. No all-history scan.
-        rows = t.execute("WITH candidates AS MATERIALIZED ("
-            "SELECT id,status,hold_units,created_at FROM billing_calls WHERE account_id=? AND status='reserved' "
-            "UNION ALL SELECT id,status,hold_units,created_at FROM billing_calls "
-            "WHERE account_id=? AND status='settled' AND created_at>=? LIMIT ?) "
-            "SELECT c.*,j.amount FROM candidates c LEFT JOIN billing_settlements s ON s.call_key=c.id "
-            "LEFT JOIN billing_journal j ON j.id=s.journal_id",
-            (account, account, min(start for start, _ in windows.values()), self.CAPACITY + 1)).fetchall()
-        if len(rows) > self.CAPACITY:
-            raise BillingError("payer_budget_capacity")
-        if any(row["status"] == "settled" and row["amount"] is None for row in rows):
-            raise BillingError("payer_budget_inconsistent")
-        held = sum(row["hold_units"] for row in rows if row["status"] == "reserved")
-        return {name: {"start": start, "end": end, "held": held,
-                "spent": sum(row["amount"] for row in rows if row["status"] == "settled" and row["created_at"] >= start)}
-                for name, (start, end) in windows.items()}
+        # The wallet's day rows (at most 31 in the periods), its holds (at most CAPACITY) and one fault
+        # probe: in a fixed order, refusing payer_budget_inconsistent / _capacity (billing/spend_rollup.py).
+        return spend_rollup.exposure(t, environment=self.environment, account=account, windows=windows,
+                                     capacity=self.CAPACITY)
 
     def _view(self, t, user_id, code):
         unit = self._unit(t, code)

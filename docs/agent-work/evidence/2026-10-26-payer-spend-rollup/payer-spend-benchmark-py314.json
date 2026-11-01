@@ -1,0 +1,245 @@
+{
+  "python": "3.14.5",
+  "sqlite": "3.54.0",
+  "machine": "Darwin-27.0.0-arm64",
+  "scope": "isolated temporary Store, synthetic fixture tariffs and wallets; no network, keys or data/",
+  "runs": [],
+  "targets_met": {},
+  "wallet_runs": [
+    {
+      "size": 200000,
+      "build_s": 6.63,
+      "counts": {
+        "settled": 200000,
+        "held": 300,
+        "day_rows": 20
+      },
+      "check_ms": {
+        "n": 200,
+        "p50": 0.057,
+        "p95": 0.067,
+        "max": 0.213
+      },
+      "query_plans": [
+        {
+          "sql": "SELECT owner,unit FROM billing_accounts WHERE id='75aeb0706cd443e7b60810f9db01e749' AND environment='test' AND kind='wallet'",
+          "plan": [
+            "SEARCH billing_accounts USING INDEX sqlite_autoindex_billing_accounts_1 (id=?)"
+          ]
+        },
+        {
+          "sql": "SELECT * FROM billing_payer_budget_versions WHERE environment='test' AND user_id='u_a746fcebb1c1' AND unit='BENCH-CREDIT' ORDER BY revision DESC LIMIT 1",
+          "plan": [
+            "SEARCH billing_payer_budget_versions USING INDEX sqlite_autoindex_billing_payer_budget_versions_1 (environment=? AND user_id=? AND unit=?)"
+          ]
+        },
+        {
+          "sql": "SELECT 1 FROM model_cost_rollup_faults INDEXED BY model_cost_rollup_faults_open WHERE environment='test' AND provider='' AND account_ref='75aeb0706cd443e7b60810f9db01e749' AND resolved_at IS NULL LIMIT 1",
+          "plan": [
+            "SEARCH model_cost_rollup_faults USING INDEX model_cost_rollup_faults_open (environment=? AND provider=? AND account_ref=?)"
+          ]
+        },
+        {
+          "sql": "SELECT start,n_set,n_paid,amt_hi,amt_lo FROM payer_spend_days WHERE account_id='75aeb0706cd443e7b60810f9db01e749' AND start>=2030054400",
+          "plan": [
+            "SEARCH payer_spend_days USING PRIMARY KEY (account_id=? AND start>?)"
+          ]
+        },
+        {
+          "sql": "SELECT COUNT(*) AS n,SUM(h/100000000000000) AS hi,SUM(h%100000000000000) AS lo FROM (SELECT hold_units AS h FROM billing_calls INDEXED BY billing_calls_holds WHERE account_id='75aeb0706cd443e7b60810f9db01e749' AND status='reserved' LIMIT 10",
+          "plan": [
+            "CO-ROUTINE (subquery-1)",
+            "SEARCH billing_calls USING INDEX billing_calls_holds (account_id=? AND status=?)",
+            "SCAN (subquery-1)"
+          ]
+        }
+      ],
+      "exposure": {
+        "revision": 1,
+        "monthly": {
+          "start": "2030054400",
+          "end": "2032732800",
+          "held": "143643",
+          "spent": "99964070"
+        }
+      },
+      "verify_daily": {
+        "s": 1.839,
+        "ok": true,
+        "facts": 0,
+        "wallet_facts": 200000,
+        "rss_before_mb": 107.5,
+        "peak_rss_mb": 111.3
+      },
+      "verify_recent_2d": {
+        "s": 0.128,
+        "ok": true,
+        "facts": 0,
+        "wallet_facts": 25625,
+        "rss_before_mb": 107.6,
+        "peak_rss_mb": 111.3
+      },
+      "verify_all": {
+        "s": 1.651,
+        "ok": true,
+        "wallet_facts": 200000
+      },
+      "backfill_s": 1.058,
+      "backfill_facts": 200000,
+      "triggers_live": {
+        "pairs": 2000,
+        "per_transaction": true,
+        "synchronous": "FULL",
+        "with": {
+          "stmt": {
+            "p50": 30.8,
+            "p95": 39.8
+          },
+          "locked": {
+            "p50": 114.5,
+            "p95": 172.8
+          }
+        },
+        "without": {
+          "stmt": {
+            "p50": 19.3,
+            "p95": 25.8
+          },
+          "locked": {
+            "p50": 96.7,
+            "p95": 154.2
+          }
+        },
+        "extra_stmt_us_p50": 11.5,
+        "extra_stmt_us_p95": 14.0,
+        "extra_locked_us_p50": 17.8,
+        "extra_locked_us_p95": 18.6
+      },
+      "db_mb": 403.5
+    },
+    {
+      "size": 1000000,
+      "build_s": 48.65,
+      "counts": {
+        "settled": 1000000,
+        "held": 300,
+        "day_rows": 20
+      },
+      "check_ms": {
+        "n": 200,
+        "p50": 0.059,
+        "p95": 0.061,
+        "max": 0.082
+      },
+      "query_plans": [
+        {
+          "sql": "SELECT owner,unit FROM billing_accounts WHERE id='52aeda6b893648dbb002b89cf2769ae0' AND environment='test' AND kind='wallet'",
+          "plan": [
+            "SEARCH billing_accounts USING INDEX sqlite_autoindex_billing_accounts_1 (id=?)"
+          ]
+        },
+        {
+          "sql": "SELECT * FROM billing_payer_budget_versions WHERE environment='test' AND user_id='u_998d5f46bb08' AND unit='BENCH-CREDIT' ORDER BY revision DESC LIMIT 1",
+          "plan": [
+            "SEARCH billing_payer_budget_versions USING INDEX sqlite_autoindex_billing_payer_budget_versions_1 (environment=? AND user_id=? AND unit=?)"
+          ]
+        },
+        {
+          "sql": "SELECT 1 FROM model_cost_rollup_faults INDEXED BY model_cost_rollup_faults_open WHERE environment='test' AND provider='' AND account_ref='52aeda6b893648dbb002b89cf2769ae0' AND resolved_at IS NULL LIMIT 1",
+          "plan": [
+            "SEARCH model_cost_rollup_faults USING INDEX model_cost_rollup_faults_open (environment=? AND provider=? AND account_ref=?)"
+          ]
+        },
+        {
+          "sql": "SELECT start,n_set,n_paid,amt_hi,amt_lo FROM payer_spend_days WHERE account_id='52aeda6b893648dbb002b89cf2769ae0' AND start>=2030054400",
+          "plan": [
+            "SEARCH payer_spend_days USING PRIMARY KEY (account_id=? AND start>?)"
+          ]
+        },
+        {
+          "sql": "SELECT COUNT(*) AS n,SUM(h/100000000000000) AS hi,SUM(h%100000000000000) AS lo FROM (SELECT hold_units AS h FROM billing_calls INDEXED BY billing_calls_holds WHERE account_id='52aeda6b893648dbb002b89cf2769ae0' AND status='reserved' LIMIT 10",
+          "plan": [
+            "CO-ROUTINE (subquery-1)",
+            "SEARCH billing_calls USING INDEX billing_calls_holds (account_id=? AND status=?)",
+            "SCAN (subquery-1)"
+          ]
+        }
+      ],
+      "exposure": {
+        "revision": 1,
+        "monthly": {
+          "start": "2030054400",
+          "end": "2032732800",
+          "held": "151783",
+          "spent": "500134317"
+        }
+      },
+      "verify_daily": {
+        "s": 11.229,
+        "ok": true,
+        "facts": 0,
+        "wallet_facts": 1000000,
+        "rss_before_mb": 108.5,
+        "peak_rss_mb": 112.2
+      },
+      "verify_recent_2d": {
+        "s": 0.749,
+        "ok": true,
+        "facts": 0,
+        "wallet_facts": 128452,
+        "rss_before_mb": 107.5,
+        "peak_rss_mb": 111.2
+      },
+      "verify_all": {
+        "s": 10.689,
+        "ok": true,
+        "wallet_facts": 1000000
+      },
+      "backfill_s": 6.82,
+      "backfill_facts": 1000000,
+      "triggers_live": {
+        "pairs": 2000,
+        "per_transaction": true,
+        "synchronous": "FULL",
+        "with": {
+          "stmt": {
+            "p50": 31.6,
+            "p95": 42.3
+          },
+          "locked": {
+            "p50": 119.5,
+            "p95": 250.4
+          }
+        },
+        "without": {
+          "stmt": {
+            "p50": 20.0,
+            "p95": 27.5
+          },
+          "locked": {
+            "p50": 102.8,
+            "p95": 184.4
+          }
+        },
+        "extra_stmt_us_p50": 11.6,
+        "extra_stmt_us_p95": 14.8,
+        "extra_locked_us_p50": 16.7,
+        "extra_locked_us_p95": 66.0
+      },
+      "db_mb": 1875.5
+    }
+  ],
+  "wallet_targets_met": {
+    "200000": {
+      "check_p95_le_1ms": true,
+      "triggers_le_150us_per_settlement": true,
+      "verify_daily_ok": true
+    },
+    "1000000": {
+      "check_p95_le_1ms": true,
+      "triggers_le_150us_per_settlement": true,
+      "verify_daily_ok": true,
+      "check_within_1_5x_of_200k": true
+    }
+  }
+}

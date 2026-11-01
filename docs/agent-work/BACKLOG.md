@@ -312,10 +312,13 @@
 
 | ID | 内容 | 优先级 | 状态 |
 |---|---|---|---|
-| cost-capacity | `billing/admission.py`、`risk.py` 与 `payer_budgets.py` 的窗口统计在写锁内逐行读取求和，并用固定行数上限（`_MAX_RECORDS`）约束写锁时长；行数上限会先于金额预算成为约束。改为按窗口的增量聚合；付费 Agent 公开放量（`allowlist_only=false`）以此项完成为前提。（2026-10-25 改写为设计描述，不在公开记录里写触发方式。） | P1 | 第一阶段（成本准入与速率刹车）已实现于 `claude/auto-run-server`，经评审后以 PR 合入 dev（决定 D18）：改读触发器维护的精确汇总，不再随月度量增长；等价性属性测试已加入；运维“接受”路径经三轮评审后删除，损坏的成本事实失败即关闭、只能从问题写入之前的备份恢复。第二阶段（`payer_budgets.py`）为下一次变更 |
+| cost-capacity | `billing/admission.py`、`risk.py` 与 `payer_budgets.py` 的窗口统计在写锁内逐行读取求和，并用固定行数上限（`_MAX_RECORDS`）约束写锁时长；行数上限会先于金额预算成为约束。改为按窗口的增量聚合；付费 Agent 公开放量（`allowlist_only=false`）以此项完成为前提。（2026-10-25 改写为设计描述，不在公开记录里写触发方式。） | P1 | 第一阶段（成本准入与速率刹车）已实现于 `claude/auto-run-server`，经评审后以 PR 合入 dev（决定 D18）：改读触发器维护的精确汇总，不再随月度量增长；等价性属性测试已加入；运维“接受”路径经三轮评审后删除，损坏的成本事实失败即关闭、只能从问题写入之前的备份恢复。第二阶段（`payer_budgets.py`，按钱包日行精确汇总）经独立预言机、三视角审查与四轮修正核验后以 PR #24 合入 dev，2026-11-01 02:50Z 上线 ae16da28 并只读核验。两阶段均已上线；付费 Agent 公开放量的前提条件已满足，是否关闭放行名单模式待所有者决定 |
 | authz-6 | 模型密钥保管与定价共用 `platform.config.manage`；要求 4.6 需分权（如 `platform.models.credential` / `platform.models.pricing`）。目前只有 super_admin 持有，暂无暴露 | P3 | 未开始 |
 | money-3 / authz-3 | 组织给成员的按空间额度未强制执行（本轮只删除了相关措辞）；需所有者决定：把运行归属到空间，或取消按空间额度 | 待所有者决定 | 阻塞 |
 | CR-012 遗留 | 卡住的 `usage_pending` / `dispatch_unknown` 尝试没有管理视图；报价没有保留期限（行不可删除） | P3 | 未开始 |
 | 金额显示精度 | 部分界面显示未取整的单位金额（如 ¥5.11182） | P3 | 未开始 |
 | 上游 429 自动重试；工具等待与 3600 秒运行时限（D-11） | 见 D17 设计 §6 | P4 | 未开始 |
 | sdk-cli-signals | Python SDK CLI `--cancel-on-interrupt`：被 SIGTERM 结束时不发取消（TS CLI 会）；作为脚本里的后台作业继承被忽略的 SIGINT 时不响应 Ctrl-C；取消请求本身慢或服务端不可达时，第一次 Ctrl-C 后阻塞在 cancel_job 且无输出（第二次 Ctrl-C 约 1 秒退出）。测试侧同一现象已由 8615036d 修正（本机镜像以 `&` 后台启动时 SIGINT 被忽略，CI 不受影响） | P4 | 未开始 |
+| dependabot-pip | Dependabot 的 pip 版本更新作业每周失败，从未开出过 Python 依赖 PR（2026-10-29 运行 40794860449："Could not open constraint file infra/server/requirements.lock"）：Dependabot 只抓取 `-r`/`-c` 引用中以 `.txt`/`.in` 结尾的文件，`requirements-dev.txt` 与 `infra/server/requirements.txt` 用 `-c` 约束的锁文件从不在它的检出里。可选：改名锁文件（同步改 requirements 文件、`infra/Dockerfile`、源码提供清单、守卫、三个测试与依赖文档），或撤下 pip 生态只保留安全告警 | P4 | 待所有者决定 |
+| cost-rollup-provider-replay | 成本汇总第一阶段（提供方账户族，已上线 d6d4a0b4）与第二阶段修正前形状相同：`model_cost_rollup.replay` 按作用域重放时也写回四个哨兵，`rebuild` 没有哨兵丢失拒绝；暴露面比钱包族小（读侧不因哨兵丢失拒绝；核对会逐作用域比较并锁定），第二阶段第四轮修正后 CLI 会报告该族打开时的重放。待决定是否把拒绝语义对齐到第二阶段（哨兵丢失时按作用域重建拒绝、只有启动重放写哨兵） | P3 | 待决定 |
+| verify-duration | 流水线 verify 作业时长逼近 120 分钟上限：2026-11-01 运行 41267068260 用了 1h49m（第二阶段新增约 1,500 项测试；当时托管运行器同时跑三个 PR 的 verify），此前 1h14m–1h37m。被上限取消的运行不会部署。可选：提高 `timeout-minutes`、把运行时镜像内的 Python 套件拆成并行作业、或在镜像内并行运行三个套件（注意 3g 内存上限，见 verify-container-memory） | P2 | 未开始 |

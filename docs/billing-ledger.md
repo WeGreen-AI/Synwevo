@@ -268,7 +268,9 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   `cost_rollup_derived` unless a delta row exists, i.e. unless the write comes from an apply
   trigger. Hand-writing deltas or dropping triggers bypasses the gate; a scheduled verify finds
   what it left, but not necessarily the next hourly one. Every round reports a delta row at rest
-  or a missing sentinel even when no scope exists, and compares a scope's whole open set, its
+  or a missing sentinel even when no scope exists (the store-wide issues: audited as object `*` and
+  alerted with their own wording, `billing.cost.rollup_issues`, which names them and says which check found
+  them, once per distinct issue set per UTC day), and compares a scope's whole open set, its
   velocity rows from the horizon (all of them while the scope has no admission yet) and its day
   rows from a lower bound: the hourly round (`cost_rollup_verify_recent`) from the start of the
   UTC day two days back, without comparing the read path's counters with the uncapped oracle; the
@@ -284,7 +286,9 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   marker, the current trigger version and all four sentinels issues no fact query. A dropped or
   emptied derived table (sentinel gone), a missing marker or another trigger version (whose
   triggers it drops and recreates in the same transaction) replays all facts once, inside the
-  migration's BEGIN IMMEDIATE (recorded as a global rebuild and a `backfill` audit row).
+  migration's BEGIN IMMEDIATE (recorded as a global rebuild and a `backfill` audit row, and reported to
+  the opening process as `Store.replays["model_cost_rollup"]`: what was missing, the facts replayed and
+  the broken ones, which the verify command turns into `cost_rollup_replayed_on_open`, "Backfill" below).
 * **Backfill and the writer lock.** That replay holds the writer lock for its whole length:
   about 48 s per million admissions on the local benchmark machine, with the WAL growing by about
   320 MB per million (reused afterwards, not returned). It happens on the first start of a release
@@ -305,7 +309,14 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   failed deploy (its image `synwevo:<sha>` stays on the host), migrate with the services stopped
   in a one-off container of the new image, then submit the same deploy again; its start finds the
   marker, version and sentinels and replays nothing. The command opens (and so migrates) the
-  Store, then verifies read-only; its exit status reports the verification, not the migration.
+  Store, then verifies read-only. When that open replayed either family (the provider accounts'
+  rollup: its marker, trigger version or one of the four sentinels missing; the wallets' day rows,
+  `payer_spend_days`: the first release that brings them, a new trigger version, a lost sentinel) the
+  command says so first, carries the store-wide issue (`cost_rollup_replayed_on_open`,
+  `spend_rollup_replayed_on_open`) and exits 1, because the rows it compared are the ones its open just
+  wrote: run it once more for the read-only verification, whose exit status then reports the
+  verification alone. A rebuild's flags are checked before the open, so a mistyped rebuild replays
+  nothing.
   Derived from receive.py, compose.yaml and the Dockerfile; not yet rehearsed on the host.
 
   ```bash
@@ -349,6 +360,93 @@ the one-way `billing_calls.status`. Everything below is derived and can always b
   delete less.
   A rebuild recreates every row a read can use exactly; it may differ from the live table only
   in rows the prune removes (so prune, rebuild, prune leaves the same rows as prune).
+
+#### Per-wallet spend (the personal limits; cost-capacity phase 2, D18)
+
+`PayerBudgets._exposure` reads exact per-wallet day rows instead of up to 10,000 calls
+(`suite_schema/payer_spend_rollup.py`, `billing/spend_rollup.py`; docs/platform/agent-run-budgets.md,
+"Personal spending limits"). Its semantics are unchanged: held is the hold of every reserved call of
+the wallet (any creation time, namespace or deadline), the same in every period; spent in a period is
+the sum of the journal amounts reached through `billing_settlements.journal_id` from the wallet's
+settled calls created at or after the period's start (no upper bound, any journal kind).
+
+* **Facts.** `billing_calls` (`account_id`, `hold_units`, `created_at`, `deadline` immutable;
+  `status` leaves `reserved` once; no delete or replace; `created_at` has no type CHECK),
+  `billing_settlements` and `billing_journal` (insert-only; `call_key` the settlement's primary key,
+  `journal_id` UNIQUE, `amount` an integer >= 0). The product writes journal, settlement, then
+  `status='settled'` in one transaction; a recovery fixture or an import may insert a call already
+  settled, or (foreign keys off) a settlement before its journal entry.
+* **Table.** `payer_spend_days(account_id, start, n_set, n_paid, amt_hi, amt_lo)`, WITHOUT ROWID,
+  primary key `(account_id, start)`: per wallet and UTC day of the call's `created_at`, the settled
+  calls, how many have their settlement and journal entry, and the exact sum of those amounts in two
+  int64 limbs (base 10^15). Derived: no CHECK, no NOT NULL, the cost rollup's gate refuses any other
+  write (`cost_rollup_derived`).
+* **Producers.** Whichever arrival completes a call books it, so each call counts once and
+  `n_paid <= n_set`: a call becoming settled (AFTER UPDATE OF status, `OLD.status IS NOT 'settled'`)
+  or inserted settled books `n_set` 1, plus `n_paid` 1 and the amount when its settlement and journal
+  exist; a settlement of a settled call whose journal exists books `n_paid` 1 and the amount; a journal
+  entry that a settlement of a settled call names does the same (one UNIQUE probe per journal insert).
+  One template (`produce_spend`) serves the four triggers and the replay.
+* **Mapping onto the cost rollup's deltas** (no column added: a trigger naming a missing NEW column
+  would make every delta INSERT, and so every fact write, raise): `kind='spend'`,
+  `attempt_key`/`call_key` = call id, `environment` = the wallet account's (or ''), `provider` = '',
+  `account_ref` = wallet id, `admitted_at` = `created_at`, `reserved` = n_set, `xunit` = n_paid,
+  `c_hi`/`c_lo` = amount in limbs. A settled call whose `created_at` is not a non-negative integer is a
+  `fault` delta (`malformed_settled_call`) that the cost rollup's fault mapping latches unchanged, with
+  id `fact_fault_id(call id, (environment, '', wallet id))`. The wallet scope `(environment, '',
+  wallet id)` never meets a provider scope: `identifier()` refuses '' as a provider.
+* **Read.** One fault probe, the table's sentinel (lost: `payer_budget_inconsistent`, not latched;
+  it goes only with a write past the gate or with the table, and the next start replays every wallet's
+  rows, so nothing is left to rebuild; `rebuild_wallet` refuses meanwhile, `cost_rollup_rebuild_refused`
+  with reason `spend_sentinel_missing`, and a one-wallet replay never writes the sentinel, so it never
+  stands over incomplete rows, which every read would count as no spend), the day rows from the earliest period start (at most 31, plus
+  any future days; a broken structure refuses as `SpendRollupInconsistent`, code
+  `payer_budget_inconsistent`, which the gateway hands to `after_refusal` whether the reservation or the
+  dispatch read it, and which latches the wallet), the reserved holds through
+  `billing_calls_holds` (more than 10,000 refuse `payer_budget_capacity`), then an unpaid settled call
+  in the periods (`payer_budget_inconsistent`, not latched: it clears when the fact arrives). It
+  never reads the settlements, the journal or `billing_calls_payer_period` (kept for the verifier and
+  the uncapped `reference_exposure`).
+* **Sentinel, marker, backfill.** The sentinel `('', 0, 0, 0, 0, 0)`, meta `payer_spend_rollup_v1` and
+  `payer_spend_rollup_triggers` (version "1"). A start that finds all three issues no fact query; a
+  dropped table, a lost sentinel, a missing marker or another trigger version recreates the versioned
+  triggers and replays every settled call once in rowid order inside the migration's BEGIN IMMEDIATE,
+  recorded as a rebuild and a `backfill` audit in scope `('', '@wallets', '')`. Wallet scopes read
+  their newest global rebuild there (provider scopes at `('', '', '')`), so neither family's backfill
+  supersedes the other's verify results. Store open never refuses: a malformed settled call becomes a
+  fault of its wallet. Until that start, every wallet's read refuses on the lost sentinel (above) and
+  the verifier reports it store-wide (`spend_sentinel_missing`: read once per run, audited each run as
+  object `*` and alerted as `billing.cost.rollup_issues`, once per distinct issue set per UTC day, worded
+  by the check that found it) and compares no wallet's
+  day rows or read while it is lost, whether the rows are still there or went with it (the table emptied
+  past the gate, one wallet's rows deleted with the sentinel): the replay rewrites every wallet's rows,
+  so no wallet is latched and none needs a rebuild after the restart; a malformed settled call is still
+  named (its fault is the triggers'). Only that full replay writes the sentinel back: a one-wallet
+  replay (`rebuild_wallet`) never does and refuses while it is lost, since a sentinel brought back with
+  one wallet's rows alone would make every other wallet's read count nothing and the next start replay
+  nothing. The verify command's own open is such a start: it replays, says so
+  (`spend_rollup_replayed_on_open`, from `Store.replays`; the provider accounts' family the same way,
+  `cost_rollup_replayed_on_open`) and exits 1 rather than print 一致 over rows it just wrote
+  (docs/platform/model-risk.md §13, "钱包"); that issue set is alerted even on a day the scheduled round
+  already alerted the lost sentinel. A dropped table is different: its triggers still name it, so every reservation
+  and settlement raises until the services restart (docs/platform/model-risk.md §13). The replay
+  takes about 1 s per 200,000 settled calls on the local benchmark machine (about 7 s per million,
+  `docs/agent-work/evidence/2026-10-26-payer-spend-rollup/`).
+* **Verify, rebuild.** `CostRollup.check` adds wallet scopes (a loose index scan of the day rows' key
+  and of `billing_calls_payer_period`, one seek per wallet) to its report (`VerifyReport.wallets`):
+  each wallet's settled calls are streamed from the lower bound, its day rows recomputed and compared
+  both ways, malformed calls named (`fact_fault`, `fact_fault_missing`; in a bounded run also those
+  outside the streamed days, through the faults their writes latched and each re-read from its call: a
+  negative or REAL creation time sorts below every window), and outside the hourly run the read
+  compared with the uncapped `reference_exposure` (neither the rows nor the read while the table's
+  sentinel is lost, above: only the malformed calls are named then). Mismatches latch the wallet (audit
+  `billing.payer_spend.rollup_inconsistent`, alert with the wallet id only); `CostRollup.rebuild_wallet`
+  (`cost_rollup rebuild --wallet <id> --reason …`) has `rebuild`'s shape and refuses while the table's
+  sentinel is lost (above) or while a settled
+  call of the wallet is malformed (docs/platform/model-risk.md §13, "钱包"). One wallet's
+  daily verify streams its settled calls from the previous month's first day: about 1.7 s for 200,000
+  and 12 s for a million (the hourly two-day run 0.1-0.8 s), in a read snapshot with a flat ~107 MB process peak; the check
+  itself stays at 0.06 ms p95 at either size, and the triggers add about 12 µs to a settlement.
 
 **Backup, restore, rollback.** The SQLite backup API copies the facts and the rollup in one
 consistent snapshot, so a restored copy verifies as it was; the restore rehearsal

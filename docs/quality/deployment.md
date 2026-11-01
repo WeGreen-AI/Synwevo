@@ -1,6 +1,102 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-10-26 10:37 UTC — d6d4a0b4, licences, the AGPL source offer and the exact cost rollup
+## Current release · 2026-11-01 06:24 UTC — 383142a5, Dependabot updates (rolldown 1.2.15, react-router-dom 7.18.5; the Tiptap group at 04:35 UTC)
+
+**Running source: `383142a52aac417d576177933bdf07e359014155`** (origin/dev, the merge of PR #27). Pipeline run 41267068260
+(push to dev): verify 04:32→06:21 UTC, deploy 06:21→06:24 UTC through the restricted SSH command; receiver backup
+`/opt/synwevo/backups/20261101T062338Z`. Earlier the same day run 41267049090 deployed 1e533a24 (PR #25, the Tiptap group,
+11 updates) at 04:35 UTC with backup `20261101T043445Z` (verify 02:54→04:32). The three Dependabot merges were made within
+one minute; GitHub cancelled the queued run of the middle one (8386c65e, PR #26) as superseded, so its change deployed with
+383142a5.
+
+**What it ships over ae16da28:** dependency updates only — the Tiptap group (PR #25), rolldown 1.2.10→1.2.15 (PR #26, a
+dev dependency) and react-router-dom 7.18.4→7.18.5 (PR #27). Each passed the full verify on its own pull request
+(1h24m–1h37m) before the merge, and the merged trees again on their push runs.
+
+**Post-deploy checks (read-only):** 383142a5 at 06:30 UTC — `/readyz` 200 on synwevo.com, workplace, accounts, docwave and
+message; accounts, docs, portal and messages all on `synwevo:383142a5…` and healthy, gateway healthy; no traceback or error
+line in the first 10 minutes. 1e533a24 was checked the same way at 04:50 UTC (four roles on its image and healthy, backup
+present, no error line in 20 minutes).
+
+**Observation — verify duration:** this push run's verify took 1h49m (04:32→06:21), the longest so far (phase 2 added
+about 1,500 tests, and the hosted runners were shared with three pull-request verifies at the time); the job's limit is
+120 minutes. Recorded in BACKLOG (`verify-duration`) so the limit or the suite's layout is changed before a run is
+cancelled by it.
+
+## 2026-11-01 02:50 UTC — ae16da28 (historical; superseded above), cost-capacity phase 2 (exact per-wallet spend rollup)
+
+**Running source: `ae16da2814adc96de1b92531f8f0d7e6c374ae14`** (origin/dev, the merge of PR #24). Pipeline run 41260820005
+(push to dev): verify 01:22→02:47 UTC, deploy 02:47→02:50 UTC through the restricted SSH command; receiver backup
+`/opt/synwevo/backups/20261101T024941Z`.
+
+**What it ships over f92fe542 (decision D18 item 7):** the per-person spending limits (`PayerBudgets._exposure`) read
+exact, trigger-maintained per-wallet day rows (`payer_spend_days`) instead of summing up to 10,000 reserved and settled
+calls inside the writer lock; settled volume no longer refuses, and the only remaining bound is 10,000 open holds. The rows
+reuse the cost rollup's deltas, gate, faults, rebuilds and audits in the wallet scope, and the Store backfills them once on
+its first open. Fail-closed throughout: a malformed settled call latches its wallet (restored from a backup); a broken day
+row refuses and latches at reservation time; a lost sentinel refuses every wallet until the next start's full replay
+(never latched; `rebuild --wallet` refuses meanwhile, and a per-wallet replay never writes the sentinel); the CLI verify
+reports when its own open replayed either family and exits 1; store-wide alerts (`billing.cost.rollup_issues`) go once per
+distinct issue set per UTC day and say which check found them. Verified by an independent oracle (391 tests, no
+disagreement), the equivalence property test with wallet histories, three review lenses and four adversarial
+verification rounds on the fixes: no money defect on the product path, 17 ordinary refusal cases byte-for-byte unchanged.
+Benchmark: `check` p95 0.06–0.07 ms at 200k and 1M settled calls; triggers 11–12 µs per settlement.
+
+**Post-deploy checks (02:52 UTC, read-only):** `/readyz` 200 on synwevo.com, workplace, accounts, docwave and message;
+accounts, docs, portal and messages all on `synwevo:ae16da28…` and healthy, gateway healthy; no traceback or error line in
+the first 10 minutes. Rollup: `payer_spend_days` present with its sentinel; marker `payer_spend_rollup_v1` = 1 and trigger
+version 1; the eight phase-2 triggers installed (three gate triggers, the apply trigger, the four producers); one
+`system:backfill` rebuild row and one `backfill` audit with status ok in scope `('', '@wallets', '')` over the 38 settled
+calls (3 day rows, 1 wallet, 0 reserved); 0 open faults; the scheduled hourly and daily verifies before the deploy all ok;
+`PRAGMA quick_check` ok. The first hourly verify after the deploy adds the wallet scopes to its report.
+
+**Also today:** Dependabot opened #25 (the Tiptap group, 11 updates), #26 (rolldown 1.2.15) and #27 (react-router-dom
+7.18.5) at 01:13 UTC with the OLD configuration — Dependabot reads `.github/dependabot.yml` from the default branch
+`main`, which has not received #21 yet, so the react group and `increase-if-necessary` take effect only after the next
+dev→main sync. All three passed verify (1h24m–1h37m) and are merged next, each deploying through the pipeline.
+
+**For the owner:** unchanged — the Cloudflare cache rule for `/api/source-code`, the copyright holder, the DeepSeek route
+renewal, the card-only payment settings, counsel review of the 2026-10-25 terms, the open-source audit's account hardening,
+and the `dependabot-pip` and `cost-rollup-provider-replay` decisions in BACKLOG. With phase 2 live, the cost-capacity
+prerequisite for taking the paid Agent out of allow-list mode (`allowlist_only=false`) is met; that switch stays yours.
+
+## 2026-10-31 19:23 UTC — f92fe542 (historical; superseded above), Dependabot updates (the Tiptap group, Vite 8.3.5, the react grouping)
+
+**Running source: `f92fe5424550ad2a887c9c5886d9f53bb2a984e8`** (origin/dev, the merge of PR #21). Pipeline run 41226651904
+(push to dev): verify 17:52→19:21 UTC, deploy 19:21→19:23 UTC through the restricted SSH command; receiver backup
+`/opt/synwevo/backups/20261031T192312Z`. Earlier the same day the pipeline deployed 8b5e3464 (PR #18, run 41203552880,
+14:27 UTC, backup `20261031T142636Z`) and 7976ce8b (PR #19, run 41203569315, verify 14:24→15:45, deploy 15:45→15:47 UTC,
+backup `20261031T154716Z`): those two merges were made one minute apart, their runs completed in order, and the deploy
+guard admits a newer source after an older one, so both deployed.
+
+**What it ships over d6d4a0b4:** dependency updates only. PR #18: the Tiptap group, 3.31.3→3.32.0 for the editor
+packages and y-tiptap 3.0.10 (the group Dependabot was given on 2026-10-26, so the extensions move together). PR #19:
+Vite 8.3.0→8.3.5 with its rolldown, postcss, nanoid and source-map-js transitive updates. Each passed the full verify on
+its own pull request (1h20m and 1h35m). Dependabot's react-only bump (#20) was closed: react-dom requires the exact
+react version, so the identity web tests failed in 1m18s; PR #21 (merged 17:52 UTC, f92fe542) groups react with
+react-dom and their type packages and sets `versioning-strategy: increase-if-necessary`, so manifest ranges — including
+the shared packages' peer ranges, which the default strategy had rewritten from `>=19` to `^19.3.1` — are no longer
+changed by an update. Nothing in #21 reaches the application: its deploy rebuilt the image from the same code.
+
+**Post-deploy checks (read-only):** f92fe542 at 19:35 UTC — `/readyz` 200 on synwevo.com, workplace, accounts, docwave
+and message; accounts, docs, portal and messages all on `synwevo:f92fe542…` and healthy, gateway healthy; no traceback or
+error line in the last 15 minutes of any role. 7976ce8b was checked the same way at 17:55 UTC (four roles on its image and
+healthy, 0 error lines in 60 minutes) and 8b5e3464 at 14:30 UTC (four roles on its image and healthy, gateway recreated,
+backup present, no error line).
+
+**Known, not fixed — Dependabot's pip job:** the weekly Python version-update job fails before opening anything
+(run 40794860449, 2026-10-29: "Could not open constraint file infra/server/requirements.lock"). Dependabot fetches only
+the `-r`/`-c` files whose names end in `.txt` or `.in`, so the lock that `requirements-dev.txt` and
+`infra/server/requirements.txt` constrain with is never in its checkout, and no Python dependency has ever received an
+update pull request. Renaming the lock touches the requirements files, `infra/Dockerfile`, the source-offer manifest,
+the guards, three tests and the dependency docs; it is recorded in BACKLOG (`dependabot-pip`) for the owner's decision
+rather than done unasked.
+
+**For the owner:** unchanged from the 2026-10-26 record below — the Cloudflare cache rule for `/api/source-code`, the
+copyright holder, the DeepSeek route renewal, the card-only payment settings, counsel review of the 2026-10-25 terms, and
+the open-source audit's account hardening.
+
+## 2026-10-26 10:37 UTC — d6d4a0b4 (historical; superseded above), licences, the AGPL source offer and the exact cost rollup
 
 **Running source: `d6d4a0b498c5051e65b72f942593214f36738b8b`** (origin/dev). Pipeline run 40298661682 (push to dev):
 verify 09:20→10:33 UTC, deploy 10:33→10:37 UTC through the restricted SSH command; receiver backup

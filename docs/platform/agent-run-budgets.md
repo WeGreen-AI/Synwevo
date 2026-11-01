@@ -428,12 +428,50 @@ The get operation takes `{}` and returns `environment`, `timezone: "UTC"`, and `
 100 published retail units). Each item contains `unit`, current `revision`, `configured`, `enabled`,
 three decimal-integer-string budgets, `usage_state`, `periods`, and the latest 20 immutable policy
 revisions. Available period values contain UTC `start`/exclusive `end`, and integer-string `spent`,
-`held`, `remaining`; remaining is floored at zero and is not wallet balance. Bounded indexed reads
-consider at most 10,000 relevant calls (**phase 2**, next change: per-wallet day rows fed by a
-trigger when a call settles, with the cost rollup's gate and faults, so this limit stops growing
-with a heavy person's month; until then it applies as written). Overflow or missing settlement evidence returns
-`usage_state: "capacity"|"inconsistent"` with `periods: null`, never invented zero usage, and refuses
-new calls. Configuration remains editable so the person can still disable their limits.
+`held`, `remaining`; remaining is floored at zero and is not wallet balance.
+
+Settled spend is read from exact **per-wallet day rows** (cost-capacity phase 2, decision D18;
+`billing/spend_rollup.py`, `suite_schema/payer_spend_rollup.py`; docs/billing-ledger.md, "Per-wallet
+spend"), not from the call history. SQL triggers keep, inside the writer's own transaction, per
+wallet and UTC day of the call's creation time, the settled calls, how many of them have their
+settlement and journal entry, and the exact sum of those journal amounts; whichever of the three
+facts arrives last books the call, so each call counts once in any order. A check reads one fault
+probe, at most 31 day rows (plus any future days) and the wallet's still-reserved holds through
+their index; nothing grows with the person's settled volume. The only row bound left is more than
+10,000 still-reserved calls of the wallet (`usage_state: "capacity"`, refusing
+`payer_budget_capacity`); holds end at settlement, release or a deadline at most a day away. A
+settled call in the periods without its settlement or journal entry (cleared when the fact
+arrives), the day table's lost sentinel (cleared only by the next start, which replays every wallet's
+rows; a rebuild of one wallet refuses meanwhile), a day row with a broken structure, or an open fault of the wallet returns
+`usage_state: "inconsistent"` and refuses `payer_budget_inconsistent`; with both, `periods` is
+`null`, never invented zero usage, and new calls are refused. Configuration remains editable so
+the person can still disable their limits.
+
+The day rows share the cost rollup's machinery. They are derived (a direct write refuses
+`cost_rollup_derived`) and verified with it: hourly over the last two days, daily from the previous
+month's first day (also comparing the read with the uncapped reference), in the restore rehearsal
+over every day. A mismatch, a latched read (a broken day row found by a reservation or a dispatch; the
+gateway hands either refusal to `after_refusal` once its transaction rolled back) or a settled call
+whose creation time is not a non-negative integer (only a write outside the product leaves one;
+the earlier read raised on a text time, counted a fractional one and ignored a negative one; the
+bounded hourly and daily runs name it too, through the fault its write latched, whatever its time)
+opens a fault of that wallet only (scope `(environment, '', wallet id)`): its paid calls refuse until an
+operator runs `python -m synwevo_core.billing.cost_rollup rebuild --wallet <id> --reason …`
+(docs/platform/model-risk.md §13), which replays its settled calls, verifies them and resolves its
+faults in one transaction, or refuses and changes nothing while a settled call of it is broken (that
+wallet stays refused until the database is restored from a backup taken before that write). The
+administrators are told (`billing.payer_spend.rollup_inconsistent`, the wallet id only); the rebuild
+is audited (`billing.payer_spend.rollup_rebuilt`). When several refusals apply, the check order
+decides (fault, day rows, holds, unpaid). While the day table's sentinel is lost, the verifier reports
+that store-wide only (`spend_sentinel_missing`) and compares no wallet's day rows, whether they went
+with it or not, since the next start replays them all: no wallet is latched and none needs a rebuild
+after the restart; a malformed settled call is still named (docs/billing-ledger.md "Per-wallet spend").
+`rebuild --wallet` refuses while the sentinel is lost (`cost_rollup_rebuild_refused`, reason
+`spend_sentinel_missing`): a one-wallet replay never writes the sentinel back, since a sentinel over
+incomplete rows would make every other wallet's read count nothing. The verify command's own open
+replays like a start and says so (`spend_rollup_replayed_on_open`, exit 1); the store-wide issues are
+alerted with their own wording (`billing.cost.rollup_issues`: which check found them, once per distinct
+issue set per UTC day).
 
 The set operation requires `unit_code`, `expected_revision`, explicit `enabled`, and
 `daily_budget`, `weekly_budget`, `monthly_budget` as nonnegative int64 decimal strings.

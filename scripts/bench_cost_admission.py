@@ -31,6 +31,18 @@ settlement <= 1 ms extra; backfill and daily verify <= 15 s.
 
 A month-end daily verify reads two months of facts (at this density about 3x the 19.5-day history
 here): its time grows linearly with the facts it reads; its memory does not (it streams).
+
+    python scripts/bench_cost_admission.py --sizes '' --wallet-sizes 200000,1000000   # the personal limits only
+
+The personal limits (cost-capacity phase 2, billing/spend_rollup.py), per size N in ``--wallet-sizes``: ONE
+wallet with N settled calls between MONTH and NOW, written in the product's order (journal entry,
+settlement, then the call's status) with plain bulk SQL, at random amounts, plus 300 still-reserved holds.
+Measured: ``PayerBudgets.check`` inside BEGIN IMMEDIATE (p50/p95/max) with the EXPLAIN QUERY PLAN of its
+statements, the trigger cost per settlement on the live write path (``triggers_live``: one settlement's
+journal, settlement and status writes per FULL transaction, A/B against a copy without the spend
+triggers), the backfill (replay of every settled call) and the verifier as the risk monitor runs it.
+Targets (phase-2 addendum §9): check p95 <= 1 ms and the 1M run within 1.5x of 200k; triggers <= 150 us
+per settlement; backfill and verify times recorded.
 """
 from __future__ import annotations
 
@@ -425,6 +437,252 @@ class Bench:
                 "extra_ms_p50": round(with_settle["p50"] - without_settle["p50"], 3)}
 
 
+class WalletBench:
+    """FIXTURE world of the personal-limits benchmark: one funded wallet with enabled limits, ``size`` settled
+    calls this month and ``holds`` reserved ones (see the module docstring)."""
+
+    SPEND_TRIGGERS = ("payer_spend_calls_settled", "payer_spend_calls_inserted", "payer_spend_settlements",
+                      "payer_spend_journal")
+
+    def __init__(self, work: Path, size: int, seed: int, holds: int = 300):
+        from dataclasses import replace
+
+        from synwevo_core.billing import ChargeContext, Ledger, PaymentReceipt, PriceSnapshot, Rate, Unit, Usage, UsageEvidence
+        from synwevo_core.billing.payer_budgets import PayerBudgets
+        from synwevo_core.identity import Identity
+        from synwevo_core.store import Store
+
+        self.mods = dict(Usage=Usage, UsageEvidence=UsageEvidence)
+        self.size, self.holds, self.rng, self.work = size, holds, random.Random(seed), work
+        self.store = Store(work)
+        self.ticks = [MONTH]
+        self.unit = Unit("BENCH-CREDIT", 6)
+        self.ledger = Ledger(self.store, environment="test", namespace="bench-wallet", authorize=lambda t, c, a: True,
+                             verify_payment=lambda t, r: True, clock=lambda: self.ticks[0], max_hold_seconds=DAY)
+        sale = PriceSnapshot("bench-sale", "sale", self.unit, "bench-provider", "bench-model", Rate(1), Rate(1),
+                             Rate(2), "bench-terms", MONTH - 2 * DAY, per_tokens=1)
+        self.ledger.publish_price(sale)
+        self.ledger.publish_price(replace(sale, price_id="bench-cost", purpose="cost", unit=Unit("BENCH-COST", 8)))
+        self.user = Identity(self.store).create_user("bench-wallet@example.test", None, status="active",
+                                                     with_personal_workspace=False)["id"]
+        self.ledger.create_payment_order(order_id="bench-order", payer_user_id=self.user, provider="bench-payments",
+                                         merchant_id="bench-merchant", amount_minor=100, currency="XTS",
+                                         unit=self.unit, credit_units=10**15, exchange_version="bench-exchange")
+        self.ledger.credit_verified_payment(PaymentReceipt("test", "bench-payments", "bench-merchant", "bench-payment",
+                                                           "bench-event", "bench-order", 100, "XTS", "bench-inbox",
+                                                           "b" * 64))
+        self.ledger.payer_budgets = PayerBudgets(self.ledger)
+        with self.store.tx():
+            self.ledger.payer_budgets.set(self.user, unit_code=self.unit.code, expected_revision=0, enabled=True,
+                                          daily_budget=2**62, weekly_budget=2**62, monthly_budget=2**62)
+        self.ctx = ChargeContext(self.user, self.user, "bench-wallet-history", "bench-approval", "bench-workspace")
+        self.ledger.open_run(self.ctx, unit=self.unit, budget=10**12, max_calls=10_000, max_attempts=10_000,
+                             deadline=NOW + 30 * DAY)
+
+    def build(self):
+        store, rng = self.store, self.rng
+        call = self.ledger.reserve_call(self.ctx, logical_call_id="template", amount=10, price_id="bench-sale",
+                                        deadline=self.ticks[0] + 600)
+        ticket = self.ledger.prepare_attempt(call, attempt_id="template", owner="bench-worker", cost_price_id="bench-cost",
+                                             requested_model="bench-model")
+        self.ledger.dispatch(ticket)
+        Usage, UsageEvidence = self.mods["Usage"], self.mods["UsageEvidence"]
+        self.ledger.settle_trusted_usage(ticket.attempt_key, UsageEvidence(
+            "bench-provider", "req-template", "final-template", Usage(2, 1, 3, 1), "bench-model", "bench-capability",
+            self.ticks[0]))
+        journal = store.one("SELECT journal_id FROM billing_settlements WHERE call_key=?", (call,))["journal_id"]
+        self.template = {"call": call, "attempt": ticket.attempt_key, "journal": journal}
+        self.account = store.one("SELECT account_id FROM billing_calls WHERE id=?", (call,))["account_id"]
+        started = time.perf_counter()
+        for first in range(0, self.size - 1, 20_000):
+            rows = [(i, rng.randint(MONTH, NOW - 1), rng.randint(1, 1000)) for i in range(first, min(self.size - 1, first + 20_000))]
+            self._settled(rows, prefix="w")
+        self._held([(i, NOW - rng.randint(60, DAY - 60), rng.randint(1, 1000)) for i in range(self.holds)], prefix="h")
+        self.build_s = time.perf_counter() - started
+        self.ticks[0] = NOW
+
+    def _copy_sql(self, t, table, key_column, key, changes, source="temp.bench_wallet_rows f"):
+        cols = [r[1] for r in t.execute(f"PRAGMA table_info({table})")]
+        t.execute(f"INSERT INTO {table}({','.join(cols)}) SELECT {','.join(changes.get(c, c) for c in cols)} "
+                  f"FROM {source}, {table} WHERE {key_column}=? ORDER BY f.i", (key,))
+
+    def _rows(self, t, rows):
+        t.execute("CREATE TEMP TABLE IF NOT EXISTS bench_wallet_rows(i INTEGER PRIMARY KEY, at INTEGER, amount INTEGER)")
+        t.execute("DELETE FROM temp.bench_wallet_rows")
+        t.executemany("INSERT INTO temp.bench_wallet_rows VALUES (?,?,?)", rows)
+
+    def _calls(self, t, p, *, status="'reserved'", hold="0", deadline="f.at+600"):
+        tpl = self.template
+        self._copy_sql(t, "billing_calls", "id", tpl["call"], {
+            "id": f"'{p}c'||f.i", "logical_call_id": f"'{p}c'||f.i", "created_at": "f.at", "status": status,
+            "hold_units": hold, "deadline": deadline})
+
+    def _attempts(self, t, p):
+        tpl = self.template
+        self._copy_sql(t, "billing_attempts", "id", tpl["attempt"], {
+            "id": f"'{p}a'||f.i", "call_key": f"'{p}c'||f.i", "attempt_id": f"'{p}a'||f.i", "fence": f"'{p}f'||f.i",
+            "request_id": f"'{p}a'||f.i"})
+        self._copy_sql(t, "billing_usage", "attempt_key", tpl["attempt"], {"attempt_key": f"'{p}a'||f.i"})
+
+    def _settled(self, rows, *, prefix):
+        """Bulk FIXTURE: settled calls in the product's order (journal, settlement, then the status)."""
+        tpl, p = self.template, prefix
+        with self.store.tx() as t:
+            self._rows(t, rows)
+            self._calls(t, p)
+            self._attempts(t, p)
+            self._copy_sql(t, "billing_journal", "id", tpl["journal"], {
+                "id": f"'{p}j'||f.i", "voucher": f"'{p}j'||f.i", "reference": f"'{p}c'||f.i", "amount": "f.amount"})
+            self._copy_sql(t, "billing_settlements", "call_key", tpl["call"], {
+                "call_key": f"'{p}c'||f.i", "attempt_key": f"'{p}a'||f.i", "journal_id": f"'{p}j'||f.i"})
+            t.execute(f"UPDATE billing_calls SET status='settled' WHERE id IN (SELECT '{p}c'||i FROM temp.bench_wallet_rows)")
+
+    def _held(self, rows, *, prefix):
+        with self.store.tx() as t:
+            self._rows(t, rows)
+            self._calls(t, prefix, hold="f.amount", deadline=str(NOW + 3600))
+
+    def counts(self):
+        one = lambda sql, *a: self.store.one(sql, a)["n"]  # noqa: E731
+        return {"settled": one("SELECT COUNT(*) AS n FROM billing_calls WHERE status='settled' AND account_id=?", self.account),
+                "held": one("SELECT COUNT(*) AS n FROM billing_calls WHERE status='reserved' AND account_id=?", self.account),
+                "day_rows": one("SELECT COUNT(*) AS n FROM payer_spend_days WHERE account_id=?", self.account)}
+
+    def check_times(self, samples):
+        out, plans, result = [], [], None
+        for k in range(samples + 1):
+            with self.store.tx() as t:
+                traced = []
+                if k == 0:
+                    t.set_trace_callback(traced.append)
+                s = time.perf_counter()
+                result = self.ledger.payer_budgets.check(t, self.account, amount=1, at=self.ticks[0])
+                elapsed = (time.perf_counter() - s) * 1000
+                if k == 0:
+                    t.set_trace_callback(None)
+                    for sql in traced:
+                        if sql.lstrip().upper().startswith(("SELECT", "WITH")):
+                            plans.append({"sql": sql[:240], "plan": [r[3] for r in t.execute("EXPLAIN QUERY PLAN " + sql)]})
+                else:
+                    out.append(elapsed)
+        with self.store.tx() as t:
+            exposure = self.ledger.payer_budgets._exposure(t, self.account, self.ledger.payer_budgets._windows(self.ticks[0]))
+        return stats(out), plans, {"revision": result["revision"],
+                                   "monthly": {k: str(v) for k, v in exposure["monthly"].items()}}
+
+    def trigger_overhead_live(self, pairs=2_000):
+        """What a live settlement pays for the spend triggers: per pair, the product's three settlement writes
+        (journal entry, settlement, the call's status) in one BEGIN IMMEDIATE .. COMMIT under synchronous=FULL,
+        on this store (A) and on a copy whose spend triggers are dropped (B), interleaved in random order.
+        ``extra_stmt_us`` times the three statements alone, ``extra_locked_us`` the writer-lock hold."""
+        rng = random.Random(5)
+        rows = [(i, NOW - 7200 + i % 3600, rng.randint(1, 1000)) for i in range(pairs)]
+        with self.store.tx() as t:            # each call, attempt and usage exists first, as in a real settlement
+            self._rows(t, rows)
+            self._calls(t, "live", deadline=str(NOW + DAY))
+            self._attempts(t, "live")
+        copy = self.work.parent / (self.work.name + "-ab")
+        refuse_real_data(copy)
+        copy.mkdir()
+        source = self.store._connect()
+        target = sqlite3.connect(copy / "docweave.sqlite3")
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+        tpl = self.store.one("SELECT * FROM billing_journal WHERE id=?", (self.template["journal"],))
+        settlement = self.store.one("SELECT * FROM billing_settlements WHERE call_key=?", (self.template["call"],))
+        sides = {}
+        try:
+            for name, path in (("A", self.work), ("B", copy)):
+                c = sqlite3.connect(path / "docweave.sqlite3", isolation_level=None, timeout=30)
+                c.execute("PRAGMA journal_mode=WAL")
+                c.execute("PRAGMA foreign_keys=ON")
+                c.execute("PRAGMA synchronous=FULL")
+                if name == "B":
+                    for trigger in self.SPEND_TRIGGERS:
+                        c.execute(f"DROP TRIGGER {trigger}")
+                sides[name] = (c, {"stmt": [], "locked": []})
+            for i, at, amount in rows:
+                order = list(sides.items())
+                rng.shuffle(order)
+                for _, (c, samples) in order:
+                    held = time.perf_counter()
+                    c.execute("BEGIN IMMEDIATE")
+                    s = time.perf_counter()
+                    c.execute("INSERT INTO billing_journal(id,environment,namespace,voucher,unit,debit_account,credit_account,"
+                              "amount,kind,reference,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                              (f"livej{i}", tpl["environment"], tpl["namespace"], f"livej{i}", tpl["unit"],
+                               tpl["debit_account"], tpl["credit_account"], amount, tpl["kind"], f"livec{i}", at))
+                    c.execute("INSERT INTO billing_settlements(call_key,attempt_key,journal_id,exact_n,exact_d,"
+                              "remainder_before_n,remainder_before_d,remainder_after_n,remainder_after_d,created_at) "
+                              "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                              (f"livec{i}", f"livea{i}", f"livej{i}", settlement["exact_n"], settlement["exact_d"], "0", "1",
+                               "0", "1", at))
+                    c.execute("UPDATE billing_calls SET status='settled' WHERE id=?", (f"livec{i}",))
+                    elapsed = time.perf_counter() - s
+                    c.execute("COMMIT")
+                    samples["stmt"].append(elapsed * 1e6)
+                    samples["locked"].append((time.perf_counter() - held) * 1e6)
+        finally:
+            for c, _ in sides.values():
+                c.close()
+            shutil.rmtree(copy, ignore_errors=True)
+
+        def q(values, p):
+            values = sorted(values)
+            return round(values[max(0, int(p * len(values)) - 1)], 1)
+
+        out = {"pairs": pairs, "per_transaction": True, "synchronous": "FULL",
+               "with": {k: {"p50": q(v, .5), "p95": q(v, .95)} for k, v in sides["A"][1].items()},
+               "without": {k: {"p50": q(v, .5), "p95": q(v, .95)} for k, v in sides["B"][1].items()}}
+        for k in ("stmt", "locked"):
+            for p in ("p50", "p95"):
+                out[f"extra_{k}_us_{p}"] = round(out["with"][k][p] - out["without"][k][p], 1)
+        return out
+
+    def backfill_s(self):
+        from synwevo_core.suite_schema.payer_spend_rollup import replay
+        c = self.store._connect()
+        try:
+            c.execute("BEGIN IMMEDIATE")
+            s = time.perf_counter()
+            result = replay(c)
+            elapsed = time.perf_counter() - s
+            c.execute("COMMIT")
+        finally:
+            c.close()
+        return round(elapsed, 3), result["facts"]
+
+    def verify_times(self):
+        from synwevo_core.billing.cost_rollup import CostRollup
+        out = {name: _child_verify(self.work, mode, self.ticks[0])
+               for name, mode in (("verify_daily", "daily"), ("verify_recent_2d", "recent"))}
+        s = time.perf_counter()
+        report = CostRollup.check(self.store, now=self.ticks[0], all=True)
+        out["verify_all"] = {"s": round(time.perf_counter() - s, 3), "ok": report.ok, "wallet_facts": report.wallet_facts}
+        return out
+
+
+def run_wallet(size, *, samples, seed, work_parent, holds=300, live_pairs=2_000):
+    work = Path(tempfile.mkdtemp(prefix=f"wallet-bench-{size}-", dir=work_parent))
+    refuse_real_data(work)
+    try:
+        bench = WalletBench(work, size, seed, holds=holds)
+        bench.build()
+        result = {"size": size, "build_s": round(bench.build_s, 2), "counts": bench.counts()}
+        check, plans, exposure = bench.check_times(samples)
+        result.update(check_ms=check, query_plans=plans, exposure=exposure)
+        result.update(bench.verify_times())
+        result["backfill_s"], result["backfill_facts"] = bench.backfill_s()
+        result["triggers_live"] = bench.trigger_overhead_live(live_pairs)
+        result["db_mb"] = round(sum(p.stat().st_size for p in work.glob("docweave.sqlite3*")) / 1e6, 1)
+        return result
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def _child_verify(work: Path, mode: str, now: int) -> dict:
     """One CostRollup.check as the risk monitor runs it, in a fresh child process: time and peak RSS."""
     import subprocess
@@ -441,8 +699,8 @@ def _child_verify(work: Path, mode: str, now: int) -> dict:
             "    r = CostRollup.check(store, environment='test', since=now - 2 * 86400, now=now, mode='recent')\n"
             "el = time.perf_counter() - s\n"
             "peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit\n"
-            "print(json.dumps({'s': round(el, 3), 'ok': r.ok, 'facts': r.facts, 'rss_before_mb': round(base / 2**20, 1),"
-            " 'peak_rss_mb': round(peak / 2**20, 1)}))\n")
+            "print(json.dumps({'s': round(el, 3), 'ok': r.ok, 'facts': r.facts, 'wallet_facts': r.wallet_facts,"
+            " 'rss_before_mb': round(base / 2**20, 1), 'peak_rss_mb': round(peak / 2**20, 1)}))\n")
     done = subprocess.run([sys.executable, "-P", "-c", code, str(work), str(now), mode], capture_output=True, text=True,
                           check=True)
     return json.loads(done.stdout.strip().splitlines()[-1])
@@ -473,7 +731,9 @@ def run(size, *, samples, dispatches, seed, work_parent, pairs=10_000, live_pair
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--sizes", default="200000,1000000")
+    ap.add_argument("--sizes", default="200000,1000000", help="cost admissions per run ('' for none)")
+    ap.add_argument("--wallet-sizes", default="200000,1000000",
+                    help="settled calls of the one wallet per personal-limits run ('' for none)")
     ap.add_argument("--samples", type=int, default=200)
     ap.add_argument("--dispatches", type=int, default=500)
     ap.add_argument("--seed", type=int, default=20261025)
@@ -484,7 +744,9 @@ def main(argv=None) -> int:
     parent.mkdir(parents=True, exist_ok=True)
     refuse_real_data(parent)
     runs = [run(int(size), samples=args.samples, dispatches=args.dispatches, seed=args.seed, work_parent=parent)
-            for size in args.sizes.split(",")]
+            for size in args.sizes.split(",") if size]
+    wallet_runs = [run_wallet(int(size), samples=args.samples, seed=args.seed, work_parent=parent)
+                   for size in args.wallet_sizes.split(",") if size]
     by_size = {r["size"]: r for r in runs}
     base = by_size.get(200_000)
     met = {}
@@ -498,9 +760,17 @@ def main(argv=None) -> int:
         if base and r is not base:
             met[r["size"]]["counters_guard_within_1_5x_of_200k"] = (
                 r["counters_guard_ms"]["p95"] <= 1.5 * base["counters_guard_ms"]["p95"])
+    wallet_base = next((r for r in wallet_runs if r["size"] == 200_000), None)
+    wallet_met = {}
+    for r in wallet_runs:
+        wallet_met[r["size"]] = {"check_p95_le_1ms": r["check_ms"]["p95"] <= 1,
+                                 "triggers_le_150us_per_settlement": r["triggers_live"]["extra_stmt_us_p50"] <= 150,
+                                 "verify_daily_ok": r["verify_daily"]["ok"]}
+        if wallet_base and r is not wallet_base:
+            wallet_met[r["size"]]["check_within_1_5x_of_200k"] = r["check_ms"]["p95"] <= 1.5 * wallet_base["check_ms"]["p95"]
     evidence = {"python": sys.version.split()[0], "sqlite": sqlite3.sqlite_version, "machine": _machine(),
                 "scope": "isolated temporary Store, synthetic fixture tariffs and wallets; no network, keys or data/",
-                "runs": runs, "targets_met": met}
+                "runs": runs, "targets_met": met, "wallet_runs": wallet_runs, "wallet_targets_met": wallet_met}
     text = json.dumps(evidence, indent=2, ensure_ascii=False, default=str)
     if args.out:
         Path(args.out).write_text(text + "\n", encoding="utf-8")

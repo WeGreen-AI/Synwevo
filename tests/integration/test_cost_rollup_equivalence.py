@@ -47,8 +47,16 @@ A disagreement is minimised (delta debugging over the recorded operation trace, 
 Stores, then halving bulk writes) and reported with its seed, step, fields and minimal trace, so
 it can become a deterministic test.
 
+Cost-capacity phase 2 adds the personal limits' per-wallet spend rollup (section "phase 2" below):
+``oracle_exposure`` (written here from the phase-2 addendum and the 0bcce176 code) against the rollup's
+``spend_rollup.exposure``, the product's uncapped ``reference_exposure`` and the verbatim 0bcce176
+``LegacyPayerBudgets._exposure``, on seeded wallet histories (reserve with holds 0, 1, 2^62; settle in
+the four orders the money facts can arrive; unpaid and late-completed settlements; release and expiry;
+malformed settled calls; clock steps back; bulk; reopen, also after a lost table, sentinel, marker or
+trigger version; rebuild; real Ledger reservations decided at the oracle's budget boundary).
+
 Default: 300 fixed seeds × ``STEPS`` (12) steps after a short prelude, plus 60 histories with a broken
-admission. ``SYNWEVO_COST_EQUIVALENCE_SEEDS=N`` runs seeds 1..N instead,
+admission; 100 wallet histories and 20 with a malformed settled call. ``SYNWEVO_COST_EQUIVALENCE_SEEDS=N`` runs seeds 1..N instead,
 ``SYNWEVO_COST_EQUIVALENCE_FAULT_SEEDS=N`` N broken-admission histories, ``SYNWEVO_COST_EQUIVALENCE_STEPS=K``
 changes the steps per history.
 """
@@ -56,7 +64,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fractions import Fraction
 import json
 import os
@@ -72,10 +80,12 @@ from synwevo_core.billing.cost_rollup import (
     CostRollup, RebuildRefused, counters as rollup_counters, reference_counters, reference_velocity,
     velocity as rollup_velocity,
 )
+from synwevo_core.billing.payer_budgets import PayerBudgets
 from synwevo_core.billing.risk import BrakeTripped, RiskControls, RiskPolicy
+from synwevo_core.billing.spend_rollup import exposure as rollup_exposure, reference_exposure
 from synwevo_core.identity import Identity
 from synwevo_core.store import Store
-from tests.integration.legacy_cost_counters import LegacyCostCounters, LegacyRiskControls
+from tests.integration.legacy_cost_counters import LegacyCostCounters, LegacyPayerBudgets, LegacyRiskControls
 from tests.integration.test_billing_ledger import (
     COST_UNIT, START, UNIT, cost_price, evidence, fixture_authorize, fixture_verify, fund, sale_price,
 )
@@ -1508,3 +1518,639 @@ def test_an_admission_expiring_when_it_is_admitted_is_a_fault_or_verifies_clean(
     report = CostRollup.check(w.store, all=True, now=at)
     faults = w.store.one("SELECT COUNT(*) AS n FROM model_cost_rollup_faults WHERE resolved_at IS NULL")["n"]
     assert report.ok or faults, report.summary()
+
+
+# ================================================================ phase 2: the per-wallet spend rollup
+# Three implementations of PayerBudgets._exposure on seeded wallet histories (cost-capacity phase 2,
+# binding addendum §8): legacy (the verbatim 0bcce176 copy, cap included), the oracle below (plain Python
+# over every call of the wallet, from the addendum's semantics: held = every reserved call's hold; spent[p]
+# = the journal amounts of the settled calls created at or after p's start, reached through their
+# settlements; refusals in the addendum's order: a malformed settled call (the wallet's fault), more than
+# 10,000 holds, a settled call in the periods without its money facts), and the rollup
+# (spend_rollup.exposure, and through it Ledger.reserve_call / dispatch). The product's uncapped
+# reference_exposure must agree with the oracle too.
+WALLET_SEEDS = list(range(1, int(os.environ.get("SYNWEVO_COST_EQUIVALENCE_SEEDS") or 100) + 1))
+#: Histories of test_a_malformed_settled_call_keeps_its_wallet_refused_on_random_histories.
+WALLET_FAULT_SEEDS = max(1, FAULT_SEEDS // 3)
+SPEND_CAP = 10_000
+#: A: the test wallet that also takes real Ledger reservations (small holds: its balance covers them);
+#: B: another test wallet and L: a live one, both written with SQL only (holds up to 2^62).
+WALLET_ENVS = {"A": "test", "B": "test", "L": "live"}
+SPEND_HOLDS = {"A": (0, 1, 7), "B": (0, 1, 2**62), "L": (0, 1, 2**62)}
+SPEND_AMOUNTS = (0, 1, 7, 2**62, INT64)
+SPEND_ORDERS = ("product", "status_first", "inserted_settled", "journal_after_settlement")
+MALFORMED_TIMES = ("soon", 1.5, -5)
+SPEND_NAMESPACE = "fixture-spend-equivalence"
+SPEND_WEIGHTS = {"reserve": 14, "settle": 22, "unpaid": 4, "complete": 8, "release": 6, "expire": 3, "clock": 6,
+                 "bulk": 4, "reopen": 3, "rebuild": 4, "real": 10}
+
+
+def spend_periods(at: int) -> dict:
+    """The UTC day, ISO week (from Monday) and month containing ``at``: {name: (start, exclusive end)}."""
+    moment = datetime.fromtimestamp(at, timezone.utc)
+    day = datetime(moment.year, moment.month, moment.day, tzinfo=timezone.utc)
+    week = day - timedelta(days=moment.weekday())
+    month = datetime(moment.year, moment.month, 1, tzinfo=timezone.utc)
+    following = datetime(moment.year + moment.month // 12, moment.month % 12 + 1, 1, tzinfo=timezone.utc)
+    stamp = lambda d: int(d.timestamp())  # noqa: E731
+    return {"daily": (stamp(day), stamp(day) + DAY), "weekly": (stamp(week), stamp(week) + 7 * DAY),
+            "monthly": (stamp(month), stamp(following))}
+
+
+#: Every call of a wallet with the money facts its settlement reached.
+WALLET_FACTS = ("SELECT c.id,c.status,c.hold_units AS hold,c.created_at,j.amount,j.id IS NOT NULL AS paid "
+                "FROM billing_calls c LEFT JOIN billing_settlements s ON s.call_key=c.id "
+                "LEFT JOIN billing_journal j ON j.id=s.journal_id WHERE c.account_id=?")
+
+
+def wallet_facts(t, account) -> list[dict]:
+    return [dict(row) for row in t.execute(WALLET_FACTS, (account,)).fetchall()]
+
+
+def malformed_call(f) -> bool:
+    return f["status"] == "settled" and (type(f["created_at"]) is not int or f["created_at"] < 0)
+
+
+def oracle_exposure(facts, at: int) -> Expect:
+    """Every check evaluated, none short-circuited; ``value`` is the uncapped answer (for the reference when
+    only the holds' bound applies); ``candidates`` what the 0bcce176 read counted against its cap."""
+    win = spend_periods(at)
+    E = min(start for start, _ in win.values())
+    codes = []
+    if any(malformed_call(f) for f in facts):
+        codes.append("payer_budget_inconsistent")                          # 1. the wallet's fault
+    reserved = [f for f in facts if f["status"] == "reserved"]
+    if len(reserved) > SPEND_CAP:
+        codes.append("payer_budget_capacity")                              # 3. holds
+    settled = [f for f in facts if f["status"] == "settled" and not malformed_call(f)]
+    if any(not f["paid"] and f["created_at"] >= E for f in settled):
+        codes.append("payer_budget_inconsistent")                          # 4. unpaid in the periods
+    held = sum(f["hold"] for f in reserved)
+    value = {name: {"start": start, "end": end, "held": held,
+                    "spent": sum(f["amount"] for f in settled if f["paid"] and f["created_at"] >= start)}
+             for name, (start, end) in win.items()}
+    candidates = len(reserved) + sum(1 for f in settled if f["created_at"] >= E)
+    STATS["spend:unpaid_before_E"] += any(not f["paid"] and f["created_at"] < E for f in settled)
+    STATS["spend:future"] += any(f["created_at"] > at for f in settled)
+    STATS["spend:big"] += any(f["paid"] and f["amount"] >= 2**62 for f in settled) or held >= 2**62
+    return Expect(_unique(codes), value, candidates)
+
+
+def compare_exposure(spec, expect: Expect, rollup, reference, legacy):
+    """rollup == oracle (its first code when refusing); reference == oracle (it has no cap); legacy == both
+    within its cap (it refuses payer_budget_capacity beyond it)."""
+    def fail(who, got, what):
+        raise Mismatch(f"exposure:{who}:{what}", {"spec": spec, "expected": {"codes": expect.codes,
+                       "value": expect.value, "candidates": expect.candidates}, who: got}, spec)
+
+    STATS["exposure:" + ("ok" if not expect.codes else "+".join(expect.codes))] += 1
+    STATS["exposure:legacy_compared"] += legacy is not None and expect.candidates <= SPEND_CAP
+    STATS["exposure:legacy_capped"] += legacy is not None and expect.candidates > SPEND_CAP
+    if not expect.codes:
+        if rollup != ("ok", expect.value):
+            fail("rollup", rollup, "value")
+        if reference != ("ok", expect.value):
+            fail("reference", reference, "value")
+    else:
+        if rollup[:2] != ("refused", expect.codes[0]):
+            fail("rollup", rollup, "code")
+        others = [code for code in expect.codes if code != "payer_budget_capacity"]
+        if not others and reference != ("ok", expect.value):
+            fail("reference", reference, "value")
+        if others and reference[:2] != ("refused", others[0]):
+            fail("reference", reference, "code")
+    if legacy is not None:
+        if expect.candidates > SPEND_CAP:
+            if legacy[:2] != ("refused", "payer_budget_capacity"):
+                fail("legacy", legacy, "capacity")
+        elif not expect.codes and legacy != ("ok", expect.value):
+            fail("legacy", legacy, "value")
+        elif expect.codes and (legacy[0] != "refused" or legacy[1] not in expect.codes):
+            fail("legacy", legacy, "code")
+
+
+@dataclass
+class WalletWorld:
+    root: Path
+    store: Store
+    users: list
+    clock: list
+    wallets: dict                   # "A" / "B" / "L" -> billing account id
+    template: dict                  # the real settled call cloned from: call, attempt, journal ids
+    ledger: Ledger | None = None
+    pair: tuple = ()                # the shared fixture (debit, credit) accounts of small SQL journal entries
+    malformed: set = field(default_factory=set)
+    revision: int = 0
+    n: int = 0
+
+    @property
+    def now(self) -> int:
+        return self.clock[0]
+
+    def new_ledger(self) -> Ledger:
+        ledger = Ledger(self.store, environment="test", namespace=SPEND_NAMESPACE, authorize=fixture_authorize,
+                        verify_payment=fixture_verify, clock=lambda: self.clock[0], max_hold_seconds=86_400)
+        ledger.payer_budgets = PayerBudgets(ledger)
+        return ledger
+
+    def key(self, kind: str) -> str:
+        self.n += 1
+        return f"fx-spend-{kind}-{self.n}"
+
+
+def _copy(t, table, key_column, key, changes: dict) -> None:
+    """FIXTURE: one row of ``table`` copied from the row ``key_column=key`` with ``changes`` (plain SQL)."""
+    cols = [r[1] for r in t.execute(f"PRAGMA table_info({table})")]
+    exprs, args = [], []
+    for col in cols:
+        if col in changes:
+            exprs.append("?")
+            args.append(changes[col])
+        else:
+            exprs.append(col)
+    t.execute(f"INSERT INTO {table}({','.join(cols)}) SELECT {','.join(exprs)} FROM {table} WHERE {key_column}=?",
+              (*args, key))
+
+
+def _set_budgets(w: WalletWorld, budgets: dict) -> None:
+    with w.store.tx():
+        w.ledger.payer_budgets.set(w.users[0], unit_code=UNIT.code, expected_revision=w.revision, enabled=True,
+                                   daily_budget=budgets["daily"], weekly_budget=budgets["weekly"],
+                                   monthly_budget=budgets["monthly"])
+    w.revision += 1
+
+
+def make_wallet_world(root: Path, start: int) -> WalletWorld:
+    """FIXTURE: an isolated Store with three users; wallet A (user 0, test) funded, with enabled limits and one
+    real settled call to clone from; wallet B (user 1, test) and wallet L (user 2, live) for SQL facts; a
+    shared pair of platform accounts that small SQL journal entries move between."""
+    store = Store(root)
+    with store.conn() as c:
+        c.executescript("CREATE TABLE IF NOT EXISTS fixture_payment_inbox(event_id TEXT PRIMARY KEY,receipt TEXT NOT NULL);"
+                        "CREATE TABLE IF NOT EXISTS fixture_billing_authority(payer TEXT,actor TEXT,authority TEXT);")
+    identity = Identity(store)
+    users = [identity.create_user(f"spend-equivalence-{i}@example.test", None, status="active",
+                                  with_personal_workspace=False)["id"] for i in range(3)]
+    with store.tx() as t:
+        t.executemany("INSERT INTO fixture_billing_authority VALUES (?,?,?)", [(u, u, "fixture-approval") for u in users])
+    clock = [start - DAY]
+    w = WalletWorld(root, store, users, clock, {}, {})
+    w.ledger = w.new_ledger()
+    w.ledger.publish_price(sale_price())
+    w.ledger.publish_price(cost_price())
+    fund((store, w.ledger, users, clock), 10**12, order="fixture-spend-equivalence", ledger=w.ledger)
+    _set_budgets(w, {"daily": INT64, "weekly": INT64, "monthly": INT64})
+    ctx = ChargeContext(users[0], users[0], "fx-spend-template", "fixture-approval", "workspace-A")
+    w.ledger.open_run(ctx, unit=UNIT, budget=10**12, max_calls=10_000, max_attempts=10_000, deadline=w.now + 900)
+    call = w.ledger.reserve_call(ctx, logical_call_id="template", amount=1, price_id="fixture-sale-v1",
+                                 deadline=w.now + 500)
+    ticket = w.ledger.prepare_attempt(call, attempt_id="template", owner="fixture-spend", cost_price_id="fixture-cost-v1",
+                                      requested_model="fixture-route-a")
+    w.ledger.dispatch(ticket)
+    w.ledger.settle_trusted_usage(ticket.attempt_key, evidence(ticket, usage=Usage(1, 0, 0)))
+    journal = store.one("SELECT journal_id FROM billing_settlements WHERE call_key=?", (call,))["journal_id"]
+    w.template = {"call": call, "attempt": ticket.attempt_key, "journal": journal}
+    with store.tx() as t:
+        w.wallets["A"] = t.execute("SELECT account_id FROM billing_calls WHERE id=?", (call,)).fetchone()[0]
+        w.wallets["B"] = w.ledger._account(t, UNIT.code, users[1])
+        w.wallets["L"] = "fixture-spend-wallet-live"
+        t.execute("INSERT INTO billing_accounts(id,environment,unit,owner,kind) VALUES (?,'live',?,?,'wallet')",
+                  (w.wallets["L"], UNIT.code, users[2]))
+        t.execute("INSERT INTO billing_balances(account_id,amount) VALUES (?,0)", (w.wallets["L"],))
+        w.pair = (w.ledger._account(t, UNIT.code, "fixture-spend-source", "paid"),
+                  w.ledger._account(t, UNIT.code, "fixture-spend-sink", "revenue"))
+    clock[0] = start
+    return w
+
+
+# ---------------------------------------------------------------- operations (concrete, replayable)
+def _spend_call(t, w, key, wallet, created_at, status, hold, deadline):
+    _copy(t, "billing_calls", "id", w.template["call"], {
+        "id": key, "logical_call_id": key, "account_id": w.wallets[wallet], "created_at": created_at,
+        "status": status, "hold_units": hold, "deadline": deadline})
+
+
+def _spend_money(t, w, call, amount, steps, pair):
+    """The attempt and usage a settlement names (once), then ``steps`` of: journal, settlement, status."""
+    attempt = call + "-attempt"
+    journal = call + "-journal"
+    if not t.execute("SELECT 1 FROM billing_attempts WHERE id=?", (attempt,)).fetchone():
+        _copy(t, "billing_attempts", "id", w.template["attempt"], {
+            "id": attempt, "call_key": call, "attempt_id": attempt, "fence": attempt + "-fence", "request_id": attempt})
+        _copy(t, "billing_usage", "attempt_key", w.template["attempt"], {"attempt_key": attempt})
+    for step in steps:
+        if step == "journal":
+            _copy(t, "billing_journal", "id", w.template["journal"], {
+                "id": journal, "voucher": journal, "reference": call, "amount": amount,
+                "debit_account": pair[0], "credit_account": pair[1]})
+        elif step == "settlement":
+            _copy(t, "billing_settlements", "call_key", w.template["call"], {
+                "call_key": call, "attempt_key": attempt, "journal_id": journal})
+        elif step == "status":
+            t.execute("UPDATE billing_calls SET status='settled' WHERE id=? AND status='reserved'", (call,))
+        else:
+            raise ValueError(step)
+
+
+#: After the call row: the money facts of each order (contract phase 2 §2).
+_ORDER_STEPS = {"product": ("journal", "settlement", "status"), "status_first": ("status", "journal", "settlement"),
+                "inserted_settled": ("journal", "settlement"), "journal_after_settlement": ("status", "settlement", "journal")}
+
+
+def _spend_tx(w, *, foreign_keys=True):
+    """A write transaction on the store's connection, or (foreign keys off) on a connection of its own."""
+    class _Tx:
+        def __enter__(self):
+            if foreign_keys:
+                self.cm = w.store.tx()
+                return self.cm.__enter__()
+            self.c = w.store._connect()
+            self.c.execute("PRAGMA foreign_keys=OFF")
+            self.c.execute("BEGIN IMMEDIATE")
+            return self.c
+
+        def __exit__(self, kind, value, tb):
+            if foreign_keys:
+                return self.cm.__exit__(kind, value, tb)
+            try:
+                self.c.execute("ROLLBACK" if kind else "COMMIT")
+            finally:
+                self.c.close()
+            return False
+    return _Tx()
+
+
+def _pair(t, w, op):
+    if op["amount"] < 2**62:
+        return w.pair
+    return (w.ledger._account(t, UNIT.code, op["call"] + "-source", "paid"),
+            w.ledger._account(t, UNIT.code, op["call"] + "-sink", "revenue"))
+
+
+def run_spend_op(w: WalletWorld, op: dict) -> dict:
+    kind = op["op"]
+    if kind == "reserve":
+        with w.store.tx() as t:
+            _spend_call(t, w, op["call"], op["wallet"], op["at"], "reserved", op["hold"], op["at"] + op["deadline_in"])
+    elif kind == "settle":
+        order = op["order"]
+        with _spend_tx(w, foreign_keys=order != "journal_after_settlement") as t:
+            if op.get("existing"):
+                steps = _ORDER_STEPS["status_first" if order == "inserted_settled" else order]
+            else:
+                _spend_call(t, w, op["call"], op["wallet"], op["at"], "settled" if order == "inserted_settled" else "reserved",
+                            op["hold"], op["at"] + 600)
+                steps = _ORDER_STEPS[order]
+            _spend_money(t, w, op["call"], op["amount"], steps, _pair(t, w, op))
+    elif kind == "unpaid":
+        with w.store.tx() as t:
+            if op.get("existing"):
+                t.execute("UPDATE billing_calls SET status='settled' WHERE id=? AND status='reserved'", (op["call"],))
+            else:
+                _spend_call(t, w, op["call"], op["wallet"], op["at"], "settled", 0, op["at"] + 600)
+    elif kind == "complete":
+        with _spend_tx(w, foreign_keys=not op["settlement_first"]) as t:
+            steps = ("settlement", "journal") if op["settlement_first"] else ("journal", "settlement")
+            _spend_money(t, w, op["call"], op["amount"], steps, _pair(t, w, op))
+    elif kind == "release":
+        with w.store.tx() as t:
+            t.execute("UPDATE billing_calls SET status='released' WHERE id=? AND status='reserved'", (op["call"],))
+    elif kind == "expire":
+        w.clock[0] += op["advance"]
+        return {"expired": w.ledger.expire_due()}
+    elif kind == "clock":
+        w.clock[0] += op["delta"]
+    elif kind == "malformed":
+        with w.store.tx() as t:
+            _spend_call(t, w, op["call"], op["wallet"], op["at"], "settled", 0, w.now + 600)
+            if op["paid"]:
+                _spend_money(t, w, op["call"], 3, ("journal", "settlement"), w.pair)
+        w.malformed.add(op["wallet"])
+    elif kind == "bulk":
+        with w.store.tx() as t:
+            t.execute("CREATE TEMP TABLE IF NOT EXISTS fixture_spend_rows(i INTEGER PRIMARY KEY, at INTEGER, amount INTEGER)")
+            t.execute("DELETE FROM temp.fixture_spend_rows")
+            t.executemany("INSERT INTO temp.fixture_spend_rows VALUES (?,?,?)",
+                          [(i, at, amount) for i, (at, amount) in enumerate(op["rows"])])
+            p = op["call"]
+            cols = {table: [r[1] for r in t.execute(f"PRAGMA table_info({table})")]
+                    for table in ("billing_calls", "billing_attempts", "billing_usage", "billing_journal", "billing_settlements")}
+
+            def clone(table, key_column, key, changes):
+                exprs = [changes.get(col, col) for col in cols[table]]
+                t.execute(f"INSERT INTO {table}({','.join(cols[table])}) SELECT {','.join(exprs)} FROM temp.fixture_spend_rows f, "
+                          f"{table} WHERE {key_column}=? ORDER BY f.i", (key,))
+
+            clone("billing_calls", "id", w.template["call"], {
+                "id": f"'{p}-'||f.i", "logical_call_id": f"'{p}-'||f.i", "account_id": f"'{w.wallets[op['wallet']]}'",
+                "created_at": "f.at", "status": "'reserved'", "hold_units": "0", "deadline": "f.at+600"})
+            clone("billing_attempts", "id", w.template["attempt"], {
+                "id": f"'{p}-a'||f.i", "call_key": f"'{p}-'||f.i", "attempt_id": f"'{p}-a'||f.i",
+                "fence": f"'{p}-f'||f.i", "request_id": f"'{p}-a'||f.i"})
+            clone("billing_usage", "attempt_key", w.template["attempt"], {"attempt_key": f"'{p}-a'||f.i"})
+            clone("billing_journal", "id", w.template["journal"], {
+                "id": f"'{p}-j'||f.i", "voucher": f"'{p}-j'||f.i", "reference": f"'{p}-'||f.i", "amount": "f.amount",
+                "debit_account": f"'{w.pair[0]}'", "credit_account": f"'{w.pair[1]}'"})
+            clone("billing_settlements", "call_key", w.template["call"], {
+                "call_key": f"'{p}-'||f.i", "attempt_key": f"'{p}-a'||f.i", "journal_id": f"'{p}-j'||f.i"})
+            t.execute(f"UPDATE billing_calls SET status='settled' WHERE id IN (SELECT '{p}-'||i FROM temp.fixture_spend_rows)")
+    elif kind == "reopen":
+        _spend_reopen(w, op.get("damage"))
+    elif kind == "rebuild":
+        return _spend_rebuild(w, op)
+    elif kind == "real":
+        return _spend_real(w, op)
+    else:
+        raise ValueError(kind)
+    return {}
+
+
+def _day_rows(store) -> list:
+    return store.all("SELECT * FROM payer_spend_days ORDER BY account_id,start")
+
+
+def _spend_reopen(w: WalletWorld, damage) -> None:
+    before = _day_rows(w.store)
+    connection = getattr(w.store._local, "c", None)
+    if connection is not None:
+        connection.close()
+        w.store._local.c = None
+    if damage:
+        c = sqlite3.connect(w.store.db_path, isolation_level=None)
+        try:
+            if damage == "drop":
+                c.execute("DROP TABLE payer_spend_days")
+            elif damage == "sentinel":
+                c.execute("BEGIN IMMEDIATE")
+                c.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('gate')")
+                c.execute("DELETE FROM payer_spend_days WHERE account_id=''")
+                c.execute("DELETE FROM model_cost_rollup_deltas")
+                c.execute("COMMIT")
+            elif damage == "version":
+                c.execute("UPDATE meta SET value='0' WHERE key='payer_spend_rollup_triggers'")
+            elif damage == "marker":
+                c.execute("DELETE FROM meta WHERE key='payer_spend_rollup_v1'")
+        finally:
+            c.close()
+    w.store = Store(w.root)
+    w.ledger = w.new_ledger()
+    after = _day_rows(w.store)
+    if after != before:
+        raise Mismatch("reopen:rows", {"damage": damage, "before": before[:5], "after": after[:5]}, {"check": "reopen"})
+
+
+def _spend_rebuild(w: WalletWorld, op: dict) -> dict:
+    before = _day_rows(w.store)
+    got = outcome(lambda: CostRollup.rebuild_wallet(w.store, account_id=w.wallets[op["wallet"]],
+                                                    actor="fixture-equivalence", reason="equivalence property test rebuild",
+                                                    clock=lambda: w.now))
+    spec = {"check": "rebuild", "wallet": op["wallet"]}
+    if op["wallet"] in w.malformed:
+        if got[:2] != ("refused", "cost_rollup_rebuild_refused"):
+            raise Mismatch("rebuild:not_refused", {"got": got}, spec)
+    elif got[0] != "ok":
+        raise Mismatch("rebuild:refused", {"got": got}, spec)
+    if _day_rows(w.store) != before:
+        raise Mismatch("rebuild:rows", {"before": before[:5], "after": _day_rows(w.store)[:5]}, spec)
+    STATS["spend:rebuild:" + got[0]] += 1
+    return {"outcome": got[0]}
+
+
+def _spend_real(w: WalletWorld, op: dict) -> dict:
+    """A real Ledger reservation of wallet A, its limit set at the oracle's boundary (spent + held + amount,
+    plus op["delta"]) for one period: the reservation must decide what the oracle's numbers decide; an
+    admitted one is then dispatched and settled through the product path."""
+    w.ledger.expire_due()                               # reserve_call expires due holds first: so does the oracle
+    with w.store.tx() as t:
+        expect = oracle_exposure(wallet_facts(t, w.wallets["A"]), w.now)
+    amount = op["amount"]
+    budgets = {name: INT64 for name in ("daily", "weekly", "monthly")}
+    if not expect.codes:
+        value = expect.value[op["period"]]
+        boundary = value["spent"] + value["held"] + amount + op["delta"]
+        if 0 <= boundary <= INT64:
+            budgets[op["period"]] = boundary
+    _set_budgets(w, budgets)
+    want = ("refused", expect.codes[0]) if expect.codes else ("ok",)
+    if not expect.codes:
+        for name, value in expect.value.items():
+            if value["spent"] + value["held"] + amount > budgets[name]:
+                want = ("refused", f"payer_{name}_budget_exceeded")
+                break
+    ctx = ChargeContext(w.users[0], w.users[0], op["call"], "fixture-approval", "workspace-A")
+    w.ledger.open_run(ctx, unit=UNIT, budget=10**12, max_calls=10, max_attempts=10, deadline=w.now + 900)
+    got = outcome(lambda: w.ledger.reserve_call(ctx, logical_call_id="real", amount=amount, price_id="fixture-sale-v1",
+                                                deadline=w.now + 500))
+    STATS["spend:real:" + ("ok" if got[0] == "ok" else got[1])] += 1
+    if got[0] != want[0] or (got[0] == "refused" and got[1] != want[1]):
+        raise Mismatch("real:reserve", {"want": want, "got": got, "budgets": budgets, "expected": expect.value,
+                                        "codes": expect.codes}, {"check": "real", "op": op})
+    if got[0] == "ok" and op["settle"] is not None:
+        ticket = w.ledger.prepare_attempt(got[1], attempt_id="real", owner="fixture-spend", cost_price_id="fixture-cost-v1",
+                                          requested_model="fixture-route-a")
+        dispatched = outcome(lambda: w.ledger.dispatch(ticket))
+        if dispatched[0] != "ok":
+            raise Mismatch("real:dispatch", {"got": dispatched}, {"check": "real", "op": op})
+        w.ledger.settle_trusted_usage(ticket.attempt_key, evidence(ticket, usage=Usage(op["settle"], 0, 0)))
+    return {"outcome": got[:2]}
+
+
+# ---------------------------------------------------------------- checks after every step
+def check_spend_verify(w: WalletWorld, *, strict=True, **kwargs):
+    """CostRollup.check is clean, except that a wallet with a malformed settled call reports each as itself
+    (fact_fault). ``strict``: every day is compared, so every such wallet must report."""
+    report = CostRollup.check(w.store, now=w.now, **(kwargs or {"all": True}))
+    malformed = {("test" if name != "L" else "live", "", w.wallets[name]) for name in w.malformed}
+    if report.issues or report.scopes:
+        raise Mismatch("verify:issues", report.summary(), {"check": "verify"})
+    for scope in report.mismatched:
+        if scope not in malformed or any(d["check"] != "fact_fault" for d in report.wallets[scope].differences):
+            raise Mismatch("verify:wallet", report.summary(), {"check": "verify"})
+    if strict and malformed - set(report.mismatched):
+        raise Mismatch("verify:fault_not_reported", report.summary(), {"check": "verify"})
+
+
+def read_exposure(w: WalletWorld, t, name: str, at: int):
+    account = w.wallets[name]
+    expect = oracle_exposure(wallet_facts(t, account), at)
+    windows = {p: (start, end) for p, (start, end) in spend_periods(at).items()}
+    rollup = outcome(lambda: rollup_exposure(t, environment=WALLET_ENVS[name], account=account, windows=windows))
+    reference = outcome(lambda: reference_exposure(t, account=account, windows=windows))
+    legacy = None if name in w.malformed else outcome(lambda: LegacyPayerBudgets()._exposure(t, account, windows))
+    compare_exposure({"check": "exposure", "wallet": name, "at": at}, expect, rollup, reference, legacy)
+
+
+def spend_instants(rng: random.Random, now: int) -> list:
+    """Six instants: each period's start ±1 s around ``now``, now, and random ones."""
+    edges = {now, now + rng.randint(1, 3 * DAY), now - rng.randint(1, 3 * DAY)}
+    for start, end in spend_periods(now).values():
+        edges |= {start - 1, start, start + 1, end - 1, end}
+    return rng.sample(sorted(edges), 6)
+
+
+# ---------------------------------------------------------------- histories
+class WalletHistory:
+    def __init__(self, root: Path, seed: int, *, steps: int = STEPS, fault_rate: float = 0.01, fault_by=None):
+        self.rng = random.Random(seed)
+        self.seed, self.steps, self.fault_rate, self.fault_by = seed, steps, fault_rate, fault_by
+        self.w = make_wallet_world(root / "store", self.rng.choice(ANCHORS) + self.rng.randint(-2 * DAY, 2 * DAY))
+        self.trace = []
+
+    def at(self) -> int:
+        rng, now = self.rng, self.w.now
+        pick = rng.random()
+        if pick < 0.4:
+            return now - rng.choice(FORWARD)
+        if pick < 0.8:
+            start, end = rng.choice(list(spend_periods(now).values()))
+            return rng.choice((start, end)) + rng.choice((-1, 0, 1))
+        return now + rng.choice((1, 60, 3_600, DAY))   # in the future: counted, no upper bound
+
+    def calls(self, wallet: str, status: str, *, paid=None) -> list:
+        sql = ("SELECT c.id FROM billing_calls c LEFT JOIN billing_settlements s ON s.call_key=c.id "
+               "WHERE c.account_id=? AND c.status=?" + ("" if paid is None else " AND (s.call_key IS NOT NULL)=?")
+               + " ORDER BY c.rowid")
+        args = (self.w.wallets[wallet], status) if paid is None else (self.w.wallets[wallet], status, int(paid))
+        return [r["id"] for r in self.w.store.all(sql, args)]
+
+    def generate(self, *, fault: bool) -> dict:
+        rng, w = self.rng, self.w
+        wallet = rng.choice(("A", "A", "B", "L"))
+        if fault:
+            return {"op": "malformed", "wallet": wallet, "call": w.key("bad"), "at": rng.choice(MALFORMED_TIMES),
+                    "paid": rng.random() < 0.5}
+        kind = rng.choices(list(SPEND_WEIGHTS), weights=list(SPEND_WEIGHTS.values()))[0]
+        if kind == "reserve":
+            return {"op": kind, "wallet": wallet, "call": w.key("held"), "at": self.at(),
+                    "hold": rng.choice(SPEND_HOLDS[wallet]), "deadline_in": rng.choice((60, 600, DAY))}
+        if kind == "settle":
+            held = self.calls(wallet, "reserved")
+            existing = held and rng.random() < 0.5
+            amount = rng.choice(SPEND_AMOUNTS) if wallet != "A" or rng.random() < 0.5 else rng.randint(0, 9)
+            return {"op": kind, "wallet": wallet, "order": rng.choice(SPEND_ORDERS), "amount": amount,
+                    "call": rng.choice(held) if existing else w.key("sold"), "existing": bool(existing),
+                    "at": self.at(), "hold": rng.choice(SPEND_HOLDS[wallet])}
+        if kind == "unpaid":
+            held = self.calls(wallet, "reserved")
+            existing = held and rng.random() < 0.5
+            return {"op": kind, "wallet": wallet, "call": rng.choice(held) if existing else w.key("unpaid"),
+                    "existing": bool(existing), "at": self.at()}
+        if kind == "complete":
+            unpaid = self.calls(wallet, "settled", paid=False)
+            if not unpaid:
+                return self.generate(fault=False)
+            return {"op": kind, "wallet": wallet, "call": rng.choice(unpaid), "amount": rng.choice(SPEND_AMOUNTS),
+                    "settlement_first": rng.random() < 0.3}
+        if kind == "release":
+            held = self.calls(wallet, "reserved")
+            if not held:
+                return self.generate(fault=False)
+            return {"op": kind, "wallet": wallet, "call": rng.choice(held)}
+        if kind == "expire":
+            return {"op": kind, "advance": rng.choice((61, 601, DAY + 1))}
+        if kind == "clock":
+            return {"op": kind, "delta": rng.choice((-DAY, -3_600, -1, 1, 3_600, DAY, 3 * DAY))}
+        if kind == "bulk":
+            low = min(start for start, _ in spend_periods(w.now).values())
+            rows = [(rng.choice((low - 1, low, low + 1, w.now - rng.randint(0, 3 * DAY))), rng.randint(0, 7))
+                    for _ in range(rng.choice((20, 200)))]
+            return {"op": kind, "wallet": wallet, "call": w.key("bulk"), "rows": rows}
+        if kind == "reopen":
+            return {"op": kind, "damage": rng.choice((None, None, "drop", "sentinel", "version", "marker"))}
+        if kind == "rebuild":
+            return {"op": kind, "wallet": wallet}
+        return {"op": "real", "call": w.key("real"), "amount": rng.choice((0, 1, 2, 5)),
+                "period": rng.choice(("daily", "weekly", "monthly")), "delta": rng.choice((-1, 0, 0, 5)),
+                "settle": rng.choice((None, 1, 3))}
+
+    def check(self, step: int) -> None:
+        w = self.w
+        if step % 3 == 2:
+            check_spend_verify(w, strict=False, mode="daily")
+        else:
+            check_spend_verify(w)
+        with w.store.tx() as t:
+            for at in spend_instants(self.rng, w.now):
+                for name in WALLET_ENVS:
+                    read_exposure(w, t, name, at)
+
+    def run(self) -> None:
+        fault_step = self.rng.randint(0, self.fault_by) if self.fault_by is not None else None
+        for step in range(self.steps):
+            for _ in range(self.rng.randint(1, 4)):
+                fault = (step == fault_step) or (fault_step is None and self.rng.random() < self.fault_rate)
+                op = self.generate(fault=fault)
+                if fault:
+                    fault_step = -1
+                self.trace.append(op)
+                run_spend_op(self.w, op)
+            self.check(step)
+
+
+def run_wallet_history(root: Path, seed: int, **options) -> WalletHistory:
+    history = WalletHistory(root, seed, **options)
+    try:
+        history.run()
+    except Mismatch as failure:
+        pytest.fail(f"wallet seed {seed}, after {len(history.trace)} ops: {failure}\n"
+                    f"trace: {json.dumps(history.trace, default=str)[:6000]}", pytrace=False)
+    except Exception as error:
+        pytest.fail(f"wallet seed {seed}, after {len(history.trace)} ops: {type(error).__name__}: {error}\n"
+                    f"last op: {json.dumps(history.trace[-1:], default=str)[:2000]}")
+    return history
+
+
+@pytest.mark.parametrize("seed", WALLET_SEEDS)
+def test_spend_rollup_equals_oracle_reference_and_legacy_on_random_wallet_histories(seed, tmp_path, monkeypatch):
+    monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
+    run_wallet_history(tmp_path, 20_000 + seed)
+
+
+@pytest.mark.parametrize("seed", range(1, WALLET_FAULT_SEEDS + 1))
+def test_a_malformed_settled_call_keeps_its_wallet_refused_on_random_histories(seed, tmp_path, monkeypatch):
+    """Every history has a malformed settled call in its first half: from then on that wallet refuses
+    payer_budget_inconsistent at every instant, every rebuild of it refuses and reopening keeps it (only
+    restoring a backup from before the write clears it), while the other wallets still equal the oracle."""
+    monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
+    history = run_wallet_history(tmp_path, 30_000 + seed, fault_by=STEPS // 2)
+    w = history.w
+    assert w.malformed
+    with w.store.tx() as t:
+        for name in w.malformed:
+            scope = (WALLET_ENVS[name], "", w.wallets[name])
+            assert t.execute("SELECT 1 FROM model_cost_rollup_faults WHERE environment=? AND provider=? AND account_ref=? "
+                             "AND resolved_at IS NULL", scope).fetchone(), scope
+            with pytest.raises(BillingError, match="^payer_budget_inconsistent$"):
+                rollup_exposure(t, environment=scope[0], account=scope[2], windows=spend_periods(w.now))
+    STATS["spend:fault_histories"] += 1
+
+
+def test_12000_settled_calls_legacy_refuses_on_its_cap_and_the_spend_rollup_still_equals_the_oracle(tmp_path,
+                                                                                                    monkeypatch):
+    """12,000 settled calls of wallet A this month (and three holds): the 0bcce176 read refuses
+    payer_budget_capacity; the rollup equals the oracle and the product's reference at the period edges,
+    verifies, and a real reservation at exactly the limit is admitted while one unit less refuses."""
+    monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
+    now = utc("2036-02-28T12:00:00")
+    w = make_wallet_world(tmp_path / "store", now)
+    rng = random.Random(12_000)
+    month = utc("2036-02-01T00:00:00")
+    run_spend_op(w, {"op": "bulk", "wallet": "A", "call": "fx-cap",
+                     "rows": [(rng.randint(month, now), rng.randint(0, 7)) for _ in range(12_000)]})
+    for k in range(3):
+        run_spend_op(w, {"op": "reserve", "wallet": "A", "call": f"fx-cap-held-{k}", "at": now - k, "hold": 7,
+                         "deadline_in": DAY})
+    check_spend_verify(w)
+    with w.store.tx() as t:
+        for at in (now, now + 1, utc("2036-02-29T00:00:00") - 1, utc("2036-02-29T00:00:00"), utc("2036-03-01T00:00:00") - 1):
+            expect = oracle_exposure(wallet_facts(t, w.wallets["A"]), at)
+            assert not expect.codes and expect.candidates > SPEND_CAP, (at, expect.codes)
+            windows = spend_periods(at)
+            assert outcome(lambda: LegacyPayerBudgets()._exposure(t, w.wallets["A"], windows)) == (
+                "refused", "payer_budget_capacity")
+            read_exposure(w, t, "A", at)
+    for delta, admitted in ((-1, False), (0, True)):
+        got = run_spend_op(w, {"op": "real", "call": f"fx-cap-real{delta}", "amount": 5, "period": "monthly",
+                               "delta": delta, "settle": None})
+        assert (got["outcome"][0] == "ok") is admitted, got
+    check_spend_verify(w)
