@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 
 import yaml
@@ -569,6 +570,88 @@ class MainSyncGuardTests(unittest.TestCase):
                 done = self.run_guard(ref, repo)
                 self.assertEqual(done.returncode, 1)
                 self.assertIn('change the base branch of this pull request to dev', done.stdout)
+
+
+class RuntimeSuiteTests(unittest.TestCase):
+    """The runtime suite runs as two containers in parallel inside the one verify step, through
+    infra/production/verify_runtime_suite.sh; the job stays the one bounded `verify` check. Its exit
+    handling is exercised against real containers in test_verify_runtime_suite.py; here the shape."""
+
+    def setUp(self):
+        self.wf = load('production.yml')
+        self.text = (WORKFLOWS / 'production.yml').read_text(encoding='utf-8')
+        self.script = (ROOT / 'infra' / 'production' / 'verify_runtime_suite.sh').read_text(encoding='utf-8')
+        self.dockerfile = (ROOT / 'infra' / 'production' / 'Dockerfile.verify').read_text(encoding='utf-8')
+
+    def array(self, name):
+        match = re.search(rf'^{name}=\((.*)\)$', self.script, re.M)
+        self.assertIsNotNone(match, f'{name}=(...) in the script')
+        return match.group(1).split()
+
+    def docker_run(self):
+        lines = self.script.splitlines()
+        starts = [i for i, line in enumerate(lines) if line.strip().startswith('docker run ')]
+        self.assertEqual(len(starts), 1, 'one command runs both containers, so A and B get the same flags')
+        end = next(i for i in range(starts[0], len(lines)) if lines[i].rstrip().endswith('2>&1 \\'))
+        return ' '.join(line.strip().rstrip('\\').strip() for line in lines[starts[0]:end + 1])
+
+    def test_the_two_containers_cover_the_configured_testpaths_exactly(self):
+        pyproject = tomllib.loads((ROOT / 'pyproject.toml').read_text(encoding='utf-8'))
+        testpaths = pyproject['tool']['pytest']['ini_options']['testpaths']
+        a, b = self.array('suite_a'), self.array('suite_b')
+        self.assertTrue(a and b, 'both containers run something')
+        self.assertFalse(set(a) & set(b), 'no suite runs twice')
+        self.assertEqual(len(a + b), len(set(a + b)))
+        self.assertEqual(sorted(a + b), sorted(testpaths), 'together the two containers run exactly the configured suites')
+        self.assertIn('run_suite A a "${suite_a[@]}" &', self.script)
+        self.assertIn('run_suite B b "${suite_b[@]}" &', self.script)
+
+    def test_each_container_runs_pytest_as_the_image_does_on_its_own_mount(self):
+        cmd = json.loads(re.search(r'^CMD (\[.*\])$', self.dockerfile, re.M).group(1))
+        self.assertEqual(cmd[:3], ['python', '-m', 'pytest'])
+        self.assertTrue(all(arg.startswith('-') for arg in cmd[3:]),
+                        'the image default stays the whole suite (testpaths), for the manual verify mirror')
+        self.assertIn('--basetemp=/tmp/ci-test-artifacts/pytest', cmd)
+        self.assertEqual(self.array('pytest_flags'), [arg for arg in cmd[3:] if not arg.startswith('--basetemp=')],
+                         'the containers run the flags of the image command, plus their paths')
+        run = self.docker_run()
+        for flag in ('--rm', '--init', '--network none', '--memory 3g', '--cpus 2'):
+            self.assertIn(f' {flag} ', run)
+        self.assertEqual(run.count('--mount'), 1, 'only the artifacts directory is mounted')
+        self.assertIn('--mount "type=bind,source=$root/ci-test-artifacts-$slot,target=/tmp/ci-test-artifacts"', run)
+        self.assertIn('"$image" python -m pytest "${pytest_flags[@]}" "--basetemp=/tmp/ci-test-artifacts/pytest-$slot" "$@"', run)
+        for forbidden in (' -v ', '--volume', '--privileged', '--network host', '/opt/synwevo', 'data/'):
+            self.assertNotIn(forbidden, run)
+        self.assertIn('mkdir -m 0777 "$root/ci-test-artifacts-a" "$root/ci-test-artifacts-b"', self.script)
+
+    def test_both_exit_codes_are_waited_for_and_checked(self):
+        self.assertIn('set -euo pipefail', self.script)
+        # Both containers start before either is waited for; each wait records its own status, so a
+        # failing first wait cannot end the script (set -e) before the second container is waited for.
+        self.assertLess(self.script.index('pid_a=$!'), self.script.index('pid_b=$!'))
+        self.assertLess(self.script.index('pid_b=$!'), self.script.index('wait "$pid_a" || status_a=$?'))
+        self.assertLess(self.script.index('wait "$pid_a" || status_a=$?'), self.script.index('wait "$pid_b" || status_b=$?'))
+        self.assertIn('if [ "$status_a" -ne 0 ] || [ "$status_b" -ne 0 ]; then', self.script)
+        self.assertIn('exit "$status_a"', self.script)
+        self.assertIn('exit "$status_b"', self.script)
+        self.assertIn('Runtime suite A (${suite_a[*]}): exit $status_a', self.script)
+        self.assertIn('Runtime suite B (${suite_b[*]}): exit $status_b', self.script)
+
+    def test_the_step_runs_the_script_on_the_image_it_built_and_the_diagnostics_list_both_mounts(self):
+        verify = self.wf['jobs']['verify']
+        run = step(verify, name='Verify the deployment runtime')['run']
+        self.assertIn('docker build -f infra/production/Dockerfile.verify -t synwevo:verify .', run)
+        self.assertIn('bash infra/production/verify_runtime_suite.sh synwevo:verify "$RUNNER_TEMP"', run)
+        self.assertLess(run.index('-t synwevo:verify .'), run.index('verify_runtime_suite.sh'))
+        self.assertNotRegex(run, r'docker run[^\n]*synwevo:verify', 'the step starts no suite container itself; the script does, twice')
+        diagnostics = step(verify, name='Runtime test disk diagnostics')
+        self.assertEqual(diagnostics['if'], "always() && steps.changes.outputs.code != 'false'")
+        self.assertIn('for mount in "$RUNNER_TEMP/ci-test-artifacts-a" "$RUNNER_TEMP/ci-test-artifacts-b"; do', diagnostics['run'])
+        self.assertIn('sudo du -h --max-depth=2 "$mount"', diagnostics['run'])
+        self.assertNotIn('ci-test-artifacts"', diagnostics['run'], 'the former single mount is gone')
+        self.assertLessEqual(verify['timeout-minutes'], 120, 'the limit is a guard, not a target: rebalance the split before raising it')
+        self.assertIn('one bounded verify job', self.text)
+        self.assertIn('two containers', self.text)
 
 
 if __name__ == '__main__':

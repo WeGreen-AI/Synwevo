@@ -16,7 +16,8 @@ name: Verify and deploy Synwevo
 # success; whatever the classifier cannot prove to be records-only gets the full verify.
 # A push to dev that only changes records neither verifies nor deploys (same rule, as a path filter).
 # workflow_dispatch runs everything and deploys only when dispatched on dev.
-# The complete runtime suite is kept in one bounded verify job.
+# The complete runtime suite is kept in one bounded verify job, where it runs as two containers in
+# parallel (infra/production/verify_runtime_suite.sh: the split, its reasons and its exit handling).
 #
 # `verify` is no boundary against the pull request it checks. A pull_request run executes that pull
 # request's own copy of this file, of the guards and of the test configuration, so a pull request
@@ -53,8 +54,13 @@ jobs:
     # Run 36997527305: 2,922 tests took 39m37s at ~69% (before an SDK install failure). Run 40200899191
     # (6,871 tests, the MCP merge) reached 98% with no failure when the former 75-minute limit cancelled
     # it: the runtime suite alone took 68 minutes on the hosted runner, plus about 4 minutes of image build.
-    # Allow the complete suite plus image build with room to grow; retain every test and the 3 GiB / 2 CPU
-    # limits. Hosted-runner minutes are free for this public repository.
+    # Run 41267068260 (7,963 tests) took 1h43m for the suite in one container, 1h49m for the job. Since
+    # then the suite runs as two containers in parallel (infra/production/verify_runtime_suite.sh); the
+    # longer one holds ~57% of the serial time, so the step is expected to take about an hour plus the
+    # image build. The limit is a guard against a hung run, not a target: it was not raised for the split,
+    # and a run that approaches it is rebalanced or split further rather than given more time. Retain
+    # every test and the 3 GiB / 2 CPU limits per container (two containers fill the hosted runner's
+    # 4 vCPU). Hosted-runner minutes are free for this public repository.
     timeout-minutes: 120
     steps:
       - name: Refuse a re-run that is no longer dev's head
@@ -204,21 +210,25 @@ jobs:
           docker image inspect --format '{{.RepoTags}} bytes={{.Size}}' synwevo:ci synwevo:verify
           du -sh "$RUNNER_TEMP/private-source" "$RUNNER_TEMP/source.tar"
           df -h "$RUNNER_TEMP"
-          # Only this job's synthetic pytest data is mounted. Keep failed fixtures after --rm;
-          # root conftest removes passing tmp_path allocations after complete teardown.
-          mkdir -m 0777 "$RUNNER_TEMP/ci-test-artifacts"
-          docker run --rm --init --network none --memory 3g --cpus 2 \
-            --mount "type=bind,source=$RUNNER_TEMP/ci-test-artifacts,target=/tmp/ci-test-artifacts" synwevo:verify
+          # The runtime suite, as two containers in parallel (the split and its reasons are in the script),
+          # each with 3 GiB, 2 CPUs, no network and its own bind mount, $RUNNER_TEMP/ci-test-artifacts-a
+          # and -b, which the script creates: only this job's synthetic pytest data is mounted. Failed
+          # fixtures survive --rm there; root conftest removes passing tmp_path allocations after complete
+          # teardown. The script waits for both containers, prints both exit codes and fails when either
+          # is non-zero (a container killed by the memory limit returns 137).
+          bash infra/production/verify_runtime_suite.sh synwevo:verify "$RUNNER_TEMP"
       - name: Runtime test disk diagnostics
         if: always() && steps.changes.outputs.code != 'false'
         run: |
           df -h "$RUNNER_TEMP"
           df -i "$RUNNER_TEMP"
-          if [ -d "$RUNNER_TEMP/ci-test-artifacts" ]; then
-            # At most 40 size/path lines, only under this job's dedicated test mount.
-            # Never dump database contents, environment values or unrelated host directories.
-            sudo du -h --max-depth=2 "$RUNNER_TEMP/ci-test-artifacts" | sort -hr | sed -n '1,40p'
-          fi
+          for mount in "$RUNNER_TEMP/ci-test-artifacts-a" "$RUNNER_TEMP/ci-test-artifacts-b"; do
+            if [ -d "$mount" ]; then
+              # At most 40 size/path lines per container, only under this job's dedicated test mounts.
+              # Never dump database contents, environment values or unrelated host directories.
+              sudo du -h --max-depth=2 "$mount" | sort -hr | sed -n '1,40p'
+            fi
+          done
   deploy:
     # Only dev of this repository deploys, and only from a push or a dispatch: pull requests, forks
     # and other branches never reach the environment, whose branch policy admits dev only as well.
