@@ -12,10 +12,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@synwevo/auth-client": "1.0.0",
     "@synwevo/ui": "1.0.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "@synwevo/auth-client": "1.0.0"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
