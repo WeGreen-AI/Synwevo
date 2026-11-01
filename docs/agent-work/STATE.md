@@ -8,14 +8,14 @@
 
 ## 实际发布与CI
 
-- **生产当前为 `383142a52aac417d576177933bdf07e359014155`**（2026-11-01 06:24Z，流水线运行 41267068260：Dependabot 依赖更新 PR #26 rolldown、#27 react-router-dom；同日 04:35Z 运行 41267049090 部署 1e533a24（PR #25 Tiptap 分组）；备份 `/opt/synwevo/backups/20261101T062338Z`、`20261101T043445Z`；五域 /readyz 200、四角色同镜像且 healthy、无错误日志。应用代码与 ae16da28（2026-11-01 02:50Z，成本核算上限第二阶段，PR #24，决定 D18 第 7 项；只读核验：日行表与哨兵在、标记 v1 与触发器版本 1、八个触发器、`('', '@wallets', '')` 回填审计 ok、0 个未处理故障、quick_check ok）相同，只多了依赖更新。verify 时长已达 1h49m（上限 120 分钟），见 BACKLOG `verify-duration`。）
+- **生产当前为 `c3176eb3f39a8b116e5c0d1078647866816c0f9f`**（2026-11-01 10:35Z，流水线运行 41293870829：verify 作业改为两个并行容器跑运行时套件（PR #31，BACKLOG verify-duration），应用代码不变；PR 自身 verify 实测 A 41m51s（2,732 项）/B 48m08s（5,231 项），步骤 49.6 分钟（此前单容器 82–105 分钟），推送运行整体 verify 56.5 分钟；备份 `/opt/synwevo/backups/20261101T103502Z`；五域 /readyz 200、四角色同镜像且 healthy、无错误日志）。此前 383142a5 / 1e533a24（2026-11-01 Dependabot 更新）、ae16da28（2026-11-01 02:50Z 成本核算上限第二阶段）。dev→main 同步 PR #30 已于 08:39Z 合入（main 17832142）；Dependabot #32（react 分组，新配置的首个 PR）已合入 9f2d5938，其推送运行随后验证并部署。
 - 流水线：仓库公开后 Actions 托管运行器免费；verify 上限 120 分钟（MCP 合入后全量运行时测试约 68 分钟）。不要重跑早于已部署版本的旧运行；部署守卫也会拒绝。
 - 已合入 dev 的开源与流程 PR：#2 切换、#3 脱敏、#5 记录、#13 许可证、#14 依赖分组、#15 成本核算上限、#16 记录、#21 Dependabot react 分组；Dependabot #6–#9、#18（Tiptap 分组）、#19（Vite）已合入，#10–#12（Tiptap 单包）与 #20（react 不带 react-dom，verify 失败）已关闭。dev→main 同步 PR #17 已于 2026-10-29 00:33Z 合入（main e98c382a = dev 0bcce176）。Dependabot 的 pip 作业每周失败（约束锁文件不在其抓取范围，见 BACKLOG `dependabot-pip`）。下一步：成本核算上限第二阶段 PR 进 dev → verify → 合并 → 部署 → 核验记录；之后再做一次 dev→main 同步。
 - 待所有者：① Admin 支付设置仍为 v3（card + wechat_pay + alipay），请重新发布仅含银行卡的版本；② DeepSeek 路线 2026-10-15 已过期，付费 Agent 调用被拒（公开状态如实显示“模型服务暂停”），请在 Admin 续期；③ 2026-10-25 条款与定价文本请法律顾问复核；④ DeepSeek 训练与保留书面答复未取得；⑤ 开源审计：把本机密钥文件移出检出目录，开启 secret scanning / push protection / 私密漏洞报告，按审计直接告知所有者的步骤加固管理员账户；成本核算上限上线前保持付费 Agent 放行名单模式。
 
 ## 当前工作包与下一条动作
 
-- 下一动作（2026-11-01 06:35Z 更新）：Dependabot #25/#26/#27 已合入并经流水线部署核验（1e533a24、383142a5）。接下来：dev→main 同步 PR（main 上的 Dependabot 配置才会生效：Dependabot 读默认分支 main 的 `.github/dependabot.yml`，#21 的 react 分组与 `increase-if-necessary` 在同步前不起作用）；再按 BACKLOG 选下一包（authz-6、CR-012 遗留、金额显示精度、A40），`cost-rollup-provider-replay` 与 `dependabot-pip` 待所有者决定。付费 Agent 公开放量（`allowlist_only=false`）的前提已满足，开关由所有者决定。
+- 下一动作（2026-11-01 10:40Z 更新）：verify 两容器并行已上线（c3176eb3）；dev→main 已同步（#30）；Dependabot #32 已合入待部署。进行中：BACKLOG 金额显示精度（worktree amount-precision，工作流 wf_a30c0676-f3b：侦察发现 ¥5.11182 并非浮点尾数，而是生产钱包单位 CNY scale=6 的精确微元显示；实现为“以分显示、不足一分显示不到 ¥0.01、上限向上取整、明细保留精确值”的共享格式化器，评审指出同一数字按语境分别四舍五入/向上取整会造成“余额 ≥ 单次冻结却被拒绝”的误读等 2 项中级，修正中）；PR 前由协调者复核并在 PR 说明里写明显示策略供所有者否决。此前：Dependabot #25/#26/#27 已合入并经流水线部署核验（1e533a24、383142a5）。dev→main 同步 PR（main 上的 Dependabot 配置才会生效：Dependabot 读默认分支 main 的 `.github/dependabot.yml`，#21 的 react 分组与 `increase-if-necessary` 在同步前不起作用）；再按 BACKLOG 选下一包（authz-6、CR-012 遗留、金额显示精度、A40），`cost-rollup-provider-replay` 与 `dependabot-pip` 待所有者决定。付费 Agent 公开放量（`allowlist_only=false`）的前提已满足，开关由所有者决定。
 - 下一动作（2026-10-31 23:00Z 更新）：成本核算上限第二阶段在 `cost-phase2` 已过三轮修正与对抗式核验（4310c577、a42a0f83、4525df07：预约时读到坏日行即锁定；有界核对能点名窗口外的坏事实；日行表被清空只作为全库问题报告、重启重放即恢复、单钱包重建不再写回哨兵、哨兵丢失时 rebuild 拒绝；CLI 核对会报告自己打开时的重放并以 1 退出；全库告警有独立措辞），第三轮核验确认无金额缺陷、无失败开放路径；剩余 3 项低级（全库告警按 UTC 日去重会吞掉当日第二组问题；提供方族 CLI 打开时静默重放；rebuild 参数校验在打开库之后）正在第四轮修正（wf_282fa827-fd4），通过后开 PR 进 dev。
 - 下一动作（2026-10-31 18:00Z 更新）：**成本核算上限第二阶段（个人支出上限按钱包日行精确汇总）在 worktree `cost-phase2`（分支 `claude/cost-phase2`，基于 dev 0bcce176）已完成实现、独立预言机测试（391 项，无分歧）、三视角对抗式审查（无金额缺陷；6 项运维缺口已在 4310c577 以先失败测试修正）与本地全部检查（五守卫、typecheck、工作区测试、定向计费测试与等价性测试均通过）**；修正提交本身的二次审查（wf_cc043309-fb0）进行中，通过后 `gh pr create --base dev`，verify 通过后合并、部署、只读核验（标记与触发器版本、`('', '@wallets', '')` 回填审计 ok、0 故障、quick_check）并记录，然后关闭 BACKLOG cost-capacity 行并做 dev→main 同步。实现代理在 2026-10-26 的工作流 wf_dd7b1e22-e8a 中断后由 wf_d468999e-87b 续做；本机 3.12 验证 venv 改放 `~/.cache/synwevo-verify-venv312`（scratchpad 下的会被 macOS 清理）。
 - 下一动作（2026-10-25 09:55Z 更新）：**311508fe 已部署并核验**（D17 + B3，CR-132–CR-135）。进行中：Node 22 账户前端日期断言修正（wf_17830410-6c4）→ 本地 Node 22/23 双跑 → 推送 → Actions verify + deploy。之后按 BACKLOG：成本容量 `_MAX_RECORDS`、authz-6（密钥与定价分权）、卡住的 usage_pending 管理视图、金额显示精度、A40 组织创建策略。
@@ -70,4 +70,4 @@
 - 历史调查及状态变更保留在EVIDENCE/BACKLOG，不将旧暂停或旧发布状态作为当前事实。
 - 接续在本实施树读取MASTER_PROMPT、STATE、BACKLOG、EVIDENCE、CODE_REVIEW，核对实际Git/CI/生产和锁，复用配置与副作用记录；不重建、不重放、不绕过门禁。交接快照 `CLAUDE_CODE_HANDOFF_2026-10-11.txt` 只在主检出、不是第二份状态真相。
 
-保存时间：2026-11-01T06:31:09.236754+00:00
+保存时间：2026-11-01T10:38:03.945980+00:00

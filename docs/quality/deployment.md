@@ -1,6 +1,40 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-11-01 06:24 UTC — 383142a5, Dependabot updates (rolldown 1.2.15, react-router-dom 7.18.5; the Tiptap group at 04:35 UTC)
+## Current release · 2026-11-01 10:35 UTC — c3176eb3, the verify job runs the runtime suite as two parallel containers
+
+**Running source: `c3176eb3f39a8b116e5c0d1078647866816c0f9f`** (origin/dev, the merge of PR #31). Pipeline run 41293870829
+(push to dev): verify 09:36→10:33 UTC, deploy 10:33→10:35 UTC through the restricted SSH command; receiver backup
+`/opt/synwevo/backups/20261101T103502Z`.
+
+**What it ships over 383142a5 (BACKLOG `verify-duration`, P2):** no application change. The "Verify the deployment runtime"
+step now runs the suite as two containers in parallel through `infra/production/verify_runtime_suite.sh` — A =
+`tests/integration` + `apps/messages/tests`, B = the Docs, Account and Suite suites, together exactly pyproject's
+testpaths — each with the former 3 GiB / 2 CPU / no-network limits and its own artifact mount, both waited for separately,
+both exit codes printed, the step failing when either is non-zero. The `fixtures` session fixture that generates the
+synthetic `testdata/` moved from the Docs conftest to the root conftest so that `tests/integration` generates it in a
+container of its own (the review found that it would otherwise have failed in CI). Measured on the pull request's own
+verify (run 41288319238): A 2,732 tests in 41m51s, B 5,231 tests in 48m08s, the step 49.6 minutes against 82–105 minutes
+for one container; the push run's whole verify took 56.5 minutes. The `timeout-minutes: 120` limit was not raised. Note for
+a later tidy-up: the comments in the script and the workflow estimated A as the longer container from the old run's
+progress lines; measured, B is (48 vs 42 minutes) — a comment correction, nothing operational.
+
+**Also today:** the dev→main sync PR #30 was merged at 08:39 UTC (`main` = 17832142, 32 commits since e98c382a), which
+also put the Dependabot configuration of #21 on the default branch. Dependabot's first run under it opened #32 with react
+and react-dom grouped as intended — but `versioning-strategy: increase-if-necessary` did **not** keep the workspace
+manifests or the shared packages' peer ranges as they were (`>=19` → `^19.3.1` in `packages/ui` and
+`packages/auth-client/web`): the 2026-10-31 records' statement that manifest ranges are no longer rewritten was wrong,
+and the comment in `.github/dependabot.yml` says the same wrong thing. Harmless inside this monorepo (the shared packages
+are consumed only by these apps); recorded in BACKLOG (`dependabot-strategy`) with `lockfile-only` as the alternative for
+the owner's decision. #32 passed verify (45m13s) and was merged at 10:37 UTC (9f2d5938); its push run verifies with the
+new two-container step and deploys next.
+
+**Post-deploy checks (10:37 UTC, read-only):** `/readyz` 200 on synwevo.com, workplace, accounts, docwave and message;
+accounts, docs, portal and messages all on `synwevo:c3176eb3…` and healthy, gateway healthy; no traceback or error line in
+the first 10 minutes.
+
+**For the owner:** unchanged, plus the `dependabot-strategy` decision above.
+
+## 2026-11-01 06:24 UTC — 383142a5 (historical; superseded above), Dependabot updates (rolldown 1.2.15, react-router-dom 7.18.5; the Tiptap group at 04:35 UTC)
 
 **Running source: `383142a52aac417d576177933bdf07e359014155`** (origin/dev, the merge of PR #27). Pipeline run 41267068260
 (push to dev): verify 04:32→06:21 UTC, deploy 06:21→06:24 UTC through the restricted SSH command; receiver backup
