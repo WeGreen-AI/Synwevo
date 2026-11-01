@@ -25,6 +25,6 @@
     "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning --test tests/*.test.mjs"
   },
   "devDependencies": {
-    "rolldown": "1.2.10"
+    "rolldown": "1.2.15"
   }
 }
