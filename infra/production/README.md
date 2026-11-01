@@ -88,7 +88,24 @@ prove to be records-only (a symbolic link or submodule under `docs/` included) g
 runs the archive check too.
 Otherwise hosted Ubuntu runners install pinned Python/Node dependencies, check boundaries/brand/types, build all
 frontends, run frontend suites and deployment safety regressions. The Python suite runs in a
-test-only derivative of the actual deployment image, with no production volume or external network.
+test-only derivative of the actual deployment image, with no production volume or external network,
+as two containers in parallel inside the one `verify` job (`verify_runtime_suite.sh`, called by the
+"Verify the deployment runtime" step): container A runs `tests/integration` and `apps/messages/tests`,
+container B the Docs, Account and Suite suites — together exactly `pyproject.toml`'s `testpaths`, split
+where the serial time divides closest to half: run 41267068260's own progress lines give A about 52 and B
+about 49 of its 101 suite minutes (one container took 1h43m; a local one-process run divides 43.5 % against
+56.5 % with B the longer), so the step is expected to take about 55 minutes plus the image build. The
+git-ignored `testdata/` fixtures that both the Docs suite and `tests/integration` read are generated on
+request by the root `conftest.py`'s session fixture `fixtures`, so each container makes its own (a reader
+that spelled the path failed in a container of its own; `infra/production/tests/test_workflow.py` checks
+that none does). Each container keeps the 3 GiB / 2 CPU
+limits the suite must fit, has its own bind mount for failed fixtures (`$RUNNER_TEMP/ci-test-artifacts-a`
+and `-b`, listed by the diagnostics step) and streams its output prefixed `[A]`/`[B]`; the script waits
+for both, prints both exit codes and fails when either is non-zero, an OOM-killed container's 137
+included (`infra/production/tests/test_verify_runtime_suite.py` proves this with throwaway containers).
+`Dockerfile.verify`'s own command stays the whole suite in one container for a manual run of the
+verify mirror; `bash infra/production/verify_runtime_suite.sh synwevo:verify <fresh directory>` runs the
+two-container layout locally (the directory must be one the Docker daemon can bind-mount).
 CI first builds from the same private archive extraction used by the SSH receiver, then checks
 account startup as the unmodified non-root runtime user. Shipped source is readable inside the
 image even when the host release directories are private; data and secret permissions are unchanged.

@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir -r requirements-dev.txt \
 COPY infra/production infra/production
 # Match repository test isolation and shared fixtures; runtime configuration is scrubbed before collection.
 COPY conftest.py ./conftest.py
-# Synthetic document fixtures are generated beneath /app/testdata during the test session.
+# Synthetic document fixtures are generated beneath /app/testdata during the test session (the root
+# conftest's `fixtures`, in whichever container asks: testdata/ is git-ignored, so the archive has none).
 RUN chown -R synwevo:synwevo /app \
     && install -d -o synwevo -g synwevo /tmp/ci-test-artifacts
 USER synwevo

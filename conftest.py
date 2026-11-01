@@ -17,9 +17,13 @@ supply "where LibreOffice is installed on this machine".
 from __future__ import annotations
 
 import functools
+import hashlib
 import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
+import tempfile
 
 import pytest
 
@@ -61,6 +65,56 @@ ROOT = repo_root() or Path(__file__).resolve().parent
 @pytest.fixture(scope="session")
 def platform_root() -> Path:
     return ROOT
+
+
+# ---------------------------------------------------------------------------- synthetic fixtures
+# TEST-ONLY document fixtures (generated, synthetic: "测试"/"TEST"-prefixed names, numbers and
+# companies) under <repo>/testdata/, which is git-ignored and therefore absent from a fresh checkout
+# and from the verify image. The fixture lives here and not in apps/docs/tests/conftest.py because
+# tests/integration reads these files too: a fixture only the Docs suite could request worked as
+# long as that suite ran first in the same process, and the verify job's two parallel containers
+# run tests/integration on its own (infra/production/verify_runtime_suite.sh). A test that reads
+# testdata/ requests `fixtures` and reads from the path it returns; infra/production/tests/
+# test_workflow.py checks that no suite spells the path itself.
+FIXTURES_DIR = ROOT / "testdata"
+FIXTURE_GENERATOR = ROOT / "apps" / "docs" / "scripts" / "make_fixtures.py"
+FIXTURE_MARKERS = ("测试_客户100.xlsx", "测试_发货单模板.pdf", "测试_发货单图片模板.png", "测试_订单段落模板.docx",
+                   "测试_多表单登记表.pdf")
+FIXTURE_STAMP = ".generated-by"          # holds the SHA-256 of the generator that produced testdata/
+
+
+def _generator_digest() -> str:
+    return hashlib.sha256(FIXTURE_GENERATOR.read_bytes()).hexdigest()
+
+
+@pytest.fixture(scope="session")
+def fixtures() -> Path:
+    """TEST-ONLY fixture files (generated, synthetic).
+
+    Regenerated when any marker file is missing **or when the generator changed** since the
+    files were made: checking only for existence meant a changed make_fixtures.py never reached
+    an existing testdata/, and tests kept passing (or failing) against content the generator no
+    longer produces. New files are generated into a scratch directory and moved in one file at a
+    time with an atomic rename, so a concurrent test run never reads a half-written fixture.
+    """
+    want = _generator_digest()
+    stamp = FIXTURES_DIR / FIXTURE_STAMP
+    fresh = stamp.exists() and stamp.read_text(encoding="utf-8").strip() == want
+    if fresh and all((FIXTURES_DIR / n).exists() for n in FIXTURE_MARKERS):
+        return FIXTURES_DIR
+    FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix=".testdata-", dir=FIXTURES_DIR.parent))
+    try:
+        subprocess.run([sys.executable, str(FIXTURE_GENERATOR), str(scratch)], check=True)
+        for src in sorted(scratch.rglob("*")):
+            if src.is_file():
+                dst = FIXTURES_DIR / src.relative_to(scratch)
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                src.replace(dst)
+        stamp.write_text(want + "\n", encoding="utf-8")
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return FIXTURES_DIR
 
 
 def pytest_addoption(parser):

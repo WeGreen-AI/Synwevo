@@ -4,7 +4,6 @@ the verdict (synwevo_core.docs_file_events)."""
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,8 +12,6 @@ from synwevo_core.auth import Auth
 
 from .clamd_double import EICAR, ClamdDouble
 from . import encrypted_fixtures as F
-
-TESTDATA = Path(__file__).resolve().parents[3] / "testdata"
 
 
 @pytest.fixture()
@@ -80,8 +77,8 @@ def test_a_usable_file_is_announced_once_with_ids_and_no_content(api):
     assert file_events(api, row["id"], api.other) == []
 
 
-def test_a_scan_needs_ocr_and_is_ready_after_recognition(api):
-    row = upload(api, "scan.pdf", (TESTDATA / "测试_扫描单据.pdf").read_bytes())
+def test_a_scan_needs_ocr_and_is_ready_after_recognition(api, fixtures):
+    row = upload(api, "scan.pdf", (fixtures / "测试_扫描单据.pdf").read_bytes())
     assert row["status"] == "needs_ocr"
     assert [e["type"] for e in file_events(api, row["id"])] == ["file.needs_ocr"]
     assert api.post(f"/api/v1/files/{row['id']}/ocr", headers=api.h, json={}).status_code == 200
