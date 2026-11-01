@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import io
 import time
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -155,7 +154,8 @@ def test_publish_use_release_and_deprecate(world):
     assert ann.post(f"/api/organization-templates/{pub['id']}/update", json={}).json()["error"] == "source_gone"
 
 
-TESTDATA = Path(__file__).resolve().parents[2] / "testdata"
+# The synthetic picture template and order rows come from the root conftest's `fixtures` (testdata/ is
+# git-ignored and generated on request: this suite runs in a verify container of its own).
 W, H = 1190, 900
 NO_BOX = [226 / W, 214 / H, 520 / W, 254 / H]          # the order number box of the synthetic picture template
 AREA = [146 / W, 346 / H, 1044 / W, 606 / H]           # its 6 body rows
@@ -190,7 +190,7 @@ def _run(c, pid, formats, timeout=180):
     raise AssertionError("job timeout")
 
 
-def test_copies_generate_like_ordinary_templates_in_every_format(world):
+def test_copies_generate_like_ordinary_templates_in_every_format(world, fixtures):
     """The claim behind "使用即复制" is that nothing downstream learns a new kind of template:
     a copy made from a release binds, maps and generates exactly like an uploaded one — for a
     DOCX template and for a picture (PNG) template with a repeat area."""
@@ -215,8 +215,8 @@ def test_copies_generate_like_ordinary_templates_in_every_format(world):
     assert len(texts) == 2 and any("张三" in t for t in texts) and any("李四" in t for t in texts), texts
     assert job["snapshot"]["template"]["id"] == copy["id"] if "snapshot" in job else True
     # ---- PNG: a picture template with a number box and a repeat area, published and used the same way
-    png = (TESTDATA / "测试_发货单图片模板.png").read_bytes()
-    orders = (TESTDATA / "测试_订单明细100.xlsx").read_bytes()
+    png = (fixtures / "测试_发货单图片模板.png").read_bytes()
+    orders = (fixtures / "测试_订单明细100.xlsx").read_bytes()
     pid_img = ann.post("/api/projects", json={"name": "图片模板"}).json()["id"]
     t = ann.post("/api/templates/upload", files={"file": ("发货单.png", png, "image/png")}, data={"project_id": pid_img}).json()
     assert t["format"] == "png", t

@@ -636,14 +636,28 @@ class RuntimeSuiteTests(unittest.TestCase):
         self.assertIn('exit "$status_b"', self.script)
         self.assertIn('Runtime suite A (${suite_a[*]}): exit $status_a', self.script)
         self.assertIn('Runtime suite B (${suite_b[*]}): exit $status_b', self.script)
+        # Inside run_suite the pipeline's status (docker's, under pipefail) is recorded and returned, so a
+        # container's failure reaches the waits above: `|| :` or `return 0` here would pass both containers.
+        body = self.script[self.script.index('run_suite() {'):self.script.index('\nexplain() {')]
+        self.assertIn('; done \\\n    || status=$?\n', body)
+        self.assertIn("printf '[%s] container finished after %ss with exit %s\\n' \"$label\" \"$SECONDS\" \"$status\"", body)
+        self.assertIn('\n  return "$status"\n', body)
+        self.assertNotIn('return 0', body)
 
     def test_the_step_runs_the_script_on_the_image_it_built_and_the_diagnostics_list_both_mounts(self):
         verify = self.wf['jobs']['verify']
-        run = step(verify, name='Verify the deployment runtime')['run']
+        runtime = step(verify, name='Verify the deployment runtime')
+        run = runtime['run']
         self.assertIn('docker build -f infra/production/Dockerfile.verify -t synwevo:verify .', run)
-        self.assertIn('bash infra/production/verify_runtime_suite.sh synwevo:verify "$RUNNER_TEMP"', run)
         self.assertLess(run.index('-t synwevo:verify .'), run.index('verify_runtime_suite.sh'))
         self.assertNotRegex(run, r'docker run[^\n]*synwevo:verify', 'the step starts no suite container itself; the script does, twice')
+        # The script is the step's last command, alone on its line, in the default fail-fast shell: its exit
+        # status is the step's. `|| true`, continue-on-error or a shell override would let both containers
+        # fail with verify green.
+        commands = [line.strip() for line in run.splitlines() if line.strip() and not line.strip().startswith('#')]
+        self.assertEqual(commands[-1], 'bash infra/production/verify_runtime_suite.sh synwevo:verify "$RUNNER_TEMP"')
+        self.assertNotIn('continue-on-error', runtime)
+        self.assertNotIn('shell', runtime)
         diagnostics = step(verify, name='Runtime test disk diagnostics')
         self.assertEqual(diagnostics['if'], "always() && steps.changes.outputs.code != 'false'")
         self.assertIn('for mount in "$RUNNER_TEMP/ci-test-artifacts-a" "$RUNNER_TEMP/ci-test-artifacts-b"; do', diagnostics['run'])
@@ -652,6 +666,23 @@ class RuntimeSuiteTests(unittest.TestCase):
         self.assertLessEqual(verify['timeout-minutes'], 120, 'the limit is a guard, not a target: rebalance the split before raising it')
         self.assertIn('one bounded verify job', self.text)
         self.assertIn('two containers', self.text)
+
+    def test_each_container_generates_the_synthetic_fixtures_its_tests_read(self):
+        """testdata/ is git-ignored, so neither a fresh checkout nor the verify image has it; the root
+        conftest's session fixture `fixtures` generates it on request. tests/integration reads those files
+        as well as the Docs suite, and in one container the Docs suite had always generated them first: a
+        reader that spells the path instead of requesting the fixture passes there and fails in a container
+        of its own (FileNotFoundError at /app/testdata/…, which would have been container A's first failure)."""
+        self.assertIn('\ntestdata/\n', (ROOT / '.gitignore').read_text(encoding='utf-8'))
+        conftest = (ROOT / 'conftest.py').read_text(encoding='utf-8')
+        self.assertIn('@pytest.fixture(scope="session")\ndef fixtures() -> Path:', conftest)
+        self.assertIn('FIXTURE_GENERATOR = ROOT / "apps" / "docs" / "scripts" / "make_fixtures.py"', conftest)
+        self.assertIn('COPY conftest.py ./conftest.py', self.dockerfile, 'the verify image carries the root conftest')
+        pyproject = tomllib.loads((ROOT / 'pyproject.toml').read_text(encoding='utf-8'))
+        spelled = re.compile(r"""["']testdata["'/]""")
+        readers = [str(path.relative_to(ROOT)) for suite in pyproject['tool']['pytest']['ini_options']['testpaths']
+                   for path in sorted((ROOT / suite).rglob('*.py')) if spelled.search(path.read_text(encoding='utf-8'))]
+        self.assertEqual(readers, [], 'a test reads testdata/ from the path `fixtures` returns, never by a path of its own')
 
 
 if __name__ == '__main__':

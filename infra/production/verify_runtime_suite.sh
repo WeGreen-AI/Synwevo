@@ -17,15 +17,23 @@
 # deploys nothing. The hosted ubuntu-24.04 runner has 4 vCPU and 16 GB; every container keeps the
 # 3 GiB / 2 CPU limits the suite is required to fit (unstopped worker threads once thrashed it at 3 GiB:
 # the limit is a regression guard, docs/quality/verification.md §16.49), so two containers fill the
-# runner and a third would only take CPU from the other two. Measured share of the serial time per suite
-# (one process): tests/integration ~42%, apps/docs/tests ~21%, services/identity/tests ~21%,
-# apps/suite/tests ~15%, apps/messages/tests ~1.5%. A suite is not split inside, so the closest to half
-# is 43.5% against 57%: A = tests/integration + apps/messages/tests, B = the three application suites;
-# the step is expected to take the longer container's ~57%, about an hour. Together the two lists are
-# exactly pyproject.toml's testpaths (infra/production/tests/test_workflow.py checks that), so no test is
-# lost to the split, and running a suite on its own means the same as running them together (root
-# conftest.py). Both containers run to the end: a failure in one and a pass in the other says more than
-# the failure alone, and --maxfail=1 still ends a failing container at its first failure.
+# runner and a third would only take CPU from the other two. A suite is not split inside, and
+# A = tests/integration + apps/messages/tests, B = the three application suites is the split closest to
+# half on both measurements. That run's own progress lines (1 % apart, so ±2 min per suite) put
+# tests/integration at ~51 of its 101 suite minutes: A ≈ 52 min, B ≈ 49 min, so on the hosted runner A
+# is the longer container and the step is expected to take about 55 minutes plus the image build. A local
+# one-process run divides the other way, 43.5 % (A) against 56.5 % (B) — tests/integration ~42 %,
+# apps/docs/tests ~21 %, services/identity/tests ~21 %, apps/suite/tests ~15 %, apps/messages/tests ~1.5 % —
+# the ratio the split was first chosen on; moving apps/messages/tests (~1 min) would change nothing
+# measurable. Together the two lists are exactly pyproject.toml's testpaths
+# (infra/production/tests/test_workflow.py checks that), so no test is lost to the split, and running a
+# suite on its own means the same as running them together: the root conftest.py holds the shared hooks
+# and the `fixtures` session fixture that generates the git-ignored testdata/ files, which
+# tests/integration reads as well as the Docs suite. In one container the Docs suite had generated them
+# before tests/integration ran; in a container of its own tests/integration generates them itself
+# (test_workflow.py checks that no suite reads them by a path of its own). Both containers run to the
+# end: a failure in one and a pass in the other says more than the failure alone, and --maxfail=1 still
+# ends a failing container at its first failure.
 #
 # Exit handling is fail-closed and explicit. Under `set -e` a failing `wait` would end the script before
 # the second container is waited for, so each wait records its status with `|| status=$?`; both codes

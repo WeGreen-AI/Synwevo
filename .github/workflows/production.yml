@@ -55,10 +55,12 @@ jobs:
     # (6,871 tests, the MCP merge) reached 98% with no failure when the former 75-minute limit cancelled
     # it: the runtime suite alone took 68 minutes on the hosted runner, plus about 4 minutes of image build.
     # Run 41267068260 (7,963 tests) took 1h43m for the suite in one container, 1h49m for the job. Since
-    # then the suite runs as two containers in parallel (infra/production/verify_runtime_suite.sh); the
-    # longer one holds ~57% of the serial time, so the step is expected to take about an hour plus the
-    # image build. The limit is a guard against a hung run, not a target: it was not raised for the split,
-    # and a run that approaches it is rebalanced or split further rather than given more time. Retain
+    # then the suite runs as two containers in parallel (infra/production/verify_runtime_suite.sh); that
+    # run's own progress lines give the halves ~52 and ~49 of its 101 suite minutes (A, tests/integration
+    # + messages, is the longer one on the hosted runner), so the step is expected to take about 55
+    # minutes plus the image build. The limit is a guard against a hung run, not a target: it was not
+    # raised for the split, and a run that approaches it is rebalanced or split further rather than given
+    # more time. Retain
     # every test and the 3 GiB / 2 CPU limits per container (two containers fill the hosted runner's
     # 4 vCPU). Hosted-runner minutes are free for this public repository.
     timeout-minutes: 120

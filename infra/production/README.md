@@ -92,8 +92,13 @@ test-only derivative of the actual deployment image, with no production volume o
 as two containers in parallel inside the one `verify` job (`verify_runtime_suite.sh`, called by the
 "Verify the deployment runtime" step): container A runs `tests/integration` and `apps/messages/tests`,
 container B the Docs, Account and Suite suites — together exactly `pyproject.toml`'s `testpaths`, split
-where the measured serial time divides closest to half (43.5 % against 57 %; one container took 1h43m in
-run 41267068260, so the step is expected to take about an hour). Each container keeps the 3 GiB / 2 CPU
+where the serial time divides closest to half: run 41267068260's own progress lines give A about 52 and B
+about 49 of its 101 suite minutes (one container took 1h43m; a local one-process run divides 43.5 % against
+56.5 % with B the longer), so the step is expected to take about 55 minutes plus the image build. The
+git-ignored `testdata/` fixtures that both the Docs suite and `tests/integration` read are generated on
+request by the root `conftest.py`'s session fixture `fixtures`, so each container makes its own (a reader
+that spelled the path failed in a container of its own; `infra/production/tests/test_workflow.py` checks
+that none does). Each container keeps the 3 GiB / 2 CPU
 limits the suite must fit, has its own bind mount for failed fixtures (`$RUNNER_TEMP/ci-test-artifacts-a`
 and `-b`, listed by the diagnostics step) and streams its output prefixed `[A]`/`[B]`; the script waits
 for both, prints both exit codes and fails when either is non-zero, an OOM-killed container's 137

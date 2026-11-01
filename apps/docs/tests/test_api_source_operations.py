@@ -8,7 +8,6 @@ import hashlib
 import io
 import json
 import time
-from pathlib import Path
 
 import docx
 import openpyxl
@@ -527,14 +526,14 @@ def test_openapi_explicit_operations_scopes_and_truthful_schemas(env):
 
 
 # ------------------------------------------------------------------ OCR (API-2)
-SCANNED_PDF = Path(__file__).resolve().parents[3] / "testdata" / "测试_扫描单据.pdf"
+SCANNED_PDF = "测试_扫描单据.pdf"      # under the root conftest's `fixtures` (generated testdata/)
 
 
-def test_machine_ocr_makes_a_scanned_pdf_usable_like_the_workbench(env):
+def test_machine_ocr_makes_a_scanned_pdf_usable_like_the_workbench(env, fixtures):
     """A script can do what the workbench's OCR button does: a needs_ocr scan becomes ready, its page
     words come from recognition, and repeating the call stores the same words (API-2)."""
     c, h = env["client"], env["h"]["rw"]
-    src = ok(c.post(f"/api/v1/projects/{env['pid']}/files", files={"file": ("scan.pdf", SCANNED_PDF.read_bytes())}, headers=h))
+    src = ok(c.post(f"/api/v1/projects/{env['pid']}/files", files={"file": ("scan.pdf", (fixtures / SCANNED_PDF).read_bytes())}, headers=h))
     for _ in range(250):
         src = ok(c.get(f"/api/v1/files/{src['id']}", headers=h))
         if src["status"] != "parsing":
@@ -559,11 +558,11 @@ def test_machine_ocr_makes_a_scanned_pdf_usable_like_the_workbench(env):
     assert again["recognized"] == [page] and again["words"] == out["words"] and again["version"] == out["version"] + 1
 
 
-def test_machine_ocr_waits_for_a_slot_then_says_when_to_return(env, monkeypatch):
+def test_machine_ocr_waits_for_a_slot_then_says_when_to_return(env, monkeypatch, fixtures):
     import threading
     from synwevo_docs.views import Views
     c, h = env["client"], env["h"]["rw"]
-    src = ok(c.post(f"/api/v1/projects/{env['pid']}/files", files={"file": ("scan.pdf", SCANNED_PDF.read_bytes())}, headers=h))
+    src = ok(c.post(f"/api/v1/projects/{env['pid']}/files", files={"file": ("scan.pdf", (fixtures / SCANNED_PDF).read_bytes())}, headers=h))
     for _ in range(250):
         if ok(c.get(f"/api/v1/files/{src['id']}", headers=h))["status"] != "parsing":
             break
