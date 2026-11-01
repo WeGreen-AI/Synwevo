@@ -148,6 +148,21 @@ test('an existing cap is shown and can be cleared back to the default', async ()
   h.unmount();
 });
 
+test('a saved maximum equal to one call\'s hold reads equal to the hold it may not go below: both to every digit the unit holds', async () => {
+  // FIXTURE: the production unit's shape (CNY, scale 6). A cap of 524,289 micro-yuan is accepted (cap >= hold), so the
+  // hold beside the box reads "CN¥0.524289" like the cap, never "CN¥0.53", which the cap would seem to be below.
+  const micro = { code: 'CNY', scale: 6 };
+  const money = status({ unit: micro, per_call_hold: '524289',
+    run: run({ maximum: '524289', default: '6291468', cap: '524289', source: 'personal_cap', per_call_hold: '524289' }) });
+  const h = await capFixture({ amount: '524289', unit: micro }, money);
+  assert.ok(h.text().includes('Current: CN¥0.524289'), h.text());
+  assert.ok(h.text().includes('Cannot be lower than one call’s hold, CN¥0.524289') && !h.text().includes('CN¥0.53'), h.text());
+  assert.ok(h.text().includes('Default: at most CN¥6.30 at the current price'), 'the default is a bound and rounds up');
+  assert.equal(h.amount().props.value, '0.524289');
+  assert.ok(!h.elements().some((el) => el.props.role === 'status' && strings(el.props.children).includes('Cannot be lower than')), 'a cap equal to the hold is not warned about');
+  h.unmount();
+});
+
 test('an unusable cap or a changed unit is said plainly; without the status no amount is invented', async () => {
   const low = await capFixture({ amount: '10', unit: UNIT }, status({ run: run({ maximum: '10', cap: '10', source: 'personal_cap', usable: false }) }));
   assert.ok(low.elements().some((el) => el.props.role === 'status' && strings(el.props.children).includes('Cannot be lower than one call’s hold, CN¥0.39')));

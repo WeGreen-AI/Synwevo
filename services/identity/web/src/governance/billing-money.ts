@@ -1,23 +1,16 @@
-/** CNY amounts for the money administration pages, exact (no binary floats) and in the reader's
- *  locale: the digits come from `walletAmount` (BigInt), the currency sign from Intl. */
-import { walletAmount } from "../pages/account/money";
+/** CNY amounts for the money administration and organization pages, through the shared formatter
+ *  (`@synwevo/ui/money`): exact integer arithmetic (no binary floats), money at fen precision in
+ *  the reader's locale, the same "¥10.00" here as on the top-up dialog. */
+import { formatMinor, formatMoney, type MoneyOptions } from "@synwevo/ui/money";
 
-function currencySign(locale: string): { sign: string; before: boolean } {
-  const parts = new Intl.NumberFormat(locale, { style: "currency", currency: "CNY" }).formatToParts(1);
-  const at = parts.findIndex((p) => p.type === "currency");
-  const integer = parts.findIndex((p) => p.type === "integer");
-  return { sign: at >= 0 ? parts[at].value : "CNY", before: at >= 0 && at < integer };
-}
-
-/** `units` integer wallet units of `scale` decimal places (fen are scale 2). */
-export function cnyText(units: number | string, scale: number, locale: string): string {
-  const exact = walletAmount(String(units), scale, locale);
-  const { sign, before } = currencySign(locale);
-  return before ? `${sign}${exact}` : `${exact} ${sign}`;
+/** `units` integer wallet units of `scale` decimal places (fen are scale 2). `signed` adds the plus sign of a
+ *  credit; `rounding` 'down' for a balance that can still be spent, 'up' for what is held (see `@synwevo/ui/money`). */
+export function cnyText(units: number | string, scale: number, locale: string, options: MoneyOptions = {}): string {
+  return formatMoney(String(units), { code: "CNY", scale }, locale, options);
 }
 
 /** Fen to text. */
-export const fenText = (fen: number, locale: string) => cnyText(fen, 2, locale);
+export const fenText = (fen: number, locale: string) => formatMinor(fen, "CNY", locale);
 
 /** A yuan amount typed by an administrator ("10", "10.5", "10.50") to whole fen; null when invalid. */
 export function parseYuan(text: string, max = 100000): number | null {

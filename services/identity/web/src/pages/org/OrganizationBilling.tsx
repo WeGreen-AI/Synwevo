@@ -77,7 +77,8 @@ export default function OrganizationBilling({ organization, mine }: { organizati
   if (!can) return null;
   const heading = <h2 id={`${id}-h`}>{t("组织付费")}</h2>;
   if (closed) return <section className="org-section" aria-labelledby={`${id}-h`}>{heading}<p className="notice" role="note">{t("组织付费尚未开放")}</p></section>;
-  const money = (units: string) => data ? cnyText(units, data.unit.scale, locale) : "";
+  // The wallet's spendable balance rounds down and what is held rounds up, as on the Agent composer.
+  const money = (units: string, rounding: "down" | "up") => data ? cnyText(units, data.unit.scale, locale, { rounding }) : "";
   return <section className="org-section org-billing" id="org-billing" aria-labelledby={`${id}-h`}>{heading}
     <p className="tiny muted">{t("组织可以为成员的 Agent 使用付费。每位成员需要单独授权并设置每月额度；成员在对话中自己选择由个人还是组织付款。额度在每次模型调用前重新核对。")}</p>
     {returned && /^[A-Za-z0-9_-]{1,200}$/.test(returned) && <TopupReturn key={returned} orderId={returned} cancelled={result === "cancel"}
@@ -86,8 +87,8 @@ export default function OrganizationBilling({ organization, mine }: { organizati
     <FlowError error={error} />
     {error ? <button type="button" className="btn" onClick={() => setRevision(v => v + 1)}>{t("重试")}</button> : !data ? <Loading /> : <>
       <div className="org-actions" aria-live="polite">
-        <span>{t("组织钱包可用：{amount}", { amount: money(data.wallet.available) })}</span>
-        {data.wallet.held !== "0" && <span className="org-count">{t("调用中冻结：{amount}", { amount: money(data.wallet.held) })}</span>}
+        <span>{t("组织钱包可用：{amount}", { amount: money(data.wallet.available, "down") })}</span>
+        {data.wallet.held !== "0" && <span className="org-count">{t("调用中冻结：{amount}", { amount: money(data.wallet.held, "up") })}</span>}
         {data.wallet.frozen && <span className="badge err">{t("因支付争议已冻结")}</span>}
       </div>
       {organization.status === "active" && <OrganizationTopup organization={organization} />}
@@ -175,7 +176,7 @@ function MemberGrants({ organization, data, onSaved }: { organization: Organizat
   const { t, locale } = useI18n(); const id = useId(); const action = useAction();
   const [drafts, setDrafts] = useState<Record<string, { enabled: boolean; yuan: string }>>({});
   const [saved, setSaved] = useState<string | null>(null);
-  const scale = data.unit.scale; const money = (units: string) => cnyText(units, scale, locale);
+  const scale = data.unit.scale; const money = (units: string, options?: { rounding: "up" }) => cnyText(units, scale, locale, options);
   const draftOf = (m: MemberGrant) => drafts[m.user_id] ?? { enabled: m.enabled, yuan: m.enabled || m.monthly_limit !== "0" ? yuanInput(unitsToFen(m.monthly_limit, scale) ?? 0) : "" };
   const editable = organization.status === "active";
   return <div className="flow-stack" role="group" aria-labelledby={`${id}-h`}>
@@ -191,7 +192,7 @@ function MemberGrants({ organization, data, onSaved }: { organization: Organizat
       return <li key={m.user_id}>
         <div className="org-billing-who"><strong>{name}</strong>
           <div className="tiny muted org-billing-wrap">{m.display_name ? `${m.email} · ` : ""}{t(roleSource(m.role))}</div>
-          <div className="tiny muted">{t("本月已用 {spent} · 冻结 {held}", { spent: money(m.spent_this_month), held: money(m.held) })}</div></div>
+          <div className="tiny muted">{t("本月已用 {spent} · 冻结 {held}", { spent: money(m.spent_this_month), held: money(m.held, { rounding: "up" }) })}</div></div>
         <form className="org-actions" onSubmit={e => { e.preventDefault(); if (!valid || !changed) return; void action.run(async () => {
           setSaved(null);
           const next = await put<Billing>(`${orgPath(organization.id)}/billing/members/${encodeURIComponent(m.user_id)}`,
@@ -222,7 +223,7 @@ function OrganizationStatement({ organization, unit }: { organization: Organizat
     {!items ? (action.error ? null : <Loading />) : !items.length ? <p className="muted">{t("还没有账单记录。")}</p> : <ul className="org-list">{items.map(r =>
       <li key={r.id}><div className="org-billing-who"><strong>{t(KIND[r.kind] || r.kind)}</strong>
         <div className="tiny muted org-billing-wrap">{new Date(r.created_at * 1000).toLocaleString(locale)}{r.member_email ? ` · ${r.member_email}` : ""}</div></div>
-        <span className="org-billing-money">{r.delta.startsWith("-") ? "-" : "+"}{cnyText(r.delta.replace(/^-/, ""), unit.scale, locale)}</span></li>)}</ul>}
+        <span className="org-billing-money">{cnyText(r.delta, unit.scale, locale, { signed: true })}</span></li>)}</ul>}
     {next && <button type="button" className="btn" disabled={action.busy} onClick={() => void action.run(() => load(next))}>{t("加载更多")}</button>}
   </div>;
 }

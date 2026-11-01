@@ -287,7 +287,12 @@ export function RunCapSettings({ settings, status, onChanged }: {
   const typing = useRef(false);
   useEffect(() => { if (!typing.current) setAmount(current); }, [current]);
   const [issue, setIssue] = useState<ChatText | null>(null);
-  const money = (minor: string, u: MoneyUnit) => { try { return formatMoney(minor, u, locale); } catch { return formatAmount(minor, u); } };
+  // The saved maximum and the hold it may not go below are the figures the person types against: both to
+  // every digit the unit holds, so a cap equal to the hold reads equal to it and is accepted, and one that
+  // reads below it is refused. The default ("at most") is a bound and rounds up.
+  const money = (minor: string, u: MoneyUnit, how: "typed" | "bound") => {
+    try { return formatMoney(minor, u, locale, how === "typed" ? { precision: "exact" } : { rounding: "up" }); } catch { return formatAmount(minor, u); }
+  };
   let typed: string | null = null;
   if (unit && amount.trim()) { try { typed = parseBudget(amount.trim(), unit.scale); } catch { typed = null; } }
   // Nothing to save: the default kept, an empty box, or the saved maximum written either way.
@@ -319,13 +324,13 @@ export function RunCapSettings({ settings, status, onChanged }: {
     setIssue(null);
     write.start<AgentSettings>("agent.settings.update", { run_budget_cap: units }, saved);
   }
-  const hold = run && unit ? money(run.per_call_hold, unit) : null;
+  const hold = run && unit ? money(run.per_call_hold, unit, "typed") : null;
   return <section className="card" aria-labelledby={`${id}-title`}>
     <div className="card-h"><h2 id={`${id}-title`}>{c("runCapTitle")}</h2></div>
     <div className="card-b col gap12">
       <p className="muted small">{c("runCapNote")}</p>
       {status === undefined && <Loading />}
-      {cap && <p>{c("runCapCurrent", { amount: money(cap.amount, cap.unit) })}</p>}
+      {cap && <p>{c("runCapCurrent", { amount: money(cap.amount, cap.unit, "typed") })}</p>}
       {unitChanged ? <p className="notice warn" role="status">{c("runCapUnitChanged")}</p>
         : below && hold ? <p className="notice warn" role="status">{c("runCapMinimum", { amount: hold })}</p> : null}
       <form className="col gap12" noValidate onSubmit={save}>
@@ -333,7 +338,7 @@ export function RunCapSettings({ settings, status, onChanged }: {
           <legend className="sr-only">{c("runCapTitle")}</legend>
           <label className="check"><input type="radio" name={`${id}-mode`} value="default" checked={mode === "default"}
             onChange={() => { setMode("default"); setIssue(null); write.dismiss(); }} />
-            <span>{run && unit ? c("runCapDefault", { amount: money(run.default, unit), calls: String(run.max_calls) }) : c("runCapDefaultUnknown")}</span></label>
+            <span>{run && unit ? c("runCapDefault", { amount: money(run.default, unit, "bound"), calls: String(run.max_calls) }) : c("runCapDefaultUnknown")}</span></label>
           <label className="check"><input type="radio" name={`${id}-mode`} value="custom" checked={mode === "custom"} disabled={!unit}
             onChange={() => { setMode("custom"); setIssue(null); write.dismiss(); }} />
             <span>{c("runCapCustom")}</span></label>
