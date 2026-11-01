@@ -18,6 +18,11 @@ The only edits are the scaffolding that lets the copies run outside their classe
   so the totals themselves can be compared.
 
 The module-level constants and helpers below are copied from the same files at 5db93f86.
+
+Cost-capacity phase 2 adds ``LegacyPayerBudgets._exposure``: a verbatim copy of
+``PayerBudgets._exposure`` (packages/core/synwevo_core/billing/payer_budgets.py) at 0bcce176, before
+the per-wallet spend rollup replaced its row-by-row read, 10,000-row cap included. Its scaffolding is
+the class and its ``CAPACITY`` (the only attribute the copy reads), as at 0bcce176.
 """
 from __future__ import annotations
 
@@ -251,3 +256,31 @@ class LegacyRiskControls(RiskControls):
             if row["route"] == route and row["admitted_at"] > now - risk.route_window_s:
                 route_total += cost
         return payer_total, route_total
+
+
+# --- payer_budgets.py at 0bcce176 ----------------------------------------------------------------
+class LegacyPayerBudgets:
+    """FIXTURE stand-in for the 0bcce176 ``PayerBudgets``: only ``_exposure`` (verbatim) and its CAPACITY."""
+
+    CAPACITY = 10_000
+
+    def _exposure(self, t, account, windows):
+        if account is None:
+            return {name: {"start": start, "end": end, "spent": 0, "held": 0}
+                    for name, (start, end) in windows.items()}
+        # Disjoint indexed ranges, bounded before the settlement join. No all-history scan.
+        rows = t.execute("WITH candidates AS MATERIALIZED ("
+            "SELECT id,status,hold_units,created_at FROM billing_calls WHERE account_id=? AND status='reserved' "
+            "UNION ALL SELECT id,status,hold_units,created_at FROM billing_calls "
+            "WHERE account_id=? AND status='settled' AND created_at>=? LIMIT ?) "
+            "SELECT c.*,j.amount FROM candidates c LEFT JOIN billing_settlements s ON s.call_key=c.id "
+            "LEFT JOIN billing_journal j ON j.id=s.journal_id",
+            (account, account, min(start for start, _ in windows.values()), self.CAPACITY + 1)).fetchall()
+        if len(rows) > self.CAPACITY:
+            raise BillingError("payer_budget_capacity")
+        if any(row["status"] == "settled" and row["amount"] is None for row in rows):
+            raise BillingError("payer_budget_inconsistent")
+        held = sum(row["hold_units"] for row in rows if row["status"] == "reserved")
+        return {name: {"start": start, "end": end, "held": held,
+                "spent": sum(row["amount"] for row in rows if row["status"] == "settled" and row["created_at"] >= start)}
+                for name, (start, end) in windows.items()}

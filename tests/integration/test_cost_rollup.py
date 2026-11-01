@@ -20,6 +20,7 @@ from synwevo_core.billing import BillingError, Ledger, Rate, Unit, Usage
 from synwevo_core.billing.admission import CostAdmission
 from synwevo_core.billing.risk import BrakeTripped, RiskPolicy
 from synwevo_core.store import Store
+from tests.integration.platform_fixture import make_platform_admin
 from tests.integration.test_billing_ledger import COST_UNIT, cost_price, evidence, fund, money  # noqa: F401
 from tests.integration.test_model_cost_admission import exact, funded, policy, prepare, send, utc  # noqa: F401
 
@@ -675,6 +676,104 @@ def test_cost_rollup_cli_verifies_and_rebuilds_an_isolated_data_directory(funded
     assert rebuilt.returncode == 0, rebuilt.stderr
     assert json.loads(rebuilt.stdout[rebuilt.stdout.index("{"):])["facts"] == 1
     assert store.one("SELECT actor FROM model_cost_rollup_rebuilds WHERE environment='test'")["actor"].startswith("operator:")
+    clean(store)
+
+
+@pytest.mark.cost_rollup_unchecked
+def test_the_command_line_verify_says_when_its_own_open_replayed_the_provider_accounts(funded):
+    """The provider-account family's counterpart of the wallets' test (test_payer_spend_rollup.py): with the four
+    derived tables' sentinels deleted past the gate, the command's own open replays every provider account's
+    rollup (``model_cost_rollup.migrate``, a full write under the writer lock, a system:backfill rebuild row and a
+    backfill audit, --no-record or not), so it must say so first, carry the store-wide issue
+    ``cost_rollup_replayed_on_open`` (recorded, audited and alerted as the command line's finding unless
+    --no-record) and exit 1, never 一致 over rows it just wrote. A healthy store verifies as before; a mistyped
+    rebuild exits 2 before the open, so it replays nothing (docs/platform/model-risk.md §13)."""
+    import os
+    import subprocess
+    import sys
+
+    from synwevo_core.suite_schema.model_cost_rollup import sentinels_present
+    store, ledger, users, _ = funded
+    recipient = users[2]
+    make_platform_admin(store, recipient)             # FIXTURE: the alert recipient (platform_fixture)
+    admission = CostAdmission(ledger, current_policy=generous)
+    for i in range(3):
+        _, ticket = prepare(funded, f"replayed-on-open-{i}")
+        send(admission, ticket, amount=4 + i)
+        if i == 1:
+            ledger.settle_trusted_usage(ticket.attempt_key, evidence(ticket))
+    original = derived_rows(store)
+    env = {**os.environ, "SYNWEVO_DATA_DIR": str(store.root), "SYNWEVO_PLATFORM_REEXEC": ""}
+    script = str(Path(__file__).resolve().parents[2] / "scripts" / "platform.py")
+    issue = "cost_rollup_replayed_on_open"
+
+    def run(*args):
+        done = subprocess.run([sys.executable, script, "cost-rollup", *args], env=env, capture_output=True,
+                              text=True, timeout=120)
+        printed = json.loads(done.stdout[done.stdout.index("{"):]) if "{" in done.stdout else None
+        return done.returncode, printed, done.stderr
+
+    def backfills():
+        return store.one("SELECT COUNT(*) AS n FROM model_cost_rollup_audits WHERE mode='backfill' AND provider=''")["n"]
+
+    def sentinels():
+        with store.conn() as c:
+            return sentinels_present(c)
+
+    def lose_sentinels():
+        with store.tx() as t:                           # FIXTURE: the gate opened by hand; the rows stay
+            t.execute("INSERT INTO model_cost_rollup_deltas(kind) VALUES ('fixture-tamper')")
+            gone = t.execute("DELETE FROM model_cost_buckets WHERE environment='' AND provider='' AND account_ref='' "
+                             "AND dim='sentinel'").rowcount
+            for table in ("model_cost_inflight", "model_cost_hold", "model_cost_exceptions"):
+                gone += t.execute(f"DELETE FROM {table} WHERE attempt_key=''").rowcount
+            t.execute("DELETE FROM model_cost_rollup_deltas")
+        assert gone == 4 and not sentinels()
+
+    healthy = run("verify", "--all", "--no-record")
+    assert healthy[0] == 0 and healthy[1]["issues"] == [] and "：一致。" in healthy[2] and "重放" not in healthy[2], healthy
+    base = backfills()
+    # 1. A mistyped rebuild exits 2 before the open: nothing replayed, the sentinels still lost, no row written.
+    lose_sentinels()
+    for args in (("--environment", "test", "--provider", "fixture-provider"), (), ("--wallet", ""),
+                 ("--environment", "test", "--provider", "fixture-provider", "--account-ref", SCOPE[2], "--reason", "short")):
+        code, result, err = run("rebuild", *args)
+        assert code == 2 and result is None and "重放" not in err and issue not in err, (args, err)
+    assert backfills() == base and not sentinels()
+    assert store.all("SELECT * FROM model_cost_rollup_rebuilds WHERE actor<>'system:backfill'") == []
+    # 2. --no-record: the replay line, the issue, exit 1; nothing recorded; the rows restored by that open.
+    code, summary, err = run("verify", "--all", "--no-record")
+    assert code == 1 and summary["issues"] == [issue] and summary["mismatched"] == {}, (summary, err)
+    assert issue in err and "：一致。" not in err and "哨兵" in err and "重放" in err and "§13" in err, err
+    assert "提供方账户" in err and "spend_rollup_replayed_on_open" not in err and "钱包" not in err.split("\n")[0], err
+    assert backfills() == base + 1 and sentinels() and derived_rows(store) == original
+    assert store.all("SELECT * FROM model_cost_rollup_audits WHERE mode='cli'") == []
+    assert store.all("SELECT * FROM model_cost_rollup_faults") == []
+    assert store.one("SELECT COUNT(*) AS n FROM notifications WHERE user_id=?", (recipient,))["n"] == 0
+    # 3. Recorded: the same, plus the run row, the * audit and the store-wide alert, worded as the command line's.
+    lose_sentinels()
+    code, summary, err = run("verify", "--all")
+    assert code == 1 and summary["issues"] == [issue] and issue in err and "：一致。" not in err, (summary, err)
+    assert backfills() == base + 2 and sentinels() and derived_rows(store) == original
+    runs = store.all("SELECT status,differences FROM model_cost_rollup_audits WHERE mode='cli'")
+    assert [r["status"] for r in runs] == ["mismatch"] and json.loads(runs[0]["differences"])["issues"] == [issue]
+    audits = store.all("SELECT object_id,meta FROM audit_events WHERE action='billing.cost.rollup_inconsistent'")
+    assert [(a["object_id"], json.loads(a["meta"])["issues"]) for a in audits] == [("*", [issue])]
+    assert store.all("SELECT * FROM model_cost_rollup_faults") == []
+    alerts = store.all("SELECT * FROM notifications WHERE user_id=? ORDER BY seq", (recipient,))
+    assert [(a["kind"], a["object_id"], json.loads(a["params"])) for a in alerts] == [
+        ("billing.cost.rollup_issues", rollup().scope_key(("*",) * 3), {"issues": issue, "source": "cli"})]
+    from synwevo_core.notifications import LOCALES, ROLLUP_SOURCE_WORDS, Notifier
+    for locale in LOCALES:
+        rendered = Notifier(store).render(alerts[0], locale)
+        assert issue in rendered["title"] and issue in rendered["body"] and "*" not in rendered["body"], rendered
+        assert rendered["body"].startswith(ROLLUP_SOURCE_WORDS["cli"][locale]), rendered["body"]
+    # A fresh start replays nothing more; the healthy verify is 一致 again, and the admission reads as before.
+    reopened = Store(store.root)
+    assert backfills() == base + 2 and derived_rows(reopened) == original
+    healthy = run("verify", "--all", "--no-record")
+    assert healthy[0] == 0 and healthy[1]["issues"] == [] and "：一致。" in healthy[2] and issue not in healthy[2], healthy
+    send(admission, prepare(funded, "after-the-replays")[1], amount=1)
     clean(store)
 
 
