@@ -6,7 +6,7 @@ import { Modal } from "@synwevo/ui";
 import { formatAmount, type Offer } from "./budget";
 import { useChatText } from "./ChatParts";
 import { composerMaximum, fundsState, limitLine, perMillion, type BillingStatus, type MaximumShown } from "./composer";
-import { formatMoney, formatPerMillion, type MoneyUnit } from "./cost";
+import { formatMoney, formatPerMillion, type MoneyOptions, type MoneyUnit } from "./cost";
 import { payerKey, spendable, type Payer, type WelcomeState } from "./payers";
 
 export interface Capabilities { vision: boolean; tools: boolean; thinking: boolean }
@@ -28,10 +28,15 @@ export interface MoneyState {
   welcome?: WelcomeState | null;
 }
 
-/** A ledger figure as money; `bound` for an amount said as "at most", which rounds up so the sentence stays true. */
-function money(minor: string | null | undefined, unit: MoneyUnit | null | undefined, locale: string, bound = false): string | null {
+/** What a figure says, and so how its finer digits round: what can still be spent (a balance, a remaining
+ *  allowance) rounds down, a hold or a bound ("at most") rounds up — a shown balance at least as large as a
+ *  shown hold then always covers it, and never the other way round; the send itself is decided by the
+ *  ledger on the exact units. A configured allowance shows every digit as it was typed. */
+type MoneyRole = "spendable" | "held" | "bound" | "typed";
+const ROLES: Record<MoneyRole, MoneyOptions> = { spendable: { rounding: "down" }, held: { rounding: "up" }, bound: { rounding: "up" }, typed: { precision: "exact" } };
+function money(minor: string | null | undefined, unit: MoneyUnit | null | undefined, locale: string, role: MoneyRole): string | null {
   if (!minor || !unit) return null;
-  try { return formatMoney(minor, unit, locale, bound ? { rounding: "up" } : undefined); } catch { return null; }
+  try { return formatMoney(minor, unit, locale, ROLES[role]); } catch { return null; }
 }
 
 /** The prices a send runs at, as published: the unit prices per million tokens, one call's hold,
@@ -46,7 +51,7 @@ export function PriceFacts({ offer, maximum }: { offer: ModelOffer; maximum?: Ma
   };
   let most: string | null = null;
   if (maximum) {
-    const amount = "amount" in maximum ? money(maximum.amount, maximum.unit, locale, true) : null;
+    const amount = "amount" in maximum ? money(maximum.amount, maximum.unit, locale, "bound") : null;
     // A figure only when the composer shows one; otherwise its sentence (being read, cannot be shown, the cap's problem).
     most = maximum.key === "turnMaximum" ? amount : "amount" in maximum ? (amount ? c(maximum.key, { amount }) : null) : c(maximum.key);
   }
@@ -54,7 +59,7 @@ export function PriceFacts({ offer, maximum }: { offer: ModelOffer; maximum?: Ma
     <div><dt>{c("tokensUncached")}</dt><dd>{price("input_uncached")}</dd></div>
     <div><dt>{c("tokensCached")}</dt><dd>{price("input_cached")}</dd></div>
     <div><dt>{c("tokensOutput")}</dt><dd>{price("output")}</dd></div>
-    <div><dt>{c("modelHold")}</dt><dd>{money(offer.per_call_hold, offer.unit, locale, true) ?? formatAmount(offer.per_call_hold, offer.unit)}</dd></div>
+    <div><dt>{c("modelHold")}</dt><dd>{money(offer.per_call_hold, offer.unit, locale, "bound") ?? formatAmount(offer.per_call_hold, offer.unit)}</dd></div>
     <div><dt>{c("changedPrice")}</dt><dd>{offer.price_id}</dd></div>
     {maximum && <div><dt>{c("runCapTitle")}</dt><dd>{most ?? c("turnMaximumUnavailable")}</dd></div>}
   </dl>;
@@ -122,15 +127,16 @@ export function ComposerStatus({ money: state, disabled = false }: { money: Mone
   const fromStatus = personalPayer && !!status?.balance;
   const balance = fromStatus ? status!.balance!.available : facts?.available;
   const balanceUnit = fromStatus ? unit : facts?.unit ?? null;
-  const shown = money(balance, balanceUnit, locale);
-  const held = fromStatus ? money(status!.balance!.held, unit, locale) : null;
+  const shown = money(balance, balanceUnit, locale, "spendable");
+  const held = fromStatus ? money(status!.balance!.held, unit, locale, "held") : null;
   const sameUnit = !!balanceUnit && !!unit && balanceUnit.code === unit.code && balanceUnit.scale === unit.scale;
   const funds = frozen ? "unknown" : !personalPayer ? orgFunds(payer, status)
     : sameUnit ? fundsState({ available: true, balance: { booked: "", held: "", available: balance ?? "" }, per_call_hold: status?.per_call_hold }) : "unknown";
   const limit = personalPayer ? limitLine(status) : null;
   const limitText = limit && (limit.amount !== undefined
-    ? c(limit.key, { amount: money(limit.amount, unit, locale) ?? limit.amount, period: c(limit.period!) }) : c(limit.key));
-  const monthly = !personalPayer && facts?.monthly ? { amount: money(facts.monthly.remaining, facts.unit, locale), limit: money(facts.monthly.limit, facts.unit, locale) } : null;
+    ? c(limit.key, { amount: money(limit.amount, unit, locale, "spendable") ?? limit.amount, period: c(limit.period!) }) : c(limit.key));
+  const monthly = !personalPayer && facts?.monthly
+    ? { amount: money(facts.monthly.remaining, facts.unit, locale, "spendable"), limit: money(facts.monthly.limit, facts.unit, locale, "typed") } : null;
   const usePersonal = !personalPayer && payers[0] ? () => state.setPayer(payers[0]) : undefined;
   const test = status?.environment === "test" || (!status && state.environment === "test");
   return <section className="ag-money" aria-label={c("moneyStatus")}>

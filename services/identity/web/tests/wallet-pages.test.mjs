@@ -14,7 +14,7 @@ const WEB = fileURLToPath(new URL('../', import.meta.url));
 const storage = new Map();
 globalThis.window ??= { location: new URL('http://127.0.0.1/'), history: { state: null, replaceState() {} }, addEventListener() {}, removeEventListener() {} };
 globalThis.sessionStorage ??= { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) };
-let server, ui, model, wallet, topup, status, usage, chart, receipt, topbar, gate;
+let server, ui, model, wallet, topup, status, usage, chart, receipt, topbar, gate, settings;
 before(async () => {
   server = await testServer({ root: WEB, configFile: false, logLevel: 'error', appType: 'custom', server: { middlewareMode: true, hmr: false, ws: false, watch: null } });
   ui = await server.ssrLoadModule('@synwevo/ui');
@@ -28,7 +28,7 @@ before(async () => {
   topbar = await server.ssrLoadModule('/src/components/Topbar.tsx');
   gate = await server.ssrLoadModule('/src/pages/account/WalletGate.tsx');
   await server.ssrLoadModule('/src/components/Topbar.messages.ts');
-  await server.ssrLoadModule('/src/pages/account/WalletSettings.tsx');
+  settings = await server.ssrLoadModule('/src/pages/account/WalletSettings.tsx');
 });
 after(async () => { await server?.close(); });
 
@@ -91,12 +91,17 @@ test('wallet amounts read as money at the currency\'s precision in every locale,
     assert.ok(model.moneyText('1250', 2, 'CNY', locale).endsWith('12.50'), locale);
     // Micro-yuan (the production unit's shape) read as fen: 5,111,820 units formerly read "¥5.11182".
     assert.ok(model.moneyText('5111820', 6, 'CNY', locale).endsWith('¥5.11'), `${locale}: ${model.moneyText('5111820', 6, 'CNY', locale)}`);
-    assert.ok(model.moneyText('-5111820', 6, 'CNY', locale, true).startsWith('-') && model.moneyText('-5111820', 6, 'CNY', locale, true).endsWith('5.11'), locale);
-    assert.ok(model.moneyText('1250000', 6, 'CNY', locale, true).startsWith('+') && model.moneyText('1250000', 6, 'CNY', locale, true).endsWith('1.25'), locale);
-    // Below one fen, yet not nothing (formerly "0.0045").
+    assert.ok(model.moneyText('-5111820', 6, 'CNY', locale, { signed: true }).startsWith('-') && model.moneyText('-5111820', 6, 'CNY', locale, { signed: true }).endsWith('5.11'), locale);
+    assert.ok(model.moneyText('1250000', 6, 'CNY', locale, { signed: true }).startsWith('+') && model.moneyText('1250000', 6, 'CNY', locale, { signed: true }).endsWith('1.25'), locale);
+    // Below one fen, yet not nothing (formerly "0.0045"); a signed credit of that size reads "within" its sign.
     assert.equal(model.moneyText('45', 4, 'CNY', locale), under[locale], locale);
-    assert.equal(model.moneyText('-45', 4, 'CNY', locale, true), within[locale], locale);
+    assert.equal(model.moneyText('-45', 4, 'CNY', locale, { signed: true }), within[locale], locale);
+    assert.equal(model.moneyText('45', 4, 'CNY', locale, { signed: true }), { 'zh-Hans': '+¥0.01 以内', 'zh-Hant': '+CN¥0.01 以內', en: 'within +CN¥0.01' }[locale], locale);
     assert.equal(model.moneyText('1500', 3, 'credits', locale), '1.50 credits');
+    // What can still be spent rounds down; what is held rounds up; the ledger's own record keeps every digit.
+    assert.ok(model.moneyText('995000', 6, 'CNY', locale, { rounding: 'down' }).endsWith('¥0.99'), locale);
+    assert.ok(model.moneyText('524289', 6, 'CNY', locale, { rounding: 'up' }).endsWith('¥0.53'), locale);
+    assert.ok(model.ledgerText('5111820', 6, 'CNY', locale).endsWith('¥5.11182') && model.ledgerText('1000000', 6, 'CNY', locale).endsWith('¥1.00'), locale);
   }
   for (const [units, scale] of [['1.5', 2], ['1e5', 2], ['01', 0], ['1', 19], ['1', -1]]) assert.throws(() => model.decimalText(units, scale), RangeError);
   assert.ok(model.paymentText(5000, 'CNY', 'en').endsWith('50.00'));
@@ -300,13 +305,17 @@ test('balance figures: the ledger’s four numbers, the test-environment notice 
   assert.ok(!live.includes('测试环境') && !live.includes('已被冻结'));
 });
 
-test('balance figures read as money at fen precision, from the integer: a micro-yuan balance never shows its sub-fen tail', () => {
-  // FIXTURE: the production wallet unit's shape (CNY, scale 6); 1 yuan welcomed, 11,182 micro-yuan spent.
+test('balance figures state the ledger exactly, from the integer: the available balance and what it is made of reconcile on the page', () => {
+  // FIXTURE: the production wallet unit's shape (CNY, scale 6); 1 yuan welcomed, 11,182 micro-yuan spent and a hold of 524,289.
+  // The page says "available = booked − held": 1.00 − 0.524289 = 0.475711, which the four figures let a reader check.
   const overview = { environment: 'live', payer: { kind: 'user', id: 'u_fixture' }, payer_user_id: 'u_fixture', used_through_seq: '9',
-    balances: [{ unit: 'CNY', scale: 6, booked: '1000000', held: '0', used: '11182', available: '988818' }] };
+    balances: [{ unit: 'CNY', scale: 6, booked: '1000000', held: '524289', used: '11182', available: '475711' }] };
   const html = render(h(wallet.BalanceFigures, { overview }));
-  assert.ok(html.includes('class="wallet-available">¥0.99<') && html.includes('<dd>¥1.00</dd>') && html.includes('<dd>¥0.00</dd>') && html.includes('<dd>¥0.01</dd>'), html);
-  assert.ok(!html.includes('0.988818') && !html.includes('0.011182'), html);
+  assert.ok(html.includes('class="wallet-available">¥0.475711<') && html.includes('<dd>¥1.00</dd>') && html.includes('<dd>¥0.524289</dd>') && html.includes('<dd>¥0.011182</dd>'), html);
+  assert.ok(!html.includes('¥0.48') && !html.includes('¥0.52<') && !html.includes('¥0.01<'), html);
+  // Trailing zeros beyond the fen are not shown; a plain yuan is "¥1.00".
+  const whole = render(h(wallet.BalanceFigures, { overview: { ...overview, balances: [{ unit: 'CNY', scale: 6, booked: '1000000', held: '0', used: '0', available: '1000000' }] } }));
+  assert.ok(whole.includes('class="wallet-available">¥1.00<') && !whole.includes('1.000000'), whole);
 });
 
 test('the calls table shows band, price version, token breakdown and settled cost; an organization sees members, not conversations', () => {
@@ -316,11 +325,12 @@ test('the calls table shows band, price version, token breakdown and settled cos
     dispatched_at: 1_790_000_000, completed_at: 1_790_000_007, duration_s: 7, conversation_id: 'conv_fixture', conversation_title: 'Fixture conversation' };
   const personal = render(h(usage.CallsTable, { items: [row, { ...row, id: 'c2', band: null, state: 'held', held_minor: '900000', tokens: null, finish_reason: null, duration_s: null, conversation_title: null },
     { ...row, id: 'c3', charged_minor: '5111820' }], organization: false, timezone: 'UTC' }));
-  // Money at fen precision from the integer units: 4,321 micro-yuan is a charge below one fen (formerly "0.004321"),
-  // 5,111,820 is ¥5.11 (formerly "¥5.11182"), a hold of 900,000 is ¥0.90.
-  for (const text of ['deepseek-flash', '低谷时段', 'price_fixture_v2', '1,200', '560', '120', '不到 ¥0.01', '¥5.11', '预留 ¥0.90', '达到长度上限', '7 秒', 'Fixture conversation', '<caption', 'scope="col"'])
+  // The table is the ledger's record: every charge to the digit the unit holds, as money in the reader's locale and
+  // never through a float — 4,321 micro-yuan is ¥0.004321, 5,111,820 is ¥5.11182, a hold of 900,000 is ¥0.90 — so
+  // rows add up to the totals above them.
+  for (const text of ['deepseek-flash', '低谷时段', 'price_fixture_v2', '1,200', '560', '120', '>¥0.004321<', '>¥5.11182<', '预留 ¥0.90', '达到长度上限', '7 秒', 'Fixture conversation', '<caption', 'scope="col"'])
     assert.ok(personal.includes(text), `${text} in ${personal}`);
-  assert.ok(!personal.includes('0.004321') && !personal.includes('5.11182') && !personal.includes('¥0.00'), personal);
+  assert.ok(!personal.includes('>¥0.00<') && !personal.includes('不到') && !personal.includes('>¥5.11<'), personal);
   assert.ok(personal.includes('时段未记录') && personal.includes('已删除的对话') && personal.includes('预留 '), 'unknown facts are named, not guessed');
   // Seven columns scroll sideways on a 390px phone: the scroller is a named region a keyboard can focus and scroll.
   assert.match(personal, /^<div class="tbl-wrap usage-calls" tabindex="0" role="region" aria-label="每次调用">/);
@@ -339,6 +349,20 @@ test('the daily chart is an image with a summary, one column per day; other grou
   assert.ok(empty.includes('Nothing settled') && !empty.includes('<svg'), 'no empty chart pretending to show data');
   const rows = render(h(chart.default, { bars: [{ key: 'm', label: 'deepseek-flash', value: '150', ratio: 1, calls: 1 }], unit: 'CNY', scale: 2, locale: 'en', daily: false, summary: 'Rows summary', empty: 'x' }));
   assert.ok(rows.includes('deepseek-flash') && rows.includes('Rows summary') && rows.includes('aria-hidden="true"'));
+});
+
+test('the balance reminder states the balance rounded down beside the line as typed; the limit form states the period exactly beside the limit as typed', () => {
+  // FIXTURE: line 1 yuan, 995,000 micro-yuan available (half a fen below the line, so the server says below).
+  const reminder = { unit: 'CNY', scale: 6, configured: true, revision: 1, enabled: true, threshold: '1000000', available: '995000', below: true };
+  const html = render(h(ui.ToastProvider, null, h(settings.ReminderForm, { reminder, onSaved() {} })));
+  assert.ok(html.includes('value="1"') && html.includes('当前可用余额 ¥0.99，已低于提醒线。') && !html.includes('¥1.00'), html);
+  // FIXTURE: a daily limit of 10 yuan, 9,995,000 micro-yuan settled, 5,000 left: the three figures add up to the limit in the box.
+  const zero = { start: 1, end: 2, spent: '0', held: '0', remaining: '0' };
+  const budget = { unit: { code: 'CNY', scale: 6 }, revision: 1, configured: true, enabled: true, daily_budget: '10000000', weekly_budget: '0', monthly_budget: '0',
+    usage_state: 'available', periods: { daily: { start: 1, end: 2, spent: '9995000', held: '0', remaining: '5000' }, weekly: zero, monthly: zero } };
+  const limits = render(h(ui.ToastProvider, null, h(settings.LimitForm, { budget, onSaved() {} })));
+  assert.ok(limits.includes('value="10"') && limits.includes('今日已结算 ¥9.995，预留 ¥0.00，剩余 ¥0.005'), limits);
+  assert.ok(!limits.includes('¥10.00，') && !limits.includes('剩余 ¥0.01'), limits);
 });
 
 test('a receipt lists only the server’s fields and states the closed-use, no-refund terms', () => {

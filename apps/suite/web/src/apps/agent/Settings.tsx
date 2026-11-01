@@ -287,9 +287,9 @@ export function RunCapSettings({ settings, status, onChanged }: {
   const typing = useRef(false);
   useEffect(() => { if (!typing.current) setAmount(current); }, [current]);
   const [issue, setIssue] = useState<ChatText | null>(null);
-  // The saved maximum is shown as typed, to every digit the unit holds; the server's bounds ("at most",
-  // "cannot be lower than one call's hold") round up, so each sentence stays true and a typed amount
-  // that reads equal to the hold is never refused.
+  // The saved maximum and the hold it may not go below are the figures the person types against: both to
+  // every digit the unit holds, so a cap equal to the hold reads equal to it and is accepted, and one that
+  // reads below it is refused. The default ("at most") is a bound and rounds up.
   const money = (minor: string, u: MoneyUnit, how: "typed" | "bound") => {
     try { return formatMoney(minor, u, locale, how === "typed" ? { precision: "exact" } : { rounding: "up" }); } catch { return formatAmount(minor, u); }
   };
@@ -324,7 +324,7 @@ export function RunCapSettings({ settings, status, onChanged }: {
     setIssue(null);
     write.start<AgentSettings>("agent.settings.update", { run_budget_cap: units }, saved);
   }
-  const hold = run && unit ? money(run.per_call_hold, unit, "bound") : null;
+  const hold = run && unit ? money(run.per_call_hold, unit, "typed") : null;
   return <section className="card" aria-labelledby={`${id}-title`}>
     <div className="card-h"><h2 id={`${id}-title`}>{c("runCapTitle")}</h2></div>
     <div className="card-b col gap12">

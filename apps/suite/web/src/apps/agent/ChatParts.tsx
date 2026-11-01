@@ -34,14 +34,17 @@ export function TurnCostLine({ cost, payerName }: { cost: unknown;
   const id = useId();
   const value = validTurnCost(cost);
   if (!value) return null;
-  let money: (minor: string) => string;
+  // The summary is money to the fen: a settled charge to the nearest, a hold — the most the call can
+  // cost — rounded up like every bound (the same figure as the price facts' hold). The breakdown
+  // states the ledger exactly, so the rounded summary can be reconciled with it.
+  let money: (minor: string, how: "settled" | "held" | "exact") => string;
   try {
     const unit = costUnit(value);
     formatMoney("0", unit, locale);
-    money = (minor) => formatMoney(minor, unit, locale);
+    money = (minor, how) => formatMoney(minor, unit, locale, how === "held" ? { rounding: "up" } : how === "exact" ? { precision: "exact" } : undefined);
   } catch { return null; }
   const summary = costSummary(value);
-  const text = c(summary.key, summary.amount !== undefined ? { amount: money(summary.amount) } : undefined);
+  const text = c(summary.key, summary.amount !== undefined ? { amount: money(summary.amount, value.state === "held" ? "held" : "settled") } : undefined);
   const band = bandText(value.band);
   const tokens = (count: number) => c("tokensCount", { count: formatTokens(count, locale) });
   const row = (label: string, content: string) => <div><dt>{label}</dt><dd>{content}</dd></div>;
@@ -56,8 +59,8 @@ export function TurnCostLine({ cost, payerName }: { cost: unknown;
     </button>
     <div id={`${id}-cost`} className="ag-cost-detail" role="region" aria-label={c("costDetails")} hidden={!open}>
       <dl>
-        {row(c("costCharged"), money(value.charged_minor))}
-        {value.held_minor !== "0" && row(c("costHeldLabel"), money(value.held_minor))}
+        {row(c("costCharged"), money(value.charged_minor, "exact"))}
+        {value.held_minor !== "0" && row(c("costHeldLabel"), money(value.held_minor, "exact"))}
         {row(c("costState"), c(value.state === "settled" ? "stateSettled" : value.state === "held" ? "stateHeld" : "statePending"))}
         {value.payer && row(c("costPayer"), value.payer.kind === "user" ? c("payerPersonal")
           : (() => { const name = payerName?.(value.payer as { kind: "organization"; id: string }); return name ? c("payerOrganization", { name }) : c("payerOrganizationUnnamed"); })())}
@@ -104,6 +107,10 @@ export function RefusalNotice({ refusal, walletUrl, onRetry, onSetup, onPersonal
   </div>;
 }
 
+/** Two readings of a changed value, or, when rounding makes them read alike, the exact pair instead:
+ *  a listed change is always visible. */
+const distinct = (x: string, y: string, exact: () => [string, string]): [string, string] => (x === y ? exact() : [x, y]);
+
 /** What differs between the pricing of the person's last answer and the pricing on offer now;
  *  nothing when they are the same (the notice's sentence stands alone). */
 export function PriceChangeList({ before, after }: { before: Pricing; after: Pricing }) {
@@ -112,9 +119,12 @@ export function PriceChangeList({ before, after }: { before: Pricing; after: Pri
   let changes: ReturnType<typeof priceChanges>;
   try {
     changes = priceChanges(before, after, {
-      rate: (pricing, key) => formatPerMillion(pricing, key, locale, perMillion(pricing, key)),
-      // The hold is a bound ("at most"): rounded up, so the sentence stays true.
-      amount: (minor, unit) => formatMoney(minor, unit, locale, { rounding: "up" }),
+      // A rate as its price per million tokens; two that round alike as the exact fractions they are compared by.
+      rate: (a, b, key) => distinct(formatPerMillion(a, key, locale, perMillion(a, key)), formatPerMillion(b, key, locale, perMillion(b, key)),
+        () => [perMillion(a, key), perMillion(b, key)]),
+      // The hold is a bound ("at most"): rounded up, so the sentence stays true; two holds within a fen of each other exactly.
+      amount: (a, b, unit) => distinct(formatMoney(a, unit, locale, { rounding: "up" }), formatMoney(b, unit, locale, { rounding: "up" }),
+        () => [formatMoney(a, unit, locale, { precision: "exact" }), formatMoney(b, unit, locale, { precision: "exact" })]),
     });
   } catch { return null; }
   if (!changes.length) return null;

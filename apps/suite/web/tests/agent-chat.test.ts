@@ -247,8 +247,8 @@ test('a per-batch rational rate shows its exact price per million tokens, at lea
   // A markup of ×1.1234 on ¥2 per million is published with four decimals, and keeps them.
   const marked = { ...pricing, per_tokens: 1_000_000, rates: { ...pricing.rates, input_uncached: { numerator: '22468000', denominator: '10' } } };
   assert.equal(cost.formatPerMillion(marked, 'input_uncached', 'en', 'x'), 'CN¥2.2468');
-  // A rate whose decimal does not terminate rounds to the unit's own decimals (formerly the fallback fraction).
-  assert.equal(cost.formatPerMillion(pricing, 'output', 'en', 'fallback'), 'CN¥0.333333');
+  // A rate whose decimal does not terminate rounds to the unit's own decimals and says so (formerly the fallback fraction).
+  assert.equal(cost.formatPerMillion(pricing, 'output', 'en', 'fallback'), 'about CN¥0.333333');
   // The exact rational is what prices are compared by; a malformed rate falls back to the given text.
   assert.equal(composer.perMillion(pricing, 'output'), '1/3 CNY');
   assert.equal(cost.formatPerMillion({ ...pricing, rates: { ...pricing.rates, output: { numerator: '1', denominator: '0' } } }, 'output', 'en', 'fallback'), 'fallback');
@@ -1067,27 +1067,49 @@ test('C1: the price facts show the unit prices, the price version and the per-an
 test('ledger figures in the chat read as money at fen precision: a micro-yuan charge, balance, hold and bound', () => {
   // FIXTURE: the production wallet unit is CNY at scale 6 (micro-yuan); the amounts are arithmetic examples.
   const micro = { code: 'CNY', scale: 6 };
-  const charged = { 'zh-Hans': ['已结算 ¥5.11', '<dt>实际扣费</dt><dd>¥5.11</dd>'], en: ['Charged CN¥5.11', '<dt>Charged</dt><dd>CN¥5.11</dd>'],
-    'zh-Hant': ['已結算 CN¥5.11', '<dt>實際扣費</dt><dd>CN¥5.11</dd>'] } as const;
+  // The summary is money to the fen; the breakdown beneath it states the ledger's exact figure, so the two can be reconciled.
+  const charged = { 'zh-Hans': ['已结算 ¥5.11', '<dt>实际扣费</dt><dd>¥5.11182</dd>'], en: ['Charged CN¥5.11', '<dt>Charged</dt><dd>CN¥5.11182</dd>'],
+    'zh-Hant': ['已結算 CN¥5.11', '<dt>實際扣費</dt><dd>CN¥5.11182</dd>'] } as const;
   for (const locale of LOCALES) {
     const html = render(locale, React.createElement(parts.TurnCostLine, { cost: fixtureCost({ scale: 6, charged_minor: '5111820' }) }));
     for (const text of charged[locale]) assert.ok(html.includes(text), `${locale}: ${text} in ${html}`);
-    assert.ok(!html.includes('5.11182'), `${locale}: the ledger's sub-fen digits are not shown: ${html}`);
+    assert.ok(!/ag-cost-summary">[^<]*5\.11182/.test(html), `${locale}: the summary carries no sub-fen tail: ${html}`);
   }
-  // Charged below one fen: said so, never "¥0.00" and never "No charge" (that is charged_minor '0' only).
+  // Charged below one fen: said so, never "¥0.00" and never "No charge" (that is charged_minor '0' only); the breakdown has the charge itself.
   const tiny = render('zh-Hans', React.createElement(parts.TurnCostLine, { cost: fixtureCost({ scale: 6, charged_minor: '200' }) }));
-  assert.ok(tiny.includes('已结算 不到 ¥0.01') && !tiny.includes('¥0.00') && !tiny.includes('未扣费'), tiny);
-  // The composer: the balance, what is on hold and the day's remaining limit as money (formerly ¥0.988818 / ¥5.11182).
+  assert.ok(tiny.includes('已结算 不到 ¥0.01') && tiny.includes('<dt>实际扣费</dt><dd>¥0.0002</dd>') && !tiny.includes('<dd>¥0.00</dd>') && !tiny.includes('未扣费'), tiny);
+  // A call in progress: what is held is the most it can cost, rounded up like every bound — the same ¥0.53 the price facts
+  // show for the hold — and the breakdown states the held figure exactly.
+  const held = render('zh-Hans', React.createElement(parts.TurnCostLine, { cost: fixtureCost({ scale: 6, charged_minor: '0', held_minor: '524289', state: 'held' }) }));
+  assert.ok(held.includes('已冻结 ¥0.53') && held.includes('<dt>仍冻结</dt><dd>¥0.524289</dd>') && !held.includes('¥0.52<'), held);
+  // The composer: the balance and the day's remaining limit round down (at least that much is there), what is on hold
+  // rounds up (at most that much is frozen) — formerly ¥0.988818 / ¥5.11182, and never a "¥0.99" balance beside a "¥0.53" hold.
   const statusMicro = { ...fixtureStatus, unit: micro, per_call_hold: '524289', balance: { booked: '1513107', held: '524289', available: '988818' },
     limit: { configured: true, enabled: true, usage_state: 'available', remaining: '5111820', period: 'daily' } };
   const props = moneyProps({ status: statusMicro, payers: [payers.parsePayers(fixturePayers(), me).payers[0]] });
-  const composerText = { 'zh-Hans': ['余额 ¥0.99', '冻结 ¥0.52', '今日剩余 ¥5.11'], en: ['Balance CN¥0.99', 'CN¥0.52 on hold', 'CN¥5.11 left today'],
-    'zh-Hant': ['餘額 CN¥0.99', '凍結 CN¥0.52', '今日剩餘 CN¥5.11'] } as const;
+  const composerText = { 'zh-Hans': ['余额 ¥0.98', '冻结 ¥0.53', '今日剩余 ¥5.11'], en: ['Balance CN¥0.98', 'CN¥0.53 on hold', 'CN¥5.11 left today'],
+    'zh-Hant': ['餘額 CN¥0.98', '凍結 CN¥0.53', '今日剩餘 CN¥5.11'] } as const;
   for (const locale of LOCALES) {
     const html = render(locale, React.createElement(status.ComposerStatus, { money: props }));
     for (const text of composerText[locale]) assert.ok(html.includes(text), `${locale}: ${text} in ${html}`);
-    assert.ok(!html.includes('0.988818') && !html.includes('5.11182'), html);
+    assert.ok(!html.includes('0.988818') && !html.includes('5.11182') && !html.includes('¥0.99') && !html.includes('¥0.52'), html);
   }
+  // A balance half a fen short of one call's hold reads below the hold, and the chip says one call cannot be covered.
+  const short = render('zh-Hans', React.createElement(status.ComposerStatus, { money: moneyProps({ payers: props.payers,
+    status: { ...statusMicro, per_call_hold: '1000000', balance: { booked: '995000', held: '0', available: '995000' } } }) }));
+  assert.ok(short.includes('余额 ¥0.99') && !short.includes('余额 ¥1.00') && short.includes('余额不足以完成一次调用'), short);
+  const shortFacts = render('zh-Hans', React.createElement(status.PriceFacts, { offer: { ...previousTerms, per_call_hold: '1000000', max_calls_limit: 12, run_seconds_limit: 3600 } }));
+  assert.ok(shortFacts.includes('<dt>每次调用最多冻结</dt><dd>¥1.00</dd>'), shortFacts);
+  // The day's remaining allowance a fen short of the hold reads below it too (formerly both ¥5.12).
+  const tight = render('zh-Hans', React.createElement(status.ComposerStatus, { money: moneyProps({ payers: props.payers,
+    status: { ...statusMicro, per_call_hold: '5116000', balance: { booked: '90000000', held: '0', available: '90000000' },
+      limit: { configured: true, enabled: true, usage_state: 'available', remaining: '5115000', period: 'daily' } } }) }));
+  assert.ok(tight.includes('今日剩余 ¥5.11') && !tight.includes('¥5.12'), tight);
+  // Exactly one hold available: the send is allowed, so no shortfall is announced; the balance is stated as at least
+  // ¥0.52 and the hold as at most ¥0.53 — the ledger decides on the exact units, never the rounded text.
+  const exact = render('zh-Hans', React.createElement(status.ComposerStatus, { money: moneyProps({ payers: props.payers,
+    status: { ...statusMicro, balance: { booked: '524289', held: '0', available: '524289' } } }) }));
+  assert.ok(exact.includes('余额 ¥0.52') && !exact.includes('余额不足以完成一次调用') && exact.includes('余额偏低'), exact);
   // The most an answer can cost is a bound: ¥6.291468 reads "at most ¥6.30", never "¥6.29" or "¥6.291468".
   const run = { maximum: '6291468', default: '6291468', cap: null, source: 'default', per_call_hold: '524289', max_calls: 12, run_seconds: 3600, usable: true };
   const bound = { 'zh-Hans': '本次回答最多 ¥6.30', en: 'This answer costs at most CN¥6.30', 'zh-Hant': '本次回答最多 CN¥6.30' } as const;
@@ -1107,4 +1129,13 @@ test('ledger figures in the chat read as money at fen precision: a micro-yuan ch
   const list = render('zh-Hans', React.createElement(parts.PriceChangeList, { before: { ...previousTerms, per_call_hold: '524289' },
     after: { ...previousTerms, per_call_hold: '600001', price_id: 'price_fixture_2' } }));
   assert.ok(list.includes('¥0.53') && list.includes('¥0.61') && !list.includes('0.524289'), list);
+  // Two holds a micro-yuan apart round to the same fen: the list then shows them exactly, so the change it announces can be seen.
+  const close = render('en', React.createElement(parts.PriceChangeList, { before: { ...previousTerms, per_call_hold: '524289' },
+    after: { ...previousTerms, per_call_hold: '524290', price_id: 'price_fixture_2' } }));
+  assert.ok(close.includes('CN¥0.524289') && close.includes('CN¥0.52429') && !close.includes('CN¥0.53'), close);
+  // Likewise two rates whose rounded decimals coincide are shown as the exact fractions per million tokens they are compared by.
+  const third = { ...previousTerms, rates: { ...previousTerms.rates, input_uncached: rate('1', '3') } };
+  const nearThird = render('en', React.createElement(parts.PriceChangeList, { before: third,
+    after: { ...third, price_id: 'price_fixture_3', rates: { ...third.rates, input_uncached: rate('1000000', '2999999') } } }));
+  assert.ok(nearThird.includes('1/3 CNY') && nearThird.includes('1000000/2999999 CNY') && !nearThird.includes('about CN¥0.333333'), nearThird);
 });

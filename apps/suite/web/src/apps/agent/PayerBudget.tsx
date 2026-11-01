@@ -19,10 +19,11 @@ function useText() {
   const { t, locale } = useI18n();
   return { m: (key: PayerBudgetText, params?: Params) => t(payerBudgetCopy[key][0], params), locale };
 }
-/** Amounts as money in the reader's locale (shared rule, `@synwevo/ui/money`): usage at the currency's
- *  precision, rounded from the integer; a limit as the person typed it, to every digit the unit holds. */
-const usageMoney = (units: string, unit: MoneyUnit, locale: string) => formatMoney(units, unit, locale);
-const limitMoney = (units: string, unit: MoneyUnit, locale: string) => formatMoney(units, unit, locale, { precision: 'exact' });
+/** Every figure on the budget panel states the ledger exactly, as money in the reader's locale to every
+ *  digit the unit holds (shared rule, `@synwevo/ui/money`): the limit as the person typed it, and the
+ *  period's settled, held and remaining amounts, which then add up to it — rounded to the fen each on
+ *  its own they would not, and a remaining budget equal to the limit would read a fen below it. */
+const exactMoney = (units: string, unit: MoneyUnit, locale: string) => formatMoney(units, unit, locale, { precision: 'exact' });
 /** Kept here as well for existing importers; the words live beside the budget model. */
 export { payerBudgetErrorText };
 function ErrorNotice({ error, fallback, retry }: { error: unknown; fallback: PayerBudgetText; retry?: () => void }) {
@@ -63,10 +64,10 @@ export function BudgetUsage({ budget }: { budget: PayerBudgetItem }) {
       return <section key={period} className="notice" style={stack} aria-label={m(period)}>
         <h4>{m(period)}</h4>
         <dl style={{ ...stack, margin: 0 }}>
-          <div><dt className="muted small">{m('limit')}</dt><dd style={{ margin: 0 }}>{limitMoney(budget[`${period}_budget`], budget.unit, locale)}</dd></div>
+          <div><dt className="muted small">{m('limit')}</dt><dd style={{ margin: 0 }}>{exactMoney(budget[`${period}_budget`], budget.unit, locale)}</dd></div>
           {usage && <>
             {(['spent', 'held', 'remaining'] as const).map((key) => <div key={key}>
-              <dt className="muted small">{m(key)}</dt><dd style={{ margin: 0 }}>{usageMoney(usage[key], budget.unit, locale)}</dd>
+              <dt className="muted small">{m(key)}</dt><dd style={{ margin: 0 }}>{exactMoney(usage[key], budget.unit, locale)}</dd>
             </div>)}
 
           </>}
@@ -98,8 +99,8 @@ export function BudgetReview({ state }: { state: BudgetEditorState }) {
       </dd></div>
       {budgetPeriods.map((period) => <div key={period}>
         <dt>{m(period)}</dt><dd style={{ margin: 0 }}>
-          <p>{m('before', { value: limitMoney(current[`${period}_budget`], current.unit, locale) })}</p>
-          <p>{m('after', { value: limitMoney(next[`${period}_budget`], current.unit, locale) })}</p>
+          <p>{m('before', { value: exactMoney(current[`${period}_budget`], current.unit, locale) })}</p>
+          <p>{m('after', { value: exactMoney(next[`${period}_budget`], current.unit, locale) })}</p>
         </dd>
       </div>)}
     </dl>
@@ -116,7 +117,7 @@ export function BudgetHistory({ budget }: { budget: PayerBudgetItem }) {
         <p><strong>{m('revision', { revision: version.revision })}</strong> · {m(version.enabled ? 'enabled' : 'disabled')}</p>
         <p className="muted small">{m('created', { time: date(version.created_at, locale) })}</p>
         <dl style={{ ...stack, margin: 0 }}>{budgetPeriods.map((period) => <div key={period}>
-          <dt className="muted small">{m(period)}</dt><dd style={{ margin: 0 }}>{limitMoney(version[`${period}_budget`], budget.unit, locale)}</dd>
+          <dt className="muted small">{m(period)}</dt><dd style={{ margin: 0 }}>{exactMoney(version[`${period}_budget`], budget.unit, locale)}</dd>
         </div>)}</dl>
       </li>)}
     </ol>}

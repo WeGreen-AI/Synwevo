@@ -9,7 +9,7 @@ import TopupDialog from './TopupDialog';
 import TopupStatusPanel from './TopupStatus';
 import { LimitsSection, ReminderSection } from './WalletSettings';
 import { WalletGate } from './WalletGate';
-import { WALLET_API, entryKindLabel, moneyText, parsePayer, payerKey, payerQuery, withQuery,
+import { WALLET_API, entryKindLabel, ledgerText, moneyText, parsePayer, payerKey, payerQuery, withQuery,
   type Entry, type Overview, type Payer, type PayerOption, type Statement } from './walletModel';
 import './wallet.messages';
 import './topup.messages';
@@ -38,7 +38,8 @@ export function PayerPicker({ payer, list, onChange }: { payer: Payer; list: Pay
     </select></label>;
 }
 
-/** The balance as the ledger states it, per unit: available first, then how it is made up. */
+/** The balance as the ledger states it, per unit: available first, then how it is made up. Every figure
+ *  is exact, to the digit the unit holds, so "available = booked − held" can be checked on the page. */
 export function BalanceFigures({ overview }: { overview: Overview }) {
   const { t, locale } = useI18n();
   return <>
@@ -47,11 +48,11 @@ export function BalanceFigures({ overview }: { overview: Overview }) {
     {overview.balances.map(balance => <article className="wallet-unit" key={balance.unit} aria-label={t('{unit} 余额', { unit: balance.unit })}>
       <p className="wallet-available-label">{t('可用余额')}</p>
       {/* Keyed by the amount: a changed balance re-enters with the shared motion tokens (none under reduced motion). */}
-      <p className="wallet-available" key={balance.available}>{moneyText(balance.available, balance.scale, balance.unit, locale)}</p>
+      <p className="wallet-available" key={balance.available}>{ledgerText(balance.available, balance.scale, balance.unit, locale)}</p>
       {balance.frozen && <p className="notice err" role="status">{t('这个钱包因一笔支付争议已被冻结，暂时不能发起新的付费调用。')}</p>}
       <dl className="wallet-amounts">
         {([['held', '预留中'], ['booked', '已入账余额'], ['used', '累计消费']] as const).map(([key, label]) => <div key={key}>
-          <dt>{t(label)}</dt><dd>{moneyText(balance[key], balance.scale, balance.unit, locale)}</dd></div>)}
+          <dt>{t(label)}</dt><dd>{ledgerText(balance[key], balance.scale, balance.unit, locale)}</dd></div>)}
       </dl>
     </article>)}
     <p className="muted small">{t('可用余额 = 已入账余额 − 预留中。预留是正在进行的调用按上限冻结的金额，结算后只扣实际用量，余下的退回可用余额。')}</p>
@@ -85,7 +86,7 @@ function RecentActivity({ payer, timezone, generation }: { payer: Payer; timezon
     {!!items.length && <ol className="wallet-history" aria-label={t('钱包流水')}>{items.map(entry => <li key={entry.id}>
       <div><b>{t(entryKindLabel(entry.kind, entry.delta))}</b>
         <p className="muted small"><time dateTime={new Date(entry.created_at * 1000).toISOString()}>{timeText(entry.created_at, locale, timezone)}</time></p></div>
-      <span className={`wallet-delta${entry.delta.startsWith('-') ? '' : ' in'}`}>{moneyText(entry.delta, entry.scale, entry.unit, locale, true)}</span>
+      <span className={`wallet-delta${entry.delta.startsWith('-') ? '' : ' in'}`}>{moneyText(entry.delta, entry.scale, entry.unit, locale, { signed: true })}</span>
     </li>)}</ol>}
     {loading && <p role="status" className="small muted">{t('正在读取钱包记录…')}</p>}
     {next && !loading && <div><button type="button" className="btn" onClick={() => void load(next, true)}>{t('加载更早的记录')}</button></div>}

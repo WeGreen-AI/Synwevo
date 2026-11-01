@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { type Bar, moneyText } from './walletModel';
+import { type Bar, ledgerText } from './walletModel';
 
 /** Charged amount per day (columns) or per model / conversation / member (rows), for one unit.
  *
@@ -17,7 +17,7 @@ export default function UsageChart({ bars, unit, scale, locale, daily, summary, 
       <ol className="usage-rows" aria-hidden="true">{bars.map(bar => <li key={bar.key}>
         <span className="usage-row-label" title={bar.label}>{bar.label}</span>
         <span className="usage-row-track"><span className="usage-row-bar" style={{ inlineSize: `${Math.max(bar.ratio * 100, bar.value === '0' ? 0 : 1)}%` }} /></span>
-        <span className="usage-row-value">{moneyText(bar.value, scale, unit, locale)}</span>
+        <span className="usage-row-value">{ledgerText(bar.value, scale, unit, locale)}</span>
       </li>)}</ol>
     </figure>;
   }
@@ -34,7 +34,7 @@ export default function UsageChart({ bars, unit, scale, locale, daily, summary, 
         const h = item.ratio * (height - 4);
         return <rect key={item.key} x={index * slot + gap / 2} y={height - h} width={bar}
           height={Math.max(h, item.value === '0' ? 0 : 1)} className="usage-column">
-          <title>{`${item.key} · ${moneyText(item.value, scale, unit, locale)} · ${item.calls}`}</title>
+          <title>{`${item.key} · ${ledgerText(item.value, scale, unit, locale)} · ${item.calls}`}</title>
         </rect>;
       })}
     </svg>

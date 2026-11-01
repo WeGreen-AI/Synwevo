@@ -120,7 +120,12 @@ export function perMillion(pricing: Pick<Pricing, 'rates' | 'per_tokens' | 'unit
 
 export interface PriceChange { field: ChatText; before: string; after: string }
 type RateKey = 'input_uncached' | 'input_cached' | 'output';
-export interface PriceDisplay { rate?: (pricing: Pricing, key: RateKey) => string; amount?: (minor: string, unit: Pricing['unit']) => string }
+/** How a changed rate or amount is written, given both values at once: a pair that would read alike
+ *  after rounding (two holds a micro-yuan apart) can then be shown exactly instead. */
+export interface PriceDisplay {
+  rate?: (before: Pricing, after: Pricing, key: RateKey) => [string, string];
+  amount?: (before: string, after: string, unit: Pricing['unit']) => [string, string];
+}
 const SEEN = /^[\x21-\x7e]{1,200}$/;
 /** The price the composer showed, repeated on every paid send (addendum AD-1: `seen_price_id`,
  *  `seen_route_version`), so the server refuses rather than runs at a price the page did not show
@@ -161,11 +166,14 @@ export function composerMaximum(status: BillingStatus | null | undefined): Maxim
 
 /** What changed between the pricing of the person's last answer and the pricing on offer now.
  *  Equality is decided on exact values; `display` only chooses how a changed rate or amount is
- *  written. */
+ *  written — and a listed change never reads the same on both sides: should the display round two
+ *  different values alike, the exact values it was decided on are shown instead. */
 export function priceChanges(before: Pricing, after: Pricing, display: PriceDisplay = {}): PriceChange[] {
   const out: PriceChange[] = [];
   const add = (field: ChatText, a: string, b: string, shown?: () => [string, string]) => {
-    if (a !== b) { const [x, y] = shown ? shown() : [a, b]; out.push({ field, before: x, after: y }); }
+    if (a === b) return;
+    const [x, y] = shown ? shown() : [a, b];
+    out.push(x === y ? { field, before: a, after: b } : { field, before: x, after: y });
   };
   add('changedModel', before.model, after.model);
   add('changedRoute', before.confirmed_route, after.confirmed_route);
@@ -174,11 +182,10 @@ export function priceChanges(before: Pricing, after: Pricing, display: PriceDisp
   const sameUnit = before.unit.code === after.unit.code && before.unit.scale === after.unit.scale;
   add('changedUnit', `${before.unit.code}/${before.unit.scale}`, `${after.unit.code}/${after.unit.scale}`);
   for (const [key, field] of [['input_uncached', 'changedUncached'], ['input_cached', 'changedCached'], ['output', 'changedOutput']] as const) {
-    add(field, perMillion(before, key), perMillion(after, key),
-      display.rate && (() => [display.rate!(before, key), display.rate!(after, key)]));
+    add(field, perMillion(before, key), perMillion(after, key), display.rate && (() => display.rate!(before, after, key)));
   }
   if (sameUnit) add('changedHold', formatAmount(before.per_call_hold, before.unit), formatAmount(after.per_call_hold, after.unit),
-    display.amount && (() => [display.amount!(before.per_call_hold, before.unit), display.amount!(after.per_call_hold, after.unit)]));
+    display.amount && (() => display.amount!(before.per_call_hold, after.per_call_hold, before.unit)));
   return out;
 }
 

@@ -4,23 +4,30 @@
  *  passes through a binary float: rounding is BigInt arithmetic on the integer, and Intl is then
  *  handed an exact decimal string with exactly the digits to show.
  *
- *  The rule (docs/personal-wallet.md): an amount a person reads is money at the currency's own
- *  precision — two decimals for CNY, with the locale's grouping — rounded from the exact units.
- *  The ledger's finer digits ("¥5.11182" for 5,111,820 micro-yuan) are a storage precision, not
- *  a display one: they read as "¥5.11". A bound said as "at most" or "no lower than" rounds up so
- *  the sentence stays true. A non-zero amount below one fen reads "不到 ¥0.01" rather than a
- *  "¥0.00" that would deny the charge. `precision: 'exact'` keeps every digit the ledger holds,
- *  for configured values where the typed figure itself is the fact. A unit price per million
- *  tokens is the exact decimal of the published rate (at most the digits it was published with). */
+ *  The rule (docs/personal-wallet.md): an amount a person reads on its own is money at the
+ *  currency's own precision — two decimals for CNY, with the locale's grouping — rounded from the
+ *  exact units in the direction that keeps its sentence true. A settled fact (a charge) rounds to
+ *  the nearest fen. A bound or a hold, said as "at most" or "no lower than", rounds up. What the
+ *  reader can still spend (a balance, a remaining allowance), said as "you have", rounds down: the
+ *  page never promises a fen the ledger would refuse, and a shown balance at least as large as a
+ *  shown hold means the ledger's balance covers that hold. A non-zero amount below one fen reads
+ *  "不到 ¥0.01" rather than a "¥0.00" that would deny it; a signed one, "+¥0.01 以内". Where two
+ *  figures are compared with each other or must add up — the box a person types into and the bound
+ *  it is checked against, a cost breakdown, a balance and what it is made of, a usage table — the
+ *  page shows them exactly (`precision: 'exact'`, every digit the ledger holds). A unit price per
+ *  million tokens is the exact decimal of the published rate; one whose decimal does not terminate
+ *  is said to be "about" its rounding, never shown as if it were exact. */
 
 /** This module is loaded by plain Node in the package tests (no bundler), so it imports nothing:
- *  its two phrases are a local three-locale table rather than a catalogue registration. */
+ *  its phrases are a local three-locale table rather than a catalogue registration. */
 type MoneyLocale = 'zh-Hans' | 'zh-Hant' | 'en';
-const PHRASES: Record<'under' | 'within', Record<MoneyLocale, (amount: string) => string>> = {
+const PHRASES: Record<'under' | 'within' | 'about', Record<MoneyLocale, (amount: string) => string>> = {
   /** A positive amount below the smallest one shown. */
   under: { 'zh-Hans': (amount) => `不到 ${amount}`, 'zh-Hant': (amount) => `不到 ${amount}`, en: (amount) => `under ${amount}` },
-  /** A negative amount (a deduction) whose size is below the smallest one shown. */
+  /** A signed amount (a deduction, or a credit shown with its plus sign) whose size is below the smallest one shown. */
   within: { 'zh-Hans': (amount) => `${amount} 以内`, 'zh-Hant': (amount) => `${amount} 以內`, en: (amount) => `within ${amount}` },
+  /** A price whose decimal does not terminate, shown rounded. */
+  about: { 'zh-Hans': (amount) => `约 ${amount}`, 'zh-Hant': (amount) => `約 ${amount}`, en: (amount) => `about ${amount}` },
 };
 /** The same resolution as i18n-core's normalizeLocale, for the locale tags the shells pass. */
 function moneyLocale(locale: string): MoneyLocale {
@@ -34,13 +41,15 @@ export interface MoneyUnit { code: string; scale: number }
 /** A rational price in smallest units per some number of tokens. */
 export interface Rate { numerator: string; denominator: string }
 export type MoneyPrecision = 'standard' | 'exact';
-export type MoneyRounding = 'nearest' | 'up';
+/** How an amount's finer digits are rounded away: 'nearest' for a settled fact, 'up' (away from zero)
+ *  for a bound or a hold said as "at most", 'down' (toward zero) for what can still be spent. */
+export type MoneyRounding = 'nearest' | 'up' | 'down';
 export interface MoneyOptions {
   /** A plus sign on a positive amount (statement deltas); negative amounts always carry theirs. */
   signed?: boolean;
   /** 'standard' (default): the currency's own decimals; 'exact': every digit the ledger holds. */
   precision?: MoneyPrecision;
-  /** 'nearest' (default): half up, away from zero; 'up': away from zero, for an "at most" bound. */
+  /** 'nearest' (default): half up, away from zero; 'up': for an "at most" bound; 'down': for a balance or allowance. */
   rounding?: MoneyRounding;
 }
 
@@ -84,7 +93,8 @@ export function majorDecimal(units: string, scale: number, keep = 0): string {
 }
 
 /** The same amount as an integer count of 10^-digits major units: rescaled exactly when `digits`
- *  is at least `scale`, otherwise rounded on the integer (half up or up, both away from zero). */
+ *  is at least `scale`, otherwise rounded on the integer's magnitude — half up, up (away from zero)
+ *  or down (toward zero) — so a negative amount rounds the same way as its size. */
 export function roundedUnits(units: string, scale: number, digits: number, rounding: MoneyRounding = 'nearest'): string {
   checkUnits(units); checkScale(scale); checkScale(digits);
   const negative = units.startsWith('-');
@@ -94,7 +104,7 @@ export function roundedUnits(units: string, scale: number, digits: number, round
     const divisor = 10n ** BigInt(scale - digits);
     const rest = value % divisor;
     value /= divisor;
-    if (rest && (rounding === 'up' || rest * 2n >= divisor)) value += 1n;
+    if (rest && (rounding === 'up' || (rounding === 'nearest' && rest * 2n >= divisor))) value += 1n;
   }
   return (negative && value ? '-' : '') + value.toString();
 }
@@ -115,6 +125,10 @@ function moneyText(exact: string, unit: MoneyUnit, locale: string, signed: boole
 }
 /** The decimals an amount of `unit` is read at: the currency's own, else at most two. */
 const shownDigits = (unit: MoneyUnit): number => currencyDigits(unit.code) ?? Math.min(2, unit.scale);
+/** The smallest amount shown at `shown` decimals ("0.01" for fen), as money, for the "under"/"within" phrases. */
+function smallestText(negative: boolean, shown: number, unit: MoneyUnit, locale: string, signed: boolean): string {
+  return moneyText(majorDecimal(negative ? '-1' : '1', shown, Math.min(shown, shownDigits(unit))), unit, locale, signed);
+}
 
 /** A ledger amount in the reader's locale: "¥5.11" / "CN¥5.11" for CNY, "1,234.57 FIXTURE" for a
  *  unit that is not a currency. See the module note for the precision, rounding and sub-fen rules. */
@@ -126,10 +140,10 @@ export function formatMoney(units: string, unit: MoneyUnit, locale: string, opti
   if (precision === 'exact') return moneyText(majorDecimal(units, unit.scale, Math.min(digits, unit.scale)), unit, locale, signed);
   const rounded = roundedUnits(units, unit.scale, digits, rounding);
   if (rounded === '0' && /[1-9]/.test(units)) {
-    // Below the smallest amount shown, yet not nothing: say so instead of a "¥0.00" that denies it.
+    // Below the smallest amount shown, yet not nothing: say so instead of a "¥0.00" that denies it. A
+    // signed amount keeps its sign on the figure ("+¥0.01 以内"), never inside the phrase.
     const negative = units.startsWith('-');
-    const smallest = moneyText(majorDecimal(negative ? '-1' : '1', digits, digits), unit, locale, signed);
-    return PHRASES[negative ? 'within' : 'under'][moneyLocale(locale)](smallest);
+    return PHRASES[negative || signed ? 'within' : 'under'][moneyLocale(locale)](smallestText(negative, digits, unit, locale, signed));
   }
   return moneyText(majorDecimal(rounded, digits, digits), unit, locale, signed);
 }
@@ -151,7 +165,9 @@ function gcd(a: bigint, b: bigint): bigint {
  *  reader's locale: exact, with at least the currency's digits and at most the digits the published
  *  decimal has ("¥2.00", "¥2.2468"), never a trailing float tail. A rate whose decimal does not
  *  terminate (a batch size that is not a divisor of a power of ten) is rounded half up to the
- *  unit's own decimals; equality between prices is decided elsewhere on the exact rationals. */
+ *  unit's own decimals and said to be about that ("约 ¥0.333333"); one below the smallest figure at
+ *  that precision is said to be under it. Equality between prices is decided elsewhere on the exact
+ *  rationals, and a list of changes falls back to those when two prices round alike. */
 export function formatPerMillion(rate: Rate, perTokens: number, unit: MoneyUnit, locale: string): string {
   if (!rate || typeof rate !== 'object' || !RATE_PART.test(rate.numerator ?? '') || !RATE_PART.test(rate.denominator ?? '')
     || rate.denominator === '0' || !Number.isSafeInteger(perTokens) || perTokens <= 0 || !validUnit(unit)) {
@@ -166,11 +182,12 @@ export function formatPerMillion(rate: Rate, perTokens: number, unit: MoneyUnit,
   let rest = denominator, twos = 0, fives = 0;
   while (rest % 2n === 0n) { rest /= 2n; twos++; }
   while (rest % 5n === 0n) { rest /= 5n; fives++; }
-  let shown = Math.max(twos, fives, digits), value: bigint;
-  if (rest === 1n && shown <= 18) value = (numerator * 10n ** BigInt(shown)) / denominator;
-  else {
-    shown = Math.max(unit.scale, digits);
-    value = (2n * numerator * 10n ** BigInt(shown) + denominator) / (2n * denominator);
+  const exact = Math.max(twos, fives, digits);
+  if (rest === 1n && exact <= 18) {
+    return moneyText(majorDecimal(((numerator * 10n ** BigInt(exact)) / denominator).toString(), exact, digits), unit, locale, false);
   }
-  return moneyText(majorDecimal(value.toString(), shown, digits), unit, locale, false);
+  const shown = Math.max(unit.scale, digits);
+  const value = (2n * numerator * 10n ** BigInt(shown) + denominator) / (2n * denominator);
+  if (!value) return PHRASES.under[moneyLocale(locale)](smallestText(false, shown, unit, locale, false));
+  return PHRASES.about[moneyLocale(locale)](moneyText(majorDecimal(value.toString(), shown, digits), unit, locale, false));
 }

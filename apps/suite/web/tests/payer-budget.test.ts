@@ -247,27 +247,32 @@ test('current usage displays the server’s still-held and settled amounts exact
   assert.doesNotMatch(html, /Wallet balance/);
 });
 
-test('amounts read as money at the unit\'s precision in the reader\'s locale, from the integer, never with the ledger\'s sub-fen tail', () => {
+test('the budget panel states the ledger exactly in the reader\'s locale: the limit as typed and the period\'s settled, held and remaining amounts, which add up to it', () => {
   // FIXTURE: the production wallet unit's shape, CNY at scale 6 (micro-yuan); the amounts are arithmetic examples.
   const micro = { code: 'CNY', scale: 6 };
   const budget = fixture({ unit: micro, configured: true, revision: 1, enabled: true, daily_budget: '10000000', weekly_budget: '30000000', monthly_budget: '100000000',
     periods: { ...fixture().periods!, daily: { start: 1790899200, end: 1790985600, spent: '5111820', held: '524289', remaining: '4363891' } } });
   model.validatePayerBudgets(envelope(budget));
-  const words = { en: ['Limit CN¥10.00', 'Settled costs CN¥5.11', 'All still-held costs CN¥0.52', 'Remaining budget CN¥4.36'],
-    'zh-Hans': ['上限 ¥10.00', '已结算费用 ¥5.11', '全部仍预留费用 ¥0.52', '剩余预算 ¥4.36'],
-    'zh-Hant': ['上限 CN¥10.00', '已結算費用 CN¥5.11', '全部仍預留費用 CN¥0.52', '剩餘預算 CN¥4.36'] } as const;
+  // 5.11182 + 0.524289 + 4.363891 = 10.00: rounded to the fen they would not (5.11 + 0.52 + 4.36 = 9.99).
+  const words = { en: ['Limit CN¥10.00', 'Settled costs CN¥5.11182', 'All still-held costs CN¥0.524289', 'Remaining budget CN¥4.363891'],
+    'zh-Hans': ['上限 ¥10.00', '已结算费用 ¥5.11182', '全部仍预留费用 ¥0.524289', '剩余预算 ¥4.363891'],
+    'zh-Hant': ['上限 CN¥10.00', '已結算費用 CN¥5.11182', '全部仍預留費用 CN¥0.524289', '剩餘預算 CN¥4.363891'] } as const;
   for (const locale of ['en', 'zh-Hans', 'zh-Hant'] as const) {
     const html = text(render('BudgetUsage', { budget }, locale));
     for (const word of words[locale]) assert.ok(html.includes(word), `${locale}: ${word} in ${html}`);
-    assert.ok(!html.includes('10.000000') && !html.includes('5.11182') && !html.includes(' CNY'), `${locale}: ${html}`);
+    assert.ok(!html.includes('10.000000') && !html.includes('¥5.11 ') && !html.includes('¥4.36 ') && !html.includes(' CNY'), `${locale}: ${html}`);
   }
-  // A limit is shown as typed, to every digit the unit holds; usage below one fen is said, not shown as nothing.
+  // A limit equal to one call's hold: the limit and the remaining budget are the same server value and read the same;
+  // a settled cost below one fen is the figure itself, not "under ¥0.01" and not nothing.
   const fine = fixture({ unit: micro, configured: true, revision: 1, enabled: true, daily_budget: '524289',
     periods: { ...fixture().periods!, daily: { start: 1790899200, end: 1790985600, spent: '200', held: '0', remaining: '524089' } } });
   model.validatePayerBudgets(envelope(fine));
   const html = text(render('BudgetUsage', { budget: fine }, 'en'));
-  assert.ok(html.includes('Limit CN¥0.524289') && html.includes('Settled costs under CN¥0.01') && html.includes('All still-held costs CN¥0.00')
-    && html.includes('Remaining budget CN¥0.52'), html);
+  assert.ok(html.includes('Limit CN¥0.524289') && html.includes('Settled costs CN¥0.0002') && html.includes('All still-held costs CN¥0.00')
+    && html.includes('Remaining budget CN¥0.524089'), html);
+  const untouched = text(render('BudgetUsage', { budget: fixture({ unit: micro, configured: true, revision: 1, enabled: true, daily_budget: '524289',
+    periods: { ...fixture().periods!, daily: { start: 1790899200, end: 1790985600, spent: '0', held: '0', remaining: '524289' } } }) }, 'en'));
+  assert.ok(untouched.includes('Limit CN¥0.524289') && untouched.includes('Remaining budget CN¥0.524289') && !untouched.includes('CN¥0.52 '), untouched);
   // The review and history show the limits the same way, in the reader's locale.
   const { editor } = makeEditor(undefined, budget);
   editor.edit({ enabled: true, daily_budget: '12.34', weekly_budget: '30.00', monthly_budget: '100.00' }); editor.review();

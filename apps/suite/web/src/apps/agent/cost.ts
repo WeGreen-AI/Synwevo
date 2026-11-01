@@ -1,11 +1,12 @@
 /** Money and token display for the chat. Ledger amounts are integer smallest units, carried as
  *  decimal strings; they never pass through a binary float. The formatting itself is the shared
- *  one (`@synwevo/ui/money`): money at the currency's own precision, rounded from the integer,
- *  bounds rounded up, a charge below one fen said as such. */
-import { formatMoney, formatPerMillion as sharedPerMillion, majorDecimal, validUnit, type MoneyUnit } from '@synwevo/ui/money';
+ *  one (`@synwevo/ui/money`): money at the currency's own precision, rounded from the integer in
+ *  the direction that keeps its sentence true (a charge to the nearest fen, a hold or bound up, a
+ *  balance down), a charge below one fen said as such, and the exact ledger figure in a breakdown. */
+import { formatMoney, formatPerMillion as sharedPerMillion, majorDecimal, validUnit, type MoneyOptions, type MoneyUnit } from '@synwevo/ui/money';
 import type { ChatText } from './chat.messages';
 
-export { formatMoney, majorDecimal, type MoneyUnit };
+export { formatMoney, majorDecimal, type MoneyOptions, type MoneyUnit };
 export interface TurnTokens { input_cached: number; input_uncached: number; output: number; reasoning: number }
 /** The shared per-turn cost contract (synwevo_suite.agent.turn_cost). */
 export interface TurnCost {

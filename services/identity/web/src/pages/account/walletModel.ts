@@ -3,7 +3,7 @@
  *  chart geometry and the top-up states. No request is made here and no figure is invented:
  *  every number on the pages is one of the server's, re-expressed. */
 
-import { formatMinor, formatMoney, majorDecimal } from '@synwevo/ui/money';
+import { formatMinor, formatMoney, majorDecimal, type MoneyOptions } from '@synwevo/ui/money';
 import { paymentMethods, type PaymentMethod } from '../../lib/paymentMethods';
 
 export type PayerKind = 'user' | 'organization';
@@ -138,17 +138,26 @@ export function csvPath(payer: Payer, period: Period, filters: CallFilters, time
 }
 
 // ------------------------------------------------------------------ money
-// The formatting is the shared rule (`@synwevo/ui/money`): money at the currency's own precision,
-// rounded from the integer units, never through a binary float; a non-zero amount below one fen
-// is said as such rather than shown as "¥0.00".
+// The formatting is the shared rule (`@synwevo/ui/money`): money in the reader's locale, from the
+// integer units and never through a binary float. A figure read on its own is at the currency's
+// precision, rounded in the direction that keeps its sentence true (a balance down, a hold up, a
+// statement entry to the nearest fen, below one fen said as such); the ledger's own record — the
+// balance and what it is made of, the usage tables and chart, a period's spending beside its limit —
+// is stated exactly, so its figures reconcile on the page.
 /** Exact decimal text of integer smallest units ("-12.05", trailing zeros trimmed). */
 export function decimalText(units: string, scale: number): string {
   return majorDecimal(units, scale);
 }
 /** A wallet amount in the reader's locale. A currency unit (CNY) reads as money ("¥12.50", "CN¥5.11");
- *  any other unit is a number followed by its code. `signed` adds the plus sign of a credit. */
-export function moneyText(units: string, scale: number, unit: string, locale: string, signed = false): string {
-  return formatMoney(units, { code: unit, scale }, locale, { signed });
+ *  any other unit is a number followed by its code. `signed` adds the plus sign of a credit; `rounding`
+ *  'down' for what can still be spent, 'up' for what is held. */
+export function moneyText(units: string, scale: number, unit: string, locale: string, options: MoneyOptions = {}): string {
+  return formatMoney(units, { code: unit, scale }, locale, options);
+}
+/** A ledger figure to every digit the unit holds ("¥5.11182", "¥1.00"): the wallet's and the usage
+ *  page's own record, which a reader can add up. */
+export function ledgerText(units: string, scale: number, unit: string, locale: string): string {
+  return formatMoney(units, { code: unit, scale }, locale, { precision: 'exact' });
 }
 /** Top-up amounts are minor units of the payment currency (fen for CNY). */
 export function paymentText(amountMinor: number, currency: string, locale: string): string {

@@ -1,11 +1,12 @@
 /** CNY amounts for the money administration and organization pages, through the shared formatter
  *  (`@synwevo/ui/money`): exact integer arithmetic (no binary floats), money at fen precision in
  *  the reader's locale, the same "¥10.00" here as on the top-up dialog. */
-import { formatMinor, formatMoney } from "@synwevo/ui/money";
+import { formatMinor, formatMoney, type MoneyOptions } from "@synwevo/ui/money";
 
-/** `units` integer wallet units of `scale` decimal places (fen are scale 2); `signed` adds the plus sign of a credit. */
-export function cnyText(units: number | string, scale: number, locale: string, signed = false): string {
-  return formatMoney(String(units), { code: "CNY", scale }, locale, { signed });
+/** `units` integer wallet units of `scale` decimal places (fen are scale 2). `signed` adds the plus sign of a
+ *  credit; `rounding` 'down' for a balance that can still be spent, 'up' for what is held (see `@synwevo/ui/money`). */
+export function cnyText(units: number | string, scale: number, locale: string, options: MoneyOptions = {}): string {
+  return formatMoney(String(units), { code: "CNY", scale }, locale, options);
 }
 
 /** Fen to text. */

@@ -54,6 +54,41 @@ test('a bound said as "at most" or "no lower than" rounds up, so the sentence st
   assert.equal(roundedUnits('1250', 2, 6), '12500000', 'a finer scale rescales exactly');
 });
 
+test('what the reader can still spend rounds down, so a balance never reads as at least a hold the ledger says it cannot cover', () => {
+  // 988,818 micro-yuan available reads "¥0.98" (at least that), beside a hold of 524,289 that reads "¥0.53" (at most that).
+  for (const locale of LOCALES) {
+    assert.equal(formatMoney('988818', CNY6, locale, { rounding: 'down' }), yuan('0.98')[locale], locale);
+    assert.equal(formatMoney('995000', CNY6, locale, { rounding: 'down' }), yuan('0.99')[locale], `${locale}: half a fen under one yuan is not one yuan`);
+    assert.equal(formatMoney('5115000', CNY6, locale, { rounding: 'down' }), yuan('5.11')[locale], locale);
+    assert.equal(formatMoney('1000000', CNY6, locale, { rounding: 'down' }), yuan('1.00')[locale], `${locale}: an exact figure is not reduced`);
+  }
+  assert.equal(formatMoney('4999', CNY6, 'zh-Hans', { rounding: 'down' }), '不到 ¥0.01', 'below one fen is still said, not shown as nothing');
+  assert.equal(roundedUnits('988818', 6, 2, 'down'), '98');
+  assert.equal(roundedUnits('-988818', 6, 2, 'down'), '-98', 'toward zero');
+  assert.equal(roundedUnits('-4999', 6, 2, 'down'), '0', 'no negative zero');
+  // The pair the composer shows: whenever the shown balance is at least the shown hold, the ledger's balance covers the hold.
+  const fen = (text: string) => Number(text.replace(/[^0-9.]/g, ''));
+  const sweep = [...Array.from({ length: 3400 }, (_, i) => 520000n + 3n * BigInt(i)), ...Array.from({ length: 2000 }, (_, i) => 995000n + 3n * BigInt(i))];
+  for (const available of sweep) {
+    for (const hold of [524289n, 525000n, 525289n, 1000000n]) {
+      const balance = fen(formatMoney(available.toString(), CNY6, 'en', { rounding: 'down' }));
+      const bound = fen(formatMoney(hold.toString(), CNY6, 'en', { rounding: 'up' }));
+      if (balance >= bound) assert.ok(available >= hold, `${available} reads CN¥${balance} beside a hold reading CN¥${bound}`);
+    }
+  }
+});
+
+test('a signed amount whose size is below one fen reads "within" its sign; the sign never sits inside the "under" phrase', () => {
+  const credit = { 'zh-Hans': '+¥0.01 以内', 'zh-Hant': '+CN¥0.01 以內', en: 'within +CN¥0.01' };
+  const debit = { 'zh-Hans': '-¥0.01 以内', 'zh-Hant': '-CN¥0.01 以內', en: 'within -CN¥0.01' };
+  for (const locale of LOCALES) {
+    assert.equal(formatMoney('200', CNY6, locale, { signed: true }), credit[locale], locale);
+    assert.equal(formatMoney('4999', CNY6, locale, { signed: true }), credit[locale], locale);
+    assert.equal(formatMoney('-4999', CNY6, locale, { signed: true }), debit[locale], locale);
+    assert.ok(!/不到|under/.test(formatMoney('200', CNY6, locale, { signed: true })), `${locale}: the "under" phrase never carries a sign`);
+  }
+});
+
 test('a non-zero amount below one fen says so in the reader\'s language, instead of a "¥0.00" that denies it', () => {
   const under = { 'zh-Hans': '不到 ¥0.01', 'zh-Hant': '不到 CN¥0.01', en: 'under CN¥0.01' };
   const within = { 'zh-Hans': '-¥0.01 以内', 'zh-Hant': '-CN¥0.01 以內', en: 'within -CN¥0.01' };
@@ -108,15 +143,30 @@ test('a unit price per million tokens is the published decimal, exact, with at l
   assert.equal(formatPerMillion({ numerator: '2', denominator: '1' }, 1, CNY6, 'zh-Hans'), '¥2.00');
   assert.equal(formatPerMillion({ numerator: '1', denominator: '25' }, 1, CNY6, 'zh-Hans'), '¥0.04');
   assert.equal(formatPerMillion({ numerator: '0', denominator: '7' }, 1000, CNY2, 'en'), 'CN¥0.00');
-  // A rate whose decimal does not terminate is rounded to the unit's own decimals, not shown as a fraction.
-  assert.equal(formatPerMillion({ numerator: '1', denominator: '3' }, 1, CNY6, 'en'), 'CN¥0.333333');
-  assert.equal(formatPerMillion({ numerator: '1', denominator: '3' }, 1, { code: 'FIXTURE', scale: 2 }, 'en'), '3,333.33 FIXTURE');
+  // A rate whose decimal does not terminate is rounded to the unit's own decimals and said to be about that (the test below).
+  assert.equal(formatPerMillion({ numerator: '1', denominator: '3' }, 1, CNY6, 'en'), 'about CN¥0.333333');
+  assert.equal(formatPerMillion({ numerator: '1', denominator: '3' }, 1, { code: 'FIXTURE', scale: 2 }, 'en'), 'about 3,333.33 FIXTURE');
   // 62.5 smallest units of a two-decimal unit per million: the published price has three decimals, and keeps them.
   assert.equal(formatPerMillion({ numerator: '125', denominator: '2' }, million, { code: 'TEST', scale: 2 }, 'en'), '0.625 TEST');
   for (const bad of [{ numerator: '1', denominator: '0' }, { numerator: '1e3', denominator: '1' }, { numerator: '-1', denominator: '1' }, null]) {
     assert.throws(() => formatPerMillion(bad as any, million, CNY6, 'en'), RangeError);
   }
   assert.throws(() => formatPerMillion({ numerator: '1', denominator: '1' }, 0, CNY6, 'en'), RangeError);
+});
+
+test('a unit price whose decimal does not terminate is said to be about its rounding; below the smallest figure shown, under it', () => {
+  const million = 1_000_000;
+  const about = { 'zh-Hans': '约 ¥0.333333', 'zh-Hant': '約 CN¥0.333333', en: 'about CN¥0.333333' };
+  for (const locale of LOCALES) assert.equal(formatPerMillion({ numerator: '1', denominator: '3' }, 1, CNY6, locale), about[locale], locale);
+  assert.equal(formatPerMillion({ numerator: '2', denominator: '3' }, 1, CNY6, 'en'), 'about CN¥0.666667', 'rounded half up, and said to be rounded');
+  // A third of a micro-yuan per million tokens is not nothing, and never "¥0.00".
+  assert.equal(formatPerMillion({ numerator: '1', denominator: '3' }, million, CNY6, 'en'), 'under CN¥0.000001');
+  assert.equal(formatPerMillion({ numerator: '1', denominator: '3000000' }, 1, CNY6, 'zh-Hans'), '不到 ¥0.000001');
+  // A decimal that terminates only beyond 18 places is rounded too, and says so.
+  assert.equal(formatPerMillion({ numerator: '1', denominator: '33554432' }, 1, { code: 'CNY', scale: 0 }, 'en'), 'about CN¥0.03');
+  // An exact price carries no such word; the ledger's zero is a plain zero.
+  assert.equal(formatPerMillion({ numerator: '2000000', denominator: '1' }, million, CNY6, 'en'), 'CN¥2.00');
+  assert.equal(formatPerMillion({ numerator: '0', denominator: '3' }, 1, CNY6, 'en'), 'CN¥0.00');
 });
 
 test('malformed amounts and units are refused, never rounded into a plausible figure', () => {

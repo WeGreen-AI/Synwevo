@@ -8,7 +8,7 @@ import { ErrorNotice, errorText, timeText } from './common';
 import UsageChart from './UsageChart';
 import { PayerPicker, payerName, usePayers } from './Wallet';
 import { WalletGate } from './WalletGate';
-import { PRESETS, callsPath, chartBars, csvPath, localToday, moneyText, parsePayer, payerKey, periodDays, presetPeriod,
+import { PRESETS, callsPath, chartBars, csvPath, ledgerText, localToday, parsePayer, payerKey, periodDays, presetPeriod,
   usagePath, withQuery, type CallRow, type CallState, type CallsPage, type Payer, type Period, type Preset,
   type UsageGroup, type UsageSummary } from './walletModel';
 import './wallet.messages';
@@ -45,7 +45,8 @@ function tokensText(row: { tokens: CallRow['tokens'] }, locale: string, t: (s: s
 }
 
 /** One row per call, newest first: what was asked of which model, in which time band and price
- *  version, the tokens the provider reported, and what the ledger settled. */
+ *  version, the tokens the provider reported, and what the ledger settled — exactly, to the digit the
+ *  unit holds, like every figure on this page, so rows add up to the totals and to the CSV. */
 export function CallsTable({ items, organization, timezone }: { items: CallRow[]; organization: boolean; timezone: string }) {
   const { t, locale } = useI18n();
   // The table scrolls sideways on a phone: a focusable, named region so a keyboard can scroll it too.
@@ -59,9 +60,9 @@ export function CallsTable({ items, organization, timezone }: { items: CallRow[]
         <td className="small"><div>{row.model || '—'}</div><div className="muted">{row.band ? t(BAND_LABELS[row.band] || row.band) : t('时段未记录')}</div>
           <div className="muted tiny" title={t('价格版本')}>{row.price_version}</div></td>
         <td className="small">{tokensText(row, locale, t)}</td>
-        <td className="nowrap usage-money">{row.state === 'settled' ? moneyText(row.charged_minor, row.scale, row.unit, locale)
-          : row.state === 'held' || row.state === 'pending' ? t('预留 {amount}', { amount: moneyText(row.held_minor, row.scale, row.unit, locale) })
-          : moneyText('0', row.scale, row.unit, locale)}</td>
+        <td className="nowrap usage-money">{row.state === 'settled' ? ledgerText(row.charged_minor, row.scale, row.unit, locale)
+          : row.state === 'held' || row.state === 'pending' ? t('预留 {amount}', { amount: ledgerText(row.held_minor, row.scale, row.unit, locale) })
+          : ledgerText('0', row.scale, row.unit, locale)}</td>
         <td><span className={`badge ${row.state === 'settled' ? 'ok' : row.state === 'not_charged' ? '' : 'info'}`}>{t(STATE_LABELS[row.state] || row.state)}</span></td>
         <td className="small">{row.finish_reason ? t(FINISH_LABELS[row.finish_reason] || row.finish_reason) : '—'}
           {row.duration_s !== null && <div className="muted">{t('{seconds} 秒', { seconds: row.duration_s })}</div>}</td>
@@ -183,15 +184,15 @@ function UsagePage() {
           const buckets = data.buckets.filter(bucket => bucket.unit === total.unit);
           return <div key={total.unit} className="col gap16">
             <dl className="usage-totals">
-              <div><dt>{t('已结算费用')}</dt><dd>{moneyText(total.charged_minor, total.scale, total.unit, locale)}</dd></div>
+              <div><dt>{t('已结算费用')}</dt><dd>{ledgerText(total.charged_minor, total.scale, total.unit, locale)}</dd></div>
               <div><dt>{t('调用次数')}</dt><dd>{new Intl.NumberFormat(locale).format(total.calls)}</dd></div>
-              <div><dt>{t('预留中')}</dt><dd>{moneyText(total.held_minor, total.scale, total.unit, locale)}</dd></div>
+              <div><dt>{t('预留中')}</dt><dd>{ledgerText(total.held_minor, total.scale, total.unit, locale)}</dd></div>
               <div className="usage-token-total"><dt>{t('Token 构成')}</dt><dd className="small">{tokensText(total, locale, t)}</dd></div>
             </dl>
             <UsageChart bars={bars} unit={total.unit} scale={total.scale} locale={locale} daily={data.group === 'day'}
               empty={t('这段时间没有已结算的费用。')}
               summary={t('{group}的已结算费用：共 {count} 项，合计 {total}。具体数值见下表。', { group: t(GROUP_LABELS[data.group]),
-                count: buckets.length, total: moneyText(total.charged_minor, total.scale, total.unit, locale) })} />
+                count: buckets.length, total: ledgerText(total.charged_minor, total.scale, total.unit, locale) })} />
             <div className="tbl-wrap"><table className="tbl usage-buckets">
               <caption className="sr-only">{t('{group}的用量明细', { group: t(GROUP_LABELS[data.group]) })}</caption>
               <thead><tr><th scope="col">{t(data.group === 'day' ? '日期' : data.group === 'model' ? '模型' : data.group === 'member' ? '成员' : '对话')}</th>
@@ -199,8 +200,8 @@ function UsagePage() {
               <tbody>{buckets.map(bucket => <tr key={bucket.key}>
                 <th scope="row" className="usage-who">{bucket.title || bucket.key || t('未记录')}</th>
                 <td>{new Intl.NumberFormat(locale).format(bucket.calls)}</td>
-                <td className="usage-money">{moneyText(bucket.charged_minor, bucket.scale, bucket.unit, locale)}</td>
-                <td className="usage-money">{moneyText(bucket.held_minor, bucket.scale, bucket.unit, locale)}</td>
+                <td className="usage-money">{ledgerText(bucket.charged_minor, bucket.scale, bucket.unit, locale)}</td>
+                <td className="usage-money">{ledgerText(bucket.held_minor, bucket.scale, bucket.unit, locale)}</td>
                 <td className="small">{tokensText(bucket, locale, t)}</td></tr>)}</tbody></table></div>
           </div>;
         })}
