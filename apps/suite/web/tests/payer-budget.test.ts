@@ -104,7 +104,7 @@ test('legacy period totals may exceed int64 without hiding limits or rounding us
   for (const period of Object.values(budget.periods!)) period.spent = '18446744073709551614';
   model.validatePayerBudgets(envelope(budget));
   const html = render('BudgetUsage', { budget });
-  assert.match(text(html), /184467440737095516\.14 FIXTURE/);
+  assert.match(text(html), /184,467,440,737,095,516\.14 FIXTURE/);
   const editor = makeEditor(undefined, budget).editor;
   proposal(editor);
   assert.equal(editor.getSnapshot().phase, 'review');
@@ -242,9 +242,37 @@ test('current usage displays the server’s still-held and settled amounts exact
       spent: '9007199254740993', held: '101', remaining: '0' } } });
   model.validatePayerBudgets(envelope(budget));
   const html = text(render('BudgetUsage', { budget }));
-  assert.match(html, /90071992547409.93 FIXTURE/); assert.match(html, /1.01 FIXTURE/);
+  assert.match(html, /90,071,992,547,409.93 FIXTURE/); assert.match(html, /1.01 FIXTURE/);
   assert.match(html, /Remaining budget 0.00 FIXTURE/); assert.match(html, /UTC/);
   assert.doesNotMatch(html, /Wallet balance/);
+});
+
+test('amounts read as money at the unit\'s precision in the reader\'s locale, from the integer, never with the ledger\'s sub-fen tail', () => {
+  // FIXTURE: the production wallet unit's shape, CNY at scale 6 (micro-yuan); the amounts are arithmetic examples.
+  const micro = { code: 'CNY', scale: 6 };
+  const budget = fixture({ unit: micro, configured: true, revision: 1, enabled: true, daily_budget: '10000000', weekly_budget: '30000000', monthly_budget: '100000000',
+    periods: { ...fixture().periods!, daily: { start: 1790899200, end: 1790985600, spent: '5111820', held: '524289', remaining: '4363891' } } });
+  model.validatePayerBudgets(envelope(budget));
+  const words = { en: ['Limit CN¥10.00', 'Settled costs CN¥5.11', 'All still-held costs CN¥0.52', 'Remaining budget CN¥4.36'],
+    'zh-Hans': ['上限 ¥10.00', '已结算费用 ¥5.11', '全部仍预留费用 ¥0.52', '剩余预算 ¥4.36'],
+    'zh-Hant': ['上限 CN¥10.00', '已結算費用 CN¥5.11', '全部仍預留費用 CN¥0.52', '剩餘預算 CN¥4.36'] } as const;
+  for (const locale of ['en', 'zh-Hans', 'zh-Hant'] as const) {
+    const html = text(render('BudgetUsage', { budget }, locale));
+    for (const word of words[locale]) assert.ok(html.includes(word), `${locale}: ${word} in ${html}`);
+    assert.ok(!html.includes('10.000000') && !html.includes('5.11182') && !html.includes(' CNY'), `${locale}: ${html}`);
+  }
+  // A limit is shown as typed, to every digit the unit holds; usage below one fen is said, not shown as nothing.
+  const fine = fixture({ unit: micro, configured: true, revision: 1, enabled: true, daily_budget: '524289',
+    periods: { ...fixture().periods!, daily: { start: 1790899200, end: 1790985600, spent: '200', held: '0', remaining: '524089' } } });
+  model.validatePayerBudgets(envelope(fine));
+  const html = text(render('BudgetUsage', { budget: fine }, 'en'));
+  assert.ok(html.includes('Limit CN¥0.524289') && html.includes('Settled costs under CN¥0.01') && html.includes('All still-held costs CN¥0.00')
+    && html.includes('Remaining budget CN¥0.52'), html);
+  // The review and history show the limits the same way, in the reader's locale.
+  const { editor } = makeEditor(undefined, budget);
+  editor.edit({ enabled: true, daily_budget: '12.34', weekly_budget: '30.00', monthly_budget: '100.00' }); editor.review();
+  const review = text(render('BudgetReview', { state: editor.getSnapshot() }, 'zh-Hans'));
+  assert.ok(review.includes('当前：¥10.00') && review.includes('更改后：¥12.34'), review);
 });
 
 test('history is bounded to the latest 20 versions, with exact amounts and UTC timestamps', () => {
@@ -255,7 +283,7 @@ test('history is bounded to the latest 20 versions, with exact amounts and UTC t
   const html = render('BudgetHistory', { budget });
   assert.match(text(html), /Latest 20 budget revisions/);
   assert.equal((html.match(/<li>/g) ?? []).length, 20);
-  assert.match(text(html), /90071992547409.93 FIXTURE/); assert.match(text(html), /UTC/);
+  assert.match(text(html), /90,071,992,547,409.93 FIXTURE/); assert.match(text(html), /UTC/);
   assert.doesNotMatch(text(html), /All history/);
   assert.throws(() => model.validatePayerBudgets(envelope({ ...budget, history: [...history, { ...history[19], revision: 10 }] })));
 });
@@ -288,7 +316,7 @@ test('forms expose exact decimal text inputs, labels, native keyboard controls a
   proposal(editor);
   html = render('BudgetEditorForm', { editor, environment: 'test' });
   assert.match(text(html), /Current: 0.00 FIXTURE/); assert.match(text(html), /After change: 12.34 FIXTURE/);
-  assert.match(text(html), /90071992547409.93 FIXTURE/); assert.match(text(html), /Confirm and save test budgets/);
+  assert.match(text(html), /90,071,992,547,409.93 FIXTURE/); assert.match(text(html), /Confirm and save test budgets/);
   assert.ok([...html.matchAll(/<input\b[^>]*>/g)].every((match) => match[0].includes('disabled')));
 });
 

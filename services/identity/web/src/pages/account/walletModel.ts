@@ -3,6 +3,7 @@
  *  chart geometry and the top-up states. No request is made here and no figure is invented:
  *  every number on the pages is one of the server's, re-expressed. */
 
+import { formatMinor, formatMoney, majorDecimal } from '@synwevo/ui/money';
 import { paymentMethods, type PaymentMethod } from '../../lib/paymentMethods';
 
 export type PayerKind = 'user' | 'organization';
@@ -137,42 +138,22 @@ export function csvPath(payer: Payer, period: Period, filters: CallFilters, time
 }
 
 // ------------------------------------------------------------------ money
-const UNITS = /^-?(0|[1-9]\d{0,30})$/;
-/** Exact decimal text of integer smallest units ("-12.05"), never through a binary float. */
+// The formatting is the shared rule (`@synwevo/ui/money`): money at the currency's own precision,
+// rounded from the integer units, never through a binary float; a non-zero amount below one fen
+// is said as such rather than shown as "¥0.00".
+/** Exact decimal text of integer smallest units ("-12.05", trailing zeros trimmed). */
 export function decimalText(units: string, scale: number): string {
-  if (!UNITS.test(units) || !Number.isInteger(scale) || scale < 0 || scale > 18) throw new RangeError('Invalid wallet amount');
-  const negative = units.startsWith('-');
-  const digits = (negative ? units.slice(1) : units).padStart(scale + 1, '0');
-  const whole = scale ? digits.slice(0, -scale) : digits;
-  const fraction = scale ? digits.slice(-scale).replace(/0+$/, '') : '';
-  return (negative && units !== '-0' ? '-' : '') + whole + (fraction ? '.' + fraction : '');
+  return majorDecimal(units, scale);
 }
-/** Exact decimal strings are formatted without a float on the way (Intl.NumberFormat v3 accepts
- *  a numeric string; the TypeScript library still declares number | bigint only). */
-function exactFormat(format: Intl.NumberFormat, exact: string): string {
-  return (format.format as unknown as (value: string) => string)(exact);
-}
-function isCurrency(code: string): boolean {
-  if (!/^[A-Z]{3}$/.test(code)) return false;
-  try { new Intl.NumberFormat('en', { style: 'currency', currency: code }); return true; } catch { return false; }
-}
-/** A wallet amount in the reader's locale. A currency unit (CNY) reads as money ("¥12.50", "CN¥0.0045")
- *  with every fractional digit the ledger holds; any other unit is a number followed by its code. */
+/** A wallet amount in the reader's locale. A currency unit (CNY) reads as money ("¥12.50", "CN¥5.11");
+ *  any other unit is a number followed by its code. `signed` adds the plus sign of a credit. */
 export function moneyText(units: string, scale: number, unit: string, locale: string, signed = false): string {
-  const exact = decimalText(units, scale);
-  if (isCurrency(unit)) {
-    const format = new Intl.NumberFormat(locale, { style: 'currency', currency: unit, minimumFractionDigits: Math.min(2, scale),
-      maximumFractionDigits: Math.max(Math.min(2, scale), scale), signDisplay: signed ? 'exceptZero' : 'auto' });
-    return exactFormat(format, exact);
-  }
-  const format = new Intl.NumberFormat(locale, { maximumFractionDigits: scale, signDisplay: signed ? 'exceptZero' : 'auto' });
-  return `${exactFormat(format, exact)} ${unit}`;
+  return formatMoney(units, { code: unit, scale }, locale, { signed });
 }
 /** Top-up amounts are minor units of the payment currency (fen for CNY). */
 export function paymentText(amountMinor: number, currency: string, locale: string): string {
   if (!Number.isSafeInteger(amountMinor) || amountMinor < 0) throw new RangeError('Invalid payment amount');
-  const digits = new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2;
-  return moneyText(String(amountMinor), digits, currency, locale);
+  return formatMinor(amountMinor, currency, locale);
 }
 /** A typed major-unit amount ("12.5") as minor units (1250), or null when it is not one exactly. */
 export function minorFromText(value: string, digits: number): number | null {

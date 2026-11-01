@@ -222,7 +222,7 @@ function OrganizationStatement({ organization, unit }: { organization: Organizat
     {!items ? (action.error ? null : <Loading />) : !items.length ? <p className="muted">{t("还没有账单记录。")}</p> : <ul className="org-list">{items.map(r =>
       <li key={r.id}><div className="org-billing-who"><strong>{t(KIND[r.kind] || r.kind)}</strong>
         <div className="tiny muted org-billing-wrap">{new Date(r.created_at * 1000).toLocaleString(locale)}{r.member_email ? ` · ${r.member_email}` : ""}</div></div>
-        <span className="org-billing-money">{r.delta.startsWith("-") ? "-" : "+"}{cnyText(r.delta.replace(/^-/, ""), unit.scale, locale)}</span></li>)}</ul>}
+        <span className="org-billing-money">{cnyText(r.delta, unit.scale, locale, true)}</span></li>)}</ul>}
     {next && <button type="button" className="btn" disabled={action.busy} onClick={() => void action.run(() => load(next))}>{t("加载更多")}</button>}
   </div>;
 }

@@ -113,7 +113,8 @@ export function PriceChangeList({ before, after }: { before: Pricing; after: Pri
   try {
     changes = priceChanges(before, after, {
       rate: (pricing, key) => formatPerMillion(pricing, key, locale, perMillion(pricing, key)),
-      amount: (minor, unit) => formatMoney(minor, unit, locale),
+      // The hold is a bound ("at most"): rounded up, so the sentence stays true.
+      amount: (minor, unit) => formatMoney(minor, unit, locale, { rounding: "up" }),
     });
   } catch { return null; }
   if (!changes.length) return null;
@@ -138,7 +139,8 @@ export function TurnMaximum({ maximum }: { maximum: MaximumShown | null }) {
     ? <> <Link to="/agent/settings">{c("nextSettings")}</Link></> : null;
   if (!("amount" in maximum)) return <span className="ag-max">{c(maximum.key)}{settings}</span>;
   let amount: string;
-  try { amount = formatMoney(maximum.amount, maximum.unit, locale); } catch { return null; }
+  // A bound ("at most", "below one call's hold"): rounded up, so the sentence stays true.
+  try { amount = formatMoney(maximum.amount, maximum.unit, locale, { rounding: "up" }); } catch { return null; }
   return <span className="ag-max">{c(maximum.key, { amount })}{settings}</span>;
 }
 

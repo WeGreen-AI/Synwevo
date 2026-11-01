@@ -6,7 +6,7 @@ import { Modal } from "@synwevo/ui";
 import { formatAmount, type Offer } from "./budget";
 import { useChatText } from "./ChatParts";
 import { composerMaximum, fundsState, limitLine, perMillion, type BillingStatus, type MaximumShown } from "./composer";
-import { formatMoney, formatPerMillion } from "./cost";
+import { formatMoney, formatPerMillion, type MoneyUnit } from "./cost";
 import { payerKey, spendable, type Payer, type WelcomeState } from "./payers";
 
 export interface Capabilities { vision: boolean; tools: boolean; thinking: boolean }
@@ -28,9 +28,10 @@ export interface MoneyState {
   welcome?: WelcomeState | null;
 }
 
-function money(minor: string | null | undefined, unit: { code: string; scale: number } | null | undefined, locale: string): string | null {
+/** A ledger figure as money; `bound` for an amount said as "at most", which rounds up so the sentence stays true. */
+function money(minor: string | null | undefined, unit: MoneyUnit | null | undefined, locale: string, bound = false): string | null {
   if (!minor || !unit) return null;
-  try { return formatMoney(minor, unit, locale); } catch { return null; }
+  try { return formatMoney(minor, unit, locale, bound ? { rounding: "up" } : undefined); } catch { return null; }
 }
 
 /** The prices a send runs at, as published: the unit prices per million tokens, one call's hold,
@@ -45,7 +46,7 @@ export function PriceFacts({ offer, maximum }: { offer: ModelOffer; maximum?: Ma
   };
   let most: string | null = null;
   if (maximum) {
-    const amount = "amount" in maximum ? money(maximum.amount, maximum.unit, locale) : null;
+    const amount = "amount" in maximum ? money(maximum.amount, maximum.unit, locale, true) : null;
     // A figure only when the composer shows one; otherwise its sentence (being read, cannot be shown, the cap's problem).
     most = maximum.key === "turnMaximum" ? amount : "amount" in maximum ? (amount ? c(maximum.key, { amount }) : null) : c(maximum.key);
   }
@@ -53,7 +54,7 @@ export function PriceFacts({ offer, maximum }: { offer: ModelOffer; maximum?: Ma
     <div><dt>{c("tokensUncached")}</dt><dd>{price("input_uncached")}</dd></div>
     <div><dt>{c("tokensCached")}</dt><dd>{price("input_cached")}</dd></div>
     <div><dt>{c("tokensOutput")}</dt><dd>{price("output")}</dd></div>
-    <div><dt>{c("modelHold")}</dt><dd>{money(offer.per_call_hold, offer.unit, locale) ?? formatAmount(offer.per_call_hold, offer.unit)}</dd></div>
+    <div><dt>{c("modelHold")}</dt><dd>{money(offer.per_call_hold, offer.unit, locale, true) ?? formatAmount(offer.per_call_hold, offer.unit)}</dd></div>
     <div><dt>{c("changedPrice")}</dt><dd>{offer.price_id}</dd></div>
     {maximum && <div><dt>{c("runCapTitle")}</dt><dd>{most ?? c("turnMaximumUnavailable")}</dd></div>}
   </dl>;

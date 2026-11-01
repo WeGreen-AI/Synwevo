@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { ApiError, useSession } from '@synwevo/auth-client';
 import { useI18n, type Params } from '@synwevo/ui';
+import { formatMoney, type MoneyUnit } from '@synwevo/ui/money';
 import { newKey, op, read } from '../../shared/ops';
 import { Empty, Failure, Loading } from '../../shared/states';
 import { formatAmount } from './budget';
@@ -18,6 +19,10 @@ function useText() {
   const { t, locale } = useI18n();
   return { m: (key: PayerBudgetText, params?: Params) => t(payerBudgetCopy[key][0], params), locale };
 }
+/** Amounts as money in the reader's locale (shared rule, `@synwevo/ui/money`): usage at the currency's
+ *  precision, rounded from the integer; a limit as the person typed it, to every digit the unit holds. */
+const usageMoney = (units: string, unit: MoneyUnit, locale: string) => formatMoney(units, unit, locale);
+const limitMoney = (units: string, unit: MoneyUnit, locale: string) => formatMoney(units, unit, locale, { precision: 'exact' });
 /** Kept here as well for existing importers; the words live beside the budget model. */
 export { payerBudgetErrorText };
 function ErrorNotice({ error, fallback, retry }: { error: unknown; fallback: PayerBudgetText; retry?: () => void }) {
@@ -58,10 +63,10 @@ export function BudgetUsage({ budget }: { budget: PayerBudgetItem }) {
       return <section key={period} className="notice" style={stack} aria-label={m(period)}>
         <h4>{m(period)}</h4>
         <dl style={{ ...stack, margin: 0 }}>
-          <div><dt className="muted small">{m('limit')}</dt><dd style={{ margin: 0 }}>{formatAmount(budget[`${period}_budget`], budget.unit)}</dd></div>
+          <div><dt className="muted small">{m('limit')}</dt><dd style={{ margin: 0 }}>{limitMoney(budget[`${period}_budget`], budget.unit, locale)}</dd></div>
           {usage && <>
             {(['spent', 'held', 'remaining'] as const).map((key) => <div key={key}>
-              <dt className="muted small">{m(key)}</dt><dd style={{ margin: 0 }}>{formatAmount(usage[key], budget.unit)}</dd>
+              <dt className="muted small">{m(key)}</dt><dd style={{ margin: 0 }}>{usageMoney(usage[key], budget.unit, locale)}</dd>
             </div>)}
 
           </>}
@@ -79,7 +84,7 @@ export function BudgetUsage({ budget }: { budget: PayerBudgetItem }) {
 }
 
 export function BudgetReview({ state }: { state: BudgetEditorState }) {
-  const { m } = useText();
+  const { m, locale } = useText();
   const next = state.review;
   if (!next) return null;
   const current = state.current;
@@ -93,8 +98,8 @@ export function BudgetReview({ state }: { state: BudgetEditorState }) {
       </dd></div>
       {budgetPeriods.map((period) => <div key={period}>
         <dt>{m(period)}</dt><dd style={{ margin: 0 }}>
-          <p>{m('before', { value: formatAmount(current[`${period}_budget`], current.unit) })}</p>
-          <p>{m('after', { value: formatAmount(next[`${period}_budget`], current.unit) })}</p>
+          <p>{m('before', { value: limitMoney(current[`${period}_budget`], current.unit, locale) })}</p>
+          <p>{m('after', { value: limitMoney(next[`${period}_budget`], current.unit, locale) })}</p>
         </dd>
       </div>)}
     </dl>
@@ -111,7 +116,7 @@ export function BudgetHistory({ budget }: { budget: PayerBudgetItem }) {
         <p><strong>{m('revision', { revision: version.revision })}</strong> · {m(version.enabled ? 'enabled' : 'disabled')}</p>
         <p className="muted small">{m('created', { time: date(version.created_at, locale) })}</p>
         <dl style={{ ...stack, margin: 0 }}>{budgetPeriods.map((period) => <div key={period}>
-          <dt className="muted small">{m(period)}</dt><dd style={{ margin: 0 }}>{formatAmount(version[`${period}_budget`], budget.unit)}</dd>
+          <dt className="muted small">{m(period)}</dt><dd style={{ margin: 0 }}>{limitMoney(version[`${period}_budget`], budget.unit, locale)}</dd>
         </div>)}</dl>
       </li>)}
     </ol>}

@@ -78,19 +78,25 @@ test('periods are local calendar days and never exceed what the server accepts',
 });
 
 // ------------------------------------------------------------------ money
-test('wallet amounts are exact decimals in every locale, as money for CNY and as a number for other units', () => {
+test('wallet amounts read as money at the currency\'s precision in every locale, from the integer; other units as a number with their code', () => {
   assert.equal(model.decimalText('9007199254740993123456', 6), '9007199254740993.123456');
   assert.equal(model.decimalText('-45', 4), '-0.0045');
   assert.equal(model.decimalText('1250', 2), '12.5');
+  const under = { 'zh-Hans': '不到 ¥0.01', 'zh-Hant': '不到 CN¥0.01', en: 'under CN¥0.01' };
+  const within = { 'zh-Hans': '-¥0.01 以内', 'zh-Hant': '-CN¥0.01 以內', en: 'within -CN¥0.01' };
   for (const locale of ['zh-Hans', 'zh-Hant', 'en']) {
     const big = model.moneyText('9007199254740993123456', 6, 'CNY', locale);
-    assert.ok(big.includes('9,007,199,254,740,993.123456'), `${locale}: ${big}`);
+    assert.ok(big.includes('9,007,199,254,740,993.12') && !big.includes('.123456'), `${locale}: ${big}`);
     assert.ok(/¥/.test(model.moneyText('1250', 2, 'CNY', locale)), locale);
     assert.ok(model.moneyText('1250', 2, 'CNY', locale).endsWith('12.50'), locale);
-    assert.ok(model.moneyText('45', 4, 'CNY', locale).endsWith('0.0045'), locale);
-    assert.ok(model.moneyText('-45', 4, 'CNY', locale, true).includes('-'), locale);
-    assert.ok(model.moneyText('45', 4, 'CNY', locale, true).includes('+'), locale);
-    assert.equal(model.moneyText('1500', 3, 'credits', locale), '1.5 credits');
+    // Micro-yuan (the production unit's shape) read as fen: 5,111,820 units formerly read "¥5.11182".
+    assert.ok(model.moneyText('5111820', 6, 'CNY', locale).endsWith('¥5.11'), `${locale}: ${model.moneyText('5111820', 6, 'CNY', locale)}`);
+    assert.ok(model.moneyText('-5111820', 6, 'CNY', locale, true).startsWith('-') && model.moneyText('-5111820', 6, 'CNY', locale, true).endsWith('5.11'), locale);
+    assert.ok(model.moneyText('1250000', 6, 'CNY', locale, true).startsWith('+') && model.moneyText('1250000', 6, 'CNY', locale, true).endsWith('1.25'), locale);
+    // Below one fen, yet not nothing (formerly "0.0045").
+    assert.equal(model.moneyText('45', 4, 'CNY', locale), under[locale], locale);
+    assert.equal(model.moneyText('-45', 4, 'CNY', locale, true), within[locale], locale);
+    assert.equal(model.moneyText('1500', 3, 'credits', locale), '1.50 credits');
   }
   for (const [units, scale] of [['1.5', 2], ['1e5', 2], ['01', 0], ['1', 19], ['1', -1]]) assert.throws(() => model.decimalText(units, scale), RangeError);
   assert.ok(model.paymentText(5000, 'CNY', 'en').endsWith('50.00'));
@@ -294,14 +300,27 @@ test('balance figures: the ledger’s four numbers, the test-environment notice 
   assert.ok(!live.includes('测试环境') && !live.includes('已被冻结'));
 });
 
+test('balance figures read as money at fen precision, from the integer: a micro-yuan balance never shows its sub-fen tail', () => {
+  // FIXTURE: the production wallet unit's shape (CNY, scale 6); 1 yuan welcomed, 11,182 micro-yuan spent.
+  const overview = { environment: 'live', payer: { kind: 'user', id: 'u_fixture' }, payer_user_id: 'u_fixture', used_through_seq: '9',
+    balances: [{ unit: 'CNY', scale: 6, booked: '1000000', held: '0', used: '11182', available: '988818' }] };
+  const html = render(h(wallet.BalanceFigures, { overview }));
+  assert.ok(html.includes('class="wallet-available">¥0.99<') && html.includes('<dd>¥1.00</dd>') && html.includes('<dd>¥0.00</dd>') && html.includes('<dd>¥0.01</dd>'), html);
+  assert.ok(!html.includes('0.988818') && !html.includes('0.011182'), html);
+});
+
 test('the calls table shows band, price version, token breakdown and settled cost; an organization sees members, not conversations', () => {
   const row = { id: 'call_fixture', created_at: 1_790_000_000, model: 'deepseek-flash', band: 'off_peak', price_version: 'price_fixture_v2',
     state: 'settled', unit: 'CNY', scale: 6, charged_minor: '4321', held_minor: '0',
     tokens: { input_cached: 1200, input_uncached: 34, output: 560, reasoning: 120 }, finish_reason: 'length',
     dispatched_at: 1_790_000_000, completed_at: 1_790_000_007, duration_s: 7, conversation_id: 'conv_fixture', conversation_title: 'Fixture conversation' };
-  const personal = render(h(usage.CallsTable, { items: [row, { ...row, id: 'c2', band: null, state: 'held', held_minor: '900000', tokens: null, finish_reason: null, duration_s: null, conversation_title: null }], organization: false, timezone: 'UTC' }));
-  for (const text of ['deepseek-flash', '低谷时段', 'price_fixture_v2', '1,200', '560', '120', '0.004321', '达到长度上限', '7 秒', 'Fixture conversation', '<caption', 'scope="col"'])
+  const personal = render(h(usage.CallsTable, { items: [row, { ...row, id: 'c2', band: null, state: 'held', held_minor: '900000', tokens: null, finish_reason: null, duration_s: null, conversation_title: null },
+    { ...row, id: 'c3', charged_minor: '5111820' }], organization: false, timezone: 'UTC' }));
+  // Money at fen precision from the integer units: 4,321 micro-yuan is a charge below one fen (formerly "0.004321"),
+  // 5,111,820 is ¥5.11 (formerly "¥5.11182"), a hold of 900,000 is ¥0.90.
+  for (const text of ['deepseek-flash', '低谷时段', 'price_fixture_v2', '1,200', '560', '120', '不到 ¥0.01', '¥5.11', '预留 ¥0.90', '达到长度上限', '7 秒', 'Fixture conversation', '<caption', 'scope="col"'])
     assert.ok(personal.includes(text), `${text} in ${personal}`);
+  assert.ok(!personal.includes('0.004321') && !personal.includes('5.11182') && !personal.includes('¥0.00'), personal);
   assert.ok(personal.includes('时段未记录') && personal.includes('已删除的对话') && personal.includes('预留 '), 'unknown facts are named, not guessed');
   // Seven columns scroll sideways on a 390px phone: the scroller is a named region a keyboard can focus and scroll.
   assert.match(personal, /^<div class="tbl-wrap usage-calls" tabindex="0" role="region" aria-label="每次调用">/);
