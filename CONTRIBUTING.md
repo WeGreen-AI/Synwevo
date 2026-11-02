@@ -47,7 +47,7 @@ npm test --workspaces --if-present
 ```
 
 CI 的 `verify` 还会在生产运行时镜像里跑完整套件（见 [.github/workflows/production.yml](.github/workflows/production.yml)）。
-只改 `docs/` 记录的 PR 只跑全仓守卫；`docs/integration/` 与 `docs/operations.md` 有测试读取，按代码处理。
+只改 `docs/` 记录的 PR 只跑全仓守卫；`docs/integration/`、`docs/operations.md`、`docs/security/permissions.md` 与 `docs/platform/admin-coverage.md` 有测试读取，按代码处理。
 
 在 PR 里把 passed / failed / skipped / not run 分开写，不要在没有实测的情况下宣称"全部通过"。
 测试只用标明是夹具的合成数据，永远不指向 `data/`；不要 Mock 产品本身、假登录或假数据。

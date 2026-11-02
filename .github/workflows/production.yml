@@ -10,7 +10,8 @@ name: Verify and deploy Synwevo
 # `verify` is the status check the branch rules require on dev and main, so it must report on every
 # pull request into either branch: the pull_request trigger has no path filter. Records under docs/
 # are not part of the product, except docs/integration/ (tests compare its generated contracts with
-# the code) and docs/operations.md (a test parses its model-risk policy). A pull request that only
+# the code), docs/operations.md (a test parses its model-risk policy), and docs/security/permissions.md
+# and docs/platform/admin-coverage.md (a test holds their permission tables to the catalogue). A pull request that only
 # changes records (regular files under docs/, no symbolic link or submodule) is recognised inside the
 # job, runs the guards that read every tracked file and the release archive check, and reports
 # success; whatever the classifier cannot prove to be records-only gets the full verify.
@@ -30,7 +31,7 @@ on:
     branches: [dev, main]
   push:
     branches: [dev]
-    paths: ['**', '!docs/**', 'docs/integration/**', 'docs/operations.md']
+    paths: ['**', '!docs/**', 'docs/integration/**', 'docs/operations.md', 'docs/security/permissions.md', 'docs/platform/admin-coverage.md']
   workflow_dispatch:
 permissions:
   contents: read
@@ -113,7 +114,7 @@ jobs:
                && git diff --raw --no-renames --no-abbrev 'HEAD^1' HEAD > "$modes"; then
               total=$(grep -c '' "$paths"); s1=$?
               outside=$(grep -c -v -E '^docs/' "$paths"); s2=$?
-              tested=$(grep -c -E '^docs/(integration/|operations\.md$)' "$paths"); s3=$?
+              tested=$(grep -c -E '^docs/(integration/|operations\.md$|security/permissions\.md$|platform/admin-coverage\.md$)' "$paths"); s3=$?
               listed=$(grep -c '' "$modes"); s4=$?
               special=$(grep -c -v -E '^:(000000|100644|100755) (000000|100644|100755) ' "$modes"); s5=$?
               if [ "$s1" -gt 1 ] || [ "$s2" -gt 1 ] || [ "$s3" -gt 1 ] || [ "$s4" -gt 1 ] || [ "$s5" -gt 1 ]; then
