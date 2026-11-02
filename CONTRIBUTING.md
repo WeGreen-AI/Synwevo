@@ -47,7 +47,7 @@ npm test --workspaces --if-present
 ```
 
 CI 的 `verify` 还会在生产运行时镜像里跑完整套件（见 [.github/workflows/production.yml](.github/workflows/production.yml)）。
-只改 `docs/` 记录的 PR 只跑全仓守卫；`docs/integration/`、`docs/operations.md`、`docs/security/permissions.md` 与 `docs/platform/admin-coverage.md` 有测试读取，按代码处理。
+只改 `docs/` 记录的 PR 只跑全仓守卫；`docs/integration/`、`docs/operations.md`、`docs/security/permissions.md`、`docs/platform/admin-coverage.md` 与 `docs/platform/model-risk.md` 有测试读取，按代码处理。
 
 在 PR 里把 passed / failed / skipped / not run 分开写，不要在没有实测的情况下宣称"全部通过"。
 测试只用标明是夹具的合成数据，永远不指向 `data/`；不要 Mock 产品本身、假登录或假数据。
@@ -124,8 +124,9 @@ npm test --workspaces --if-present
 
 CI's `verify` also runs the complete suite inside the production runtime image (see
 [.github/workflows/production.yml](.github/workflows/production.yml)). A pull request that only changes
-records under `docs/` runs the repository-wide guards only; `docs/integration/` and `docs/operations.md`
-are read by tests and count as code.
+records under `docs/` runs the repository-wide guards only; `docs/integration/`, `docs/operations.md`,
+`docs/security/permissions.md`, `docs/platform/admin-coverage.md` and `docs/platform/model-risk.md` are read
+by tests and count as code.
 
 In the pull request, report passed / failed / skipped / not run separately, and never claim "all green"
 without running the checks. Tests use clearly labelled synthetic fixtures and never point at `data/`; do

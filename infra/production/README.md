@@ -82,7 +82,8 @@ Queue behaviour, local configuration and error meanings: [operations](../../docs
 manual dispatch (branch model: [AGENTS.md](../../AGENTS.md#分支与发布)). Its `verify` job is the check the
 branch rules require, so it reports on every such pull request; one that only changes records under
 `docs/` (regular files only, not `docs/integration/`, `docs/operations.md`,
-`docs/security/permissions.md` or `docs/platform/admin-coverage.md`, which tests read) runs
+`docs/security/permissions.md`, `docs/platform/admin-coverage.md` or `docs/platform/model-risk.md`,
+which tests read) runs
 only the guards that read every tracked file and `check_release_archive.py`, which applies this
 receiver's own entry rules and size limits to the release archive. Anything the classifier cannot
 prove to be records-only (a symbolic link or submodule under `docs/` included) gets the full run, which

@@ -79,7 +79,8 @@ class BranchModelTests(unittest.TestCase):
         push = self.wf['on']['push']
         self.assertEqual(push['branches'], ['dev'], 'a push to main must run nothing')
         self.assertEqual(push['paths'], ['**', '!docs/**', 'docs/integration/**', 'docs/operations.md',
-                                         'docs/security/permissions.md', 'docs/platform/admin-coverage.md'])
+                                         'docs/security/permissions.md', 'docs/platform/admin-coverage.md',
+                                         'docs/platform/model-risk.md'])
         self.assertIn('workflow_dispatch', self.wf['on'])
 
     def test_required_check_name_is_verify(self):
@@ -252,7 +253,7 @@ class RecordsOnlyClassifierTests(unittest.TestCase):
 
     def test_docs_that_tests_read_count_as_code(self):
         for rel in ('docs/operations.md', 'docs/integration/openapi.yaml', 'docs/integration/new.json',
-                    'docs/security/permissions.md', 'docs/platform/admin-coverage.md'):
+                    'docs/security/permissions.md', 'docs/platform/admin-coverage.md', 'docs/platform/model-risk.md'):
             with self.subTest(rel=rel):
                 if self.repo.exists():
                     shutil.rmtree(self.repo)

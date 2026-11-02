@@ -87,7 +87,7 @@ npm run typecheck && npm run build         # 三个前端外壳
   **merge commit** 合入（`gh pr merge --merge`），记录里引用的 SHA 因此一直有效。不直接推送、不强推、
   不删除分支，规则对任何人都不放行（不用 `--admin`，不改规则集或环境）。
 * **合入 `dev` 就是部署。** 推送到 `dev` 的运行先 verify 再部署；只改 `docs/` 记录的合入既不验证也不部署
-  （`docs/integration/` 与 `docs/operations.md` 有测试读取，按代码处理）。合入代码改动前，先确认本轮已获部署授权。
+  （`docs/integration/`、`docs/operations.md`、`docs/security/permissions.md`、`docs/platform/admin-coverage.md` 与 `docs/platform/model-risk.md` 有测试读取，按代码处理）。合入代码改动前，先确认本轮已获部署授权。
 * **`main`** 是公开的开源分支、`dev` 的合并镜像：只接受 `dev`→`main` 的同步 PR
   （`gh pr create --base main --head dev`），必需检查 `verify` 与 `sync-source`，以 merge commit 合入；
   自第一次 `dev`→`main` 同步把新工作流带到 `main` 起，`main` 上没有部署，推送到 `main` 什么都不运行。在那之前
