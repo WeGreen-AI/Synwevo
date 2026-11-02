@@ -53,30 +53,57 @@ export const chargingLabels: Record<ChargingKind, string> = {
 export const noCharging = (): ChargingPolicy => ({ length: false, content_filter: false, provider_interrupted: false, client_cancelled: false });
 export const routeEfforts = (route: ProviderRoute): Effort[] => route.reasoning_efforts ?? [...efforts];
 export const specCharging = (spec: ProviderSpec): ChargingPolicy => spec.incomplete_charging ?? noCharging();
-/** What one publication changes (authz-6, `ProviderSettings.change_parts`): the prices a route names,
- *  the evidence for its cost and the charging of incomplete calls are the pricing permission's; the
- *  key and the rest of a version the credential permission's. The server decides; this keeps the
- *  editor from offering what it would refuse. */
+/** What one publication changes (authz-6, `ProviderSettings.change_parts`). Fail closed, as on the
+ *  server: custody is this short list (the key, whether the route is on, its evidence and validity,
+ *  withdrawing and reopening it) and every other field, one added later included, is a price term,
+ *  the pricing permission's. The server decides; this keeps the editor from offering what it would refuse. */
 export type ProviderPart = 'custody' | 'price_terms';
-const pricedRouteKeys = ['sale_price_id', 'cost_price_id', 'cost_basis_ref'] as const;
-const custodyRouteKeys = ['requested_model', 'confirmed_route', 'confirmation_ref', 'account_confirmation_ref',
-  'input_token_ceiling', 'output_token_ceiling', 'valid_until'] as const;
-export const providerFieldPart = (key: string): ProviderPart =>
-  (pricedRouteKeys as readonly string[]).includes(key) || key.startsWith('charge_') ? 'price_terms' : 'custody';
+const custodyRouteKeys = ['confirmation_ref', 'account_confirmation_ref', 'valid_until'] as const;
+const custodyFormKeys: readonly string[] = ['credential_action', 'enabled', 'route_mode', ...custodyRouteKeys];
+export const providerFieldPart = (key: string): ProviderPart => custodyFormKeys.includes(key) ? 'custody' : 'price_terms';
 function sameCustody(a: ProviderSpec | null, b: ProviderSpec): boolean {
   if (a === null || a.enabled !== b.enabled || (a.route === null) !== (b.route === null)) return false;
   if (a.route === null || b.route === null) return true;
   const before = a.route, after = b.route;
-  return custodyRouteKeys.every(key => before[key] === after[key]) && routeEfforts(before).join() === routeEfforts(after).join();
+  return custodyRouteKeys.every(key => before[key] === after[key]);
 }
+/** A route's price terms as the server compares them: a version from before a field existed reads with its default. */
+function routeTerms(route: ProviderRoute | null | undefined): Record<string, unknown> {
+  const terms: Record<string, unknown> = route ? { ...route, reasoning_efforts: routeEfforts(route) } : {};
+  for (const key of custodyRouteKeys) delete terms[key];
+  return terms;
+}
+const sameTerms = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+  Object.keys({ ...a, ...b }).every(key => JSON.stringify(a[key]) === JSON.stringify(b[key]));
 /** `closed`: the current version is closed, and any publication reopens it, which is custody. */
 export function providerChangeParts(before: ProviderSpec | null, after: ProviderSpec, action: CredentialAction, closed = false): ProviderPart[] {
   const parts: ProviderPart[] = [];
   if (action !== 'keep' || closed || !sameCustody(before, after)) parts.push('custody');
   const old = before ? specCharging(before) : noCharging(), charging = specCharging(after);
-  const priced = after.route !== null && pricedRouteKeys.some(key => before?.route?.[key] !== after.route![key]);
+  const priced = after.route !== null && !sameTerms(routeTerms(before?.route), routeTerms(after.route));
   if (priced || chargingKinds.some(kind => old[kind] !== charging[kind])) parts.push('price_terms');
   return parts.length ? parts : ['custody'];
+}
+/** What stands between the editor and a preview: nothing to publish, or a part the holder lacks. On a
+ *  closed route the same settings are something to publish: that is how it reopens (`ProviderSettings.preview`). */
+export function providerPreviewGate(before: ProviderSpec | null, after: ProviderSpec | null, action: CredentialAction, closed: boolean,
+  may: Record<ProviderPart, boolean>): { unchanged: boolean; missing: ProviderPart[] } {
+  if (after === null) return { unchanged: false, missing: [] };
+  if (action === 'keep' && !closed && sameProviderSpec(after, before)) return { unchanged: true, missing: [] };
+  return { unchanged: false, missing: providerChangeParts(before, after, action, closed).filter(part => !may[part]) };
+}
+const modelPermissions: readonly unknown[] = ['platform.models.credential', 'platform.models.pricing'];
+/** Where a refusal leaves the page. `part`: one part of this change, by name. The server admits a
+ *  holder of either permission first (`ProviderOperations._admitted`, a refusal that lists both in
+ *  `any_of`), so whoever reads this still holds the other one: the route closed while the page was open,
+ *  or their grants moved. The input stays and the page catches up. `grant`: they hold neither, or
+ *  nothing any more, so the page has nothing left to offer them. null: not about a grant (the
+ *  step-up, the re-authentication, a conflict), and the page has its own answer. */
+export function providerRefusal(error: { status?: number; code?: string; detail?: unknown }): 'part' | 'grant' | null {
+  if (error.status === 404 || error.code === 'platform_admin_required') return 'grant';
+  if (error.code !== 'platform_permission_denied') return null;
+  const detail = record(error.detail) ? error.detail : {};
+  return !('any_of' in detail) && modelPermissions.includes(detail.permission) ? 'part' : 'grant';
 }
 export const routeLabels: Record<keyof ProviderRoute, string> = {
   requested_model: '请求模型标识', confirmed_route: '已核实的实际路线', confirmation_ref: '模型与路线核实证据',

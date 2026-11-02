@@ -115,7 +115,7 @@ function AdminViews({ held, tab }: { held: Held; tab: Tab }) {
     {tab === "model-prices" && <ModelPricesTab onDenied={onDenied} held={held} />}
     {tab === "model-costs" && <ModelCostsTab onDenied={onDenied} held={held} />}
     {tab === "model-risk" && <ModelRiskTab onDenied={onDenied} held={held} />}
-    {tab === "model-provider" && <ModelProviderTab onDenied={onDenied}
+    {tab === "model-provider" && <ModelProviderTab onDenied={onDenied} onPartRefused={() => void refresh()}
       canRead={!permitted(held, "platform.config.view").disabled}
       canCustody={!permitted(held, MODEL_CREDENTIAL).disabled}
       canPricing={!permitted(held, MODEL_PRICING).disabled} />}

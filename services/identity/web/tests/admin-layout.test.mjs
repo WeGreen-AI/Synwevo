@@ -84,13 +84,13 @@ test('the actual Admin entry mounts ModelProviderTab and adapts view/manage gran
   const manage = render(['platform.config.view', 'platform.models.credential']);
   assert.match(manage, /正在读取提供方配置/);
   assert.doesNotMatch(manage, /你可以查看提供方配置和历史，不能修改或发布/);
-  assert.match(manage, /你保管密钥与路线/);
-  // authz-6: the pricing permission decides the prices a route uses here, and nothing else on this page
+  assert.match(manage, /你保管密钥：/);
+  // authz-6: the pricing permission decides what payers pay on this page, and leaves the key and the rest of custody
   const pricing = render(['platform.config.view', 'platform.models.pricing']);
   assert.doesNotMatch(pricing, /你可以查看提供方配置和历史，不能修改或发布/);
   assert.match(pricing, /你负责定价/);
   const both = render(['platform.config.view', 'platform.models.credential', 'platform.models.pricing']);
-  assert.doesNotMatch(both, /你可以查看提供方配置和历史，不能修改或发布|你保管密钥与路线|你负责定价/);
+  assert.doesNotMatch(both, /你可以查看提供方配置和历史，不能修改或发布|你保管密钥：|你负责定价：/);
   // platform configuration's manage no longer changes anything here
   assert.match(render(['platform.config.view', 'platform.config.manage']), /你可以查看提供方配置和历史，不能修改或发布/);
   for (const permissions of [[], ['platform.config.manage'], ['platform.models.credential'], ['api_platform.manage']]) {
@@ -129,8 +129,8 @@ test('authz-6: each model surface tells a holder of the other permission it is r
   for (const [active, reader, holder, sentence] of [
     ['model-provider', ['platform.config.view', 'platform.config.manage'], CREDENTIAL, '你可以查看提供方配置和历史，不能修改或发布。'],
     ['model-provider', ['platform.config.view'], PRICING, '你可以查看提供方配置和历史，不能修改或发布。'],
-    ['model-provider', CREDENTIAL, PRICING, '你保管密钥与路线：可以更换或撤销凭据、调整路线及其证据。路线采用的销售价、成本价及其成本依据和未完成调用的计费属于定价权限，这里只读。'],
-    ['model-provider', PRICING, CREDENTIAL, '你负责定价：可以让路线采用已发布的销售价与成本价、更新成本依据，并决定未完成调用是否收费。凭据与其他路线字段属于密钥保管权限，这里只读。'],
+    ['model-provider', CREDENTIAL, PRICING, '你保管密钥：可以设置、更换或撤销凭据，启停或撤下路线，更新模型与账户的核实证据和路线有效期，并重新开放已关闭的路线。路线的模型、采用的价格、成本依据、上限、推理投入和未完成调用的计费决定付款人付多少，属于定价权限，这里只读。'],
+    ['model-provider', PRICING, CREDENTIAL, '你负责定价：可以决定路线的模型、采用的已发布价格、成本依据、上限和推理投入，以及未完成调用是否收费。凭据、路线启停、模型与账户的核实证据和路线有效期属于密钥保管权限，这里只读。'],
     ['model-prices', CREDENTIAL, PRICING, '你可以查看价格和试算，不能创建、修改或发布价格。'],
     ['model-costs', CREDENTIAL, PRICING, '你可以查看成本策略和历史，不能修改或发布。'],
     ['model-risk', CREDENTIAL, PRICING, '你可以查看风险控制状态，不能修改。'],
