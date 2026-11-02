@@ -2,7 +2,7 @@ import { useId, useRef, useState, type CSSProperties, type ReactNode } from 'rea
 import { post } from '@synwevo/auth-client';
 import { useI18n } from '@synwevo/ui';
 import { ActionDialog } from './ActionDialog';
-import { permitted, type Held } from './access';
+import { MODEL_PRICING, permitted, type Held } from './access';
 import { useAdminData } from './data';
 import { walletAmount } from '../pages/account/money';
 import { SCOPE_LABELS, STATUS_LABELS, codeLabel, lastEndedUtcDay, roundedUnits, topupUnits, utcDay, validDay,
@@ -40,7 +40,7 @@ function ModelRiskContent({ held, onDenied }: { held: Held; onDenied: () => void
   const [values, setValues] = useState<Values>({});
   const [notice, setNotice] = useState<string | null>(null);
   const status = useRef<HTMLParagraphElement>(null);
-  const manage = !permitted(held, 'platform.config.manage').disabled;
+  const manage = !permitted(held, MODEL_PRICING).disabled;
   const state = overview.data;
   const unit = state?.unit || null;
   const writable = manage && !!state && (state.environment === 'test' || state.environment === 'live');

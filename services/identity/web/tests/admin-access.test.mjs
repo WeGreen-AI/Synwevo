@@ -74,19 +74,61 @@ test("the historical data is offered only to whoever may assign it and search fo
   assert.deepEqual(access.visibleTabs(ROLES.super_admin), Object.keys(access.TAB_PERMISSION));
 });
 
-test("model provider uses the existing config grants, never a role name or a manage-implies-view default", () => {
+test("model provider reads with the config view and is changed with the credential permission, never a role name or a manage-implies-view default", () => {
   assert.equal(access.TAB_PERMISSION['model-provider'], 'platform.config.view');
+  assert.equal(access.MODEL_CREDENTIAL, 'platform.models.credential');
   for (const [role, held] of Object.entries(ROLES)) {
     assert.equal(access.visibleTabs(held).includes('model-provider'), held.has('platform.config.view'), role);
-    assert.equal(access.permitted(held, 'platform.config.manage').disabled, !held.has('platform.config.manage'), role);
+    assert.equal(access.permitted(held, access.MODEL_CREDENTIAL).disabled, !held.has(access.MODEL_CREDENTIAL), role);
   }
   for (const identity of [undefined, null, {}, { role: 'owner' }, { role: 'admin' }, { platform_role: 'super_admin' }]) {
     assert.equal(access.visibleTabs(access.heldPermissions(identity)).includes('model-provider'), false);
   }
   const readOnly = access.heldPermissions({ platform_permissions: ['platform.config.view'] });
   assert.equal(access.visibleTabs(readOnly).includes('model-provider'), true);
-  assert.equal(access.permitted(readOnly, 'platform.config.manage').disabled, true);
-  assert.equal(access.visibleTabs(new Set(['platform.config.manage'])).includes('model-provider'), false);
+  assert.equal(access.permitted(readOnly, access.MODEL_CREDENTIAL).disabled, true);
+  for (const managing of ['platform.config.manage', access.MODEL_CREDENTIAL, access.MODEL_PRICING]) {
+    assert.equal(access.visibleTabs(new Set([managing])).includes('model-provider'), false, `${managing}: managing is not reading`);
+  }
+});
+
+test("authz-6: model governance is split from platform configuration — each id is the super administrator's alone, each page decides on its own id, config.manage opens neither, and every new label has three languages", () => {
+  assert.equal(access.MODEL_CREDENTIAL, "platform.models.credential");
+  assert.equal(access.MODEL_PRICING, "platform.models.pricing");
+  assert.ok(PERMISSIONS.includes(access.MODEL_CREDENTIAL) && PERMISSIONS.includes(access.MODEL_PRICING));
+  const holders = (permission) => Object.keys(ROLES).filter((role) => ROLES[role].has(permission));
+  for (const permission of [access.MODEL_CREDENTIAL, access.MODEL_PRICING, "platform.config.manage"]) {
+    assert.deepEqual(holders(permission), ["super_admin"], permission);
+    assert.equal(access.permitted(ROLES.super_admin, permission).disabled, false, permission);
+  }
+  // no delegated role was offered anything by the split: the roles the catalogue had before, and their pages
+  for (const [role, held] of Object.entries(ROLES)) {
+    if (role === "super_admin") continue;
+    assert.equal(access.permitted(held, access.MODEL_CREDENTIAL).disabled, true, role);
+    assert.equal(access.permitted(held, access.MODEL_PRICING).disabled, true, role);
+  }
+  // the pages decide on the permission, never a role: each id offers its own surface and not the other's
+  const pricingOnly = new Set(["platform.config.view", access.MODEL_PRICING]);
+  const credentialOnly = new Set(["platform.config.view", access.MODEL_CREDENTIAL]);
+  assert.equal(access.permitted(pricingOnly, access.MODEL_CREDENTIAL).disabled, true);
+  assert.equal(access.permitted(pricingOnly, access.MODEL_PRICING).disabled, false);
+  assert.equal(access.permitted(credentialOnly, access.MODEL_PRICING).disabled, true);
+  assert.equal(access.permitted(credentialOnly, access.MODEL_CREDENTIAL).disabled, false);
+  // platform configuration's manage opens neither
+  const configOnly = new Set(["platform.config.view", "platform.config.manage"]);
+  assert.equal(access.permitted(configOnly, access.MODEL_CREDENTIAL).disabled, true);
+  assert.equal(access.permitted(configOnly, access.MODEL_PRICING).disabled, true);
+  // the roster and the grant dialog name the permissions in the reader's language
+  // (`t` outside the hook follows the active locale: the Simplified source is read under zh-Hans)
+  ui.setLocale("zh-Hans");
+  for (const permission of [access.MODEL_CREDENTIAL, access.MODEL_PRICING, "platform.config.manage"]) {
+    const label = dialog.permissionLabel(permission);
+    assert.notEqual(label, permission, `${permission}: labelled`);
+    translated(label);
+    assert.ok(!HAN.test(inEnglish(() => dialog.permissionLabel(permission))), permission);
+    assert.notEqual(ui.translate("zh-Hant", label), label, `${permission}: Traditional Chinese`);
+  }
+  assert.notEqual(dialog.permissionLabel(access.MODEL_CREDENTIAL), dialog.permissionLabel(access.MODEL_PRICING));
 });
 
 test("each account action is offered as the server would answer it", () => {

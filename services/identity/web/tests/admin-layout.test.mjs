@@ -81,13 +81,57 @@ test('the actual Admin entry mounts ModelProviderTab and adapts view/manage gran
   assert.match(readonly, /正在读取提供方配置/);
   assert.match(readonly, /你可以查看提供方配置和历史，不能修改或发布/);
   assert.doesNotMatch(readonly, /正在读取成本策略|<form|type="password"/);
-  const manage = render(['platform.config.view', 'platform.config.manage']);
+  const manage = render(['platform.config.view', 'platform.models.credential']);
   assert.match(manage, /正在读取提供方配置/);
   assert.doesNotMatch(manage, /你可以查看提供方配置和历史，不能修改或发布/);
-  for (const permissions of [[], ['platform.config.manage'], ['api_platform.manage']]) {
+  // authz-6: platform configuration's manage, and the pricing permission, no longer change the credential
+  for (const permissions of [['platform.config.view', 'platform.config.manage'], ['platform.config.view', 'platform.models.pricing']]) {
+    assert.match(render(permissions), /你可以查看提供方配置和历史，不能修改或发布/, permissions.join());
+  }
+  for (const permissions of [[], ['platform.config.manage'], ['platform.models.credential'], ['api_platform.manage']]) {
     const denied = render(permissions);
     assert.match(denied, /你没有查看模型提供方配置的权限/);
     assert.doesNotMatch(denied, /正在读取提供方配置|提供方发布历史/);
+  }
+});
+
+test('authz-6: the price, cost and risk pages are changed with the pricing permission; the config view, config manage and the credential permission only read them', () => {
+  const shell = admin.default();
+  const render = (active, permissions) => renderToStaticMarkup(shell.props.children({ held: new Set(permissions), active }));
+  const pages = [['model-prices', /你可以查看价格和试算，不能创建、修改或发布价格。/],
+                 ['model-costs', /你可以查看成本策略和历史，不能修改或发布。/],
+                 ['model-risk', /你可以查看风险控制状态，不能修改。/]];
+  for (const [active, readOnly] of pages) {
+    for (const permissions of [['platform.config.view'], ['platform.config.view', 'platform.config.manage'],
+                               ['platform.config.view', 'platform.models.credential']]) {
+      assert.match(render(active, permissions), readOnly, `${active}: ${permissions.join()}`);
+    }
+    assert.doesNotMatch(render(active, ['platform.config.view', 'platform.models.pricing']), readOnly, `${active}: pricing`);
+    // without the view nothing of the page is mounted, whatever else is held
+    for (const permissions of [[], ['platform.models.pricing'], ['platform.config.manage']]) {
+      assert.doesNotMatch(render(active, permissions), readOnly, `${active}: ${permissions.join()} without the view`);
+    }
+  }
+});
+
+test('authz-6: each model surface tells a holder of the other permission it is read-only, and that sentence exists in the three languages', () => {
+  const shell = admin.default();
+  // These pages word themselves with `useI18n`, whose server snapshot is the Simplified source:
+  // the markup proves who is told, the catalogue proves the other two languages have it.
+  const render = (active, permissions) => renderToStaticMarkup(shell.props.children({ held: new Set(permissions), active }));
+  const CREDENTIAL = ['platform.config.view', 'platform.models.credential'];
+  const PRICING = ['platform.config.view', 'platform.models.pricing'];
+  for (const [active, reader, holder, sentence] of [
+    ['model-provider', PRICING, CREDENTIAL, '你可以查看提供方配置和历史，不能修改或发布。'],
+    ['model-prices', CREDENTIAL, PRICING, '你可以查看价格和试算，不能创建、修改或发布价格。'],
+    ['model-costs', CREDENTIAL, PRICING, '你可以查看成本策略和历史，不能修改或发布。'],
+    ['model-risk', CREDENTIAL, PRICING, '你可以查看风险控制状态，不能修改。'],
+  ]) {
+    assert.ok(render(active, reader).includes(sentence), `${active}: the other permission reads only`);
+    assert.ok(!render(active, holder).includes(sentence), `${active}: its own permission changes it`);
+    assert.ok(ui.hasMessage(sentence), sentence);
+    assert.doesNotMatch(ui.translate('en', sentence), /[㐀-鿿]/, `${active}: English`);
+    assert.notEqual(ui.translate('zh-Hant', sentence), sentence, `${active}: Traditional Chinese`);
   }
 });
 

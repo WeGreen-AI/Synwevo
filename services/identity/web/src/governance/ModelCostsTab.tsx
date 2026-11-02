@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent 
 import { ApiError, post } from '@synwevo/auth-client';
 import { useI18n } from '@synwevo/ui';
 import { ActionDialog } from './ActionDialog';
-import { permitted, type Held } from './access';
+import { MODEL_PRICING, permitted, type Held } from './access';
 import { useAdminData } from './data';
 import { errText } from './labels';
 import { useUnsavedChanges } from '../lib/hooks';
@@ -115,7 +115,7 @@ function ModelCostsContent({ held, onDenied }: { held: Held; onDenied: () => voi
   const units = state?.units || [];
   const selectedUnit = units.find(unit => unitKey(unit) === form.unit);
   const environment = state?.environment;
-  const manage = !permitted(held, 'platform.config.manage').disabled;
+  const manage = !permitted(held, MODEL_PRICING).disabled;
   const canWrite = manage && !!state && (environment === 'test' || environment === 'live') && !current.loading && !current.err;
   const changedBase = !!base && !!state && (base.environment !== state.environment || base.revision !== state.revision);
   const changedEnvironment = !!plan && plan.environment !== environment;

@@ -29,6 +29,8 @@ export const platformMessages = {
   "在管理后台管理自己拥有的组织": { en: "Manage organizations you own from the console", "zh-Hant": "在管理後台管理自己擁有的組織" },
   "查看平台配置与登录方式": { en: "View platform settings and sign-in methods", "zh-Hant": "檢視平台設定與登入方式" },
   "修改注册策略与非秘密平台配置": { en: "Change the registration policy and non-secret platform settings", "zh-Hant": "修改註冊政策與非秘密平台設定" },
+  "保管模型提供方的密钥与路线（设置、更换、撤销密封的凭据；不能读回密钥）": { en: "Keep the model provider's credential and route (set, replace and revoke the sealed credential; never reads a key back)", "zh-Hant": "保管模型提供方的金鑰與路線（設定、更換、撤銷密封的憑證；不能讀回金鑰）" },
+  "发布模型价格、分时排期、加价与成本策略，操作付费风险控制": { en: "Publish model prices, the peak/off-peak schedule, markups and the cost policy, and operate the paid-call risk controls", "zh-Hant": "發布模型價格、分時排程、加價與成本策略，操作付費風險控制" },
   "查看邮件投递": { en: "View mail delivery", "zh-Hant": "檢視郵件投遞" },
   "重试失败的找回与验证邮件": { en: "Retry failed recovery and verification mail", "zh-Hant": "重試失敗的找回與驗證郵件" },
   "按工作空间启用或停用应用；全平台启停和访问策略还需要修改平台配置的权限；不含业务内容": { en: "Turn applications on or off for one workspace; turning them on or off platform-wide and their access policy also need the permission to change platform settings; no business content", "zh-Hant": "按工作空間啟用或停用應用；全平台啟停和存取策略還需要修改平台設定的權限；不含業務內容" },

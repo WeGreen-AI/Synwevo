@@ -35,6 +35,13 @@ export const TAB_PERMISSION: Record<Tab, string> = {
 export const visibleTabs = (held: Held): Tab[] =>
   (Object.keys(TAB_PERMISSION) as Tab[]).filter((t) => held.has(TAB_PERMISSION[t]));
 
+/** authz-6: model governance is split from platform configuration (platform_access.py). The four
+ *  model pages read with platform.config.view; the provider's route and sealed credential are
+ *  changed with MODEL_CREDENTIAL, prices, the schedule, markups, the cost policy and the paid-model
+ *  risk controls with MODEL_PRICING. platform.config.manage changes neither any more. */
+export const MODEL_CREDENTIAL = "platform.models.credential";
+export const MODEL_PRICING = "platform.models.pricing";
+
 /** B1/B2: an application switched on or off for one workspace needs the catalogue's manage
  *  permission; a platform-scope change — on or off platform-wide, or its access policy — needs
  *  platform configuration's as well, which only a super administrator holds (admin_apps). */
