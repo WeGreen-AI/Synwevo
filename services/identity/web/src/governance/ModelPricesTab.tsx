@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent 
 import { ApiError, get, patch, post } from "@synwevo/auth-client";
 import { useI18n } from "@synwevo/ui";
 import { ActionDialog } from "./ActionDialog";
-import { permitted, type Held } from "./access";
+import { MODEL_PRICING, permitted, type Held } from "./access";
 import { useAdminData } from "./data";
 import { errText } from "./labels";
 import { useUnsavedChanges } from "../lib/hooks";
@@ -170,7 +170,7 @@ function ModelPricesContent({ held, onDenied }: { held: Held; onDenied: () => vo
   const [calculation, setCalculation] = useState<{ result: Calculation; id: string; revision: number; counts: Counts } | null>(null);
   const [tried, setTried] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
-  const manage = !permitted(held, "platform.config.manage").disabled;
+  const manage = !permitted(held, MODEL_PRICING).disabled;
   const environment = list.data?.environment;
   const canWrite = manage && (environment === "test" || environment === "live") && !list.err && !list.loading;
   const pending = !!createAttempt || publishUncertain;

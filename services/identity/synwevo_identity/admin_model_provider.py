@@ -3,6 +3,13 @@
 Only credential commitments enter previews and request hashes. Current authorization,
 sealed credential publication, successful audit and operation result commit together.
 This surface never resolves a credential or invokes a provider.
+
+One route, two permissions (authz-6): a publication needs the permission of what it changes against
+the version it names (`ProviderSettings.change_parts`), so keeping the key decides no price and
+setting the price handles no key. Custody is a closed list and every other field of a version a price
+term, so a field nobody thought about is not the key's by accident (`provider_settings`). A change of
+price terms is also on the price record (`admin.model_price.adopt`): that is the moment payers are
+charged differently.
 """
 from __future__ import annotations
 
@@ -18,14 +25,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
+from synwevo_core.audit_change import change
 from synwevo_core.billing.provider_settings import (
-    ACCOUNT_REF, PROVIDER, CredentialChange, ProviderSettings, ProviderSpec,
+    ACCOUNT_REF, PRICE_TERMS, PROVIDER, CredentialChange, ProviderSettings, ProviderSpec, price_terms,
 )
 from synwevo_core.errors import ServiceError
 from synwevo_core.platform_access import require_platform
 from synwevo_core.store import new_id
 
-from .admin_operations import PREVIEW_SECONDS, SignedPreview, canonical
+from .admin_operations import MODEL_VIEW_PERMISSION, OPERATIONS, PREVIEW_SECONDS, SignedPreview, canonical
 
 
 class ProviderContract(BaseModel):
@@ -144,6 +152,16 @@ def _state(version):
     return {**version, "status": "configured" if version["spec"] is not None else "unconfigured"}
 
 
+def _snapshot(version):
+    """A version as the audit records it (G24): whatever a reader of the history sees, the route's
+    fields by name, and of the key only whether one is configured and its revision."""
+    spec = version["spec"] or {}
+    return {**(spec.get("route") or {}), "enabled": spec.get("enabled"),
+            "incomplete_charging": spec.get("incomplete_charging"),
+            "credential_configured": version["credential_configured"],
+            "credential_revision": version["credential_revision"]}
+
+
 class ProviderOperations(SignedPreview):
     action = "admin.model_provider.publish"
 
@@ -153,13 +171,38 @@ class ProviderOperations(SignedPreview):
     def _settings(self):
         return ProviderSettings(self.store, environment=self.environment)
 
-    def _actor(self, request, *, view=False, execute=False):
-        return require_platform(request, "platform.config.view" if view else "platform.config.manage",
-                                store=self.store, audit=self.audit, dangerous=execute)
+    def _admitted(self, request, *, by_name=False, dangerous=False):
+        """Holding either permission of the operation. `by_name`: nothing but that, the step-up and
+        the re-authentication wait until every permission has answered (`_actor`)."""
+        return require_platform(request, tuple(permission for _, permission in OPERATIONS[self.action].per_operation),
+                                store=self.store, audit=self.audit, dangerous=dangerous, step_up=not by_name)
 
-    def _audit(self, request, actor, *, result="ok", meta):
-        self.audit(request, self.action, actor_id=actor["id"], object_kind="model_provider",
-                   object_id=ACCOUNT_REF, workspace_given=True, result=result,
+    def _actor(self, request, *, view=False, execute=False, parts=()):
+        """`view` reads. A change is admitted on either permission of the operation and then needs
+        the one of each part it changes (authz-6, OPERATIONS; `_parts`): every refusal by name
+        first, then the step-up, the re-authentication last, the order `require_platform` keeps for one."""
+        if view:
+            return require_platform(request, MODEL_VIEW_PERMISSION, store=self.store, audit=self.audit)
+        operation = OPERATIONS[self.action]
+        for part in parts:
+            require_platform(request, operation.permission_for(part), store=self.store, audit=self.audit, step_up=False)
+        return self._admitted(request, dangerous=execute)
+
+    def _parts(self, body):
+        """What this request changes. No billing environment, no version, a version this release
+        cannot read: nothing to judge it by, and the plan refuses it next, with its failure record."""
+        if not self.environment:
+            return ()
+        try:
+            return self._settings().change_parts(body.spec, body.credential, expected_revision=body.expected_revision)
+        except ServiceError as exc:
+            if exc.code == "model_config_unavailable":
+                return ()
+            raise
+
+    def _audit(self, request, actor, *, action=None, object_kind="model_provider", object_id=ACCOUNT_REF, result="ok", meta):
+        self.audit(request, action or self.action, actor_id=actor["id"], object_kind=object_kind,
+                   object_id=object_id, workspace_given=True, result=result,
                    meta={"billing_environment": self.environment, "provider": PROVIDER,
                          "origin": self._environment(request), **meta})
 
@@ -190,10 +233,12 @@ class ProviderOperations(SignedPreview):
             return result
 
     def preview(self, request, body: ProviderPreviewRequest):
-        actor = self._actor(request)
+        self._admitted(request, by_name=True)  # Holding neither permission is refused before anything is read.
+        actor = self._actor(request, parts=self._parts(body))  # Outside the lock: the refusal's record commits.
         try:
             with self.store.tx():
-                actor = self._actor(request)
+                parts = self._parts(body)
+                actor = self._actor(request, parts=parts)
                 plan = self._settings().preview(body.spec, body.credential, expected_revision=body.expected_revision)
                 plan = {**plan, "before": _state(plan["before"])}
                 expires = time.time() + PREVIEW_SECONDS
@@ -208,14 +253,15 @@ class ProviderOperations(SignedPreview):
                            "expires_at": expires, "nonce": new_id("plan")}
                 result = {**plan, "environment": self.environment, "risk": "high",
                           "preview_token": self._sign(binding), "expires_at": expires}
-                self._actor(request)
+                self._actor(request, parts=parts)
                 return result
         except Exception as exc:
             self._failure(request, actor, exc)
             raise
 
     def publish(self, request, body: ProviderPublishRequest):
-        actor = self._actor(request, execute=True)
+        self._admitted(request, by_name=True)  # Holding neither permission is refused before anything is read.
+        actor = self._actor(request, execute=True, parts=self._parts(body))
         try:
             reason = body.reason.strip()
             if not 8 <= len(reason) <= 500:
@@ -227,7 +273,8 @@ class ProviderOperations(SignedPreview):
                 "spec": body.spec.model_dump(), "credential": commitment,
                 "token": body.preview_token, "reason": reason})
             with self.store.tx() as transaction:
-                actor = self._actor(request, execute=True)
+                parts = self._parts(body)
+                actor = self._actor(request, execute=True, parts=parts)
                 settings = self._settings()
                 previous = self.store.one("SELECT * FROM admin_operations WHERE actor_id=? AND idempotency_key=?",
                                           (actor["id"], body.idempotency_key))
@@ -235,7 +282,7 @@ class ProviderOperations(SignedPreview):
                     if previous["request_hash"] != request_hash or previous["action"] != self.action:
                         raise ServiceError(409, "idempotency_conflict", "此操作编号已用于不同的请求")
                     result = json.loads(previous["result_json"])
-                    self._actor(request, execute=True)
+                    self._actor(request, execute=True, parts=parts)
                     return result
                 signed = self._verify(body.preview_token)
                 expected = {"actor": actor["id"], "action": self.action, "scope": "platform",
@@ -254,7 +301,7 @@ class ProviderOperations(SignedPreview):
                         any(signed.get(key) != plan[key] for key in
                             ("after", "credential", "credential_revision", "credential_configured"))):
                     raise ServiceError(409, "admin_preview_invalid", "操作目标已变化，请重新预览")
-                self._actor(request, execute=True)
+                self._actor(request, execute=True, parts=parts)
                 operation_id = new_id("ao")
                 saved = settings.append(body.spec, body.credential, expected_revision=body.expected_revision,
                                         actor_id=actor["id"], reason=reason, operation_id=operation_id)
@@ -263,11 +310,17 @@ class ProviderOperations(SignedPreview):
                     "before_revision": plan["before"]["revision"], "revision": saved["revision"],
                     "credential_action": commitment["action"],
                     "before_credential_revision": plan["before"]["credential_revision"],
-                    "credential_revision": saved["credential_revision"]})
+                    "credential_revision": saved["credential_revision"],
+                    **change(_snapshot(plan["before"]), _snapshot(saved))})
+                if PRICE_TERMS in parts:
+                    terms = change(price_terms(plan["before"]["spec"]), price_terms(saved["spec"]))
+                    self._audit(request, actor, action="admin.model_price.adopt", object_kind="model_price",
+                                object_id=terms["after"].get("sale_price_id") or ACCOUNT_REF,
+                                meta={"operation_id": operation_id, "reason": reason, "revision": saved["revision"], **terms})
                 transaction.execute("INSERT INTO admin_operations(id,actor_id,action,target_id,idempotency_key,request_hash,result_json,created_at) "
                     "VALUES (?,?,?,?,?,?,?,?)", (operation_id, actor["id"], self.action, ACCOUNT_REF,
                     body.idempotency_key, request_hash, canonical(result), time.time()))
-                self._actor(request, execute=True)
+                self._actor(request, execute=True, parts=parts)
                 return result
         except Exception as exc:
             self._failure(request, actor, exc)

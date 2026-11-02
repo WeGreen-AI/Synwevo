@@ -10,6 +10,8 @@ registerMessages({
   '放行名单条目无效': { en: 'The allowlist entry is invalid.', 'zh-Hant': '放行名單項目無效' },
   '未找到要放行的账户或组织': { en: 'No account or organization to allow was found.', 'zh-Hant': '找不到要放行的帳戶或組織' },
   '该付款方已在放行名单中': { en: 'This payer is already on the allowlist.', 'zh-Hant': '該付款方已在放行名單中' },
+  '不能放行或解除与你自己有关的付款方，请由另一位管理员处理': { en: 'You cannot allow or release a payer connected with you. Ask another administrator.', 'zh-Hant': '不能放行或解除與你自己有關的付款方，請由另一位管理員處理' },
+  '按登录邮箱放行需要查看账户的权限；这里只能按组织编号放行。': { en: 'Allowing a person by login email needs permission to view accounts. Here you can allow an organization by its ID.', 'zh-Hant': '按登入信箱放行需要檢視帳戶的權限；這裡只能按組織編號放行。' },
   '未找到这条放行名单记录': { en: 'This allowlist entry was not found.', 'zh-Hant': '找不到這筆放行名單記錄' },
   '这条放行名单记录已移除': { en: 'This allowlist entry has already been removed.', 'zh-Hant': '這筆放行名單記錄已移除' },
   '只能对已经结束的 UTC 日进行对账': { en: 'Only a UTC day that has ended can be reconciled.', 'zh-Hant': '只能對已經結束的 UTC 日進行對帳' },

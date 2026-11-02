@@ -87,6 +87,7 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 - 暂停不会随窗口过去自动解除；只有平台管理员在管理页写明理由并重新认证后解除（`admin.model_risk.suspension_lift` 审计）。
   解除后若速率仍超过阈值，下一次调用再次锁定。锁定写入失败时只记日志；拒绝由事实计算，下一次调用会再次检测到。
 - 同一付款方/路线同时只有一条生效暂停（唯一索引）；暂停记录只追加，解除只能填写一次，不能删除或改写。
+- 路线的暂停与滚动窗口都按 `requested_model` 记：换一个模型标识，旧标识上的暂停还在，却不再拦新标识，窗口也从零开始。所以模型标识不归保管密钥的人：它是价格条款，要 `platform.models.pricing`，并记入 `admin.model_price.adopt`（authz-6，决定 D20），和解除暂停是同一权限。
 
 ## 4. 平台总闸
 
@@ -96,7 +97,7 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
   分支都调用它。它是幂等的：已关闭时返回当前事件，不重复写入、不重复通知。自动关闭写系统审计 `billing.risk.breaker_opened`
   与安全日志 `model_breaker_opened`，提交后通知管理员。网关在 402 处的调用点由网关工作包接入（上游 402 是平台账户余额问题，
   不是用户钱包问题）。
-- 只有管理员重新开启（理由 + 管理重认证）。余额仍低于停止阈值时，下一次读数会再次关闭。
+- 只有管理员重新开启（理由 + 管理重认证，`platform.models.pricing`）。余额仍低于停止阈值时，下一次读数会再次关闭。发布提供方配置不会重新开启总闸：上游 402 不写提供方关闭（`upstream_balance` 只出现在没有本模块的回退路径上），告警也发给定价一侧，不发给保管密钥的人（authz-6，决定 D20）。
 - 测试环境与正式环境的总闸互不影响。
 
 ## 5. 放行名单（分阶段开放）
@@ -104,6 +105,7 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 - `allowlist_required(environment, risk)`：有 `risk` 段时取 `allowlist_only`；没有时正式环境为真、测试环境为假。
 - 条目是付款方（`user` 按登录邮箱加入，`organization` 按组织编号加入），只追加；移出填写一次结束列。加入需要理由与管理重认证
   （它让钱可以流动）；移出只需理由。名单只决定能否发起付费调用，钱包、预算、额度与其他上限照常检查。
+- 按登录邮箱加入还要 `platform.users.view`：这个地址有没有账户、账户编号是什么，是账户列表回答的问题（authz-6，§10）。
 
 ## 6. 上游余额监控
 
@@ -141,8 +143,9 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 
 ## 9. 告警
 
-经既有站内通知与邮件（读者偏好），不引入外部服务。管理员告警发给当前有效授权中含 `platform.config.manage` 的平台管理员
-（最多 50 人）；投递失败不撤销保护性状态变化。参数只含代码、金额与固定词语，不含对话内容、载荷或密钥。
+经既有站内通知与邮件（读者偏好），不引入外部服务。管理员告警发给当前有效授权中含 `platform.models.pricing` 的平台管理员
+（能操作风险控制的人，目前即最高管理员，最多 50 人；authz-6 之前是 `platform.config.manage`）；投递失败不撤销保护性
+状态变化。参数只含代码、金额与固定词语，不含对话内容、载荷或密钥。
 
 | kind | 接收者 | 触发 | 去重 |
 |---|---|---|---|
@@ -153,7 +156,7 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 | `billing.risk.reconciliation` | 管理员 | 每日对账 `drift` / `incomplete` / `error` | 每条结果一次 |
 | `billing.risk.ledger_audit` | 管理员 | 账本审计发现差异 | 每条结果一次 |
 | `billing.risk.pending_exposure` | 管理员 | 用量待确认的预留成本 > `pending_alert` | 每个 UTC 日一次 |
-| `billing.risk.payment_webhook_failed` | 管理员 | 支付渠道调用 `alert_payment_webhook_failure(store, environment=, provider=, code=)` | 每渠道每代码每 UTC 日一次 |
+| `billing.risk.payment_webhook_failed` | 持有 `platform.config.manage` 的管理员（即最高管理员；authz-6 保持原收件人，是否改为财务角色待所有者决定，D20） | 支付渠道调用 `alert_payment_webhook_failure(store, environment=, provider=, code=)` | 每渠道每代码每 UTC 日一次 |
 | `billing.cost.rollup_inconsistent` | 管理员 | 成本汇总与事实不一致，某提供方账户被锁定（§13） | 每个提供方账户每 UTC 日一次 |
 | `billing.payer_spend.rollup_inconsistent` | 管理员 | 个人支出汇总与已结算调用不一致，某钱包被锁定（§13「钱包」），只给出钱包 id | 每个钱包每 UTC 日一次 |
 | `billing.cost.rollup_issues` | 管理员 | 不属于某一个账户或钱包的全库问题（§13：静止时有 delta 行、哨兵行丢失、读不出名字的范围、verify 打开时重放了提供方账户的汇总或钱包日行），自己的措辞，开头写明是哪次核对发现的（每日或每小时定时核对、命令行），列出问题名 | 每种问题组合每 UTC 日一次（同一天里不同的问题组合各告警一次） |
@@ -167,13 +170,19 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 
 | 操作 | 接口（`/api/admin/billing/risk`） | 需要 |
 |---|---|---|
-| 关闭全部付费调用 | `POST /breaker/open` | `platform.config.manage`、理由 |
+| 关闭全部付费调用 | `POST /breaker/open` | `platform.models.pricing`（authz-6；之前是 `platform.config.manage`）、理由 |
 | 重新开启 | `POST /breaker/close` | 同上 + 管理重认证 |
 | 解除暂停 | `POST /suspensions/{id}/lift` | 同上 + 管理重认证 |
-| 加入放行名单 | `POST /allowlist` | 同上 + 管理重认证 |
-| 移出放行名单 | `POST /allowlist/{id}/remove` | `platform.config.manage`、理由 |
+| 加入放行名单 | `POST /allowlist` | 同上 + 管理重认证；按登录邮箱加入个人付款方还要 `platform.users.view` |
+| 移出放行名单 | `POST /allowlist/{id}/remove` | `platform.models.pricing`、理由 |
 | 登记上游充值 | `POST /topups` | 同上 |
 | 重算某日 / 立即审计账本 | `POST /reconciliations/run` | 同上 |
+
+解除暂停与加入放行名单不能用在自己身上：委派的持有者不能解除或放行自己的账户与自己所在的组织（403 `risk_own_payer`，审计；页面不提供这个按钮），
+否则刹车和分阶段开放对他不起作用（authz-6，决定 D20）。最高管理员可以：平台可能只有一位，审计行标 `own_payer`。
+这是委派的一项代价，不是完整的隔离：被拒绝放行自己的持有者仍可在「模型成本」页发布 `risk.allowlist_only=false`，让放行名单对全平台失效（也就包括他自己）。那是全平台的决定，有审计（`admin.model_cost.publish`）；已锁定的暂停不受影响。
+
+一次请求只要缺少权限，就先按权限名拒绝：缺少 `platform.models.pricing` 或（按邮箱放行时）`platform.users.view` 的持有者，即使当前会话只验证了一个因素，得到的也是指明这项权限的 403，而不是 `step_up_required`。
 
 每个修改先检查授权，再检查计费环境是否配置（没有权限的人得到权限拒绝，不会得知部署是否配置了计费）；全部 13 个接口登记在
 平台权限矩阵 `services/identity/tests/test_platform_access.py` 中。每个修改带客户端幂等键；授权在写状态、审计与操作结果的同一事务内复核；同一键不同内容返回 409 `idempotency_conflict`；

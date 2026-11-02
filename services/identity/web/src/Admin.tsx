@@ -16,7 +16,7 @@ import { OwnershipRecovery } from "./governance/OwnershipRecovery";
 import { IdentityProvidersTab } from "./governance/IdentityProvidersTab";
 import { auditChanges } from "./governance/audit";
 import { PlatformAccessDialog, PlatformAdminsTab, platformRoleLabel, platformRolesText, ROLE_ORDER, systemReasonText } from "./governance/PlatformAccess";
-import { AUDIT_SCOPES, mayClaim, permitted, userOffers, type Held, type Tab } from "./governance/access";
+import { AUDIT_SCOPES, MODEL_CREDENTIAL, MODEL_PRICING, mayClaim, permitted, userOffers, type Held, type Tab } from "./governance/access";
 import { useAdminData, useAdminPage } from "./governance/data";
 import { t as tr, useI18n, PageState } from "@synwevo/ui";
 import "./governance/messages";
@@ -115,9 +115,10 @@ function AdminViews({ held, tab }: { held: Held; tab: Tab }) {
     {tab === "model-prices" && <ModelPricesTab onDenied={onDenied} held={held} />}
     {tab === "model-costs" && <ModelCostsTab onDenied={onDenied} held={held} />}
     {tab === "model-risk" && <ModelRiskTab onDenied={onDenied} held={held} />}
-    {tab === "model-provider" && <ModelProviderTab onDenied={onDenied}
+    {tab === "model-provider" && <ModelProviderTab onDenied={onDenied} onPartRefused={() => void refresh()}
       canRead={!permitted(held, "platform.config.view").disabled}
-      canManage={!permitted(held, "platform.config.manage").disabled} />}
+      canCustody={!permitted(held, MODEL_CREDENTIAL).disabled}
+      canPricing={!permitted(held, MODEL_PRICING).disabled} />}
     {tab === "finance" && <FinanceTab onDenied={onDenied} canManage={!permitted(held, "platform.billing.manage").disabled} />}
     {tab === "payments" && <PaymentsTab onDenied={onDenied} canManage={!permitted(held, "platform.billing.manage").disabled} />}
     {tab === "agent-safety" && <AgentSafetyTab onDenied={onDenied} held={held} />}

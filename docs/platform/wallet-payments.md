@@ -171,7 +171,8 @@ Stripe 对密钥本身的明确回答不是“暂时不可用”：HTTP 401 且�
    `_revive`——CR rr-money-2 前该路径不告警），以及进不了收件箱的投递
    （签名 `signature_missing|malformed|mismatch|stale`、`payload_too_large`、`payload_invalid`、
    `environment_mismatch`、`event_conflict`），都调用 `alert_payment_webhook_failure`，通知有
-   `platform.config.manage` 的平台管理员（站内与邮件），每个环境、渠道、代码每个 UTC 日一次。告警只带渠道名
+   `platform.config.manage` 的平台管理员（站内与邮件；authz-6 把模型治理从该权限分出后收件人不变，即最高管理员——
+   是否改发给持有 `platform.billing.manage` 的财务角色待所有者决定，见 DECISIONS D20），每个环境、渠道、代码每个 UTC 日一次。告警只带渠道名
    （`stripe`）与稳定代码（如 `amount_mismatch`、`payment_order_mismatch`、`processing_error`），从不带请求体、
    签名、事件 ID 或客户信息；告警送不出去也不改变返回给 Stripe 的结果。
 5. 返回页轮询 `GET /api/auth/wallet/topups/{order_id}`（`pending|paid|failed|expired`、`creation_status`、

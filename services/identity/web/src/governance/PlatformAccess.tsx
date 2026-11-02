@@ -41,6 +41,8 @@ const PERMISSION_LABEL: Record<string, string> = {
   "platform.orgs.view": "查看组织",
   "platform.orgs.manage": "在管理后台管理自己拥有的组织", "platform.config.view": "查看平台配置与登录方式",
   "platform.config.manage": "修改注册策略与非秘密平台配置", "platform.mail.view": "查看邮件投递", "platform.mail.manage": "重试失败的找回与验证邮件",
+  "platform.models.credential": "保管模型提供方的密钥（设置、更换、撤销密封的凭据，不能读回密钥），启停或撤下路线，更新核实证据与有效期，重新开放已关闭的路线；不决定价格",
+  "platform.models.pricing": "发布模型价格、分时排期、加价与成本策略，决定路线的模型、采用的价格、成本依据、上限、推理投入与未完成调用的计费，操作付费风险控制",
   "platform.apps.view": "查看应用目录，以及业务应用与流程的运行记录（不含内容）",
   "platform.apps.manage": "按工作空间启用或停用应用；全平台启停和访问策略还需要修改平台配置的权限；不含业务内容",
   "platform.billing.view": "查看充值、赠送、拒付与未用余额（只含金额与元数据）",

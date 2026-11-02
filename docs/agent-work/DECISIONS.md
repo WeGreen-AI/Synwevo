@@ -290,3 +290,55 @@ Docs另提供严格extract_context契约，现有成员导入/Extract截取语�
 - 决定（所有者）：main 为默认与公开的开源分支，只接收 dev→main 同步 PR（合并提交）；dev 承载全部开发并且是唯一的生产部署来源（`production` 环境只允许 dev，管理员不可绕过）；dev 与 main 的规则集禁止删除与强推、必须 PR、只允许合并提交、无任何绕过；dev 必须 `verify`，main 必须 `verify` 与 `sync-source`；外部贡献 PR 进 dev。许可证：平台 AGPL-3.0-or-later，`apps/docs/sdk/*` Apache-2.0，名称、Logo 与图标不随许可证授权（TRADEMARKS.md）。内部记录保留公开但脱敏；不改写历史（审计确认 946 个提交中从未提交过真实凭据）。今后已跟踪文件不写“生产仍有可利用的漏洞 X”，安全修复私下准备、就绪即经 PR 进 dev 部署后再披露。
 - 实施：PR #2（流水线与流程，8a3b679d 首次从 dev 部署）、#3（脱敏）、许可证 PR、#4 起的同步 PR；开源准备审计与计划见会话记录 2026-10-25（四个扫描器覆盖全部引用的 9,081 个对象）。
 
+## D20 模型密钥保管与定价从平台配置分权（authz-6，2026-11-02）
+
+- 背景：模型提供方的密封凭据与路线、零售价格与排期、成本策略、付费风险控制都挂在 `platform.config.manage` 上（只有最高管理员持有）；
+  所有者简报 §4.6 要求「模型密钥保管与定价分离」；BACKLOG authz-6（P3）。实现在分支 `claude/authz-6`。
+- 决定：
+  1. 两项新权限：`platform.models.credential`，一份封闭的保管名单：密封凭据的设置、更换、撤销（从不读回密钥），路线是否启用（`enabled`），模型与账户两项核实证据（`confirmation_ref`、`account_confirmation_ref`），路线有效期（`valid_until`），撤下路线，关闭后重新开放；
+     `platform.models.pricing`：名单之外的一切，即路线的其余全部字段（`sale_price_id`、`cost_price_id`、`cost_basis_ref`、`requested_model`、`confirmed_route`、`input_token_ceiling`、`output_token_ceiling`、`reasoning_efforts`，**以及以后新增的任何字段**）和未完成调用是否收费，再加零售价格、分时排期、加价、成本策略、付费风险控制。成本策略与风险控制并入定价一侧：要求只给出两项，
+     它们是平台「收多少、花多少」的商业运营，不是密钥保管；总闸重开、解除暂停仍是危险操作（严格重认证）。
+     已发布的价格要路线写明才生效，所以采用价格就是决定付款人付多少，属于定价（评审修正：最初的版本把整个提供方版本都挂在 `platform.models.credential` 上，保管密钥的人能改零售价，定价的人反而不能让价格生效）。
+     **默认归定价，这一条是第二次评审的结果。**第一次修正列的是价格字段，其余都归保管，于是保管密钥的人还是决定付款人付多少。两名验证者用同一请求、同一上游夹具和真实结算量出来：
+     上限是单次预留（`gateway.upper_bound`），十二倍就是每条回答的上限（D17 第 2、5 条，`RunQuotes.price_key`，docs/platform/agent-run-budgets.md 规定这就是本人付的数），在夹具的基线（输入 100000、输出 8192）上把输入上限调到顶，每条回答的上限变成 15 倍；同一条回答因输出上限不同，一次被截断由平台承担，一次按完整用量收费；`ledger.py` 的扣费不超过预留，上限压低后差额变成平台成本，成本策略准入看的也是这个上界，所以 `max_call_cost` 或 `unknown_budget` 拒绝的调用，只改上限后就发出去了；
+     推理投入只发布 `["max"]` 就让所有请求按最高思考级别运行、多花 reasoning token，没有 `price_changed`，也没有 `admin.model_price.adopt`；路线暂停与速率窗口按 `requested_model` 记（`risk.py`），被拒绝解除暂停的保管人只要换一个模型标识就达到同样的效果，也能在价格不变时换上游模型。
+     所以方向反过来（fail closed）：保管是这份短名单，只有确实不动钱的才在上面（同一组实测：两项证据、有效期、启停、换密钥都不移动任何金额；`confirmed_route` 在启用时由价格钉住，但也不上名单），其余默认是价格条款，新增字段不用记得归类；要把一个字段移到名单上，就要在评审里证明它不动钱（`provider_settings._CUSTODY_ROUTE_FIELDS`，`test_a_field_added_later_is_a_price_term_until_someone_says_otherwise`）。
+     路线与它采用的价格在同一个版本里，发布接口只有一个，按请求相对当前版本改了什么要权限（`ProviderSettings.change_parts`，`OPERATIONS` 的 `per_operation`）：
+     只改价格条款要定价权限，只动名单要保管权限，两边都改要两项；首次配置或恢复已撤下的路线会写明价格，所以要两项；撤下路线不设定价格，属于保管；关闭的路线一发布就重新开放，告警发给保管一边，所以这属于保管，定价的发布在路线关闭期间被拒绝。
+     **这样分的代价：**用换模型标识来修复 `model_missing` 关闭，一次发布要两项都有（重新开放属于保管，模型标识是价格条款）。分开持有的两个人要发布三次，各用自己的权限：保管停用路线（新版本上没有关闭），定价在停用时改标识（写 `admin.model_price.adopt`），保管再启用（实测，`test_separate_holders_fix_a_missing_model_in_three_publications`）。只持保管的人单独只能原样重新发布，标识仍未列出时下一次核对会再次关闭；只持定价的人收不到这条告警，路线关闭期间也不能发布。首条路线和恢复已撤下的路线没有这条路，要一位两项都有的人。
+     价格条款变化时，发布的审计行写明前后值，并另记 `admin.model_price.adopt`（发布不再只能从历史接口还原）。`platform.config.manage` 保留
+     注册策略、管理员第二因素策略、限流解除、MCP 策略与停用、应用目录平台范围变更（D12）与 Agent 安全规则，不再治理任何模型面。
+     四个面的读取仍是 `platform.config.view`，两项新权限都不蕴含它（管理不等于查看）；读到的只有元数据（是否已配置凭据及其修订号、已发布的数字、
+     金额与代码），任何路由都读不到密钥。
+  2. 角色不变：两项按定义属于最高管理员，不属于任何委派角色（MASTER_PROMPT §12.1）。两项之外，没有任何角色的可达路由发生变化。
+  3. 迁移：没有，也不需要。授予表只存角色，权限是推导的：不改写任何授予行，不动 schema，不写审计。本版本启动时最高管理员的授予立即带上两项；
+     回滚时两项并回 `platform.config.manage`，上一版本照常打开这个库（角色 CHECK 的文字没有变）。测试把六种角色各一名持有者的库连续打开两次：
+     schema、授予行、回滚镜像、管理审计逐字不变，每位持有者的有效权限等于冻结的上一版本目录（最高管理员多两项），上一版本的 `widen_roles` 无事可做；
+     另有一项按整张矩阵逐角色比对分权前后的可达路由，完全相等。
+  4. 告警随「谁能处理」改收件人：模型标识缺失关闭路线 → `platform.models.credential` 持有者，他们能发布重新开放；风险控制、成本汇总、待确认敞口
+     → `platform.models.pricing` 持有者。上游 402 不走保管一边（评审修正，实测）：装有风险模块时（本仓库的每个部署）它打开平台总闸（`gateway._open_platform_breaker`，来源 `upstream_402`），不写提供方关闭，发布不能重新开启，告警（`billing.risk.breaker_opened`）和关闭总闸都属于定价一侧；只有没有风险模块时的回退路径才写提供方关闭（`upstream_balance`），那时保管的告警与重新开放才适用于 402。所以保管的告警与重新开放规则实际只对 `model_missing` 成立。今天两者都只有最高管理员，所以实际收件人不变。
+  5. 界面：四个模型标签页仍按 `platform.config.view` 显示；模型提供方的编辑按字段分，和服务端同一份名单、同样的默认（`providerFieldPart`，测试读服务端的名单比对）：凭据操作、启用、路线模式、两项核实证据与有效期按 `platform.models.credential`，其余按 `platform.models.pricing`；
+     价格/成本/风险的写操作按 `platform.models.pricing`（`governance/access.ts` 的 `MODEL_CREDENTIAL` / `MODEL_PRICING`）；复制历史版本要两项都有；两项权限的标签三语。
+     一个部分被拒绝（路线在页面打开期间关闭、持有者的权限在读取和提交之间变了）时页面留在原处：显示拒绝、保留输入、重读路线健康与持有者的权限；授予确实结束才走页面不存在（`providerRefusal`）。两者由服务端区分：持有者一项都没有时拒绝的 `detail` 带 `any_of`，部分拒绝不带，能读到部分拒绝的人一定还持有另一项。路线关闭时未改动的表单也能预览（页面说可以原样发布，服务端也接受），只对能重新开放的持有者。 换到更新的版本时（`rebaseProviderForm`）只保留持有者自己改过、仍能改的字段，其余跟随新版本：第三轮验证发现，否则换密钥时会把页面上旧的启停或已撤下的路线一起发布出去。
+  6. 委派定价权限的两条规则（评审修正，`admin_model_risk`；今天只有最高管理员持有，所以现在没有暴露）：按登录邮箱放行个人付款方还要 `platform.users.view`，否则放行名单就回答了账户列表拒绝回答的问题（这个地址有没有账户、编号是什么）；
+     委派的持有者不能解除或放行自己的账户与自己所在的组织（`risk_own_payer`），否则刹车与分阶段开放对他不起作用。最高管理员可以（审计行标 `own_payer`）：平台可能只有一位，这条规则不能把所有者锁在自己的产品外面。
+- 未决（所有者）：
+  1. 是否委派，即新增只持一项的内置角色。要求只写了权限分离与「财务」角色，侦察报告也把委派列为第二阶段的所有者决定，所以本次不加；因此在产品里
+     这项分权今天只体现在目录、路由、审计与界面上，要到有人被任命才有两个不同的持有者。代价已实测（2026-11-01 中断的一次尝试加过两个角色，补丁未合入）：
+     角色 CHECK 要表重建加宽；上一版本的 `widen_roles` 不认识新子句，**拒绝打开**加宽过的库（`unexpected schema for platform_role_grants: cannot widen`），
+     因此发布后不能只换回旧镜像（生产回滚本来就是恢复发布前的备份，见 infra/production/README.md，但这要写进发布说明）；这样的角色还必须带
+     `platform.config.view`，否则每个 GET 都是 403，于是它能读另一面的元数据（不含密钥）；只有最高管理员能授予。这项查看权限不是可选的：预览返回的 `before` 就是当前版本，不带查看权限的持有者也能从预览读到 GET 拒绝给他的内容（路线各字段、上一次发布的操作者与理由，实测），所以省掉它只会让页面打不开，挡不住读取。委派定价角色若要按邮箱放行个人付款方，还要 `platform.users.view`（决定 6）；
+     两名不同的持有者配置不了首条路线，也恢复不了已撤下的路线，这要一位两项都有的人（目前是最高管理员）。用新的模型标识修复模型缺失的关闭，两人可以分三次发布，见上面「这样分的代价」。
+     委派定价还有一项代价写在这里：被 `risk_own_payer` 拒绝放行自己的持有者，仍可发布 `risk.allowlist_only=false` 的成本策略，让放行名单对全平台失效，也就包括他自己（实测）。成本策略本来就是他的职权，这是全平台的决定，有审计（`admin.model_cost.publish`），不是一条只放行自己的旁路；已锁定的暂停不受影响，仍要另一位管理员解除。委派之前要知道这一点。
+  2. 支付渠道 webhook 失败告警的收件人保持不变（`platform.config.manage`，即最高管理员，`risk.WEBHOOK_ALERT_PERMISSION`）；改发给持有
+     `platform.billing.manage` 的财务角色可能更合理，但这改变财务角色收到的通知。
+- 偏离侦察报告：侦察建议三项（另设 `platform.models.cost`）；要求是两项，按侦察给出的备选把成本与风险并入定价。其余按侦察的第一阶段（只加权限）。
+- 验证：`services/identity/tests/test_platform_access.py`（矩阵、只持一项者读不到也改不了另一面、`platform.config.manage` 单独不再治理模型、最高管理员仍可达、
+  未登录与无权限者照旧、逐角色可达路由比对、分权前的库、授予审计、告警收件人；只持一项的持有者是标明的夹具 `platform_fixture.holding_exactly`）、
+  四个模型管理模块的测试（`test_admin_model_provider.py` 里密钥不出现在持有定价权限者能读到的任何回答中）、
+  `services/identity/web/tests/admin-access.test.mjs`、`admin-layout.test.mjs`（标签页的读/写门控、三语）。
+  评审修正：`test_admin_model_provider.py`（只持密钥的权限改不了价格条款，只持定价的权限能采用价格、碰不到密钥与其余路线，两边都改要两项，首条与恢复的路线，重新开放，审计与 `admin.model_price.adopt`）、
+  `test_admin_model_risk.py`（按邮箱放行要账户列表权限，委派持有者不能放行自己），`model-provider.test.mjs`（`providerChangeParts` 与服务端同样的用例、按字段的权限），
+  `tests/integration/test_permission_docs.py`（两份文档的权限表对照目录）。
+  第二次评审修正：`test_admin_model_provider.py`（`test_custody_is_a_closed_list_and_every_other_route_field_is_a_price_term` 逐字段、`test_a_field_added_later_is_a_price_term_until_someone_says_otherwise`、`test_fixing_a_missing_model_by_changing_its_id_needs_both_permissions`、`test_every_price_term_is_on_the_price_record`、一因素会话先得到按权限的拒绝、读不了的版本保持原来的顺序与失败记录）、
+  `test_admin_model_risk.py`（同样的拒绝顺序）、`model-provider.test.mjs`（同样的用例，与服务端比对名单，`providerRefusal`、`providerPreviewGate`）、`infra/production/tests/test_workflow.py`（读这两份文档的测试不再被当成只改记录而跳过）。

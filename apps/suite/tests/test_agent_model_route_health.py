@@ -47,7 +47,7 @@ def models_transport(respond, seen=None):
 
 
 def admin(g):
-    """A fixture platform administrator who can reopen a route (platform.config.manage)."""
+    """A fixture platform administrator who can reopen a route (platform.models.credential)."""
     bob = g.suite.people.users['bob']
     g.store.execute('UPDATE users SET email_verified_at=? WHERE id=?', (time.time(), bob['id']))
     PlatformAccess(g.store).host_grant(bob['id'], 'super_admin', source='fixture:tests', reason='test fixture: platform role')

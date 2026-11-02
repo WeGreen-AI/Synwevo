@@ -91,7 +91,11 @@ price, the calendar and calendar revision that decide which of the two applies),
 `per_call_hold` (and with it the maximum), the model and confirmed route, and which incomplete
 endings are charged (`charge_incomplete`). The route version, the route's validity and its
 confirmation references are not in it: renewing the route at the same prices changes nothing the
-person sees and refuses nothing. The page sends back `run.price_id` as `seen_price_id` and
+person sees and refuses nothing. Everything in the digest is decided by `platform.models.pricing`,
+never by the key's permission (authz-6, D20, "Governed provider composition" below). The thinking
+levels a route allows are not in it, yet they decide how many tokens a request spends, so they are
+the pricing permission's as well and on the price record, although no open page is refused for them.
+The page sends back `run.price_id` as `seen_price_id` and
 `run.price_key` as **`seen_route_version`** — the field keeps its name for compatibility and
 carries the price key, not the route version (strings, at most 200 characters). On the automatic
 path both are **required**: no page in use reaches it without them (the earlier bundle always
@@ -304,8 +308,9 @@ paid route. Isolated admission tests are not evidence of live provider capacity 
 Account administration exposes `/admin?tab=model-costs` and the typed
 `/api/admin/billing/cost-policy` endpoints: GET current state, GET `/history` with
 `before_revision` and bounded `limit`, POST `/preview`, and POST `/publish`.
-`platform.config.view` permits reads; `platform.config.manage` permits preparation and
-publication, with fresh `admin` authentication and an 8–500 character reason for publication.
+`platform.config.view` permits reads; `platform.models.pricing` (authz-6: split out of
+`platform.config.manage`, held by the super administrator) permits preparation and publication,
+with fresh `admin` authentication and an 8–500 character reason for publication.
 Workspace ownership alone grants neither permission. The host captures
 `SYNWEVO_BILLING_ENVIRONMENT=test|live` at startup. Missing configuration returns an explicit
 unconfigured read state and refuses writes. Reads never create a policy or a price.
@@ -341,8 +346,21 @@ visual/keyboard acceptance is tracked separately in the evidence log and is not 
 
 Account administration now mounts `/admin?tab=model-provider` and four typed routes under
 `/api/admin/billing/model-provider`: GET current state, GET `/history`, POST `/preview`,
-and POST `/publish`. Reading requires `platform.config.view`; changing configuration requires
-`platform.config.manage`, a bound preview and fresh admin authentication at publication.
+and POST `/publish`. Reading requires `platform.config.view`. A publication requires the permission
+of what it changes against the current version (authz-6, split out of `platform.config.manage`; both
+held by the super administrator). `platform.models.credential` keeps a closed list, which moves no
+money: the sealed credential, whether the route is enabled, its two confirmation references, its
+validity, withdrawing it and reopening it after a closure. Everything else needs
+`platform.models.pricing`: every other route field (the sale and cost prices, their cost basis, the
+requested model, the confirmed route, the input and output token ceilings, the reasoning efforts, and
+any field added later) and the charging of incomplete calls. The ceilings are one call's hold and,
+twelve times over, the most an answer costs, which is what this document says the person pays. A
+first route, or one restored after a withdrawal, names its prices and needs one person holding both.
+Fixing a missing model by naming another id reopens the route and changes a price term, so one
+publication needs both; separate holders publish three times (custody turns the route off, pricing
+names the id while it is off, custody turns it on). Every
+publication also needs a bound preview and fresh admin authentication, and a change of price terms
+also writes `admin.model_price.adopt`.
 A platform role never supplies workspace access, payment consent or wallet funds.
 
 The host explicitly selects `SYNWEVO_AGENT_PROVIDER=deepseek` and

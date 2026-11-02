@@ -42,8 +42,14 @@ POLL_MIN_S, POLL_MAX_S = 60, 86_400
 # Class-X cost facts (not on the rollup's grid) read row by row for one payer or route: the only
 # row cap left on the velocity path (cost_rollup.MAX_EXCEPTIONS; risk_accounting_capacity).
 MAX_RECORDS = cost_rollup.MAX_EXCEPTIONS
-# Admin alerts go to the people who can act on them: holders of this platform permission.
-ALERT_PERMISSION = "platform.config.manage"
+# Admin alerts go to the people who can act on them: holders of this platform permission — since
+# authz-6 the pricing permission, which operates the risk controls (platform_access.py).
+ALERT_PERMISSION = "platform.models.pricing"
+#: The payment channel's webhook-failure alert keeps the recipients it had before the split: the
+#: holders of platform configuration's manage, i.e. the super administrators. Whether it should
+#: go to `platform.billing.manage` (the finance role configures the payment provider) is the
+#: owner's call (docs/agent-work/DECISIONS.md D20); nothing here decides it.
+WEBHOOK_ALERT_PERMISSION = "platform.config.manage"
 ADMIN_TARGET = {"origin": "accounts", "path": "/admin?tab=model-risk"}
 REASON_MIN, REASON_MAX = 8, 500
 
@@ -110,26 +116,27 @@ def _system_audit(t, action: str, object_kind: str, object_id: str, meta: dict) 
                json.dumps(meta, ensure_ascii=False, sort_keys=True)))
 
 
-def admin_recipients(store, *, limit: int = 50) -> list[str]:
-    """Accounts whose current platform grants include ALERT_PERMISSION (bounded)."""
+def admin_recipients(store, *, permission: str = ALERT_PERMISSION, limit: int = 50) -> list[str]:
+    """Accounts whose current platform grants include `permission` (bounded)."""
     from ..platform_access import ROLES, PlatformAccess
-    roles = sorted(role for role, permissions in ROLES.items() if ALERT_PERMISSION in permissions)
+    roles = sorted(role for role, permissions in ROLES.items() if permission in permissions)
     marks = ",".join("?" * len(roles))
     rows = store.all(f"SELECT DISTINCT user_id FROM platform_role_grants WHERE revoked_at IS NULL "
                      f"AND (expires_at IS NULL OR expires_at>?) AND role IN ({marks}) ORDER BY user_id LIMIT ?",
                      (time.time(), *roles, limit))
     access = PlatformAccess(store)
-    return [row["user_id"] for row in rows if ALERT_PERMISSION in access.effective_permissions(row["user_id"])]
+    return [row["user_id"] for row in rows if permission in access.effective_permissions(row["user_id"])]
 
 
-def notify_admins(store, kind: str, *, params: dict, dedupe_key: str, object_id: str) -> int:
+def notify_admins(store, kind: str, *, params: dict, dedupe_key: str, object_id: str,
+                  permission: str = ALERT_PERMISSION) -> int:
     """Inbox (and mail, by the reader's preferences) for every current alert recipient.
     Never raises: an alert that cannot be delivered must not undo the protective state change."""
     from ..notifications import Notifier
     sent = 0
     try:
         notifier = Notifier(store)
-        for uid in admin_recipients(store):
+        for uid in admin_recipients(store, permission=permission):
             try:
                 if notifier.emit(uid, kind, params=params, object_kind="model_risk", object_id=object_id,
                                  dedupe_key=dedupe_key, target=ADMIN_TARGET):
@@ -220,6 +227,8 @@ class RiskControls:
             raise BillingError("risk_breaker_open")
         risk = getattr(policy, "risk", None)
         payer = self.payer_of(t, call)
+        # Suspensions and the velocity window are keyed on the model id: a price term, not the key's
+        # to change, or a holder refused the lift could leave the suspension behind (provider_settings).
         route = identifier(attempt["requested_model"])
         if allowlist_required(self.environment, risk) and not self._allowlisted(t, payer["kind"], payer["id"]):
             raise BillingError("risk_not_allowlisted")
@@ -281,6 +290,10 @@ class RiskControls:
         if row["scope_kind"] in PAYER_KINDS and actor:
             notify_user(self.store, actor, "billing.risk.paid_paused", params={},
                         dedupe_key="risk:suspension:" + row["id"], object_id=row["id"])
+
+    def suspension(self, suspension_id: str) -> dict | None:
+        return self.store.one("SELECT * FROM model_risk_suspensions WHERE id=? AND environment=?",
+                              (identifier(suspension_id), self.environment))
 
     def lift(self, suspension_id: str, *, actor_id: str, reason: str) -> dict:
         """Administrator action; the caller authorizes, audits and owns the transaction."""
@@ -414,4 +427,4 @@ def alert_payment_webhook_failure(store, *, environment: str, provider: str, cod
     day = time.strftime("%Y-%m-%d", time.gmtime())
     return notify_admins(store, "billing.risk.payment_webhook_failed", params={"provider": provider, "code": code},
                          dedupe_key=f"risk:webhook:{environment}:{provider}:{code}:{day}",
-                         object_id=f"{environment}:{provider}")
+                         object_id=f"{environment}:{provider}", permission=WEBHOOK_ALERT_PERMISSION)

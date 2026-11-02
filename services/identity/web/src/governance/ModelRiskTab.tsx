@@ -2,10 +2,10 @@ import { useId, useRef, useState, type CSSProperties, type ReactNode } from 'rea
 import { post } from '@synwevo/auth-client';
 import { useI18n } from '@synwevo/ui';
 import { ActionDialog } from './ActionDialog';
-import { permitted, type Held } from './access';
+import { MODEL_PRICING, permitted, type Held } from './access';
 import { useAdminData } from './data';
 import { walletAmount } from '../pages/account/money';
-import { SCOPE_LABELS, STATUS_LABELS, codeLabel, lastEndedUtcDay, roundedUnits, topupUnits, utcDay, validDay,
+import { SCOPE_LABELS, STATUS_LABELS, allowKinds, codeLabel, lastEndedUtcDay, roundedUnits, topupUnits, utcDay, validDay,
   type AllowEntry, type Breaker, type Overview, type Page, type Reading, type Reconciliation, type Suspension, type Topup } from './model-risk';
 import './model-risk.messages';
 
@@ -40,7 +40,7 @@ function ModelRiskContent({ held, onDenied }: { held: Held; onDenied: () => void
   const [values, setValues] = useState<Values>({});
   const [notice, setNotice] = useState<string | null>(null);
   const status = useRef<HTMLParagraphElement>(null);
-  const manage = !permitted(held, 'platform.config.manage').disabled;
+  const manage = !permitted(held, MODEL_PRICING).disabled;
   const state = overview.data;
   const unit = state?.unit || null;
   const writable = manage && !!state && (state.environment === 'test' || state.environment === 'live');
@@ -115,13 +115,15 @@ function ModelRiskContent({ held, onDenied }: { held: Held; onDenied: () => void
             {item.threshold_units !== null && <> · {t('阈值 {threshold}，本次将达到 {observed}', {
               threshold: unitAmount(item.threshold_units, item.unit), observed: unitAmount(item.observed_units, item.unit) })}</>}</span>
           <span className="small muted">{t('暂停于 {time}', { time: time(item.created_at) })}{item.lifted_at !== null && <> · {t('解除于 {time}：{reason}', { time: time(item.lifted_at), reason: item.lift_reason || '' })}</>}</span>
-          {writable && item.lifted_at === null && <div><button type="button" className="btn" onClick={() => open({ title: t('解除这项暂停？'), confirm: t('解除暂停'),
+          {writable && item.lifted_at === null && (item.refused_own_payer
+            ? <p className="small muted">{t('不能放行或解除与你自己有关的付款方，请由另一位管理员处理')}</p>
+            : <div><button type="button" className="btn" onClick={() => open({ title: t('解除这项暂停？'), confirm: t('解除暂停'),
             path: `${API}/suspensions/${encodeURIComponent(item.id)}/lift`,
-            impact: <p>{t('解除后，{scope}「{name}」可以再次发起付费调用。若成本速率仍超过阈值，会再次被暂停。', { scope: t(SCOPE_LABELS[item.scope_kind]), name: item.payer_label || item.scope_id })}</p> })}>{t('解除暂停')}</button></div>}
+            impact: <p>{t('解除后，{scope}「{name}」可以再次发起付费调用。若成本速率仍超过阈值，会再次被暂停。', { scope: t(SCOPE_LABELS[item.scope_kind]), name: item.payer_label || item.scope_id })}</p> })}>{t('解除暂停')}</button></div>)}
         </li>)}</ul>}
     </section>
 
-    <AllowlistSection id={id} data={allowlist} writable={writable} required={!!state?.allowlist_required} time={time} open={open} />
+    <AllowlistSection id={id} data={allowlist} writable={writable} required={!!state?.allowlist_required} time={time} open={open} kinds={allowKinds(held)} />
 
     <section className="card card-b col gap12" aria-labelledby={`${id}-balance`} aria-busy={balance.loading}>
       <h3 id={`${id}-balance`}>{t('上游余额')}</h3>
@@ -176,16 +178,17 @@ function ModelRiskContent({ held, onDenied }: { held: Held; onDenied: () => void
 
 type Open = (next: Omit<Action, 'body'> & { body?: Record<string, unknown> }) => void;
 
-function AllowlistSection({ id, data, writable, required, time, open }: { id: string; writable: boolean; required: boolean;
-  data: { data: Page<AllowEntry> | null; err: string | null; loading: boolean }; time: (s: number) => string; open: Open }) {
+function AllowlistSection({ id, data, writable, required, time, open, kinds }: { id: string; writable: boolean; required: boolean;
+  data: { data: Page<AllowEntry> | null; err: string | null; loading: boolean }; time: (s: number) => string; open: Open; kinds: ('user' | 'organization')[] }) {
   const { t } = useI18n();
-  const [kind, setKind] = useState<'user' | 'organization'>('user');
+  const [kind, setKind] = useState<'user' | 'organization'>(kinds[0]);
   const [value, setValue] = useState('');
   const field = useId();
   const valid = kind === 'user' ? /^[^\s@]+@[^\s@]+$/.test(value.trim()) && value.trim().length <= 320 : /^[A-Za-z0-9_-]{1,64}$/.test(value.trim());
   return <section className="card card-b col gap12" aria-labelledby={`${id}-allowlist`} aria-busy={data.loading}>
     <h3 id={`${id}-allowlist`}>{t('放行名单')}</h3>
     <p className="small muted">{t(required ? '放行名单模式已开启：只有名单中的付款方可以发起付费 Agent 调用。' : '放行名单模式未开启：名单保留，但不限制付款方。')}</p>
+    {writable && !kinds.includes('user') && <p className="small muted">{t('按登录邮箱放行需要查看账户的权限；这里只能按组织编号放行。')}</p>}
     {writable && <form className="row wrap gap8" style={{ alignItems: 'flex-end' }} onSubmit={event => { event.preventDefault(); if (!valid) return;
       const target = value.trim();
       open({ title: t('加入放行名单？'), confirm: t('加入'), path: '/api/admin/billing/risk/allowlist',
@@ -193,7 +196,7 @@ function AllowlistSection({ id, data, writable, required, time, open }: { id: st
         impact: <p>{t('「{name}」将可以在分阶段开放期间发起付费 Agent 调用；其他额度与预算仍然适用。', { name: target })}</p> }); }}>
       <label className="field" htmlFor={`${field}-kind`}><span>{t('付款方类型')}</span>
         <select id={`${field}-kind`} className="input" value={kind} onChange={event => { setKind(event.target.value as 'user' | 'organization'); setValue(''); }}>
-          <option value="user">{t('个人（按登录邮箱）')}</option><option value="organization">{t('组织（按组织编号）')}</option></select></label>
+          {kinds.includes('user') && <option value="user">{t('个人（按登录邮箱）')}</option>}<option value="organization">{t('组织（按组织编号）')}</option></select></label>
       <label className="field grow" htmlFor={`${field}-value`} style={{ minWidth: 0 }}><span>{t(kind === 'user' ? '登录邮箱' : '组织编号')}</span>
         <input id={`${field}-value`} className="input" type={kind === 'user' ? 'email' : 'text'} autoComplete="off" value={value}
           maxLength={kind === 'user' ? 320 : 64} onChange={event => setValue(event.target.value)} style={{ width: '100%', minWidth: 0 }} /></label>

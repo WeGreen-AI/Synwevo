@@ -7,7 +7,7 @@ import { transformWithOxc } from 'vite';
 // Pure helpers of the paid-model risk tab, compiled with the installed Vite compiler (no server).
 const file = new URL('../src/governance/model-risk.ts', import.meta.url);
 const { code } = await transformWithOxc(await readFile(file, 'utf8'), fileURLToPath(file));
-const { roundedUnits, utcDay, lastEndedUtcDay, validDay, topupUnits, codeLabel } =
+const { roundedUnits, utcDay, lastEndedUtcDay, validDay, topupUnits, codeLabel, allowKinds } =
   await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 
 test('rational ledger amounts round half away from zero and say when they were rounded', () => {
@@ -42,4 +42,21 @@ test('server codes become fixed wording; unknown codes stay visible as codes', (
   assert.deepEqual(codeLabel('payer_velocity'), { text: '付款方成本速率超过阈值' });
   assert.deepEqual(codeLabel('something_new'), { text: '代码：{code}', params: { code: 'something_new' } });
   assert.deepEqual(codeLabel(null), { text: '—' });
+});
+
+test('authz-6: adding a person goes by address, which is offered only with the account list', () => {
+  assert.deepEqual(allowKinds(new Set(['platform.config.view', 'platform.models.pricing', 'platform.users.view'])), ['user', 'organization']);
+  assert.deepEqual(allowKinds(new Set(['platform.config.view', 'platform.models.pricing'])), ['organization']);
+});
+
+test('authz-6: the tab offers neither a lookup nor a release the server would refuse, and says why', async () => {
+  const tab = await readFile(new URL('../src/governance/ModelRiskTab.tsx', import.meta.url), 'utf8');
+  const catalogue = await readFile(new URL('../src/governance/model-risk.messages.ts', import.meta.url), 'utf8');
+  assert.match(tab, /allowKinds\(held\)/, 'the payer kinds come from what the viewer holds');
+  assert.match(tab, /item\.refused_own_payer/, 'the lift button follows the row the server marks');
+  for (const sentence of ['不能放行或解除与你自己有关的付款方，请由另一位管理员处理', '按登录邮箱放行需要查看账户的权限；这里只能按组织编号放行。']) {
+    assert.ok(tab.includes(`t('${sentence}')`), sentence);
+    const entry = catalogue.split('\n').find(line => line.includes(`'${sentence}'`));
+    assert.ok(entry && /en: '[^\u3400-\u9fff]+'/.test(entry) && /'zh-Hant': '/.test(entry), `three languages: ${sentence}`);
+  }
 });

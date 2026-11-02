@@ -50,6 +50,7 @@ ADMIN_ACTIONS: dict[str, dict] = {
     "admin.invitation.revoke_bulk": _a("workspace", "批量撤销邀请", "批次撤銷邀請", "Revoke invitations in bulk"),
     "admin.mail.retry": _a("mail", "重发邮件", "重發郵件", "Retry a mail"),
     "admin.model_cost.publish": _a("model", "发布模型成本策略", "發布模型成本策略", "Publish the model cost policy"),
+    "admin.model_price.adopt": _a("model", "改变路线的价格条款（模型、价格、上限、推理投入或计费）", "改變路線的價格條款（模型、價格、上限、推理投入或計費）", "Change a route's price terms (model, prices, ceilings, reasoning effort or charging)"),
     "admin.model_price.draft": _a("model", "起草模型价格", "起草模型價格", "Draft model prices"),
     "admin.model_price.markup.publish": _a("model", "发布模型加价", "發布模型加價", "Publish the model markup"),
     "admin.model_price.publish": _a("model", "发布模型价格", "發布模型價格", "Publish model prices"),

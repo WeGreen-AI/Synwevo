@@ -216,7 +216,7 @@
 | A1 平台权限 | 平台角色 | 授予与本人接任 | 委派角色继续经 `platform-grants`；最高角色的普通grant和旧`platform-role: admin`返回 `super_admin_acceptance_required`。`admin_handover.py`实现签名预览/24小时提议、指定本人专用Passkey UV接受、后台独立UV就绪；所有成功变更/操作结果/审计同事务 | 账户「平台权限」发起；本人 `/account#admin-handover`；后台就绪区和提议列表 | 已接入（B4专项已验证） | 本批不外发接任通知；完整应急恢复与无日志恢复核对仍缺（A8/R21） | 委派需`platform.roles.assign`；最高发起/取消需`platform.roles.assign_super`及严格admin认证；接受/就绪绑定本人及专用UV | 全局/指定账户 | 高 | platform_super_admin_offers、platform_role_grants、reauth_challenges、admin_operations；会话策略只收紧 | `test_admin_handover.py`、原平台权限/恢复用例；浏览器12项业务、9组三语/视口及键盘检查通过 | B4仅本地 |
 | A2 平台权限 | 平台角色 | 撤销，最后可用最高管理员保护 | `POST /api/admin/platform-grants/{gid}/revoke {reason}` → `PlatformAccess.revoke`：同一事务内计数可用最高管理员（active、计入、能完成身份确认与严格重认证；应用身份、停用/删除/待验证账户、只有TOTP、没有可用严格验证方式的账户与到期授予不计），B4新接任授予还须该准确grant已完成ready；未就绪者不计入。归零时 409 `last_super_admin`；停用路由对最后一名返回 `last_super_admin`、对其他持有授予者返回 `demote_first`；本人删除（`ac/profile.py`）同样检查 | 同上 | 已接入 | 撤销不通知目标；本批 `platform_grant_revoked` 保护旧备份撤权，旧恢复工具须升级（见使用说明）；无日志恢复仍缺门禁 | 同上 | 全局 | 高 | 同上；权限每个请求重读，撤销在下一请求生效 | `services/identity/tests/test_platform_access.py`：`test_last_super_admin_under_revocation_suspension_and_self_deletion`、`test_two_super_admins_revoking_each_other_at_once_leave_exactly_one`（两人同时互撤只成功一个）、`test_existing_host_granted_passwordless_admin_with_current_uv_is_usable`（可用 = 能严格重认证）、`test_the_audit_names_what_a_change_did_even_on_an_account_whose_grants_do_not_count`、`test_a_finalized_deletion_records_each_grant_it_ends`、`test_a_replayed_deletion_ends_the_grants_with_the_account`；`test_self_service.py`：`test_last_platform_admin_cannot_delete`、`test_concurrent_last_admin_deletions_cannot_remove_both`；`test_identity.py::test_last_platform_admin_cannot_be_demoted` | 仅本地 |
 | A3 平台权限 | 平台角色 operator（「平台运维」） | 停用 | v27 迁移与每次打开库的对账（`core/platform_access.py` `reconcile_mirror`）把 `operator` 改为 `none` 并写审计 `admin.platform.operator_cleared`；兼容路由对 `operator` 返回 400 `operator_retired`；`users.platform_role` 的 CHECK 保留，不重建表 | 选择器与筛选中已移除（`role=operator` 筛选为 422），旧行显示为「无平台权限」 | 已接入 | — | — | 全局 | 低 | 迁移与对账 | `services/identity/tests/test_platform_access.py`::`test_migration_26_to_27_makes_admins_super_admins_and_clears_operators`；`test_admin.py::test_user_filters_and_counts_apply_before_pagination`；`test_admin_governance.py::test_workspace_org_owner_and_operator_cannot_enter_platform_governance` | 仅本地 |
-| A4 平台权限 | 权限目录、内置角色、授予（查看 / 管理 / 支持 / 授权；期限） | 定义、授予、撤销、列出有效权限 | `core/platform_access.py`：19 项权限（B1-2 复审新增 `platform.workspaces.claim`；应用运行页新增 `platform.apps.view`）、5 个内置角色（`super_admin` 按定义等于整个目录，其余逐项列出）、`platform_role_grants`（schema v27；`(user_id, role)` 部分唯一索引；角色 CHECK）。`require_platform` 用于全部 `/api/admin` 路由与 `/admin` 外壳，`require_manage` 查 `api_platform.manage`；`describe_user` 新增 `platform_permissions`、`platform_roles` | 标签按调用者权限显示（`acweb/Admin.tsx`）；标签内的写操作按权限禁用并写明原因（`acweb/governance/access.ts`）；审计筛选含「平台权限」与「被拒绝的管理请求」；门户与账户顶栏按任一平台权限显示「平台管理」 | 已接入 | 作用域只有全局（组织/应用范围、可激活授予留待后续）；没有自定义角色；异步任务里还没有平台权限执行点；导出与敏感内容权限尚未登记 | `platform.roles.*` | 全局 | 高 | 授予表，每个请求重读 | `services/identity/tests/test_platform_access.py`：`test_each_built_in_role_is_allowed_exactly_its_permissions`（5 个角色 × 全部管理路由与 API 控制台）、`test_every_admin_route_is_in_the_matrix`、`test_no_platform_permission_sees_404_everywhere_including_owners_and_workspace_admins`、`test_the_admin_shell_opens_for_any_platform_permission`、`test_a_denied_attempt_is_audited_once_per_window`、`test_expired_grants_are_ignored_and_can_be_granted_again`、`test_the_rollback_mirror_follows_every_grant_and_carries_a_rollbacks_changes_forward`、`test_a_lower_administrator_does_not_act_on_a_higher_one`（`target_outranks_actor`，审计限流）；`services/identity/web/tests/admin-access.test.mjs`（页面按角色提供的操作与服务器一致） | 仅本地 |
+| A4 平台权限 | 权限目录、内置角色、授予（查看 / 管理 / 支持 / 授权；期限） | 定义、授予、撤销、列出有效权限 | `core/platform_access.py`：25 项权限（B1-2 复审新增 `platform.workspaces.claim`；应用运行页新增 `platform.apps.view`；org-payments 新增 `platform.billing.view|manage`；authz-6 新增 `platform.models.credential|pricing`，模型治理从 `platform.config.manage` 分出）、6 个内置角色（`super_admin` 按定义等于整个目录，其余逐项列出；`finance` 为后加的委派角色）、`platform_role_grants`（schema v27；`(user_id, role)` 部分唯一索引；角色 CHECK）。`require_platform` 用于全部 `/api/admin` 路由与 `/admin` 外壳，`require_manage` 查 `api_platform.manage`；`describe_user` 新增 `platform_permissions`、`platform_roles` | 标签按调用者权限显示（`acweb/Admin.tsx`）；标签内的写操作按权限禁用并写明原因（`acweb/governance/access.ts`）；审计筛选含「平台权限」与「被拒绝的管理请求」；门户与账户顶栏按任一平台权限显示「平台管理」 | 已接入 | 作用域只有全局（组织/应用范围、可激活授予留待后续）；没有自定义角色；异步任务里还没有平台权限执行点；导出与敏感内容权限尚未登记 | `platform.roles.*` | 全局 | 高 | 授予表，每个请求重读 | `services/identity/tests/test_platform_access.py`：`test_each_built_in_role_is_allowed_exactly_its_permissions`（6 个角色 × 全部管理路由与 API 控制台）、`test_every_admin_route_is_in_the_matrix`、`test_no_platform_permission_sees_404_everywhere_including_owners_and_workspace_admins`、`test_the_admin_shell_opens_for_any_platform_permission`、`test_a_denied_attempt_is_audited_once_per_window`、`test_expired_grants_are_ignored_and_can_be_granted_again`、`test_the_rollback_mirror_follows_every_grant_and_carries_a_rollbacks_changes_forward`、`test_a_lower_administrator_does_not_act_on_a_higher_one`（`target_outranks_actor`，审计限流）；`services/identity/web/tests/admin-access.test.mjs`（页面按角色提供的操作与服务器一致） | 仅本地 |
 | A5 平台权限 | 权限解释与模拟 | 说明为何允许或拒绝 | **CR-108** 模拟与授予路由同口径：先 `_precondition`（未验证/待激活/已停用/应用身份/不能完成身份确认或重认证），`super_admin` 回答 `super_admin_acceptance_required`；`GET /api/admin/users/{uid}/platform-access`：每项权限及其来源授予、每个授予是否计入、调用者可授予的角色与可撤销的授予，以及不能授予（`assign_refusal`）或不能撤销（每个授予的 `revoke_refusal`）的原因代码；`GET /api/admin/session`：调用者的有效权限与来源、step-up 状态、重认证剩余秒数、实例标记（与 `/healthz` 同源的 `instance_kind`） | 「平台权限」对话框的「有效权限」，不能撤销或授予的原因以可见文字写在按钮旁（确认框叠在对话框之上，关闭后焦点回到原按钮）；系统写的理由按读者语言显示；管理页顶栏在测试实例上显示「测试实例」 | 已接入（解释 + 模拟，本地） | **CR-104** `GET /api/admin/users/{uid}/platform-access/simulate?change=grant|revoke&role=`（`platform.roles.view`）：按角色目录与计入规则算出变化前后的角色与权限、新增/失去的权限、调用者能否真正执行（复用授予/撤销路由的拒绝码 + already_held/not_held），不执行任何变更；权限对话框「模拟一次变化」。业务操作不模拟（设计如此） | `platform.roles.view`；session 只需任一平台权限（锁定会话也可读） | 全局 | 低 | 只读计算 | `services/identity/tests/test_platform_access.py`：`test_session_roster_and_explanation`、`test_a_super_administrator_grants_and_revokes_through_the_routes`；`test_email_code_login.py`（锁定管理员读到 `step_up.required=true`） | 仅本地 |
 | A6 平台权限 | 平台管理员名册 | 查看授予来源、能否完成身份确认、最近登录 | `GET /api/admin/platform/roles`：目录与名册（授予、来源、到期、是否计入、口令 / 可验证 Passkey / TOTP、能否严格重认证、最近一次中央登录） | 「平台管理员」标签（`acweb/governance/PlatformAccess.tsx`）；少于 2 名可用最高管理员时常驻「建议至少 2 名」 | 已接入 | 会话列表与 MFA 普及统计（A32）；最近登录只读保留的会话行（结束一周后清理） | `platform.roles.view` | 全局 | 中 | platform_role_grants、sessions、user_passwords、passkeys、totp_secrets | `services/identity/tests/test_platform_access.py`::`test_session_roster_and_explanation` | 仅本地 |
 | A7 最高管理员恢复 | 首位管理员 | 一次性令牌初始化 | `bootstrap token --ttl`限定60–3600秒；`POST /api/auth/bootstrap`在写锁内重新检查可用管理员和令牌，账户/个人空间/消费/授予/成功审计同事务；CLI同样原子提交 | 登录页受控领取 | 已接入 | 完整应急恢复仍见A8 | 主机生成、令牌领取 | 全局 | 高 | 唯一Store，bootstrap_tokens | `test_bootstrap_transactions.py`覆盖并发领取、有效期穿越、授予/审计故障回滚、会话交付失败后可重新登录、CLI二次检查 | B2仅本地 |
@@ -523,23 +523,28 @@
 - 新增 `synwevo_core` 权限目录（草案；实现时以代码中的目录为准并回写本表）：
   - **已实现（仅本地，2026-09-29）**：`packages/core/synwevo_core/platform_access.py` 是唯一目录，下表已回写。
 
-| 权限 | 最高 | 账户与访问 | 支持 | 审计查看 | API 平台管理 |
-|---|---|---|---|---|---|
-| `platform.overview.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `platform.users.view` | ✓ | ✓ | ✓ | ✓ | — |
-| `platform.users.manage` | ✓ | ✓ | — | — | — |
-| `platform.users.support` | ✓ | ✓ | ✓ | — | — |
-| `platform.workspaces.view` / `.manage` | ✓/✓ | ✓/✓ | ✓/— | ✓/— | — |
-| `platform.workspaces.claim`（复审新增：指派历史数据，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — |
-| `platform.orgs.view` | ✓ | ✓ | ✓ | ✓ | — |
-| `platform.config.view` / `.manage` | ✓/✓ | ✓/— | — | ✓/— | — |
-| `platform.mail.view` / `.manage` | ✓/✓ | ✓/✓ | ✓/— | ✓/— | — |
-| `platform.apps.view`（应用运行与流程运行的元数据，只读；理由见 `core/platform_access.py` 文档） | ✓ | ✓ | ✓ | ✓ | — |
-| `platform.audit.view` | ✓ | ✓ | — | ✓ | — |
-| `platform.roles.view` | ✓ | ✓ | — | ✓ | — |
-| `platform.roles.assign` / `.assign_super` | ✓/✓ | — | — | — | — |
-| `api_platform.manage` | ✓ | — | — | — | ✓（仅由最高管理员显式授予，见 §4.1） |
-| `platform.orgs.manage`（实现时新增，理由见 `core/platform_access.py` 文档） | ✓ | ✓ | — | — | — |
+| 权限 | 最高 | 账户与访问 | 支持 | 审计查看 | API 平台管理 | 财务 |
+|---|---|---|---|---|---|---|
+| `platform.overview.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `platform.users.view` | ✓ | ✓ | ✓ | ✓ | — | — |
+| `platform.users.manage` | ✓ | ✓ | — | — | — | — |
+| `platform.users.support` | ✓ | ✓ | ✓ | — | — | — |
+| `platform.users.recover`（A26：核验身份后重置丢失的第二因素，延迟生效并通知本人，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — | — |
+| `platform.workspaces.view` / `.manage` | ✓/✓ | ✓/✓ | ✓/— | ✓/— | — | — |
+| `platform.workspaces.claim`（复审新增：指派历史数据，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — | — |
+| `platform.orgs.view` | ✓ | ✓ | ✓ | ✓ | — | — |
+| `platform.config.view` / `.manage` | ✓/✓ | ✓/— | — | ✓/— | — | — |
+| `platform.models.credential`（authz-6：模型提供方的密封凭据与一份封闭的保管名单：路线启停、两项核实证据、有效期、撤下、重新开放，从 `platform.config.manage` 分出，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — | — |
+| `platform.models.pricing`（authz-6：价格、排期、加价、路线的其余全部字段与未完成调用的计费，新增字段默认在此，成本策略、付费风险控制，同上） | ✓ | — | — | — | — | — |
+| `platform.mail.view` / `.manage` | ✓/✓ | ✓/✓ | ✓/— | ✓/— | — | — |
+| `platform.apps.view`（应用目录与运行、流程运行的元数据，只读；理由见 `core/platform_access.py` 文档） | ✓ | ✓ | ✓ | ✓ | — | — |
+| `platform.apps.manage`（B1/B2：应用目录的开关；平台范围的变更还要 `platform.config.manage`，决定 D12） | ✓ | ✓ | — | — | — | — |
+| `platform.billing.view` / `.manage`（org-payments：资金只属于最高管理员与财务角色，见 wallet-payments.md §4） | ✓/✓ | — | — | — | — | ✓/✓ |
+| `platform.audit.view` | ✓ | ✓ | — | ✓ | — | — |
+| `platform.roles.view` | ✓ | ✓ | — | ✓ | — | — |
+| `platform.roles.assign` / `.assign_super` | ✓/✓ | — | — | — | — | — |
+| `api_platform.manage` | ✓ | — | — | — | ✓（仅由最高管理员显式授予，见 §4.1） | — |
+| `platform.orgs.manage`（实现时新增，理由见 `core/platform_access.py` 文档） | ✓ | ✓ | — | — | — | — |
 
 - `platform.apps.view` 打开的「应用运行」「流程运行」两页（`ac/admin_runs.py`）只显示运行的元数据，其中包括个人 Agent 操作的操作名与时间，但从不显示对话正文、输入、输出或失败说明。
 - 授权拒绝（403）与输入校验失败（422）发生在运行行建立之前，不留下运行行，所以这两页的「失败」只统计处理过程中的失败。
@@ -661,6 +666,7 @@
 | 双人审批 | 本批不引入（现团队无法满足，专项约定明确不得凭空强制）；数据模型保留扩展位 | 专项约定 §4.2 |
 | 重认证方式与窗口 | 沿用口令与 600 s 窗口；邮件验证码不能用于 step-up；B2已实现Passkey（UV）用途重认证；TOTP单独重认证仍待补齐（D10） | 现有 `sessions.py`；调研 b1 |
 | `api_platform.manage` | 仍是平台权限，只经平台授予获得；迁移后最高管理员持有，另有内置"API 平台管理员"角色可由最高管理员显式授予；组织/空间角色永远不得到它 | CLAUDE.md；专项约定 §1.1 |
+| 模型密钥保管与定价分权（authz-6） | `platform.config.manage` 不再治理模型面：密封凭据与保管名单（路线启停、两项核实证据、有效期、撤下、重新开放）要 `platform.models.credential`，路线的其余字段（新增字段默认在内）、价格、排期、加价、成本策略与风险控制要 `platform.models.pricing`；读取仍是 `platform.config.view`。两项只属于最高管理员，没有新角色；既有角色无一多出可达项；是否委派待所有者决定 | 专项约定 §4.6「模型密钥保管与定价分离」；DECISIONS D20；`docs/security/permissions.md` §4.1 |
 
 ### 4.2 需要所有者决定（未决前按最保守的现状执行，不替所有者作答）
 

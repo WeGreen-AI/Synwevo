@@ -73,9 +73,9 @@ class GovernedDeepSeek(MeteredTurnProvider):
             raise BillingError(CLOSURE_CODES[closure["state"]])
 
     def upstream_balance(self, route):
-        """The single seam an upstream HTTP 402 goes through: close paid dispatch on this
-        revision (audited, administrators alerted) until an administrator publishes again.
-        A platform-wide breaker that other controls share hooks in here as well."""
+        """The fallback of the seam an upstream HTTP 402 goes through (`gateway._open_platform_breaker`),
+        where the platform-wide breaker's module is not installed: close paid dispatch on this
+        revision (audited, administrators alerted) until an administrator publishes again."""
         self.settings.record_health(state="upstream_balance", requested_model=route.requested_model,
                                     reason_code="http_402", revision=self.settings.route_revision(route.version))
 

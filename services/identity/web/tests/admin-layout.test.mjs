@@ -81,13 +81,65 @@ test('the actual Admin entry mounts ModelProviderTab and adapts view/manage gran
   assert.match(readonly, /正在读取提供方配置/);
   assert.match(readonly, /你可以查看提供方配置和历史，不能修改或发布/);
   assert.doesNotMatch(readonly, /正在读取成本策略|<form|type="password"/);
-  const manage = render(['platform.config.view', 'platform.config.manage']);
+  const manage = render(['platform.config.view', 'platform.models.credential']);
   assert.match(manage, /正在读取提供方配置/);
   assert.doesNotMatch(manage, /你可以查看提供方配置和历史，不能修改或发布/);
-  for (const permissions of [[], ['platform.config.manage'], ['api_platform.manage']]) {
+  assert.match(manage, /你保管密钥：/);
+  // authz-6: the pricing permission decides what payers pay on this page, and leaves the key and the rest of custody
+  const pricing = render(['platform.config.view', 'platform.models.pricing']);
+  assert.doesNotMatch(pricing, /你可以查看提供方配置和历史，不能修改或发布/);
+  assert.match(pricing, /你负责定价/);
+  const both = render(['platform.config.view', 'platform.models.credential', 'platform.models.pricing']);
+  assert.doesNotMatch(both, /你可以查看提供方配置和历史，不能修改或发布|你保管密钥：|你负责定价：/);
+  // platform configuration's manage no longer changes anything here
+  assert.match(render(['platform.config.view', 'platform.config.manage']), /你可以查看提供方配置和历史，不能修改或发布/);
+  for (const permissions of [[], ['platform.config.manage'], ['platform.models.credential'], ['api_platform.manage']]) {
     const denied = render(permissions);
     assert.match(denied, /你没有查看模型提供方配置的权限/);
     assert.doesNotMatch(denied, /正在读取提供方配置|提供方发布历史/);
+  }
+});
+
+test('authz-6: the price, cost and risk pages are changed with the pricing permission; the config view, config manage and the credential permission only read them', () => {
+  const shell = admin.default();
+  const render = (active, permissions) => renderToStaticMarkup(shell.props.children({ held: new Set(permissions), active }));
+  const pages = [['model-prices', /你可以查看价格和试算，不能创建、修改或发布价格。/],
+                 ['model-costs', /你可以查看成本策略和历史，不能修改或发布。/],
+                 ['model-risk', /你可以查看风险控制状态，不能修改。/]];
+  for (const [active, readOnly] of pages) {
+    for (const permissions of [['platform.config.view'], ['platform.config.view', 'platform.config.manage'],
+                               ['platform.config.view', 'platform.models.credential']]) {
+      assert.match(render(active, permissions), readOnly, `${active}: ${permissions.join()}`);
+    }
+    assert.doesNotMatch(render(active, ['platform.config.view', 'platform.models.pricing']), readOnly, `${active}: pricing`);
+    // without the view nothing of the page is mounted, whatever else is held
+    for (const permissions of [[], ['platform.models.pricing'], ['platform.config.manage']]) {
+      assert.doesNotMatch(render(active, permissions), readOnly, `${active}: ${permissions.join()} without the view`);
+    }
+  }
+});
+
+test('authz-6: each model surface tells a holder of the other permission it is read-only, and that sentence exists in the three languages', () => {
+  const shell = admin.default();
+  // These pages word themselves with `useI18n`, whose server snapshot is the Simplified source:
+  // the markup proves who is told, the catalogue proves the other two languages have it.
+  const render = (active, permissions) => renderToStaticMarkup(shell.props.children({ held: new Set(permissions), active }));
+  const CREDENTIAL = ['platform.config.view', 'platform.models.credential'];
+  const PRICING = ['platform.config.view', 'platform.models.pricing'];
+  for (const [active, reader, holder, sentence] of [
+    ['model-provider', ['platform.config.view', 'platform.config.manage'], CREDENTIAL, '你可以查看提供方配置和历史，不能修改或发布。'],
+    ['model-provider', ['platform.config.view'], PRICING, '你可以查看提供方配置和历史，不能修改或发布。'],
+    ['model-provider', CREDENTIAL, PRICING, '你保管密钥：可以设置、更换或撤销凭据，启停或撤下路线，更新模型与账户的核实证据和路线有效期，并重新开放已关闭的路线。路线的模型、采用的价格、成本依据、上限、推理投入和未完成调用的计费决定付款人付多少，属于定价权限，这里只读。'],
+    ['model-provider', PRICING, CREDENTIAL, '你负责定价：可以决定路线的模型、采用的已发布价格、成本依据、上限和推理投入，以及未完成调用是否收费。凭据、路线启停、模型与账户的核实证据和路线有效期属于密钥保管权限，这里只读。'],
+    ['model-prices', CREDENTIAL, PRICING, '你可以查看价格和试算，不能创建、修改或发布价格。'],
+    ['model-costs', CREDENTIAL, PRICING, '你可以查看成本策略和历史，不能修改或发布。'],
+    ['model-risk', CREDENTIAL, PRICING, '你可以查看风险控制状态，不能修改。'],
+  ]) {
+    assert.ok(render(active, reader).includes(sentence), `${active}: the other permission reads only`);
+    assert.ok(!render(active, holder).includes(sentence), `${active}: its own permission changes it`);
+    assert.ok(ui.hasMessage(sentence), sentence);
+    assert.doesNotMatch(ui.translate('en', sentence), /[㐀-鿿]/, `${active}: English`);
+    assert.notEqual(ui.translate('zh-Hant', sentence), sentence, `${active}: Traditional Chinese`);
   }
 });
 

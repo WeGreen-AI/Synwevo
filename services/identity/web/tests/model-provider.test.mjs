@@ -159,6 +159,146 @@ test('credential actions never include an old key, and replacing requires explic
   assert.equal(m.validateProviderForm({ ...form, credential_action: 'unknown' }, '').spec, null);
 });
 
+test('authz-6: a change asks for the permission of what it changes, in the words the server judges it', () => {
+  // The same cases as test_admin_model_provider.py: the page offers what the route would answer.
+  const parts = (before, after, action = 'keep', closed = false) => m.providerChangeParts(before, after, action, closed);
+  const changed = (key, value) => ({ ...spec, route: { ...route, [key]: value } });
+  const withdrawn = { enabled: false, route: null, incomplete_charging: NO_CHARGING };
+  const charging = { ...NO_CHARGING, length: true };
+  // custody is a closed list: the key, whether the route is on, its evidence and how long that stands
+  for (const key of ['confirmation_ref', 'account_confirmation_ref']) assert.deepEqual(parts(spec, changed(key, 'fixture-other')), ['custody'], key);
+  assert.deepEqual(parts(spec, changed('valid_until', 1798761608)), ['custody']);
+  assert.deepEqual(parts(spec, { ...spec, enabled: false }), ['custody']);
+  for (const action of ['replace', 'revoke']) assert.deepEqual(parts(spec, spec, action), ['custody'], action);
+  // everything else moves what payers pay or the platform spends, a field nobody has thought of yet included
+  for (const key of ['sale_price_id', 'cost_price_id', 'cost_basis_ref', 'requested_model', 'confirmed_route']) assert.deepEqual(parts(spec, changed(key, 'fixture-other')), ['price_terms'], key);
+  for (const [key, value] of [['input_token_ceiling', 1], ['output_token_ceiling', 1], ['reasoning_efforts', ['max']], ['later_field', 1]]) {
+    assert.deepEqual(parts(spec, changed(key, value)), ['price_terms'], key);
+  }
+  assert.deepEqual(parts(spec, { ...spec, incomplete_charging: charging }), ['price_terms']);
+  assert.deepEqual(parts(spec, { ...changed('sale_price_id', 'fixture-other'), enabled: false }), ['custody', 'price_terms'], 'not while disabled either');
+  // both, and creating or restoring a route, which names its prices
+  assert.deepEqual(parts(spec, changed('sale_price_id', 'fixture-other'), 'replace'), ['custody', 'price_terms']);
+  assert.deepEqual(parts(spec, changed('output_token_ceiling', 1), 'replace'), ['custody', 'price_terms'], 'a key does not carry a ceiling');
+  assert.deepEqual(parts(null, spec), ['custody', 'price_terms']);
+  assert.deepEqual(parts(withdrawn, spec), ['custody', 'price_terms'], 'a withdrawal is no way around the prices');
+  // withdrawing sets no price; the charging is a pricing decision with or without a route
+  assert.deepEqual(parts(spec, withdrawn), ['custody']);
+  assert.deepEqual(parts(null, withdrawn), ['custody']);
+  assert.deepEqual(parts(withdrawn, { ...withdrawn, incomplete_charging: charging }), ['price_terms']);
+  assert.deepEqual(parts(spec, { ...withdrawn, incomplete_charging: charging }), ['custody', 'price_terms']);
+  // publishing reopens a closed route, which is custody whatever else changes; publishing nothing is custody's too
+  assert.deepEqual(parts(spec, changed('sale_price_id', 'fixture-other'), 'keep', true), ['custody', 'price_terms']);
+  assert.deepEqual(parts(spec, changed('requested_model', 'fixture-other'), 'keep', true), ['custody', 'price_terms'], 'fixing a missing model by its id needs both');
+  assert.deepEqual(parts(spec, spec, 'keep', true), ['custody']);
+  assert.deepEqual(parts(spec, spec), ['custody']);
+  // a version published before the fields existed reads with the server's defaults
+  const older = { enabled: true, route: Object.fromEntries(Object.entries(route).filter(([key]) => key !== 'reasoning_efforts')) };
+  assert.deepEqual(parts(older, spec), ['custody'], 'no price term differs');
+  assert.deepEqual(parts(older, changed('reasoning_efforts', ['none'])), ['price_terms']);
+  assert.deepEqual(parts(older, { ...spec, incomplete_charging: charging }), ['price_terms']);
+});
+
+test('authz-6: each form field belongs to the permission that changes it, and an unknown one to pricing', () => {
+  const custody = ['credential_action', 'enabled', 'route_mode', 'confirmation_ref', 'account_confirmation_ref', 'valid_until'];
+  for (const key of Object.keys(m.emptyProviderForm())) {
+    assert.equal(m.providerFieldPart(key), custody.includes(key) ? 'custody' : 'price_terms', key);
+  }
+  assert.equal(m.providerFieldPart('later_field'), 'price_terms', 'fail closed, as on the server');
+});
+
+test('authz-6: the page and the server keep the same closed list of custody', async () => {
+  const python = await readFile(new URL('../../../../packages/core/synwevo_core/billing/provider_settings.py', import.meta.url), 'utf8');
+  const listed = [...python.match(/_CUSTODY_ROUTE_FIELDS = frozenset\(\{([^}]*)\}\)/)[1].matchAll(/"([a-z_]+)"/g)].map(match => match[1]);
+  assert.ok(listed.length > 0);
+  for (const key of listed) assert.ok(key in route, `${key}: a route field`);
+  for (const key of Object.keys(route)) assert.equal(m.providerFieldPart(key) === 'custody', listed.includes(key), key);
+});
+
+test('authz-6: over a newer version a holder keeps what they changed in their own fields, and the rest follows the version', () => {
+  const base = m.providerForm(spec);
+  const form = { ...base, confirmation_ref: 'fixture-my-evidence', sale_price_id: 'fixture-my-sale', output_token_ceiling: '16' };
+  const latest = m.providerForm({ ...spec, route: { ...route, sale_price_id: 'fixture-new-sale', confirmation_ref: 'fixture-new-evidence', output_token_ceiling: 8 }, incomplete_charging: { ...NO_CHARGING, length: true } });
+  const both = m.rebaseProviderForm(form, base, latest, { custody: true, price_terms: true });
+  assert.deepEqual(both, { ...latest, confirmation_ref: 'fixture-my-evidence', sale_price_id: 'fixture-my-sale', output_token_ceiling: '16' }, 'a holder of both keeps what they changed');
+  assert.equal(both.charge_length, true, 'and what they left alone follows the version');
+  const custodian = m.rebaseProviderForm(form, base, latest, { custody: true, price_terms: false });
+  assert.equal(custodian.confirmation_ref, 'fixture-my-evidence');
+  assert.equal(custodian.sale_price_id, 'fixture-new-sale', 'a price field they cannot edit must not hold a change they cannot publish');
+  assert.equal(custodian.output_token_ceiling, '8', 'nor a ceiling');
+  assert.equal(custodian.charge_length, true);
+  const pricer = m.rebaseProviderForm(form, base, latest, { custody: false, price_terms: true });
+  assert.equal(pricer.confirmation_ref, 'fixture-new-evidence');
+  assert.equal(pricer.sale_price_id, 'fixture-my-sale');
+  assert.equal(pricer.output_token_ceiling, '16');
+  assert.equal(pricer.charge_length, true, 'a charging change they did not make is not undone by their publication');
+});
+
+test('authz-6: a key rotation over a newer version publishes the switch and the route as they now stand', () => {
+  const may = { custody: true, price_terms: true };
+  const base = m.providerForm(spec);
+  const rotating = { ...base, credential_action: 'replace' };
+  const off = m.rebaseProviderForm(rotating, base, m.providerForm({ ...spec, enabled: false }), may);
+  assert.equal(off.enabled, false, 'a colleague turned it off: the rotation does not turn it back on');
+  assert.equal(off.credential_action, 'replace', 'the rotation stays');
+  const withdrawn = m.rebaseProviderForm(rotating, base, m.providerForm({ ...spec, enabled: false, route: null }), may);
+  assert.equal(withdrawn.route_mode, 'none', 'a colleague withdrew it: the rotation does not put it back');
+  assert.equal(withdrawn.sale_price_id, '');
+  assert.equal(withdrawn.credential_action, 'replace');
+  const untouched = m.rebaseProviderForm(base, base, base, may);
+  assert.deepEqual(untouched, base, 'nothing changed on either side');
+  const turnedOff = m.rebaseProviderForm({ ...base, enabled: false }, base, m.providerForm({ ...spec, route: { ...route, sale_price_id: 'fixture-new-sale' } }), may);
+  assert.equal(turnedOff.enabled, false, 'the switch the holder did change stays changed');
+  assert.equal(turnedOff.sale_price_id, 'fixture-new-sale');
+});
+
+test('authz-6: each call of the merge names the version the holder was editing', async () => {
+  const component = await source('ModelProviderTab.tsx');
+  assert.match(component, /setSaved\(latest\); setForm\(previous => rebaseProviderForm\(previous, saved, latest, \{ custody: canCustody, price_terms: canPricing \}\)\);/,
+    'adopting a newer version compares the input with the version it was typed over');
+});
+
+test('authz-6: a refusal of one part keeps the page, and a grant that ended does not', () => {
+  const denied = detail => m.providerRefusal({ status: 403, code: 'platform_permission_denied', detail });
+  // the route closed while the page was open, or the holder lost one of the two: they still hold the other
+  assert.equal(denied({ permission: 'platform.models.credential' }), 'part');
+  assert.equal(denied({ permission: 'platform.models.pricing' }), 'part');
+  // the operation refused them: they hold neither any more
+  assert.equal(denied({ permission: 'platform.models.credential', any_of: ['platform.models.credential', 'platform.models.pricing'] }), 'grant');
+  // anything else named, or nothing
+  for (const detail of [{ permission: 'platform.config.view' }, {}, undefined, null, 'platform.models.pricing', { permission: ['platform.models.pricing'] }]) {
+    assert.equal(denied(detail), 'grant', JSON.stringify(detail));
+  }
+  assert.equal(m.providerRefusal({ status: 404, code: 'not_found' }), 'grant');
+  assert.equal(m.providerRefusal({ status: 403, code: 'platform_admin_required' }), 'grant');
+  // not about a grant: the page has its own answers
+  for (const error of [{ status: 403, code: 'step_up_required' }, { status: 403, code: 'reauth_required' }, { status: 409, code: 'model_revision_conflict' },
+    { status: 400, code: 'model_config_invalid' }, { status: 503, code: 'model_config_unavailable' }]) {
+    assert.equal(m.providerRefusal(error), null, error.code);
+  }
+});
+
+test('authz-6: preview is offered for a change the holder may publish, and a closed route may be republished as it is', () => {
+  const both = { custody: true, price_terms: true }, custodian = { custody: true, price_terms: false }, pricer = { custody: false, price_terms: true };
+  const changed = (key, value) => ({ ...spec, route: { ...route, [key]: value } });
+  const gate = (after, may, { before = spec, action = 'keep', closed = false } = {}) => m.providerPreviewGate(before, after, action, closed, may);
+  for (const may of [both, custodian, pricer]) assert.deepEqual(gate(spec, may), { unchanged: true, missing: [] }, 'nothing to publish on an open route');
+  // the page says it can be republished as it is, and the server accepts that: not for a pricing holder, who is told why
+  for (const may of [both, custodian]) assert.deepEqual(gate(spec, may, { closed: true }), { unchanged: false, missing: [] });
+  assert.deepEqual(gate(spec, pricer, { closed: true }), { unchanged: false, missing: ['custody'] });
+  // each holder's own fields, and the other's
+  assert.deepEqual(gate(changed('confirmation_ref', 'fixture-other'), custodian), { unchanged: false, missing: [] });
+  assert.deepEqual(gate(changed('confirmation_ref', 'fixture-other'), pricer), { unchanged: false, missing: ['custody'] });
+  assert.deepEqual(gate(changed('output_token_ceiling', 1), pricer), { unchanged: false, missing: [] });
+  assert.deepEqual(gate(changed('output_token_ceiling', 1), custodian), { unchanged: false, missing: ['price_terms'] });
+  assert.deepEqual(gate(changed('requested_model', 'fixture-other'), custodian, { closed: true }), { unchanged: false, missing: ['price_terms'] });
+  assert.deepEqual(gate(changed('requested_model', 'fixture-other'), pricer, { closed: true }), { unchanged: false, missing: ['custody'] });
+  assert.deepEqual(gate(changed('requested_model', 'fixture-other'), both, { closed: true }), { unchanged: false, missing: [] });
+  assert.deepEqual(gate(spec, custodian, { action: 'replace' }), { unchanged: false, missing: [] });
+  // invalid input is the form's to explain
+  assert.deepEqual(gate(null, pricer), { unchanged: false, missing: [] });
+});
+
 test('copying history copies only the route/enablement, preserves draft credential choice and never restores historical keys', () => {
   const historical = { ...spec, api_key: 'fixture-never-copy', credential_revision: 91 };
   for (const action of ['keep', 'replace', 'revoke']) {
@@ -314,11 +454,11 @@ const compiled = (await compile('ModelProviderTab.tsx')).replace(/(from\s*|impor
 const { ModelProviderTab } = await import(moduleURL(compiled));
 
 function render(props = {}) {
-  return renderToStaticMarkup(React.createElement(ModelProviderTab, { canRead: true, canManage: false, onDenied() {}, ...props }));
+  return renderToStaticMarkup(React.createElement(ModelProviderTab, { canRead: true, canCustody: false, canPricing: false, onDenied() {}, ...props }));
 }
 test('denied readers mount no loader even with manage=true, and read-only rendering shows no write controls', () => {
   support.fixture.reads = [];
-  const denied = render({ canRead: false, canManage: true });
+  const denied = render({ canRead: false, canCustody: true, canPricing: true });
   assert.deepEqual(support.fixture.reads, []);
   assert.match(denied, /没有查看/);
   support.fixture.current = initial;
@@ -328,6 +468,62 @@ test('denied readers mount no loader even with manage=true, and read-only render
   assert.match(html, /尚未配置模型提供方/);
   assert.match(html, /不能修改或发布/);
   assert.doesNotMatch(html, /<input|<form|复制路线到编辑器/);
+});
+
+test('authz-6: each holder is told what is theirs on this page, and a version is copied whole only by a holder of both', () => {
+  support.fixture.loading = false;
+  support.fixture.current = publishedFixture().state;
+  support.fixture.history = { items: [support.fixture.current], next_before_revision: null };
+  const READ_ONLY = /不能修改或发布/, CUSTODY = /你保管密钥：/, PRICING = /你负责定价：/, COPY = /复制路线到编辑器/;
+  const page = (canCustody, canPricing) => render({ canCustody, canPricing });
+  assert.match(page(false, false), READ_ONLY);
+  assert.doesNotMatch(page(false, false), CUSTODY);
+  assert.doesNotMatch(page(false, false), PRICING);
+  assert.match(page(true, false), CUSTODY);
+  assert.doesNotMatch(page(true, false), READ_ONLY);
+  assert.doesNotMatch(page(true, false), PRICING);
+  assert.match(page(false, true), PRICING);
+  assert.doesNotMatch(page(false, true), READ_ONLY);
+  assert.doesNotMatch(page(false, true), CUSTODY);
+  for (const pattern of [READ_ONLY, CUSTODY, PRICING]) assert.doesNotMatch(page(true, true), pattern);
+  // A copied version carries prices and route together: for one permission half of it would be refused.
+  assert.match(page(true, true), COPY);
+  for (const [custody, pricing] of [[true, false], [false, true], [false, false]]) assert.doesNotMatch(page(custody, pricing), COPY);
+});
+
+test('authz-6: the editor offers each field by its permission and refuses to send a change the server would refuse', async () => {
+  const component = await source('ModelProviderTab.tsx');
+  assert.match(component, /providerFieldPart\(key\)/, 'each route field asks whose it is');
+  assert.match(component, /providerPreviewGate\(base\.spec, validation\.spec/, 'the preview button asks what the change needs');
+  assert.match(component, /missingParts\.length/, 'and stays off while a part of it is not held');
+  assert.match(component, /mayEdit\(`effort_\$\{effort\}`\)/, 'the thinking levels are a price term');
+  assert.doesNotMatch(component, /disabled=\{!canCustody\}|disabled=\{!canPricing\}/, 'no control decides by a permission of its own');
+});
+
+test('authz-6: a refusal of one part stays on the page with the input and catches up; only a grant that ended leaves it', async () => {
+  const component = await source('ModelProviderTab.tsx');
+  const fail = component.slice(component.indexOf('function fail('), component.indexOf('function refresh('));
+  assert.match(fail, /providerRefusal\(err\)/);
+  assert.match(fail, /refused === 'part'\) \{ refresh\(\); onPartRefused\?\.\(\); \}/, 'the health and the grants are read again');
+  assert.match(fail, /refused === 'grant'\) onDenied\(\);/);
+  assert.doesNotMatch(fail, /platform_permission_denied/, 'the code alone does not say which it is');
+  assert.match(component, /rebaseProviderForm\(previous, saved, saved, \{ custody: canCustody, price_terms: canPricing \}\)\);\n  \}, \[canCustody, canPricing\]\)/,
+    'a field the holder can no longer change does not keep a change they could neither publish nor put back');
+  const admin = await readFile(new URL('../src/Admin.tsx', import.meta.url), 'utf8');
+  assert.match(admin, /onPartRefused=\{\(\) => void refresh\(\)\}/, 'the tabs and fields follow the server\'s answer');
+});
+
+test('authz-6: on a missing model a holder of one permission is told what another id takes, in one publication or in three', () => {
+  const NOTE = /换一个模型标识会重新开放路线并改变价格条款，一次发布需要同时持有密钥保管与定价权限。分开持有时分三次发布/;
+  const published = publishedFixture().state;
+  support.fixture.loading = false;
+  support.fixture.history = { items: [], next_before_revision: null };
+  const missing = { closure: { state: 'model_missing', reason_code: 'models_listing', requested_model: 'fixture-requested', since: 1780000000 }, last_models_check: null };
+  support.fixture.current = { ...published, health: missing };
+  for (const [custody, pricing] of [[true, false], [false, true]]) assert.match(render({ canCustody: custody, canPricing: pricing }), NOTE);
+  for (const [custody, pricing] of [[true, true], [false, false]]) assert.doesNotMatch(render({ canCustody: custody, canPricing: pricing }), NOTE);
+  support.fixture.current = { ...published, health: { closure: { ...missing.closure, state: 'upstream_balance', reason_code: 'http_402' }, last_models_check: null } };
+  assert.doesNotMatch(render({ canCustody: true }), NOTE);
 });
 
 test('current and immutable historical routes show concrete fields and credential status without server key/digest extras', () => {
