@@ -22,7 +22,7 @@ from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER, Session
 from synwevo_core.store import Store
 from synwevo_identity import admin_model_prices
 
-from .platform_fixture import end_platform_grants, make_platform_admin
+from .platform_fixture import end_platform_grants, holding_exactly, make_platform_admin
 from .test_admin_operations import PW, post, world
 
 BASE = "/api/admin/billing/prices"
@@ -170,10 +170,19 @@ def test_preview_cannot_change_authority_environment_snapshot_or_target(world, m
     assert not w["store"].all("SELECT * FROM billing_prices")
 
 
-def test_permission_fresh_auth_csrf_and_revoked_replay(world):
+def test_permission_fresh_auth_csrf_and_revoked_replay(world, monkeypatch):
     w = world
     assert w["ordinary"].get(BASE).status_code == 404
     assert post(w["ordinary"], BASE+"/drafts", {"spec": SPEC, "idempotency_key": uuid.uuid4().hex}).status_code == 404
+    # authz-6: drafting and publishing are platform.models.pricing — refused by name to the auditor
+    # and to a holder of the key's permission, who read the list (FIXTURE: holding_exactly)
+    auditor = make_platform_admin(w["store"], w["ident"].create_user("price-auditor@example.test", PW, status="active"), "auditor")
+    custodian = holding_exactly(monkeypatch, w["store"], w["ident"].create_user("price-custodian@example.test", PW, status="active"),
+                                {"platform.config.view", "platform.models.credential"})
+    for other in (w["login"](auditor), w["login"](custodian)):
+        assert other.get(BASE).status_code == 200
+        refused = post(other, BASE+"/drafts", {"spec": SPEC, "idempotency_key": uuid.uuid4().hex})
+        assert refused.status_code == 403 and refused.json()["detail"]["permission"] == "platform.models.pricing", refused.text
     actor = make_platform_admin(w["store"], w["ident"].create_user("price-admin@example.test", PW, status="active"))
     client = w["login"](actor)
     draft = create(w)

@@ -20,7 +20,7 @@ from synwevo_core.sessions import COOKIE_NAME, Sessions
 from synwevo_core.store import Store
 from synwevo_identity import admin_model_costs
 
-from .platform_fixture import end_platform_grants, make_platform_admin
+from .platform_fixture import end_platform_grants, holding_exactly, make_platform_admin
 from .test_admin_model_prices import SPEC as PRICE_SPEC
 from .test_admin_operations import PW, post, world
 
@@ -241,7 +241,7 @@ def test_history_paginates_real_versions_and_restoration_is_a_new_version(cost_w
     assert first["items"][0]["operation_id"] != last["items"][0]["operation_id"]
 
 
-def test_permissions_csrf_freshness_and_revoked_replay(cost_world):
+def test_permissions_csrf_freshness_and_revoked_replay(cost_world, monkeypatch):
     w = cost_world
     w["ident"].create_workspace("Fixture owner has no platform authority", owner_id=w["target"]["id"])
     for suffix in ("", "/history"):
@@ -252,8 +252,14 @@ def test_permissions_csrf_freshness_and_revoked_replay(cost_world):
     viewer = make_platform_admin(w["store"], w["ident"].create_user("cost-viewer@example.test", PW, status="active"), "auditor")
     client = w["login"](viewer)
     assert client.get(BASE).status_code == 200 and client.get(BASE + "/history").status_code == 200
-    assert post(client, BASE + "/preview", {"expected_revision": 0, "spec": SPEC}).status_code == 403
-    assert publish(w, command(preview(w)), client=client).status_code == 403
+    for refused in (post(client, BASE + "/preview", {"expected_revision": 0, "spec": SPEC}), publish(w, command(preview(w)), client=client)):
+        assert refused.status_code == 403 and refused.json()["error"] == "platform_permission_denied", refused.text
+        assert refused.json()["detail"]["permission"] == "platform.models.pricing", "authz-6: the cost policy is pricing's, not config.manage"
+    # a holder of the key's permission (FIXTURE: holding_exactly) reads the policy, never publishes it
+    custodian = w["login"](holding_exactly(monkeypatch, w["store"], w["ident"].create_user("cost-custodian@example.test", PW, status="active"),
+                                           {"platform.config.view", "platform.models.credential"}))
+    assert custodian.get(BASE).status_code == 200
+    assert post(custodian, BASE + "/preview", {"expected_revision": 0, "spec": SPEC}).json()["detail"]["permission"] == "platform.models.pricing"
     manager = w["login"](w["root"])
     body = command(preview(w, client=manager))
     assert publish(w, body, client=manager).json()["error"] == "reauth_required"

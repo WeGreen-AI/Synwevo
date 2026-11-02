@@ -9,7 +9,7 @@ administrator's is. Nothing here writes `users.platform_role` itself.
 """
 from __future__ import annotations
 
-from synwevo_core.platform_access import PlatformAccess, SUPER_ADMIN
+from synwevo_core.platform_access import PlatformAccess, ROLES, SUPER_ADMIN
 from synwevo_core.store import now
 
 FIXTURE_SOURCE = "fixture:tests"
@@ -25,6 +25,15 @@ def make_platform_admin(store, user_or_id, role: str = SUPER_ADMIN) -> dict:
     store.execute("UPDATE users SET email_verified_at=COALESCE(email_verified_at, ?) WHERE id=?", (now(), uid))
     PlatformAccess(store).host_grant(uid, role, source=FIXTURE_SOURCE, reason="test fixture: platform role")
     return store.one("SELECT * FROM users WHERE id=?", (uid,))
+
+
+def holding_exactly(monkeypatch, store, user_or_id, permissions, *, carrier: str = "support") -> dict:
+    """FIXTURE, this test only: one real grant that confers exactly `permissions`. No built-in role
+    holds one model permission without the whole catalogue (authz-6), so a built-in role's set is
+    redefined for the test (`monkeypatch` restores it); the grant, the session, the route and the
+    check are the real ones. It shows what a route answers to that set, not that anyone holds it."""
+    monkeypatch.setitem(ROLES, carrier, frozenset(permissions))
+    return make_platform_admin(store, user_or_id, role=carrier)
 
 
 def end_platform_grants(store, user_or_id) -> int:

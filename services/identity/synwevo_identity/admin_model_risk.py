@@ -1,8 +1,8 @@
 """Platform administration of the paid-model risk controls (docs/platform/model-risk.md).
 
-Reading needs `platform.config.view`; every change needs `platform.config.manage`, a reason, a
-client idempotency key and, where it lets money flow again (closing the breaker, lifting a
-suspension, allowlisting a payer), a fresh re-authentication. Authorization is re-checked inside
+Reading needs `platform.config.view`; every change needs `platform.models.pricing` (authz-6), a
+reason, a client idempotency key and, where it lets money flow again (closing the breaker, lifting
+a suspension, allowlisting a payer), a fresh re-authentication. Authorization is re-checked inside
 the writer transaction that changes state, records the audit row and the durable operation
 result. Views carry amounts, codes and identifiers only — never conversation content.
 """
@@ -29,7 +29,7 @@ from synwevo_core.identity import normalise_email
 from synwevo_core.platform_access import require_platform
 from synwevo_core.store import new_id
 
-from .admin_operations import canonical
+from .admin_operations import MODEL_PRICING_PERMISSION, MODEL_VIEW_PERMISSION, canonical
 
 OperationKey = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{16,128}$")]
 Reason = Annotated[str, Field(min_length=8, max_length=500)]
@@ -102,7 +102,8 @@ class RiskOperations:
 
     # ------------------------------------------------------------------ helpers
     def _actor(self, request, *, manage=False, dangerous=False):
-        return require_platform(request, "platform.config.manage" if manage else "platform.config.view",
+        # authz-6: the risk controls are platform.models.pricing's, not platform configuration's
+        return require_platform(request, MODEL_PRICING_PERMISSION if manage else MODEL_VIEW_PERMISSION,
                                 store=self.store, audit=self.audit, dangerous=dangerous)
 
     def _require_environment(self):

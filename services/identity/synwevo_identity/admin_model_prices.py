@@ -24,7 +24,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.platform_access import require_platform
 from synwevo_core.store import new_id
 
-from .admin_operations import PREVIEW_SECONDS, SignedPreview, canonical
+from .admin_operations import MODEL_VIEW_PERMISSION, OPERATIONS, PREVIEW_SECONDS, SignedPreview, canonical
 
 
 class PriceContract(BaseModel):
@@ -279,7 +279,8 @@ class PriceOperations(SignedPreview):
         return PriceCatalogue(self.store, environment=self.environment)
 
     def _actor(self, request, *, view=False, execute=False):
-        return require_platform(request, "platform.config.view" if view else "platform.config.manage",
+        # authz-6: drafting and publishing are platform.models.pricing's (OPERATIONS, both entries)
+        return require_platform(request, MODEL_VIEW_PERMISSION if view else OPERATIONS[self.action].permission,
                                 store=self.store, audit=self.audit, dangerous=execute)
 
     def _audit(self, request, actor, action, *, target, result="ok", meta):
@@ -397,7 +398,8 @@ class _Governed(SignedPreview):
         self.store, self.audit, self.environment = store, audit, environment
 
     def _actor(self, request, *, view=False, execute=False):
-        return require_platform(request, "platform.config.view" if view else "platform.config.manage",
+        # authz-6: the schedule and the markups are platform.models.pricing's (OPERATIONS)
+        return require_platform(request, MODEL_VIEW_PERMISSION if view else OPERATIONS[self.action].permission,
                                 store=self.store, audit=self.audit, dangerous=execute)
 
     def _audit(self, request, actor, *, target, result="ok", meta):

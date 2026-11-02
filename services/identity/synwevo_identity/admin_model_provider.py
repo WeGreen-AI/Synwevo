@@ -25,7 +25,7 @@ from synwevo_core.errors import ServiceError
 from synwevo_core.platform_access import require_platform
 from synwevo_core.store import new_id
 
-from .admin_operations import PREVIEW_SECONDS, SignedPreview, canonical
+from .admin_operations import MODEL_VIEW_PERMISSION, OPERATIONS, PREVIEW_SECONDS, SignedPreview, canonical
 
 
 class ProviderContract(BaseModel):
@@ -154,7 +154,8 @@ class ProviderOperations(SignedPreview):
         return ProviderSettings(self.store, environment=self.environment)
 
     def _actor(self, request, *, view=False, execute=False):
-        return require_platform(request, "platform.config.view" if view else "platform.config.manage",
+        # authz-6: the route and the sealed credential are platform.models.credential's (OPERATIONS)
+        return require_platform(request, MODEL_VIEW_PERMISSION if view else OPERATIONS[self.action].permission,
                                 store=self.store, audit=self.audit, dangerous=execute)
 
     def _audit(self, request, actor, *, result="ok", meta):

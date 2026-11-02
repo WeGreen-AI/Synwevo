@@ -70,6 +70,26 @@ for each (the brief asks that each be written here):
   means, so it is the super administrator's only (by construction). It never reads a seed or a
   code, refuses the actor's own account and every account holding a platform grant (an
   administrator's way back is the handover process), and grants no access to anything.
+* `platform.models.credential` and `platform.models.pricing` are split out of
+  `platform.config.manage` (backlog authz-6; the brief's §4.6 asks that the custody of the model
+  key and the pricing be separate powers). The credential permission governs the platform model
+  provider: its route, charging policy and the sealed credential — set, replace, revoke — and
+  never reads a key back (synwevo_identity.admin_model_provider; a published revision's health
+  alerts go to its holders, who can republish). The pricing permission governs what the platform
+  charges and spends: retail prices, the peak/off-peak schedule and markups, the cost policy
+  (cost windows, risk brake, traffic limits) and the paid-model risk controls (suspensions,
+  breaker, allowlist, upstream top-ups, reconciliation; admin_model_prices, admin_model_costs,
+  admin_model_risk — their alerts go to its holders). Reads of the four surfaces stay
+  `platform.config.view`, and neither new permission implies it: every GET is metadata (whether a
+  credential is configured and its revision, published figures, amounts and codes). A key is
+  readable through no route at all. `platform.config.manage` keeps the platform settings
+  (registration, the administrator second-factor policy, throttles, the MCP policy and stops,
+  platform-scope application changes, agent-safety rules) and governs no model surface any more.
+  Both ids are the super administrator's by construction and no delegated role's: no pre-existing
+  role received either (MASTER_PROMPT §12.1), and whether to delegate them is the owner's decision
+  (DECISIONS D20). Only roles are stored, so nothing is migrated: no grant row, no schema object.
+  A super administrator's grant confers the two ids the moment this release starts, and a rollback
+  merges them back into `platform.config.manage`.
 
 Rules that are properties of the data rather than of a caller's discipline:
 
@@ -147,8 +167,10 @@ PERMISSIONS: dict[str, str] = {
     "platform.workspaces.claim": "assign the historical (pre-identity) workspace to an ordinary account, and take it back",
     "platform.orgs.view": "list organizations and read their governance metadata (owners, workspaces, members, custom roles, open imports and copies, effective permissions; never content) without membership",
     "platform.orgs.manage": "run any organization's lifecycle and hand ownership of an ownerless one to an existing member, from the admin console, without membership",
-    "platform.config.view": "read the registration policy, sign-in provider status and non-secret dynamic platform settings",
-    "platform.config.manage": "change platform settings and govern model credentials, routes, prices and cost limits",
+    "platform.config.view": "read the registration policy, sign-in provider status, non-secret dynamic platform settings and the model governance surfaces' metadata (never a key)",
+    "platform.config.manage": "change platform settings: the registration policy, the administrator second-factor policy, throttles, the MCP policy and stops, platform-scope application changes and agent-safety rules; no model governance (platform.models.*)",
+    "platform.models.credential": "govern the platform model provider: its route, charging policy and the sealed credential (set, replace, revoke); never reads a key back",
+    "platform.models.pricing": "draft and publish retail model prices, the peak/off-peak schedule and markups; publish the cost policy (cost windows, risk brake, traffic limits) and operate the paid-model risk controls (suspensions, breaker, allowlist, upstream top-ups, reconciliation)",
     "platform.mail.view": "read the mail outbox metadata",
     "platform.mail.manage": "retry a failed reset or verification mail",
     "platform.apps.view": "read business application run and flow run metadata (operation, state, timing, error code; never inputs, outputs or content) and the application catalogue's state and counts",

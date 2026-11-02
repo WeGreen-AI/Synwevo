@@ -27,7 +27,7 @@ from synwevo_core.store import Store
 from synwevo_identity import admin_model_provider
 from synwevo_identity.admin_operations import canonical
 
-from .platform_fixture import end_platform_grants, make_platform_admin
+from .platform_fixture import end_platform_grants, holding_exactly, make_platform_admin
 from .test_admin_operations import PW, post, world
 
 BASE = "/api/admin/billing/model-provider"
@@ -382,8 +382,9 @@ def test_permissions_csrf_reauthentication_and_revoked_replay(provider_world):
     viewer = make_platform_admin(w["store"], w["ident"].create_user("provider-viewer@example.test", PW, status="active"), "auditor")
     client = w["login"](viewer)
     assert client.get(BASE).status_code == client.get(BASE + "/history").status_code == 200
-    assert post(client, BASE + "/preview", preview_request(w)).status_code == 403
-    assert publish(w, command(preview(w)), client=client).status_code == 403
+    for refused in (post(client, BASE + "/preview", preview_request(w)), publish(w, command(preview(w)), client=client)):
+        assert refused.status_code == 403 and refused.json()["error"] == "platform_permission_denied", refused.text
+        assert refused.json()["detail"]["permission"] == "platform.models.credential", "authz-6: the credential is not config.manage"
     manager = w["login"](w["root"])
     body = command(preview(w, client=manager))
     assert publish(w, body, client=manager).json()["error"] == "reauth_required"
@@ -393,6 +394,28 @@ def test_permissions_csrf_reauthentication_and_revoked_replay(provider_world):
     assert publish(w, body, client=manager).status_code == 200
     end_platform_grants(w["store"], w["root"])
     assert publish(w, body, client=manager).status_code == 404
+
+
+def test_the_sealed_credential_reaches_no_reader_and_only_its_permission_changes_it(provider_world, monkeypatch):
+    """authz-6. A key a holder of `platform.models.credential` published is in no answer a holder
+    of the configuration view and the pricing permission (FIXTURE: `holding_exactly`) can read: the
+    status and the history say whether one is configured and its revision. That holder cannot
+    replace, keep or revoke it, with a key in the request or not, and the attempt changes nothing."""
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    sealed = w["store"].one("SELECT secret_enc FROM model_provider_credentials WHERE environment='test'")["secret_enc"]
+    pricing = w["login"](holding_exactly(monkeypatch, w["store"], w["ident"].create_user("provider-pricing@example.test", PW, status="active"),
+                                         {"platform.config.view", "platform.models.pricing"}))
+    status, history = pricing.get(BASE), pricing.get(BASE + "/history")
+    assert status.status_code == history.status_code == 200
+    assert status.json()["credential_configured"] is True and status.json()["credential_revision"] == 1
+    for answer in (status, history):
+        assert KEY not in answer.text and sealed not in answer.text and "api_key" not in answer.text, answer.text
+    versions = w["store"].one("SELECT COUNT(*) AS n FROM model_provider_versions")["n"]
+    for credential in (REPLACEMENT, {"action": "keep", "api_key": None}, {"action": "revoke", "api_key": None}):
+        refused = post(pricing, BASE + "/preview", preview_request(w, revision=status.json()["revision"], credential=credential))
+        assert refused.status_code == 403 and refused.json()["detail"]["permission"] == "platform.models.credential", refused.text
+    assert w["store"].one("SELECT COUNT(*) AS n FROM model_provider_versions")["n"] == versions
 
 
 @pytest.mark.parametrize("withdrawal", ["permission", "session", "freshness", "account", "step_up"])

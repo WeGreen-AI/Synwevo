@@ -7,6 +7,7 @@ import pytest
 
 from synwevo_core.billing.risk import RiskControls
 
+from .platform_fixture import holding_exactly
 from .test_admin_operations import post, world  # noqa: F401 - fixture
 
 BASE = "/api/admin/billing/risk"
@@ -55,9 +56,15 @@ def test_authorization_comes_before_configuration(request, monkeypatch):
               "/allowlist": change(payer_kind="user", email="nobody@example.test"),
               "/allowlist/rallow_fixture/remove": change(), "/topups": change(amount_units="1", topped_up_at=0),
               "/reconciliations/run": change(kind="ledger_audit")}
+    custodian = holding_exactly(monkeypatch, w["store"], w["ident"].create_user("risk-custodian@example.test", PW, status="active"),
+                                {"platform.config.view", "platform.models.credential"})  # FIXTURE, this test only
+    credential = w["login"](custodian)
     for path, body in bodies.items():
-        r = post(auditor, BASE + path, body)
-        assert r.status_code == 403 and r.json()["error"] == "platform_permission_denied", (path, r.text)
+        for who, client in (("auditor", auditor), ("holder of the credential permission", credential)):
+            r = post(client, BASE + path, body)
+            assert r.status_code == 403 and r.json()["error"] == "platform_permission_denied", (who, path, r.text)
+            # authz-6: the risk controls are the pricing permission's, never platform.config.manage
+            assert r.json()["detail"]["permission"] == "platform.models.pricing", (who, path)
         assert post(w["ordinary"], BASE + path, body).status_code == 404, path
     # A platform administrator is told the honest reason once authorized.
     refused = post(w["admin"], BASE + "/breaker/open", change())

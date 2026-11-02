@@ -28,7 +28,7 @@ log = logging.getLogger("synwevo.billing")
 #: Health observations of a published revision; the closing ones stop paid dispatch on it.
 HEALTH_STATES = ("model_listed", "model_missing", "models_check_failed", "upstream_balance")
 CLOSING = ("model_missing", "upstream_balance")
-ALERT_PERMISSION = "platform.config.manage"  # Those who can reopen the route by publishing.
+ALERT_PERMISSION = "platform.models.credential"  # Those who can reopen the route by publishing (authz-6).
 ADMIN_TARGET = {"origin": "accounts", "path": "/admin?tab=model-provider"}
 #: DeepSeek reasoning_effort values; "none" is thinking off (docs/deepseek-provider.md).
 REASONING_EFFORTS = ("none", "low", "high", "max")

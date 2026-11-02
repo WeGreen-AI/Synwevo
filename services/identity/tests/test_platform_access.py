@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from .platform_fixture import legacy_platform_role_row, make_platform_admin
+from .platform_fixture import holding_exactly, legacy_platform_role_row, make_platform_admin
 from .test_admin_runs import flow as flow_run_fixture, run as op_run_fixture
 from synwevo_core import platform_access
 from synwevo_core.errors import ServiceError
@@ -30,7 +30,7 @@ from synwevo_core.identity import Identity
 from synwevo_core.notifications import Notifier, RETRY_DELAYS_S
 from synwevo_core.organizations import Organizations
 from synwevo_core.platform_access import (PERMISSIONS, ROLE_ORDER, ROLES, SUPER_ADMIN, PlatformAccess,
-                                          catalogue, sorted_permissions, clock)
+                                          catalogue, sorted_permissions, sorted_roles, clock)
 from synwevo_core.sessions import ADMIN_IDLE_SECONDS, CSRF_COOKIE, CSRF_HEADER
 from synwevo_core.store import Store, now
 
@@ -130,23 +130,23 @@ ROUTES = [
     ("POST", "/api/admin/mcp/connections/{cid}/lift", "platform.config.manage", True),
     ("GET", "/api/admin/billing/prices", "platform.config.view", False),
     ("GET", "/api/admin/billing/prices/drafts/{draft_id}", "platform.config.view", False),
-    ("POST", "/api/admin/billing/prices/drafts", "platform.config.manage", False),
-    ("PATCH", "/api/admin/billing/prices/drafts/{draft_id}", "platform.config.manage", False),
+    ("POST", "/api/admin/billing/prices/drafts", "platform.models.pricing", False),
+    ("PATCH", "/api/admin/billing/prices/drafts/{draft_id}", "platform.models.pricing", False),
     ("POST", "/api/admin/billing/prices/drafts/{draft_id}/calculate", "platform.config.view", False),
-    ("POST", "/api/admin/billing/prices/drafts/{draft_id}/preview", "platform.config.manage", False),
-    ("POST", "/api/admin/billing/prices/drafts/{draft_id}/publish", "platform.config.manage", True),
+    ("POST", "/api/admin/billing/prices/drafts/{draft_id}/preview", "platform.models.pricing", False),
+    ("POST", "/api/admin/billing/prices/drafts/{draft_id}/publish", "platform.models.pricing", True),
     ("GET", "/api/admin/billing/prices/schedule", "platform.config.view", False),
     ("GET", "/api/admin/billing/prices/schedule/history", "platform.config.view", False),
-    ("POST", "/api/admin/billing/prices/schedule/preview", "platform.config.manage", False),
-    ("POST", "/api/admin/billing/prices/schedule/publish", "platform.config.manage", True),
+    ("POST", "/api/admin/billing/prices/schedule/preview", "platform.models.pricing", False),
+    ("POST", "/api/admin/billing/prices/schedule/publish", "platform.models.pricing", True),
     ("GET", "/api/admin/billing/prices/markups", "platform.config.view", False),
-    ("POST", "/api/admin/billing/prices/markups/preview", "platform.config.manage", False),
-    ("POST", "/api/admin/billing/prices/markups/publish", "platform.config.manage", True),
+    ("POST", "/api/admin/billing/prices/markups/preview", "platform.models.pricing", False),
+    ("POST", "/api/admin/billing/prices/markups/publish", "platform.models.pricing", True),
     ("GET", "/api/admin/billing/cost-policy", "platform.config.view", False),
     ("GET", "/api/admin/billing/cost-policy/history", "platform.config.view", False),
     ("GET", "/api/admin/billing/cost-policy/traffic", "platform.config.view", False),
-    ("POST", "/api/admin/billing/cost-policy/preview", "platform.config.manage", False),
-    ("POST", "/api/admin/billing/cost-policy/publish", "platform.config.manage", True),
+    ("POST", "/api/admin/billing/cost-policy/preview", "platform.models.pricing", False),
+    ("POST", "/api/admin/billing/cost-policy/publish", "platform.models.pricing", True),
     ("GET", "/api/admin/billing/payments", "platform.billing.view", False),
     ("GET", "/api/admin/billing/payments/readiness", "platform.billing.view", False),
     ("POST", "/api/admin/billing/payments/publish", "platform.billing.manage", True),
@@ -155,22 +155,24 @@ ROUTES = [
     ("POST", "/api/admin/billing/freezes/{freeze_id}/lift", "platform.billing.manage", True),
     ("GET", "/api/admin/billing/model-provider", "platform.config.view", False),
     ("GET", "/api/admin/billing/model-provider/history", "platform.config.view", False),
-    ("POST", "/api/admin/billing/model-provider/preview", "platform.config.manage", False),
-    ("POST", "/api/admin/billing/model-provider/publish", "platform.config.manage", True),
+    ("POST", "/api/admin/billing/model-provider/preview", "platform.models.credential", False),
+    ("POST", "/api/admin/billing/model-provider/publish", "platform.models.credential", True),
     # Paid-model risk controls (docs/platform/model-risk.md §10): reopening paid calls is dangerous.
+    # authz-6: every model write below is platform.models.credential (provider) or
+    # platform.models.pricing (prices, schedule, markups, cost policy, risk), never config.manage.
     ("GET", "/api/admin/billing/risk", "platform.config.view", False),
     ("GET", "/api/admin/billing/risk/suspensions", "platform.config.view", False),
-    ("POST", "/api/admin/billing/risk/suspensions/{suspension_id}/lift", "platform.config.manage", True),
+    ("POST", "/api/admin/billing/risk/suspensions/{suspension_id}/lift", "platform.models.pricing", True),
     ("GET", "/api/admin/billing/risk/breaker", "platform.config.view", False),
-    ("POST", "/api/admin/billing/risk/breaker/open", "platform.config.manage", False),
-    ("POST", "/api/admin/billing/risk/breaker/close", "platform.config.manage", True),
+    ("POST", "/api/admin/billing/risk/breaker/open", "platform.models.pricing", False),
+    ("POST", "/api/admin/billing/risk/breaker/close", "platform.models.pricing", True),
     ("GET", "/api/admin/billing/risk/allowlist", "platform.config.view", False),
-    ("POST", "/api/admin/billing/risk/allowlist", "platform.config.manage", True),
-    ("POST", "/api/admin/billing/risk/allowlist/{entry_id}/remove", "platform.config.manage", False),
+    ("POST", "/api/admin/billing/risk/allowlist", "platform.models.pricing", True),
+    ("POST", "/api/admin/billing/risk/allowlist/{entry_id}/remove", "platform.models.pricing", False),
     ("GET", "/api/admin/billing/risk/balance", "platform.config.view", False),
-    ("POST", "/api/admin/billing/risk/topups", "platform.config.manage", False),
+    ("POST", "/api/admin/billing/risk/topups", "platform.models.pricing", False),
     ("GET", "/api/admin/billing/risk/reconciliations", "platform.config.view", False),
-    ("POST", "/api/admin/billing/risk/reconciliations/run", "platform.config.manage", False),
+    ("POST", "/api/admin/billing/risk/reconciliations/run", "platform.models.pricing", False),
     ("GET", "/api/admin/registration", "platform.config.view", False),
     ("POST", "/api/admin/registration", "platform.config.manage", True),
     ("GET", "/api/admin/security/second-factor", "platform.config.view", False),
@@ -460,6 +462,12 @@ def test_catalogue_roles_are_sets_of_catalogued_permissions_and_super_admin_is_a
     # money is its own role's: no other delegated role reads or moves it, and finance holds nothing else
     assert [r for r in ROLES if ROLES[r] & {"platform.billing.view", "platform.billing.manage"}] == [SUPER_ADMIN, "finance"]
     assert ROLES["finance"] == {"platform.overview.view", "platform.billing.view", "platform.billing.manage"}
+    # authz-6: model governance is split from platform configuration — the credential (route and
+    # sealed key) and the pricing (prices, schedule, markups, cost policy, risk controls) are the
+    # super administrator's alone, as platform.config.manage still is, which governs no model
+    # surface any more (test_model_governance_is_split_...)
+    for permission in ("platform.models.credential", "platform.models.pricing", "platform.config.manage"):
+        assert [r for r in ROLES if permission in ROLES[r]] == [SUPER_ADMIN], permission
     assert [r["id"] for r in catalogue()["roles"]] == list(ROLE_ORDER)
 
 
@@ -615,6 +623,358 @@ def test_a_denied_attempt_is_audited_once_per_window(world):
     assert [r["object_id"] for r in rows] == ["platform.users.manage", "api_platform.manage"]
     assert all(r["result"] == "denied" for r in rows)
     assert json.loads(rows[0]["meta"])["path"] == path
+
+
+# ---------------------------------------------------------------- authz-6: model governance split
+MODEL_CREDENTIAL = "platform.models.credential"
+MODEL_PRICING = "platform.models.pricing"
+MODEL_IDS = frozenset({MODEL_CREDENTIAL, MODEL_PRICING})
+#: The catalogue of the release before the split (dev a1b270e1, 2026-11-01), frozen: what its
+#: grants confer, and what the live catalogue is held to below.
+PRE_SPLIT_PERMISSIONS = frozenset({
+    "platform.overview.view", "platform.users.view", "platform.users.manage", "platform.users.support",
+    "platform.users.recover", "platform.workspaces.view", "platform.workspaces.manage", "platform.workspaces.claim",
+    "platform.orgs.view", "platform.orgs.manage", "platform.config.view", "platform.config.manage",
+    "platform.mail.view", "platform.mail.manage", "platform.apps.view", "platform.apps.manage",
+    "platform.billing.view", "platform.billing.manage", "platform.audit.view", "platform.roles.view",
+    "platform.roles.assign", "platform.roles.assign_super", "api_platform.manage"})
+PRE_SPLIT_ROLES = {
+    SUPER_ADMIN: PRE_SPLIT_PERMISSIONS,
+    "access_admin": frozenset({
+        "platform.overview.view", "platform.users.view", "platform.users.manage", "platform.users.support",
+        "platform.workspaces.view", "platform.workspaces.manage", "platform.orgs.view", "platform.orgs.manage",
+        "platform.config.view", "platform.mail.view", "platform.mail.manage", "platform.apps.view",
+        "platform.apps.manage", "platform.audit.view", "platform.roles.view"}),
+    "support": frozenset({
+        "platform.overview.view", "platform.users.view", "platform.users.support", "platform.workspaces.view",
+        "platform.orgs.view", "platform.mail.view", "platform.apps.view"}),
+    "auditor": frozenset({
+        "platform.overview.view", "platform.users.view", "platform.workspaces.view", "platform.orgs.view",
+        "platform.config.view", "platform.mail.view", "platform.apps.view", "platform.audit.view",
+        "platform.roles.view"}),
+    "api_platform_admin": frozenset({"platform.overview.view", "api_platform.manage"}),
+    "finance": frozenset({"platform.overview.view", "platform.billing.view", "platform.billing.manage"}),
+}
+#: That release's role CHECK on the grants table (the finance release, 28e210fd). The split changes
+#: no stored text: that release's `widen_roles` refuses a table whose clause it does not know.
+PRE_SPLIT_ROLE_CHECK = "CHECK (role IN ('super_admin','access_admin','support','auditor','api_platform_admin','finance'))"
+#: The writes each model permission takes over from `platform.config.manage`; every GET of the
+#: four surfaces stays `platform.config.view` (metadata only: whether a credential is configured
+#: and its revision, published figures, amounts and codes — never a key).
+CREDENTIAL_WRITES = {("POST", "/api/admin/billing/model-provider/preview"),
+                     ("POST", "/api/admin/billing/model-provider/publish")}
+PRICING_WRITES = {("POST", "/api/admin/billing/prices/drafts"),
+                  ("PATCH", "/api/admin/billing/prices/drafts/{draft_id}"),
+                  ("POST", "/api/admin/billing/prices/drafts/{draft_id}/preview"),
+                  ("POST", "/api/admin/billing/prices/drafts/{draft_id}/publish"),
+                  ("POST", "/api/admin/billing/prices/schedule/preview"),
+                  ("POST", "/api/admin/billing/prices/schedule/publish"),
+                  ("POST", "/api/admin/billing/prices/markups/preview"),
+                  ("POST", "/api/admin/billing/prices/markups/publish"),
+                  ("POST", "/api/admin/billing/cost-policy/preview"),
+                  ("POST", "/api/admin/billing/cost-policy/publish"),
+                  ("POST", "/api/admin/billing/risk/suspensions/{suspension_id}/lift"),
+                  ("POST", "/api/admin/billing/risk/breaker/open"),
+                  ("POST", "/api/admin/billing/risk/breaker/close"),
+                  ("POST", "/api/admin/billing/risk/allowlist"),
+                  ("POST", "/api/admin/billing/risk/allowlist/{entry_id}/remove"),
+                  ("POST", "/api/admin/billing/risk/topups"),
+                  ("POST", "/api/admin/billing/risk/reconciliations/run")}
+MODEL_PREFIXES = ("/api/admin/billing/model-provider", "/api/admin/billing/prices",
+                  "/api/admin/billing/cost-policy", "/api/admin/billing/risk")
+MODEL_MODULES = ("admin_model_provider", "admin_model_prices", "admin_model_costs", "admin_model_risk")
+#: The surfaces' reads: every GET, and the price calculator (it computes, it changes nothing).
+MODEL_READS = [(m, p, d) for m, p, perm, d in ROUTES if p.startswith(MODEL_PREFIXES) and perm == "platform.config.view"]
+
+
+def _model_routes(permission):
+    return [(m, p, d) for m, p, perm, d in ROUTES if perm == permission]
+
+
+def _holding(world, monkeypatch, permissions, *, carrier="support", email=None):
+    """FIXTURE, this test only: see `platform_fixture.holding_exactly`."""
+    user = verified(world["store"], world["ident"], email or f"holds-{carrier}@example.test")
+    return holding_exactly(monkeypatch, world["store"], user, permissions, carrier=carrier)
+
+
+def _assert_reached(r, template, dangerous, who):
+    """Past the permission check: the strict re-authentication, the state refusal, or 200."""
+    if dangerous:
+        assert r.status_code == 403 and r.json()["error"] == "reauth_required", (who, template, r.text)
+    elif template in RISK_STATE_REFUSALS:
+        status, code = RISK_STATE_REFUSALS[template]
+        assert r.status_code == status and r.json()["error"] == code, (who, template, r.text)
+    else:
+        assert r.status_code == 200, (who, template, r.text)
+
+
+def _assert_denied(r, permission, who, template):
+    assert r.status_code == 403 and r.json()["error"] == "platform_permission_denied", (who, template, r.text)
+    assert r.json()["detail"]["permission"] == permission, (who, template)
+
+
+def test_model_governance_is_split_from_platform_configuration_in_the_catalogue_and_the_routes(world):
+    """authz-6 (brief §4.6 "模型密钥保管与定价分离"): the sealed provider credential and its route
+    are `platform.models.credential`; retail prices, the schedule, markups, the cost policy and the
+    paid-model risk controls are `platform.models.pricing`. `platform.config.manage` keeps platform
+    settings and nothing of model governance. Each id is the super administrator's by construction
+    and no delegated role's; no pre-existing delegated role received either."""
+    import importlib
+    import inspect
+    from synwevo_core.billing import provider_settings, risk
+    from synwevo_identity.admin_operations import OPERATIONS
+    assert MODEL_IDS <= set(PERMISSIONS)
+    for permission in (*MODEL_IDS, "platform.config.manage"):
+        assert [r for r in ROLES if permission in ROLES[r]] == [SUPER_ADMIN], permission
+    # the matrix: exactly these writes, by these ids; the surfaces' reads unchanged
+    assert {(m, p) for m, p, _ in _model_routes(MODEL_CREDENTIAL)} == CREDENTIAL_WRITES
+    assert {(m, p) for m, p, _ in _model_routes(MODEL_PRICING)} == PRICING_WRITES
+    for method, template, permission, _ in ROUTES:
+        if template.startswith(MODEL_PREFIXES):
+            assert permission != "platform.config.manage", (method, template)
+            if method == "GET" or template.endswith("/calculate"):
+                assert permission == "platform.config.view", (method, template)
+    # the modules ask for the split ids and not the old one; the operation catalogue agrees
+    for name in MODEL_MODULES:
+        assert '"platform.config.manage"' not in inspect.getsource(importlib.import_module(f"synwevo_identity.{name}")), name
+    for action in ("admin.model_price.draft", "admin.model_price.publish", "admin.model_price.schedule.publish",
+                   "admin.model_price.markup.publish", "admin.model_cost.publish"):
+        assert OPERATIONS[action].permission == MODEL_PRICING, action
+    assert OPERATIONS["admin.model_provider.publish"].permission == MODEL_CREDENTIAL
+    assert OPERATIONS["admin.settings.publish"].permission == "platform.config.manage"
+    # alerts go to whoever can act: republish the route, or operate the risk controls
+    assert provider_settings.ALERT_PERMISSION == MODEL_CREDENTIAL and risk.ALERT_PERMISSION == MODEL_PRICING
+    assert world["api"].openapi()  # the matrix completeness test holds ROUTES to the mounted routes
+
+
+@pytest.mark.parametrize("own, other", [(MODEL_PRICING, MODEL_CREDENTIAL), (MODEL_CREDENTIAL, MODEL_PRICING)],
+                         ids=["pricing-only", "credential-only"])
+def test_a_holder_of_only_one_model_permission_can_neither_read_nor_change_the_other(world, monkeypatch, own, other):
+    """Holding exactly one id (FIXTURE: `_holding`): every write of the other surface is refused
+    by name, every read is refused because managing is not reading, and the own writes are
+    reached. Each refusal is audited once per missing id, so a page that keeps asking cannot flood
+    the log. Nothing of the other surface changed."""
+    user = _holding(world, monkeypatch, {own})
+    c = world["login"](user)
+    me = c.get("/api/auth/me").json()
+    assert me["platform_permissions"] == [own] and me["permissions"] == []
+    for method, template, _ in _model_routes(other):
+        _assert_denied(_call(c, method, _path(template, world), world), other, own, template)
+    for method, template, _ in MODEL_READS:
+        _assert_denied(_call(c, method, _path(template, world), world), "platform.config.view", own, template)
+    for method, template, dangerous in _model_routes(own):
+        _assert_reached(_call(c, method, _path(template, world), world), template, dangerous, own)
+    rows = world["store"].all("SELECT object_id FROM audit_events WHERE action='admin.access.denied' AND actor_id=? ORDER BY seq",
+                              (user["id"],))
+    assert sorted(r["object_id"] for r in rows) == sorted({other, "platform.config.view"}), "once per missing id"
+    if other == MODEL_CREDENTIAL:
+        assert not world["store"].one("SELECT 1 FROM model_provider_versions")
+    else:
+        assert not world["store"].one("SELECT 1 FROM model_cost_policy_versions")
+        assert not world["store"].one("SELECT 1 FROM billing_prices WHERE price_id<>?", (world["cost_price_id"],))
+
+
+@pytest.mark.parametrize("own, other", [(MODEL_PRICING, MODEL_CREDENTIAL), (MODEL_CREDENTIAL, MODEL_PRICING)],
+                         ids=["pricing-with-view", "credential-with-view"])
+def test_the_configuration_view_reads_model_metadata_and_changes_nothing_of_the_other_surface(world, monkeypatch, own, other):
+    """With `platform.config.view` too (FIXTURE: `_holding`; what a delegated role would have to
+    hold, because managing does not imply reading): the four surfaces read as metadata, as for
+    the auditor, and the other surface's writes stay refused by name."""
+    c = world["login"](_holding(world, monkeypatch, {"platform.config.view", own}))
+    for method, template, dangerous in MODEL_READS:
+        _assert_reached(_call(c, method, _path(template, world), world), template, dangerous, own)
+    for method, template, _ in _model_routes(other):
+        _assert_denied(_call(c, method, _path(template, world), world), other, own, template)
+    for method, template, dangerous in _model_routes(own):
+        _assert_reached(_call(c, method, _path(template, world), world), template, dangerous, own)
+
+
+def test_platform_configuration_authority_alone_no_longer_governs_models(world, monkeypatch):
+    """`platform.config.manage` opens the platform settings and nothing of model governance
+    (FIXTURE: `_holding`; the settings' own routes prove the fixture's manage is a real one)."""
+    c = world["login"](_holding(world, monkeypatch, {"platform.overview.view", "platform.config.view", "platform.config.manage"}))
+    for permission in (MODEL_CREDENTIAL, MODEL_PRICING):
+        for method, template, _ in _model_routes(permission):
+            _assert_denied(_call(c, method, _path(template, world), world), permission, "config.manage", template)
+    assert _call(c, "POST", "/api/admin/settings/preview", world).status_code == 200
+    assert _call(c, "POST", "/api/admin/registration", world).json()["error"] == "reauth_required"
+    assert not world["store"].one("SELECT 1 FROM model_provider_versions")
+    assert not world["store"].one("SELECT 1 FROM model_cost_policy_versions")
+
+
+def test_the_super_administrator_still_reaches_every_model_surface(world):
+    """Both ids, by construction: every read answers, every write passes the permission check (a
+    dangerous one stops at the strict re-authentication until it is given; the publishing itself
+    is proved end to end in test_admin_model_provider, _prices, _costs and _risk, whose actors are
+    super administrators). Nothing is refused for a permission and no refusal is audited."""
+    assert ROLES[SUPER_ADMIN] >= MODEL_IDS | {"platform.config.view", "platform.config.manage"}
+    root = world["root"]
+    c = world["login"](root)
+    assert MODEL_IDS <= set(c.get("/api/auth/me").json()["platform_permissions"])
+    for method, template, _, dangerous in (r for r in ROUTES if r[1].startswith(MODEL_PREFIXES)):
+        r = _call(c, method, _path(template, world), world)
+        assert not (r.status_code == 403 and r.json()["error"] == "platform_permission_denied"), (template, r.text)
+        _assert_reached(r, template, dangerous, SUPER_ADMIN)
+    assert not world["store"].one("SELECT 1 FROM audit_events WHERE action='admin.access.denied' AND actor_id=?", (root["id"],))
+
+
+def test_unauthenticated_and_unprivileged_callers_meet_the_model_surfaces_as_before(world):
+    """No session: 401 on the API (404 for the shell); an account without a platform permission
+    — the plain account, an organization owner, a workspace administrator: 404 everywhere; a
+    delegated role without the id: 403 naming it (the auditor and finance here, the whole matrix
+    in test_each_built_in_role_is_allowed_exactly_its_permissions)."""
+    model = [(m, p, perm, d) for m, p, perm, d in ROUTES if p.startswith(MODEL_PREFIXES)]
+    assert {perm for _, _, perm, _ in model} == {"platform.config.view", MODEL_CREDENTIAL, MODEL_PRICING}
+    with TestClient(world["api"], raise_server_exceptions=False) as anonymous:
+        for method, template, _, _ in model:
+            r = _call(anonymous, method, _path(template, world), world)
+            assert r.status_code == 401 and r.json()["error"] == "unauthorized", (method, template, r.text)
+        assert anonymous.get("/admin").status_code == 404
+    owner = verified(world["store"], world["ident"], "model-org-owner@example.test")
+    org = Organizations(world["store"], world["ident"]).create(owner["id"], "Model fixture organization",
+                                                               "Model fixture workspace", "fixture-org-model1")
+    ws_admin = verified(world["store"], world["ident"], "model-ws-admin@example.test")
+    world["ident"].add_member(org["workspace"]["id"], ws_admin["id"], "admin", actor_id=owner["id"])
+    for who in (world["plain"], owner, ws_admin):
+        c = world["login"](who)
+        for method, template, _, _ in model:
+            r = _call(c, method, _path(template, world), world)
+            assert r.status_code == 404 and r.json()["error"] == "not_found", (who["email"], method, template, r.text)
+    for role in ("auditor", "finance"):
+        c = world["login"](holder(world, role))
+        for method, template, permission, _ in model:
+            r = _call(c, method, _path(template, world), world)
+            if permission in ROLES[role]:
+                assert r.status_code == 200, (role, method, template, r.text)
+            else:
+                _assert_denied(r, permission, role, template)
+    assert not world["store"].one("SELECT 1 FROM audit_events WHERE action='admin.access.denied' AND actor_id IN (?,?,?)",
+                                  (world["plain"]["id"], owner["id"], ws_admin["id"]))
+
+
+def test_no_role_reaches_a_route_it_could_not_reach_before_the_split_and_none_lost_one():
+    """Reachability, role by role, over the whole matrix: the routes the frozen catalogue opened
+    (a model write asked for `platform.config.manage` then) are the routes the live one opens.
+    The matrix test holds the HTTP answers to `ROLES`; this holds `ROLES` to the previous release."""
+    assert set(ROLES) == set(PRE_SPLIT_ROLES) and list(ROLE_ORDER) == list(PRE_SPLIT_ROLES)
+    assert set(PERMISSIONS) - PRE_SPLIT_PERMISSIONS == MODEL_IDS and not PRE_SPLIT_PERMISSIONS - set(PERMISSIONS)
+
+    def before(permission):
+        return "platform.config.manage" if permission in MODEL_IDS else permission
+    for role, perms in PRE_SPLIT_ROLES.items():
+        assert ROLES[role] == perms | (MODEL_IDS if role == SUPER_ADMIN else frozenset()), role
+        then = {(m, p) for m, p, perm, _ in ROUTES if perm is None or before(perm) in perms}
+        now_ = {(m, p) for m, p, perm, _ in ROUTES if perm is None or perm in ROLES[role]}
+        assert now_ == then, role
+
+
+def test_a_store_of_the_release_before_the_split_keeps_every_holder_and_needs_no_migration(tmp_path, monkeypatch):
+    """A store whose grants were made before the split, opened by this release: only roles are
+    stored, so nothing is rewritten — no schema object, grant row, rollback-mirror value or
+    administrator audit row changes, on the first start or a second one, and the role CHECK stays
+    the previous release's text (its `widen_roles` refuses a clause it does not know, so a rollback
+    keeps opening this store). Every holder keeps exactly what it could do; the super
+    administrator gains the two ids by construction, and no other holder gains anything."""
+    import sqlite3
+    from synwevo_core.schema_widen import widen_checks
+    monkeypatch.setenv("SYNWEVO_TEST_INSTANCE", "1")
+    root = tmp_path / "isolated-pre-split"
+    store = Store(root)
+    ident = Identity(store)
+    people = {}
+    for role in PRE_SPLIT_ROLES:
+        u = ident.create_user(f"pre-split-{role}@example.test", PW, status="active", with_personal_workspace=False)
+        people[role] = make_platform_admin(store, u, role=role)
+    raw = sqlite3.connect(store.db_path, isolation_level=None)
+    raw.execute("PRAGMA busy_timeout=30000")
+
+    def schema():
+        return raw.execute("SELECT name,type,tbl_name,sql FROM sqlite_master ORDER BY name").fetchall()
+
+    def grants():
+        return raw.execute("SELECT rowid,* FROM platform_role_grants ORDER BY rowid").fetchall()
+
+    def mirror():
+        return raw.execute("SELECT id,platform_role FROM users ORDER BY id").fetchall()
+
+    def audited():
+        return raw.execute("SELECT seq,action,object_id,meta FROM audit_events WHERE action LIKE 'admin.platform.%' ORDER BY seq").fetchall()
+
+    def state():
+        return schema(), grants(), mirror(), audited()
+    before = state()
+    assert len(before[1]) == len(PRE_SPLIT_ROLES), "one grant per role, none of them about a permission"
+    assert PRE_SPLIT_ROLE_CHECK in dict((r[0], r[3]) for r in before[0])["platform_role_grants"]
+    for _ in ("this release's first start", "a second start"):
+        reopened = Store(root)
+        assert state() == before
+        access = PlatformAccess(reopened)
+        for role, user in people.items():
+            assert access.roles(user["id"]) == [role]
+            assert access.effective_permissions(user["id"]) == PRE_SPLIT_ROLES[role] | (MODEL_IDS if role == SUPER_ADMIN else frozenset()), role
+    # the previous release's own migration step finds nothing to do on this store (a rollback)
+    previous_release = {"platform_role_grants": ((
+        "CHECK (role IN ('super_admin','access_admin','support','auditor','api_platform_admin'))", PRE_SPLIT_ROLE_CHECK),)}
+    assert widen_checks(raw, previous_release) == [] and state() == before
+    raw.close()
+
+
+def test_grants_stay_audited_and_no_delegated_grant_confers_a_model_permission(world):
+    """A grant names a role; permissions are derived, so a grant row or its audit row never carries
+    an id and the split leaves both as they were. Through the real routes: each delegated role a
+    super administrator grants adds neither model id (in the simulation first, then in the
+    explanation), the audit records the roles before and after, and the catalogue and an
+    explanation show the two ids as the super administrator's alone."""
+    store = world["store"]
+    root = world["login"](world["root"])
+    reauth(root)
+    catalogued = {r["id"]: set(r["permissions"]) for r in root.get("/api/admin/platform/roles").json()["roles"]}
+    assert [r for r, perms in catalogued.items() if perms & MODEL_IDS] == [SUPER_ADMIN] and catalogued[SUPER_ADMIN] >= MODEL_IDS
+    target = world["plain"]
+    delegated = root.get(f"/api/admin/users/{target['id']}/platform-access").json()["assignable_roles"]
+    assert set(delegated) == set(PRE_SPLIT_ROLES) - {SUPER_ADMIN}
+    held = []
+    for role in delegated:
+        sim = root.get(f"/api/admin/users/{target['id']}/platform-access/simulate?change=grant&role={role}").json()
+        assert sim["feasible"] and not set(sim["gained"]) & MODEL_IDS, role
+        r = post(root, f"/api/admin/users/{target['id']}/platform-grants", {"role": role, "reason": REASON})
+        assert r.status_code == 200, r.text
+        before, after = sorted_roles(held), sorted_roles([*held, role])
+        assert r.json()["before"] == before and r.json()["after"] == after
+        event = store.one("SELECT * FROM audit_events WHERE action='admin.platform.grant' AND object_id=? ORDER BY seq DESC LIMIT 1",
+                          (target["id"],))
+        meta = json.loads(event["meta"])
+        assert event["actor_id"] == world["root"]["id"] and meta["role"] == role and meta["reason"] == REASON
+        assert meta["before"] == {"roles": before} and meta["after"] == {"roles": after}
+        assert "platform.models" not in event["meta"], "a grant's audit names roles, not permissions"
+        held.append(role)
+    everything = {p["permission"] for p in root.get(f"/api/admin/users/{target['id']}/platform-access").json()["permissions"]}
+    assert everything == set().union(*(PRE_SPLIT_ROLES[r] for r in delegated)) and not everything & MODEL_IDS
+    own = root.get(f"/api/admin/users/{world['root']['id']}/platform-access").json()
+    sources = {p["permission"]: {s["role"] for s in p["sources"]} for p in own["permissions"]}
+    assert sources[MODEL_CREDENTIAL] == sources[MODEL_PRICING] == {SUPER_ADMIN}
+
+
+def test_model_alerts_reach_the_administrators_who_can_act_on_them(world, monkeypatch):
+    """Route closures (missing model, upstream balance) go to whoever can republish the route;
+    the risk controls' alerts to whoever can operate them; the payment channel's webhook-failure
+    alert keeps its recipients (holders of `platform.config.manage`: the super administrators).
+    FIXTURE: `_holding`, one id per account, so the recipients can tell the ids apart."""
+    from synwevo_core.billing import provider_settings, risk
+    store = world["store"]
+    credential = _holding(world, monkeypatch, {MODEL_CREDENTIAL}, carrier="support", email="holds-credential@example.test")
+    pricing = _holding(world, monkeypatch, {MODEL_PRICING}, carrier="auditor", email="holds-pricing@example.test")
+    holder(world, "finance"), holder(world, "access_admin")   # real delegated roles receive none of them
+    assert set(risk.admin_recipients(store)) == {world["root"]["id"], pricing["id"]}
+    assert risk.WEBHOOK_ALERT_PERMISSION == "platform.config.manage"
+    assert set(risk.admin_recipients(store, permission=risk.WEBHOOK_ALERT_PERMISSION)) == {world["root"]["id"]}
+    assert risk.alert_payment_webhook_failure(store, environment="test", provider="stripe", code="fixture_code") == 1
+    webhook = store.all("SELECT user_id FROM notifications WHERE kind='billing.risk.payment_webhook_failed'")
+    assert {r["user_id"] for r in webhook} == {world["root"]["id"]}
+    settings = provider_settings.ProviderSettings(store, environment="test")
+    assert settings._alert({"state": "model_missing", "requested_model": "fixture-model"}, 1) == 2
+    rows = store.all("SELECT user_id FROM notifications WHERE kind='billing.model.route_missing'")
+    assert {r["user_id"] for r in rows} == {world["root"]["id"], credential["id"]}
 
 
 # ---------------------------------------------------------------- granting
