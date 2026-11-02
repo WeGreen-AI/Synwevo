@@ -12,6 +12,7 @@
     ".": "./src/index.ts",
     "./styles.css": "./src/styles.css",
     "./i18n-core": "./src/i18n-core.ts",
+    "./money": "./src/money.ts",
     "./vite": "./vite/brand-icons.ts"
   },
   "peerDependencies": {

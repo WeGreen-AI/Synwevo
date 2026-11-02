@@ -1,6 +1,35 @@
 # Vultr Tokyo deployment — current record
 
-## Current release · 2026-11-01 10:35 UTC — c3176eb3, the verify job runs the runtime suite as two parallel containers
+## Current release · 2026-11-01 15:10 UTC — 7bbe18c1, money amounts read to the fen (and 9f2d5938, the react group, at 11:25 UTC)
+
+**Running source: `7bbe18c19d140c5929f87d8c9e6ccce6fbe0d174`** (origin/dev, the merge of PR #34). Pipeline run 41315035891
+(push to dev): verify 14:12→15:08 UTC, deploy 15:08→15:10 UTC through the restricted SSH command; receiver backup
+`/opt/synwevo/backups/20261101T151017Z`. Earlier the same day run 41298262842 deployed 9f2d5938 (PR #32, react and react-dom
+19.3.1, the first Dependabot pull request under the grouped configuration) at 11:25 UTC, backup `20261101T112449Z`.
+
+**What it ships over c3176eb3 (BACKLOG 金额显示精度):** front-end only, no API or schema change. Headline amounts no longer
+show the production wallet unit's six decimals (CNY at scale 6, micro-yuan: "¥5.11182"). One shared formatter,
+`packages/ui/src/money.ts`, rounds on the integer with BigInt to the currency's own decimals, in the direction its sentence
+needs: a settled charge to the nearest fen; a bound or hold said as "at most" up; what can still be spent down, so a shown
+balance at least as large as a shown hold means the ledger covers that hold. A non-zero amount under one fen reads
+"不到 ¥0.01" / "under CN¥0.01", never "¥0.00". Where figures are compared or must add up (a cost breakdown, a balance and its
+parts, usage tables, the budget panel, the run-cap input and its bound) the page shows every ledger digit; CSV exports and
+admin cost tooling keep full precision. Per-million prices show the published decimal exactly, and a non-terminating one
+says "about". The rule is in `docs/personal-wallet.md`.
+
+**Post-deploy checks (read-only):** 7bbe18c1 on 2026-11-02 04:48 UTC, 14 hours after the deploy — `/readyz` 200 on synwevo.com,
+workplace, accounts, docwave and message; accounts, docs, portal and messages all on `synwevo:7bbe18c1…` and healthy, gateway
+healthy; no traceback or error line in the last 30 minutes of any role. The Account bundle served from accounts.synwevo.com
+carries the new formatter's phrases (public static assets). **Not observed:** the new text on a signed-in production page; the
+amounts were checked by the tests and by the reviewers' rendered probes, not in a production session. 9f2d5938 was checked at
+11:27 UTC: four roles on its image and healthy, gateway healthy, backup present, no error line in 10 minutes, five `/readyz` 200.
+
+**For the owner — one display choice you can overrule:** with a balance exactly equal to one hold (524,289 micro-yuan), the
+composer reads "余额 ¥0.52" beside "每次调用最多冻结 ¥0.53". Fen rounding of two different directions has to break that equality
+one way, and the page takes the conservative way: it never promises a fen the ledger would refuse. The send is still decided by
+the server on exact units, so such a send goes through. The other standing items are unchanged.
+
+## 2026-11-01 10:35 UTC — c3176eb3 (historical; superseded above), the verify job runs the runtime suite as two parallel containers
 
 **Running source: `c3176eb3f39a8b116e5c0d1078647866816c0f9f`** (origin/dev, the merge of PR #31). Pipeline run 41293870829
 (push to dev): verify 09:36→10:33 UTC, deploy 10:33→10:35 UTC through the restricted SSH command; receiver backup

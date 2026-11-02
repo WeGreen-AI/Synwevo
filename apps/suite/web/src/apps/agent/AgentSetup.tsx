@@ -192,11 +192,15 @@ export default function AgentSetup({ setup, organizationPayer, hasDraft, maximum
   const unit: Unit | null = setup?.limits.unit ?? null;
   const limits = draft ?? (setup ? suggestedDraft(setup) : { daily: "", weekly: "", monthly: "" });
   const ready = (!needConsent || (consentChecked && !!facts)) && (!needTerms || termsChecked);
-  const money = (minor: string, u: MoneyUnit) => { try { return formatMoney(minor, u, locale); } catch { return formatAmount(minor, u); } };
-  const amount = maximum ? money(maximum.amount, maximum.unit) : c("setupAmountUnknown");
+  // The most an answer can cost is a bound ("at most"): rounded up, so the sentence stays true. The
+  // limits are the amounts in the boxes, shown to every digit the unit holds.
+  const money = (minor: string, u: MoneyUnit, how: "typed" | "bound") => {
+    try { return formatMoney(minor, u, locale, how === "typed" ? { precision: "exact" } : { rounding: "up" }); } catch { return formatAmount(minor, u); }
+  };
+  const amount = maximum ? money(maximum.amount, maximum.unit, "bound") : c("setupAmountUnknown");
   const shownLimit = (period: BudgetPeriod) => {
     if (!unit) return limits[period];
-    try { return money(parsePayerBudget(limits[period], unit.scale), unit); } catch { return limits[period]; }
+    try { return money(parsePayerBudget(limits[period], unit.scale), unit, "typed"); } catch { return limits[period]; }
   };
   // Why the step stopped, when the card does not already say it (a new document or notice version).
   const partialCode = partial != null ? errorCode(partial) : "";

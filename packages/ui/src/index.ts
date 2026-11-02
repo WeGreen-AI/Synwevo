@@ -12,3 +12,4 @@ export * from "./useFit";
 export * from "./i18n";
 export * from "./layer";
 export * from "./lazy";
+export * from "./money";

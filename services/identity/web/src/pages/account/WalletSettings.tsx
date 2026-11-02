@@ -3,7 +3,7 @@ import { get, put } from '@synwevo/auth-client';
 import { useI18n, useToast } from '@synwevo/ui';
 import { amountToUnits, unitsToAmount } from '../../governance/model-costs';
 import { ErrorNotice, errorText } from './common';
-import { WALLET_API, moneyText } from './walletModel';
+import { WALLET_API, ledgerText, moneyText } from './walletModel';
 import './wallet.messages';
 
 interface Period { start: number; end: number; spent: string; held: string; remaining: string }
@@ -20,7 +20,9 @@ function toUnits(value: string, scale: number): string | null {
   return amountToUnits(value.trim(), scale);
 }
 
-function LimitForm({ budget, onSaved }: { budget: Budget; onSaved: (next: Budget) => void }) {
+/** One unit's limits and this period's spending against them. The spending sentence states the ledger
+ *  exactly, like the limit in the box above it, so settled + held + remaining add up to that limit. */
+export function LimitForm({ budget, onSaved }: { budget: Budget; onSaved: (next: Budget) => void }) {
   const { t, locale } = useI18n();
   const toast = useToast();
   const { code, scale } = budget.unit;
@@ -56,8 +58,8 @@ function LimitForm({ budget, onSaved }: { budget: Budget; onSaved: (next: Budget
           {period && budget.configured && <>
             <meter min={0} max={Number(limit > 0n ? limit : 1n)} value={Number(used > limit ? limit : used)} aria-label={t('{period}已用', { period: t(now) })} />
             <span className="tiny muted">{t('{period}已结算 {spent}，预留 {held}，剩余 {remaining}', { period: t(now),
-              spent: moneyText(period.spent, scale, code, locale), held: moneyText(period.held, scale, code, locale),
-              remaining: moneyText(period.remaining, scale, code, locale) })}</span>
+              spent: ledgerText(period.spent, scale, code, locale), held: ledgerText(period.held, scale, code, locale),
+              remaining: ledgerText(period.remaining, scale, code, locale) })}</span>
           </>}
         </div>;
       })}
@@ -93,7 +95,9 @@ export function LimitsSection() {
   </section>;
 }
 
-function ReminderForm({ reminder, onSaved }: { reminder: Reminder; onSaved: (next: Reminder) => void }) {
+/** The low-balance line and, when the server says the balance is below it, that balance rounded down —
+ *  so it always reads below the line in the box, which is shown as typed. */
+export function ReminderForm({ reminder, onSaved }: { reminder: Reminder; onSaved: (next: Reminder) => void }) {
   const { t, locale } = useI18n();
   const toast = useToast();
   const [enabled, setEnabled] = useState(reminder.enabled);
@@ -115,7 +119,7 @@ function ReminderForm({ reminder, onSaved }: { reminder: Reminder; onSaved: (nex
       <span>{t('可用余额低于提醒线时通知我')}</span></label>
     <label className="field"><span>{t('提醒线')}</span>
       <input className="input" inputMode="decimal" autoComplete="off" value={threshold} aria-invalid={units === null} onChange={e => setThreshold(e.target.value)} /></label>
-    {reminder.below && <p className="notice warn" role="status">{t('当前可用余额 {available}，已低于提醒线。', { available: moneyText(reminder.available, reminder.scale, reminder.unit, locale) })}</p>}
+    {reminder.below && <p className="notice warn" role="status">{t('当前可用余额 {available}，已低于提醒线。', { available: moneyText(reminder.available, reminder.scale, reminder.unit, locale, { rounding: 'down' }) })}</p>}
     {units === null && <p className="tiny err-text" role="alert">{t('请输入不小于 0 的金额，小数位数不超过 {scale} 位。', { scale: reminder.scale })}</p>}
     <ErrorNotice error={error ? errorText(error, t) : null} />
     <div><button className="btn primary" disabled={busy || units === null}>{t(busy ? '正在保存…' : '保存余额提醒')}</button></div>

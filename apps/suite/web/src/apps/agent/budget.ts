@@ -57,7 +57,9 @@ export function parseBudget(value: string, scale: number): string {
   return units.toString();
 }
 
-/** Keep the full unit precision visible, including the smallest unit at scale 18. */
+/** The exact amount and its code, to every digit the unit holds (the smallest unit at scale 18
+ *  included), locale-free: the key two prices are compared by, the box a person types into and the
+ *  unit's stated precision. What a person reads as money goes through `@synwevo/ui/money`. */
 export function formatAmount(value: string, unit: Unit): string {
   validScale(unit.scale);
   return `${decimal(unsigned(value), unit.scale)} ${unit.code}`;

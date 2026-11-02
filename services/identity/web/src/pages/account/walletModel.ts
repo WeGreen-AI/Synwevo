@@ -3,6 +3,7 @@
  *  chart geometry and the top-up states. No request is made here and no figure is invented:
  *  every number on the pages is one of the server's, re-expressed. */
 
+import { formatMinor, formatMoney, majorDecimal, type MoneyOptions } from '@synwevo/ui/money';
 import { paymentMethods, type PaymentMethod } from '../../lib/paymentMethods';
 
 export type PayerKind = 'user' | 'organization';
@@ -137,42 +138,31 @@ export function csvPath(payer: Payer, period: Period, filters: CallFilters, time
 }
 
 // ------------------------------------------------------------------ money
-const UNITS = /^-?(0|[1-9]\d{0,30})$/;
-/** Exact decimal text of integer smallest units ("-12.05"), never through a binary float. */
+// The formatting is the shared rule (`@synwevo/ui/money`): money in the reader's locale, from the
+// integer units and never through a binary float. A figure read on its own is at the currency's
+// precision, rounded in the direction that keeps its sentence true (a balance down, a hold up, a
+// statement entry to the nearest fen, below one fen said as such); the ledger's own record — the
+// balance and what it is made of, the usage tables and chart, a period's spending beside its limit —
+// is stated exactly, so its figures reconcile on the page.
+/** Exact decimal text of integer smallest units ("-12.05", trailing zeros trimmed). */
 export function decimalText(units: string, scale: number): string {
-  if (!UNITS.test(units) || !Number.isInteger(scale) || scale < 0 || scale > 18) throw new RangeError('Invalid wallet amount');
-  const negative = units.startsWith('-');
-  const digits = (negative ? units.slice(1) : units).padStart(scale + 1, '0');
-  const whole = scale ? digits.slice(0, -scale) : digits;
-  const fraction = scale ? digits.slice(-scale).replace(/0+$/, '') : '';
-  return (negative && units !== '-0' ? '-' : '') + whole + (fraction ? '.' + fraction : '');
+  return majorDecimal(units, scale);
 }
-/** Exact decimal strings are formatted without a float on the way (Intl.NumberFormat v3 accepts
- *  a numeric string; the TypeScript library still declares number | bigint only). */
-function exactFormat(format: Intl.NumberFormat, exact: string): string {
-  return (format.format as unknown as (value: string) => string)(exact);
+/** A wallet amount in the reader's locale. A currency unit (CNY) reads as money ("¥12.50", "CN¥5.11");
+ *  any other unit is a number followed by its code. `signed` adds the plus sign of a credit; `rounding`
+ *  'down' for what can still be spent, 'up' for what is held. */
+export function moneyText(units: string, scale: number, unit: string, locale: string, options: MoneyOptions = {}): string {
+  return formatMoney(units, { code: unit, scale }, locale, options);
 }
-function isCurrency(code: string): boolean {
-  if (!/^[A-Z]{3}$/.test(code)) return false;
-  try { new Intl.NumberFormat('en', { style: 'currency', currency: code }); return true; } catch { return false; }
-}
-/** A wallet amount in the reader's locale. A currency unit (CNY) reads as money ("¥12.50", "CN¥0.0045")
- *  with every fractional digit the ledger holds; any other unit is a number followed by its code. */
-export function moneyText(units: string, scale: number, unit: string, locale: string, signed = false): string {
-  const exact = decimalText(units, scale);
-  if (isCurrency(unit)) {
-    const format = new Intl.NumberFormat(locale, { style: 'currency', currency: unit, minimumFractionDigits: Math.min(2, scale),
-      maximumFractionDigits: Math.max(Math.min(2, scale), scale), signDisplay: signed ? 'exceptZero' : 'auto' });
-    return exactFormat(format, exact);
-  }
-  const format = new Intl.NumberFormat(locale, { maximumFractionDigits: scale, signDisplay: signed ? 'exceptZero' : 'auto' });
-  return `${exactFormat(format, exact)} ${unit}`;
+/** A ledger figure to every digit the unit holds ("¥5.11182", "¥1.00"): the wallet's and the usage
+ *  page's own record, which a reader can add up. */
+export function ledgerText(units: string, scale: number, unit: string, locale: string): string {
+  return formatMoney(units, { code: unit, scale }, locale, { precision: 'exact' });
 }
 /** Top-up amounts are minor units of the payment currency (fen for CNY). */
 export function paymentText(amountMinor: number, currency: string, locale: string): string {
   if (!Number.isSafeInteger(amountMinor) || amountMinor < 0) throw new RangeError('Invalid payment amount');
-  const digits = new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2;
-  return moneyText(String(amountMinor), digits, currency, locale);
+  return formatMinor(amountMinor, currency, locale);
 }
 /** A typed major-unit amount ("12.5") as minor units (1250), or null when it is not one exactly. */
 export function minorFromText(value: string, digits: number): number | null {
