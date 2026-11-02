@@ -381,21 +381,21 @@ Webhook 是本服务**主动向外发起**的请求，因此它的风险方向�
 （指派历史数据是业务内容的交付，只属于最高管理员；`.manage` 只剩冻结与解冻），理由写在模块文档里。
 
 **模型治理与平台配置分权（authz-6，决定 D20）。**`platform.config.manage` 不再治理任何模型面：
-模型提供方的密封凭据与路线（模型、证据、上限、有效期、启停、关闭后重新开放）要 `platform.models.credential`；零售价格、分时排期、加价
-（`/api/admin/billing/prices/**` 的写操作）、路线采用哪个已发布的售价与成本价及其成本依据、未完成调用是否收费、成本策略
-（`/api/admin/billing/cost-policy/preview|publish`）与付费风险控制（`/api/admin/billing/risk/**` 的七个写操作）要
-`platform.models.pricing`。路线要写明采用的价格，所以两边在同一个提供方版本里、同一个发布接口（`POST /api/admin/billing/model-provider/preview|publish`）：
-接口按这次请求相对当前版本改了什么要对应的权限（`ProviderSettings.change_parts`）：只采用价格不需要密钥的权限，只换密钥也不需要定价的权限，两边都改要两项都有，
-所以首次配置路线、恢复已撤下的路线要两项都有；撤下路线不设定价格，只属于保管一边；关闭的路线一发布就重新开放，这只属于保管一边。
-这些条款的变化写进发布的审计行（`before`/`after`/`changed`），并另记一行 `admin.model_price.adopt`。
+`platform.models.credential` 只有一份封闭的保管名单：密封凭据（设置、更换、撤销）、路线是否启用、模型与账户两项核实证据、路线有效期、撤下路线、关闭后重新开放，这些都不动钱。
+名单之外都要 `platform.models.pricing`：路线的其余全部字段（售价、成本价、成本依据、请求模型、已核实路线、输入与输出 token 上限、推理投入，以及以后新增的任何字段，默认如此）、未完成调用是否收费、零售价格、分时排期、加价
+（`/api/admin/billing/prices/**` 的写操作）、成本策略（`/api/admin/billing/cost-policy/preview|publish`）与付费风险控制（`/api/admin/billing/risk/**` 的七个写操作）。
+默认归定价是因为这些字段决定付款人付多少、平台花多少：上限是单次预留和每条回答的上限，推理投入决定一次请求花多少 token，路线暂停与速率窗口按请求模型记。路线要写明采用的价格，所以两边在同一个提供方版本里、同一个发布接口（`POST /api/admin/billing/model-provider/preview|publish`）：
+接口按这次请求相对当前版本改了什么要对应的权限（`ProviderSettings.change_parts`）：只改价格条款不需要密钥的权限，只换密钥也不需要定价的权限，两边都改要两项都有，
+所以首次配置路线、恢复已撤下的路线要两项都有，用新的模型标识修复模型缺失的关闭也要两项都有（重新开放属于保管，模型标识是价格条款）；撤下路线不设定价格，只属于保管一边；关闭的路线一发布就重新开放，这至少要保管一边。
+这些条款的变化写进发布的审计行（`before`/`after`/`changed`），并另记一行 `admin.model_price.adopt`。持有者一项都没有时，拒绝的 `detail` 带 `any_of` 列出这两项；拒绝某一部分时不带，读到它的人一定还持有另一项，页面据此保留输入（`providerRefusal`）。
 四个面的全部读取仍是 `platform.config.view`，两项新权限都不蕴含它；读到的只有元数据（是否已配置凭据及其修订号、
-已发布的数字、金额与代码），任何路由都读不到密钥。`platform.config.manage` 保留注册策略、管理员第二因素策略、限流解除、MCP 策略与停用、
+已发布的数字、金额与代码），任何路由都读不到密钥。提供方预览的 `before` 也是一次读取：不带这项查看权限的持有者能从预览读到当前版本，所以实际委派的角色必须带它。`platform.config.manage` 保留注册策略、管理员第二因素策略、限流解除、MCP 策略与停用、
 应用目录的平台范围变更（D12）与 Agent 安全规则。两项按定义属于最高管理员，不属于任何委派角色（MASTER_PROMPT §12.1）；是否新增委派角色待所有者决定。
 授予表只存角色，所以没有任何迁移：本版本启动时最高管理员的授予立即带上两项，回滚到上一版本时两项并回 `platform.config.manage`。告警随之改收件人：
-路线关闭（模型缺失、上游余额）发给能重新发布的 `platform.models.credential` 持有者，风险控制告警发给 `platform.models.pricing` 持有者；
+模型标识缺失关闭路线发给能重新发布的 `platform.models.credential` 持有者，风险控制告警发给 `platform.models.pricing` 持有者。上游 402 属于后者：装有风险模块时（本仓库的每个部署）它打开平台总闸，不写提供方关闭，发布不能重新开启，要 `platform.models.pricing` 关闭总闸；只有没有风险模块时才把它记成提供方关闭（`upstream_balance`）。
 支付渠道 webhook 失败告警的收件人不变（`platform.config.manage`，即最高管理员；是否改为财务角色待所有者决定）。
 委派定价权限时另有两条（`admin_model_risk`）：按登录邮箱放行个人付款方还要 `platform.users.view`，账户列表不回答的问题放行名单也不回答；
-委派的持有者不能解除或放行自己的账户与自己所在的组织（403 `risk_own_payer`）。最高管理员可以，审计行标 `own_payer`。
+委派的持有者不能解除或放行自己的账户与自己所在的组织（403 `risk_own_payer`）。最高管理员可以，审计行标 `own_payer`。这条挡不住一件事，委派时要知道：同一持有者仍可发布 `risk.allowlist_only=false` 的成本策略，让放行名单对全平台失效，这是全平台的决定并留有审计（`admin.model_cost.publish`）。
 
 `platform.apps.view` 读「应用运行」「流程运行」两页（`synwevo_identity/admin_runs.py`，五个只读路由），由已能读邮件投递的
 三个角色与最高管理员持有，`api_platform_admin` 不持有。这两页只显示运行的元数据——哪个操作、状态、时间、错误代码、入口、

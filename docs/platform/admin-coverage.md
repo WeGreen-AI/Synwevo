@@ -534,8 +534,8 @@
 | `platform.workspaces.claim`（复审新增：指派历史数据，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — | — |
 | `platform.orgs.view` | ✓ | ✓ | ✓ | ✓ | — | — |
 | `platform.config.view` / `.manage` | ✓/✓ | ✓/— | — | ✓/— | — | — |
-| `platform.models.credential`（authz-6：模型提供方的密封凭据与路线，从 `platform.config.manage` 分出，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — | — |
-| `platform.models.pricing`（authz-6：价格、排期、加价、路线采用的价格与未完成调用的计费、成本策略、付费风险控制，同上） | ✓ | — | — | — | — | — |
+| `platform.models.credential`（authz-6：模型提供方的密封凭据与一份封闭的保管名单：路线启停、两项核实证据、有效期、撤下、重新开放，从 `platform.config.manage` 分出，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — | — |
+| `platform.models.pricing`（authz-6：价格、排期、加价、路线的其余全部字段与未完成调用的计费，新增字段默认在此，成本策略、付费风险控制，同上） | ✓ | — | — | — | — | — |
 | `platform.mail.view` / `.manage` | ✓/✓ | ✓/✓ | ✓/— | ✓/— | — | — |
 | `platform.apps.view`（应用目录与运行、流程运行的元数据，只读；理由见 `core/platform_access.py` 文档） | ✓ | ✓ | ✓ | ✓ | — | — |
 | `platform.apps.manage`（B1/B2：应用目录的开关；平台范围的变更还要 `platform.config.manage`，决定 D12） | ✓ | ✓ | — | — | — | — |
@@ -666,7 +666,7 @@
 | 双人审批 | 本批不引入（现团队无法满足，专项约定明确不得凭空强制）；数据模型保留扩展位 | 专项约定 §4.2 |
 | 重认证方式与窗口 | 沿用口令与 600 s 窗口；邮件验证码不能用于 step-up；B2已实现Passkey（UV）用途重认证；TOTP单独重认证仍待补齐（D10） | 现有 `sessions.py`；调研 b1 |
 | `api_platform.manage` | 仍是平台权限，只经平台授予获得；迁移后最高管理员持有，另有内置"API 平台管理员"角色可由最高管理员显式授予；组织/空间角色永远不得到它 | CLAUDE.md；专项约定 §1.1 |
-| 模型密钥保管与定价分权（authz-6） | `platform.config.manage` 不再治理模型面：路线与密封凭据要 `platform.models.credential`，价格、排期、加价、成本策略与风险控制要 `platform.models.pricing`；读取仍是 `platform.config.view`。两项只属于最高管理员，没有新角色；既有角色无一多出可达项；是否委派待所有者决定 | 专项约定 §4.6「模型密钥保管与定价分离」；DECISIONS D20；`docs/security/permissions.md` §4.1 |
+| 模型密钥保管与定价分权（authz-6） | `platform.config.manage` 不再治理模型面：密封凭据与保管名单（路线启停、两项核实证据、有效期、撤下、重新开放）要 `platform.models.credential`，路线的其余字段（新增字段默认在内）、价格、排期、加价、成本策略与风险控制要 `platform.models.pricing`；读取仍是 `platform.config.view`。两项只属于最高管理员，没有新角色；既有角色无一多出可达项；是否委派待所有者决定 | 专项约定 §4.6「模型密钥保管与定价分离」；DECISIONS D20；`docs/security/permissions.md` §4.1 |
 
 ### 4.2 需要所有者决定（未决前按最保守的现状执行，不替所有者作答）
 

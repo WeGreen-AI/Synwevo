@@ -25,7 +25,9 @@ def _between(text: str, start: str, end: str) -> str:
 
 def test_the_permission_id_list_names_the_whole_catalogue():
     text = (ROOT / "docs/security/permissions.md").read_text(encoding="utf-8")
-    block = _between(text, "权限 ID：", "**模型治理与平台配置分权")
+    # The list ends at its full stop, and a note in brackets is prose: an id only mentioned in passing
+    # (`platform.config.manage` in the note on the split) is not listed.
+    block = re.sub(r"（[^）]*）", "", _between(text, "权限 ID：", "。"))
     listed = set()
     for token in re.findall(r"`((?:platform\.|api_platform\.)[a-z_.|]+)`", block):
         head, *others = token.split("|")
@@ -48,10 +50,12 @@ def test_the_role_table_says_who_holds_each_permission():
     seen = set()
     for row in table[2:]:
         cells = [cell.strip() for cell in row.strip("|").split("|")]
+        assert len(cells) == len(header) + 1, ("one cell per role", row)
         ids = _ids(cells[0])
         seen.update(ids)
-        for name, cell in zip(header, cells[1:]):
+        for name, cell in zip(header, cells[1:], strict=True):
             marks = cell.split("（")[0].split("/")
+            assert len(marks) in (1, len(ids)), ("one mark, or one per permission of the row", row)
             for index, permission in enumerate(ids):
                 mark = marks[index] if len(marks) > 1 else marks[0]
                 assert (mark.strip() == "✓") == (permission in ROLES[COLUMNS[name]]), (permission, name, cell)
