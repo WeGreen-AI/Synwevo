@@ -84,10 +84,15 @@ test('the actual Admin entry mounts ModelProviderTab and adapts view/manage gran
   const manage = render(['platform.config.view', 'platform.models.credential']);
   assert.match(manage, /正在读取提供方配置/);
   assert.doesNotMatch(manage, /你可以查看提供方配置和历史，不能修改或发布/);
-  // authz-6: platform configuration's manage, and the pricing permission, no longer change the credential
-  for (const permissions of [['platform.config.view', 'platform.config.manage'], ['platform.config.view', 'platform.models.pricing']]) {
-    assert.match(render(permissions), /你可以查看提供方配置和历史，不能修改或发布/, permissions.join());
-  }
+  assert.match(manage, /你保管密钥与路线/);
+  // authz-6: the pricing permission decides the prices a route uses here, and nothing else on this page
+  const pricing = render(['platform.config.view', 'platform.models.pricing']);
+  assert.doesNotMatch(pricing, /你可以查看提供方配置和历史，不能修改或发布/);
+  assert.match(pricing, /你负责定价/);
+  const both = render(['platform.config.view', 'platform.models.credential', 'platform.models.pricing']);
+  assert.doesNotMatch(both, /你可以查看提供方配置和历史，不能修改或发布|你保管密钥与路线|你负责定价/);
+  // platform configuration's manage no longer changes anything here
+  assert.match(render(['platform.config.view', 'platform.config.manage']), /你可以查看提供方配置和历史，不能修改或发布/);
   for (const permissions of [[], ['platform.config.manage'], ['platform.models.credential'], ['api_platform.manage']]) {
     const denied = render(permissions);
     assert.match(denied, /你没有查看模型提供方配置的权限/);
@@ -122,7 +127,10 @@ test('authz-6: each model surface tells a holder of the other permission it is r
   const CREDENTIAL = ['platform.config.view', 'platform.models.credential'];
   const PRICING = ['platform.config.view', 'platform.models.pricing'];
   for (const [active, reader, holder, sentence] of [
-    ['model-provider', PRICING, CREDENTIAL, '你可以查看提供方配置和历史，不能修改或发布。'],
+    ['model-provider', ['platform.config.view', 'platform.config.manage'], CREDENTIAL, '你可以查看提供方配置和历史，不能修改或发布。'],
+    ['model-provider', ['platform.config.view'], PRICING, '你可以查看提供方配置和历史，不能修改或发布。'],
+    ['model-provider', CREDENTIAL, PRICING, '你保管密钥与路线：可以更换或撤销凭据、调整路线及其证据。路线采用的销售价、成本价及其成本依据和未完成调用的计费属于定价权限，这里只读。'],
+    ['model-provider', PRICING, CREDENTIAL, '你负责定价：可以让路线采用已发布的销售价与成本价、更新成本依据，并决定未完成调用是否收费。凭据与其他路线字段属于密钥保管权限，这里只读。'],
     ['model-prices', CREDENTIAL, PRICING, '你可以查看价格和试算，不能创建、修改或发布价格。'],
     ['model-costs', CREDENTIAL, PRICING, '你可以查看成本策略和历史，不能修改或发布。'],
     ['model-risk', CREDENTIAL, PRICING, '你可以查看风险控制状态，不能修改。'],

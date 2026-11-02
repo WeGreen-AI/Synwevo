@@ -5,6 +5,12 @@ reason, a client idempotency key and, where it lets money flow again (closing th
 a suspension, allowlisting a payer), a fresh re-authentication. Authorization is re-checked inside
 the writer transaction that changes state, records the audit row and the durable operation
 result. Views carry amounts, codes and identifiers only — never conversation content.
+
+Two rules bind whoever is delegated the pricing permission (authz-6, D20). A login address resolves
+to an account only with the account-list permission: the allowlist does not answer what the account
+list refuses. And a holder does not release their own paid calls: not their account, not an
+organization they belong to. A super administrator may, on the record (`own_payer` in the audit
+row): they hold the whole catalogue, and on a platform with one of them there is nobody else to ask.
 """
 from __future__ import annotations
 
@@ -26,11 +32,12 @@ from synwevo_core.billing.risk import RiskControls, allowlist_required
 from synwevo_core.billing.upstream import DAY, Reconciliation, UpstreamBalance
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import normalise_email
-from synwevo_core.platform_access import require_platform
+from synwevo_core.platform_access import SUPER_ADMIN, PlatformAccess, require_platform
 from synwevo_core.store import new_id
 
 from .admin_operations import MODEL_PRICING_PERMISSION, MODEL_VIEW_PERMISSION, canonical
 
+ACCOUNT_LIST_PERMISSION = "platform.users.view"
 OperationKey = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{16,128}$")]
 Reason = Annotated[str, Field(min_length=8, max_length=500)]
 EntryId = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
@@ -101,10 +108,13 @@ class RiskOperations:
         self.store, self.audit, self.environment = store, audit, environment
 
     # ------------------------------------------------------------------ helpers
-    def _actor(self, request, *, manage=False, dangerous=False):
-        # authz-6: the risk controls are platform.models.pricing's, not platform configuration's
-        return require_platform(request, MODEL_PRICING_PERMISSION if manage else MODEL_VIEW_PERMISSION,
-                                store=self.store, audit=self.audit, dangerous=dangerous)
+    def _actor(self, request, *, manage=False, dangerous=False, also=()):
+        # authz-6: the risk controls are platform.models.pricing's, not platform configuration's.
+        # `also`: what this change needs besides. Refused by name, before any re-authentication is asked.
+        permission = MODEL_PRICING_PERMISSION if manage else MODEL_VIEW_PERMISSION
+        for needed in ((permission, *also) if also else ()):
+            require_platform(request, needed, store=self.store, audit=self.audit)
+        return require_platform(request, permission, store=self.store, audit=self.audit, dangerous=dangerous)
 
     def _require_environment(self):
         if self.environment not in ("test", "live"):
@@ -134,6 +144,23 @@ class RiskOperations:
                 f"SELECT id,name FROM organizations WHERE id IN ({marks})", tuple(orgs))})
         return [{**r, "payer_label": names.get(r[id_key]) if r[kind_key] != "route" else None} for r in rows]
 
+    def _belongs_to(self, actor, kind, payer) -> bool:
+        """Is this payer the administrator's own account, or an organization they belong to?"""
+        if kind == "user":
+            return payer == actor["id"]
+        return kind == "organization" and self.store.one(
+            "SELECT 1 AS x FROM organization_memberships WHERE organization_id=? AND user_id=?",
+            (payer, actor["id"])) is not None
+
+    def _refused_own_payer(self, actor, kind, payer) -> bool:
+        return self._belongs_to(actor, kind, payer) and SUPER_ADMIN not in PlatformAccess(self.store).roles(actor)
+
+    def _releasing(self, actor, kind, payer) -> dict:
+        """Refuses a delegated holder's own payer; what the audit row says about any other release."""
+        if self._refused_own_payer(actor, kind, payer):
+            raise ServiceError(403, "risk_own_payer", "不能放行或解除与你自己有关的付款方，请由另一位管理员处理")
+        return {"own_payer": True} if self._belongs_to(actor, kind, payer) else {}
+
     def _previous(self, actor, body, action, request_hash):
         previous = self.store.one("SELECT * FROM admin_operations WHERE actor_id=? AND idempotency_key=?",
                                   (actor["id"], body.idempotency_key))
@@ -141,14 +168,14 @@ class RiskOperations:
             raise ServiceError(409, "idempotency_conflict", "此操作编号已用于不同的请求")
         return json.loads(previous["result_json"]) if previous else None
 
-    def _change(self, request, action, target, body, run, *, dangerous, own_transaction=False):
+    def _change(self, request, action, target, body, run, *, dangerous, own_transaction=False, also=()):
         """Authorize, idempotency, state change, audit and operation result in one transaction.
 
         `own_transaction`: the change opens its own (the ledger audit must), so it runs between
         an authorized idempotency check and the transaction that records audit and result. Only
         append-only reconciliation results use it; repeating one is a second result, not harm."""
         # Authority first: whether billing is configured is not for callers who may not change it.
-        actor = self._actor(request, manage=True, dangerous=dangerous)
+        actor = self._actor(request, manage=True, dangerous=dangerous, also=also)
         self._require_environment()
         reason = body.reason.strip()
         if not 8 <= len(reason) <= 500:
@@ -159,13 +186,13 @@ class RiskOperations:
             outcome = None
             if own_transaction:
                 with self.store.tx():
-                    actor = self._actor(request, manage=True, dangerous=dangerous)
+                    actor = self._actor(request, manage=True, dangerous=dangerous, also=also)
                     previous = self._previous(actor, body, action, request_hash)
                 if previous:
                     return previous
                 outcome = run(actor, reason)
             with self.store.tx() as transaction:
-                actor = self._actor(request, manage=True, dangerous=dangerous)
+                actor = self._actor(request, manage=True, dangerous=dangerous, also=also)
                 previous = self._previous(actor, body, action, request_hash)
                 if previous:
                     return previous
@@ -180,7 +207,7 @@ class RiskOperations:
                                     "result_json,created_at) VALUES (?,?,?,?,?,?,?,?)",
                                     (operation_id, actor["id"], action, target, body.idempotency_key, request_hash,
                                      canonical(result), time.time()))
-                self._actor(request, manage=True, dangerous=dangerous)
+                self._actor(request, manage=True, dangerous=dangerous, also=also)
                 return result
         except Exception as exc:
             code = exc.code if isinstance(exc, ServiceError) else "admin_operation_failed"
@@ -220,7 +247,9 @@ class RiskOperations:
         if self.environment not in ("test", "live"):
             return {"items": [], "next_before": None}
         result = self._controls().suspensions(active_only=state == "active", before=before)
-        return {**result, "items": [_money(r) for r in self._payers(actor, result["items"], "scope_kind", "scope_id")]}
+        # `refused_own_payer`: the page does not offer a lift the server would refuse this reader.
+        return {**result, "items": [{**_money(r), "refused_own_payer": self._refused_own_payer(actor, r["scope_kind"], r["scope_id"])}
+                                    for r in self._payers(actor, result["items"], "scope_kind", "scope_id")]}
 
     def allowlist(self, request, *, before):
         actor = self._actor(request)
@@ -252,8 +281,11 @@ class RiskOperations:
     # ------------------------------------------------------------------ changes
     def lift(self, request, suspension_id, body: Change):
         def run(actor, reason):
-            row = self._controls().lift(suspension_id, actor_id=actor["id"], reason=reason)
-            return row, {"scope_kind": row["scope_kind"], "scope_id": row["scope_id"]}
+            controls = self._controls()
+            suspended = controls.suspension(suspension_id)
+            own = self._releasing(actor, suspended["scope_kind"], suspended["scope_id"]) if suspended else {}
+            row = controls.lift(suspension_id, actor_id=actor["id"], reason=reason)
+            return row, {"scope_kind": row["scope_kind"], "scope_id": row["scope_id"], **own}
         return self._change(request, "admin.model_risk.suspension_lift", suspension_id, body, run, dangerous=True)
 
     def open_breaker(self, request, body: Change):
@@ -284,9 +316,13 @@ class RiskOperations:
                 if not body.organization_id:
                     raise ServiceError(404, "risk_allowlist_payer_not_found", "未找到要放行的账户或组织")
                 payer = body.organization_id
+            own = self._releasing(actor, body.payer_kind, payer)
             row = self._controls().allow(body.payer_kind, payer, actor_id=actor["id"], reason=reason)
-            return self._payers(actor, [row], "payer_kind", "payer_id")[0], {"payer_kind": body.payer_kind, "payer_id": payer}
-        return self._change(request, "admin.model_risk.allowlist_add", "allowlist", body, run, dangerous=True)
+            return self._payers(actor, [row], "payer_kind", "payer_id")[0], {"payer_kind": body.payer_kind, "payer_id": payer, **own}
+        # A person is named by login address: whether it has an account, and that account's id, are
+        # the account list's to tell, as an email in `_payers` is. An organization goes by its id.
+        return self._change(request, "admin.model_risk.allowlist_add", "allowlist", body, run, dangerous=True,
+                            also=(ACCOUNT_LIST_PERMISSION,) if body.payer_kind == "user" else ())
 
     def disallow(self, request, entry_id, body: Change):
         def run(actor, reason):

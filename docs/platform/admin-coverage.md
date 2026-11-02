@@ -523,25 +523,28 @@
 - 新增 `synwevo_core` 权限目录（草案；实现时以代码中的目录为准并回写本表）：
   - **已实现（仅本地，2026-09-29）**：`packages/core/synwevo_core/platform_access.py` 是唯一目录，下表已回写。
 
-| 权限 | 最高 | 账户与访问 | 支持 | 审计查看 | API 平台管理 |
-|---|---|---|---|---|---|
-| `platform.overview.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `platform.users.view` | ✓ | ✓ | ✓ | ✓ | — |
-| `platform.users.manage` | ✓ | ✓ | — | — | — |
-| `platform.users.support` | ✓ | ✓ | ✓ | — | — |
-| `platform.workspaces.view` / `.manage` | ✓/✓ | ✓/✓ | ✓/— | ✓/— | — |
-| `platform.workspaces.claim`（复审新增：指派历史数据，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — |
-| `platform.orgs.view` | ✓ | ✓ | ✓ | ✓ | — |
-| `platform.config.view` / `.manage` | ✓/✓ | ✓/— | — | ✓/— | — |
-| `platform.models.credential`（authz-6：模型提供方的路线与密封凭据，从 `platform.config.manage` 分出，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — |
-| `platform.models.pricing`（authz-6：价格、排期、加价、成本策略、付费风险控制，同上） | ✓ | — | — | — | — |
-| `platform.mail.view` / `.manage` | ✓/✓ | ✓/✓ | ✓/— | ✓/— | — |
-| `platform.apps.view`（应用运行与流程运行的元数据，只读；理由见 `core/platform_access.py` 文档） | ✓ | ✓ | ✓ | ✓ | — |
-| `platform.audit.view` | ✓ | ✓ | — | ✓ | — |
-| `platform.roles.view` | ✓ | ✓ | — | ✓ | — |
-| `platform.roles.assign` / `.assign_super` | ✓/✓ | — | — | — | — |
-| `api_platform.manage` | ✓ | — | — | — | ✓（仅由最高管理员显式授予，见 §4.1） |
-| `platform.orgs.manage`（实现时新增，理由见 `core/platform_access.py` 文档） | ✓ | ✓ | — | — | — |
+| 权限 | 最高 | 账户与访问 | 支持 | 审计查看 | API 平台管理 | 财务 |
+|---|---|---|---|---|---|---|
+| `platform.overview.view` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `platform.users.view` | ✓ | ✓ | ✓ | ✓ | — | — |
+| `platform.users.manage` | ✓ | ✓ | — | — | — | — |
+| `platform.users.support` | ✓ | ✓ | ✓ | — | — | — |
+| `platform.users.recover`（A26：核验身份后重置丢失的第二因素，延迟生效并通知本人，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — | — |
+| `platform.workspaces.view` / `.manage` | ✓/✓ | ✓/✓ | ✓/— | ✓/— | — | — |
+| `platform.workspaces.claim`（复审新增：指派历史数据，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — | — |
+| `platform.orgs.view` | ✓ | ✓ | ✓ | ✓ | — | — |
+| `platform.config.view` / `.manage` | ✓/✓ | ✓/— | — | ✓/— | — | — |
+| `platform.models.credential`（authz-6：模型提供方的密封凭据与路线，从 `platform.config.manage` 分出，理由见 `core/platform_access.py` 文档） | ✓ | — | — | — | — | — |
+| `platform.models.pricing`（authz-6：价格、排期、加价、路线采用的价格与未完成调用的计费、成本策略、付费风险控制，同上） | ✓ | — | — | — | — | — |
+| `platform.mail.view` / `.manage` | ✓/✓ | ✓/✓ | ✓/— | ✓/— | — | — |
+| `platform.apps.view`（应用目录与运行、流程运行的元数据，只读；理由见 `core/platform_access.py` 文档） | ✓ | ✓ | ✓ | ✓ | — | — |
+| `platform.apps.manage`（B1/B2：应用目录的开关；平台范围的变更还要 `platform.config.manage`，决定 D12） | ✓ | ✓ | — | — | — | — |
+| `platform.billing.view` / `.manage`（org-payments：资金只属于最高管理员与财务角色，见 wallet-payments.md §4） | ✓/✓ | — | — | — | — | ✓/✓ |
+| `platform.audit.view` | ✓ | ✓ | — | ✓ | — | — |
+| `platform.roles.view` | ✓ | ✓ | — | ✓ | — | — |
+| `platform.roles.assign` / `.assign_super` | ✓/✓ | — | — | — | — | — |
+| `api_platform.manage` | ✓ | — | — | — | ✓（仅由最高管理员显式授予，见 §4.1） | — |
+| `platform.orgs.manage`（实现时新增，理由见 `core/platform_access.py` 文档） | ✓ | ✓ | — | — | — | — |
 
 - `platform.apps.view` 打开的「应用运行」「流程运行」两页（`ac/admin_runs.py`）只显示运行的元数据，其中包括个人 Agent 操作的操作名与时间，但从不显示对话正文、输入、输出或失败说明。
 - 授权拒绝（403）与输入校验失败（422）发生在运行行建立之前，不留下运行行，所以这两页的「失败」只统计处理过程中的失败。

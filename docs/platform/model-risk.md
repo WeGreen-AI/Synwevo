@@ -104,6 +104,7 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 - `allowlist_required(environment, risk)`：有 `risk` 段时取 `allowlist_only`；没有时正式环境为真、测试环境为假。
 - 条目是付款方（`user` 按登录邮箱加入，`organization` 按组织编号加入），只追加；移出填写一次结束列。加入需要理由与管理重认证
   （它让钱可以流动）；移出只需理由。名单只决定能否发起付费调用，钱包、预算、额度与其他上限照常检查。
+- 按登录邮箱加入还要 `platform.users.view`：这个地址有没有账户、账户编号是什么，是账户列表回答的问题（authz-6，§10）。
 
 ## 6. 上游余额监控
 
@@ -171,10 +172,13 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 | 关闭全部付费调用 | `POST /breaker/open` | `platform.models.pricing`（authz-6；之前是 `platform.config.manage`）、理由 |
 | 重新开启 | `POST /breaker/close` | 同上 + 管理重认证 |
 | 解除暂停 | `POST /suspensions/{id}/lift` | 同上 + 管理重认证 |
-| 加入放行名单 | `POST /allowlist` | 同上 + 管理重认证 |
+| 加入放行名单 | `POST /allowlist` | 同上 + 管理重认证；按登录邮箱加入个人付款方还要 `platform.users.view` |
 | 移出放行名单 | `POST /allowlist/{id}/remove` | `platform.models.pricing`、理由 |
 | 登记上游充值 | `POST /topups` | 同上 |
 | 重算某日 / 立即审计账本 | `POST /reconciliations/run` | 同上 |
+
+解除暂停与加入放行名单不能用在自己身上：委派的持有者不能解除或放行自己的账户与自己所在的组织（403 `risk_own_payer`，审计；页面不提供这个按钮），
+否则刹车和分阶段开放对他不起作用（authz-6，决定 D20）。最高管理员可以：平台可能只有一位，审计行标 `own_payer`。
 
 每个修改先检查授权，再检查计费环境是否配置（没有权限的人得到权限拒绝，不会得知部署是否配置了计费）；全部 13 个接口登记在
 平台权限矩阵 `services/identity/tests/test_platform_access.py` 中。每个修改带客户端幂等键；授权在写状态、审计与操作结果的同一事务内复核；同一键不同内容返回 409 `idempotency_conflict`；

@@ -129,6 +129,9 @@ test("authz-6: model governance is split from platform configuration — each id
     assert.notEqual(ui.translate("zh-Hant", label), label, `${permission}: Traditional Chinese`);
   }
   assert.notEqual(dialog.permissionLabel(access.MODEL_CREDENTIAL), dialog.permissionLabel(access.MODEL_PRICING));
+  // the labels say who decides the price a route charges: a grant dialog must not read as key custody alone
+  assert.match(dialog.permissionLabel(access.MODEL_CREDENTIAL), /不决定价格/);
+  assert.match(dialog.permissionLabel(access.MODEL_PRICING), /决定路线采用的价格与未完成调用的计费/);
 });
 
 test("each account action is offered as the server would answer it", () => {

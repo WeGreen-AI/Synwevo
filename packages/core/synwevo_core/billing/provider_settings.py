@@ -78,7 +78,8 @@ class ChargingPolicy(BaseModel):
     platform absorbing it as recorded cost, which is what every version before this field
     meant. Anything else that fails (invalid tool output, a rejected step, untrusted or missing
     usage) is never charged. Part of the published revision, so a change is versioned, needs a
-    reason, is audited, and invalidates existing quotes and consents through the route version.
+    reason, is audited, and invalidates existing quotes and consents through the route version;
+    a price term (`price_terms`), so the pricing permission decides it, not the key's.
     """
     model_config = ConfigDict(extra="forbid", strict=True)
     length: bool = False                # finish_reason=length (output limit reached)
@@ -101,6 +102,30 @@ class ProviderSpec(BaseModel):
         if self.enabled and self.route is None:
             raise ValueError("enabled route required")
         return self
+
+
+#: What one publication can change (authz-6, docs/agent-work/DECISIONS.md D20). PRICE_TERMS are what
+#: payers pay and the platform spends by: the published prices a route names, the evidence for its
+#: cost and the incomplete endings it charges for. CUSTODY is the key and the rest of a version. They
+#: share a version because a route names its prices and a published price reaches nobody until one
+#: does, so a publication asks for the permission of what it changes, not of its address.
+CUSTODY, PRICE_TERMS = "custody", "price_terms"
+_PRICED_ROUTE_FIELDS = ("sale_price_id", "cost_price_id", "cost_basis_ref")
+
+
+def price_terms(spec: dict | None) -> dict:
+    """A published spec's price terms; a version without a route names no price."""
+    route = (spec or {}).get("route") or {}
+    return {**{field: route.get(field) for field in _PRICED_ROUTE_FIELDS},
+            "incomplete_charging": (spec or {}).get("incomplete_charging") or ChargingPolicy().model_dump()}
+
+
+def _custody_terms(spec: dict | None) -> dict | None:
+    if spec is None:
+        return None
+    route = spec["route"]
+    return {"enabled": spec["enabled"],
+            "route": route and {key: value for key, value in route.items() if key not in _PRICED_ROUTE_FIELDS}}
 
 
 class CredentialChange(BaseModel):
@@ -324,6 +349,34 @@ class ProviderSettings:
             revision = before["credential_revision"] + int(credential.action != "keep")
             return {"before": before, "after": spec.model_dump(), "credential": credential.commitment(),
                     "credential_revision": revision, "credential_configured": present}
+
+    def change_parts(self, spec, credential, *, expected_revision) -> tuple[str, ...]:
+        """Which parts of the version this publication changes, against the version it names; which
+        permission each needs is the caller's to ask (admin_model_provider).
+
+        * Custody: a key set, replaced or revoked; any field that is not a price term; and reopening.
+          Every publication reopens a route an upstream 402 or a missing model id closed, which is
+          for those who are alerted and can see to the cause (ALERT_PERMISSION), so it is custody
+          whatever else it changes. The same settings published again are that and nothing else.
+        * Price terms: a route naming a price or a cost basis other than the current ones (so a
+          version's first route, and one put back after a withdrawal, even with the same prices),
+          and the charging of incomplete calls. Withdrawing a route names no price and sets none.
+
+        Empty against a version that has moved on: `preview` refuses it (`model_revision_conflict`)
+        and a replay of a finished request returns its result; neither changes anything."""
+        spec, action = _valid(ProviderSpec, spec).model_dump(), _valid(CredentialChange, credential).action
+        before = self.read()
+        if before["revision"] != expected_revision:
+            return ()
+        old, new = price_terms(before["spec"]), price_terms(spec)
+        parts = []
+        if (action != "keep" or _custody_terms(before["spec"]) != _custody_terms(spec)
+                or self.closure(before["revision"]) is not None):
+            parts.append(CUSTODY)
+        if (spec["route"] is not None and any(old[field] != new[field] for field in _PRICED_ROUTE_FIELDS)
+                or old["incomplete_charging"] != new["incomplete_charging"]):
+            parts.append(PRICE_TERMS)
+        return tuple(parts) or (CUSTODY,)
 
     def append(self, spec, credential, *, expected_revision, actor_id, reason, operation_id):
         with self.store.conn() as transaction:

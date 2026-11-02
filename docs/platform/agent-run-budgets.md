@@ -342,10 +342,13 @@ visual/keyboard acceptance is tracked separately in the evidence log and is not 
 
 Account administration now mounts `/admin?tab=model-provider` and four typed routes under
 `/api/admin/billing/model-provider`: GET current state, GET `/history`, POST `/preview`,
-and POST `/publish`. Reading requires `platform.config.view`; changing configuration requires
-`platform.models.credential` (authz-6: the custody of the route and the sealed credential, split
-out of `platform.config.manage`; held by the super administrator), a bound preview and fresh admin
-authentication at publication.
+and POST `/publish`. Reading requires `platform.config.view`. A publication requires the permission
+of what it changes against the current version (authz-6, split out of `platform.config.manage`; both
+held by the super administrator): the sealed credential and the route as a technical fact need
+`platform.models.credential`; the sale and cost prices the route uses, their cost basis and the
+charging of incomplete calls need `platform.models.pricing`. A first route, or one restored after a
+withdrawal, names its prices and needs both. Every publication also needs a bound preview and fresh
+admin authentication.
 A platform role never supplies workspace access, payment consent or wallet funds.
 
 The host explicitly selects `SYNWEVO_AGENT_PROVIDER=deepseek` and

@@ -12,7 +12,9 @@ export type Overview = { environment: Environment; configured: boolean; unit: Co
   balance: Reading | null; active_suspensions: number; allowlisted: number };
 export type Suspension = { id: string; scope_kind: 'user' | 'organization' | 'route'; scope_id: string; payer_label: string | null;
   source: 'brake' | 'journal'; reason_code: string; unit: string | null; window_s: number | null; threshold_units: string | null;
-  observed_units: string | null; created_at: number; lifted_at: number | null; lifted_by: string | null; lift_reason: string | null };
+  observed_units: string | null; created_at: number; lifted_at: number | null; lifted_by: string | null; lift_reason: string | null;
+  /** The server would refuse this reader's lift: a delegated holder's own account or organization (authz-6). */
+  refused_own_payer?: boolean };
 export type AllowEntry = { id: string; payer_kind: 'user' | 'organization'; payer_id: string; payer_label: string | null;
   added_by: string; add_reason: string; added_at: number };
 export type Topup = { id: string; unit: string; amount_units: string; topped_up_at: number; actor_id: string; reason: string };
@@ -22,6 +24,11 @@ export type Reconciliation = { id: string; kind: 'daily' | 'ledger_audit'; windo
   pending_units: string | null; drift_n: string | null; drift_d: string | null; tolerance_units: string | null;
   differences: number | null; trigger: 'schedule' | 'admin'; created_at: number };
 export type Page<T> = { items: T[]; next_before: number | null };
+
+/** A person is added by login address, which resolves to an account only with the account list
+ *  (admin_model_risk.allow); an organization goes by its id. */
+export const allowKinds = (held: ReadonlySet<string>): ('user' | 'organization')[] =>
+  held.has('platform.users.view') ? ['user', 'organization'] : ['organization'];
 
 const INTEGER = /^-?(0|[1-9][0-9]{0,30})$/;
 /** A rational amount in smallest units, rounded half away from zero; `exact` says whether rounding happened. */

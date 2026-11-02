@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from synwevo_core.auth import Auth
 from synwevo_core.audit_change import change
+from synwevo_core.billing.provider_settings import CUSTODY, PRICE_TERMS
 from synwevo_core.errors import ServiceError
 from synwevo_core.identity import Identity
 from synwevo_core.oidc import Grants
@@ -35,7 +36,9 @@ class Operation:
     #: permission here, as `(operation, permission)` pairs read through `permission_for`. Its
     #: `permission` is then the admission for an operation outside the table — the lesser of the
     #: acts' permissions, refused as `bad_operation` right after — so a caller without either still
-    #: meets the platform's 404 or 403 first and never the request's own validation.
+    #: meets the platform's 404 or 403 first and never the request's own validation. A provider
+    #: publication (admin.model_provider.publish) names what each part of a version needs the same
+    #: way; a request that changes both parts needs both, and its `permission` is the custody's.
     per_operation: tuple[tuple[str, str], ...] = ()
 
     def permission_for(self, operation=None) -> str:
@@ -47,8 +50,9 @@ class Operation:
 REVOKE_SESSIONS_PERMISSION = "platform.users.support"
 #: authz-6 (platform_access.py): model governance is split from platform configuration. The
 #: provider's route and sealed credential (admin_model_provider) are the credential permission's;
-#: prices, the schedule, markups (admin_model_prices), the cost policy (admin_model_costs) and the
-#: risk controls (admin_model_risk) the pricing permission's. Reads stay `platform.config.view`.
+#: the price terms of that route (`ProviderSettings.change_parts`), prices, the schedule, markups
+#: (admin_model_prices), the cost policy (admin_model_costs) and the risk controls
+#: (admin_model_risk) the pricing permission's. Reads stay `platform.config.view`.
 MODEL_CREDENTIAL_PERMISSION = "platform.models.credential"
 MODEL_PRICING_PERMISSION = "platform.models.pricing"
 MODEL_VIEW_PERMISSION = "platform.config.view"
@@ -56,7 +60,8 @@ MODEL_VIEW_PERMISSION = "platform.config.view"
 OPERATIONS = {
     "admin.user.status": Operation("platform.users.manage", "high"),
     "admin.settings.publish": Operation("platform.config.manage", "high"),
-    "admin.model_provider.publish": Operation(MODEL_CREDENTIAL_PERMISSION, "high"),
+    "admin.model_provider.publish": Operation(MODEL_CREDENTIAL_PERMISSION, "high", per_operation=(
+        (CUSTODY, MODEL_CREDENTIAL_PERMISSION), (PRICE_TERMS, MODEL_PRICING_PERMISSION))),
     "admin.model_price.draft": Operation(MODEL_PRICING_PERMISSION, "medium"),
     "admin.model_price.publish": Operation(MODEL_PRICING_PERMISSION, "high"),
     "admin.model_price.schedule.publish": Operation(MODEL_PRICING_PERMISSION, "high"),

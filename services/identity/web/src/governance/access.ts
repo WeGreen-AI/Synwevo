@@ -36,9 +36,10 @@ export const visibleTabs = (held: Held): Tab[] =>
   (Object.keys(TAB_PERMISSION) as Tab[]).filter((t) => held.has(TAB_PERMISSION[t]));
 
 /** authz-6: model governance is split from platform configuration (platform_access.py). The four
- *  model pages read with platform.config.view; the provider's route and sealed credential are
- *  changed with MODEL_CREDENTIAL, prices, the schedule, markups, the cost policy and the paid-model
- *  risk controls with MODEL_PRICING. platform.config.manage changes neither any more. */
+ *  model pages read with platform.config.view; the provider's sealed credential and route are
+ *  changed with MODEL_CREDENTIAL; the prices that route uses and its charging of incomplete calls
+ *  (the same page: ModelProviderTab asks per field), prices, the schedule, markups, the cost policy
+ *  and the paid-model risk controls with MODEL_PRICING. platform.config.manage changes neither. */
 export const MODEL_CREDENTIAL = "platform.models.credential";
 export const MODEL_PRICING = "platform.models.pricing";
 

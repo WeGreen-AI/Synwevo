@@ -295,9 +295,13 @@ Docs另提供严格extract_context契约，现有成员导入/Extract截取语�
 - 背景：模型提供方的密封凭据与路线、零售价格与排期、成本策略、付费风险控制都挂在 `platform.config.manage` 上（只有最高管理员持有）；
   所有者简报 §4.6 要求「模型密钥保管与定价分离」；BACKLOG authz-6（P3）。实现在分支 `claude/authz-6`。
 - 决定：
-  1. 两项新权限：`platform.models.credential`（提供方的路线、计费方式与密封凭据：设置、更换、撤销；从不读回密钥）与
-     `platform.models.pricing`（零售价格、分时排期、加价、成本策略、付费风险控制）。成本策略与风险控制并入定价一侧：要求只给出两项，
-     它们是平台「收多少、花多少」的商业运营，不是密钥保管；总闸重开、解除暂停仍是危险操作（严格重认证）。`platform.config.manage` 保留
+  1. 两项新权限：`platform.models.credential`（提供方的密封凭据：设置、更换、撤销，从不读回密钥；以及路线的技术事实：模型、证据、上限、有效期、启停、关闭后重新开放）与
+     `platform.models.pricing`（零售价格、分时排期、加价、路线采用的售价与成本价及其成本依据、未完成调用是否收费、成本策略、付费风险控制）。成本策略与风险控制并入定价一侧：要求只给出两项，
+     它们是平台「收多少、花多少」的商业运营，不是密钥保管；总闸重开、解除暂停仍是危险操作（严格重认证）。
+     已发布的价格要路线写明才生效，所以采用价格就是决定付款人付多少，属于定价（评审修正：最初的版本把整个提供方版本都挂在 `platform.models.credential` 上，保管密钥的人能改零售价，定价的人反而不能让价格生效）。
+     路线与它采用的价格在同一个版本里，发布接口只有一个，按请求相对当前版本改了什么要权限（`ProviderSettings.change_parts`，`OPERATIONS` 的 `per_operation`）：
+     只改价格条款要定价权限，其余只要保管权限，两边都改要两项；首次配置或恢复已撤下的路线会写明价格，所以要两项；撤下路线不设定价格；关闭的路线一发布就重新开放，告警发给保管一边，所以这属于保管，定价的发布在路线关闭期间被拒绝。
+     价格条款变化时，发布的审计行写明前后值，并另记 `admin.model_price.adopt`（发布不再只能从历史接口还原）。`platform.config.manage` 保留
      注册策略、管理员第二因素策略、限流解除、MCP 策略与停用、应用目录平台范围变更（D12）与 Agent 安全规则，不再治理任何模型面。
      四个面的读取仍是 `platform.config.view`，两项新权限都不蕴含它（管理不等于查看）；读到的只有元数据（是否已配置凭据及其修订号、已发布的数字、
      金额与代码），任何路由都读不到密钥。
@@ -308,14 +312,17 @@ Docs另提供严格extract_context契约，现有成员导入/Extract截取语�
      另有一项按整张矩阵逐角色比对分权前后的可达路由，完全相等。
   4. 告警随「谁能处理」改收件人：路线关闭（模型缺失、上游余额）→ `platform.models.credential` 持有者；风险控制、成本汇总、待确认敞口
      → `platform.models.pricing` 持有者。今天两者都只有最高管理员，所以实际收件人不变。
-  5. 界面：四个模型标签页仍按 `platform.config.view` 显示；模型提供方的编辑按 `platform.models.credential`，价格/成本/风险的写操作按
-     `platform.models.pricing`（`governance/access.ts` 的 `MODEL_CREDENTIAL` / `MODEL_PRICING`）；两项权限的标签三语。
+  5. 界面：四个模型标签页仍按 `platform.config.view` 显示；模型提供方的编辑按字段分：售价、成本价、成本依据与未完成调用的计费按 `platform.models.pricing`，其余按 `platform.models.credential`；
+     价格/成本/风险的写操作按 `platform.models.pricing`（`governance/access.ts` 的 `MODEL_CREDENTIAL` / `MODEL_PRICING`）；复制历史版本要两项都有；两项权限的标签三语。
+  6. 委派定价权限的两条规则（评审修正，`admin_model_risk`；今天只有最高管理员持有，所以现在没有暴露）：按登录邮箱放行个人付款方还要 `platform.users.view`，否则放行名单就回答了账户列表拒绝回答的问题（这个地址有没有账户、编号是什么）；
+     委派的持有者不能解除或放行自己的账户与自己所在的组织（`risk_own_payer`），否则刹车与分阶段开放对他不起作用。最高管理员可以（审计行标 `own_payer`）：平台可能只有一位，这条规则不能把所有者锁在自己的产品外面。
 - 未决（所有者）：
   1. 是否委派，即新增只持一项的内置角色。要求只写了权限分离与「财务」角色，侦察报告也把委派列为第二阶段的所有者决定，所以本次不加；因此在产品里
      这项分权今天只体现在目录、路由、审计与界面上，要到有人被任命才有两个不同的持有者。代价已实测（2026-11-01 中断的一次尝试加过两个角色，补丁未合入）：
      角色 CHECK 要表重建加宽；上一版本的 `widen_roles` 不认识新子句，**拒绝打开**加宽过的库（`unexpected schema for platform_role_grants: cannot widen`），
      因此发布后不能只换回旧镜像（生产回滚本来就是恢复发布前的备份，见 infra/production/README.md，但这要写进发布说明）；这样的角色还必须带
-     `platform.config.view`，否则每个 GET 都是 403，于是它能读另一面的元数据（不含密钥）；只有最高管理员能授予。
+     `platform.config.view`，否则每个 GET 都是 403，于是它能读另一面的元数据（不含密钥）；只有最高管理员能授予。委派定价角色若要按邮箱放行个人付款方，还要 `platform.users.view`（决定 6）；
+     两名不同的持有者都不能单独配置首条路线或恢复已撤下的路线，这要一位两项都有的人（目前是最高管理员）。
   2. 支付渠道 webhook 失败告警的收件人保持不变（`platform.config.manage`，即最高管理员，`risk.WEBHOOK_ALERT_PERMISSION`）；改发给持有
      `platform.billing.manage` 的财务角色可能更合理，但这改变财务角色收到的通知。
 - 偏离侦察报告：侦察建议三项（另设 `platform.models.cost`）；要求是两项，按侦察给出的备选把成本与风险并入定价。其余按侦察的第一阶段（只加权限）。
@@ -323,3 +330,6 @@ Docs另提供严格extract_context契约，现有成员导入/Extract截取语�
   未登录与无权限者照旧、逐角色可达路由比对、分权前的库、授予审计、告警收件人；只持一项的持有者是标明的夹具 `platform_fixture.holding_exactly`）、
   四个模型管理模块的测试（`test_admin_model_provider.py` 里密钥不出现在持有定价权限者能读到的任何回答中）、
   `services/identity/web/tests/admin-access.test.mjs`、`admin-layout.test.mjs`（标签页的读/写门控、三语）。
+  评审修正：`test_admin_model_provider.py`（只持密钥的权限改不了价格条款，只持定价的权限能采用价格、碰不到密钥与其余路线，两边都改要两项，首条与恢复的路线，重新开放，审计与 `admin.model_price.adopt`）、
+  `test_admin_model_risk.py`（按邮箱放行要账户列表权限，委派持有者不能放行自己），`model-provider.test.mjs`（`providerChangeParts` 与服务端同样的用例、按字段的权限），
+  `tests/integration/test_permission_docs.py`（两份文档的权限表对照目录）。

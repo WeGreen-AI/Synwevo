@@ -159,6 +159,64 @@ test('credential actions never include an old key, and replacing requires explic
   assert.equal(m.validateProviderForm({ ...form, credential_action: 'unknown' }, '').spec, null);
 });
 
+test('authz-6: a change asks for the permission of what it changes, in the words the server judges it', () => {
+  // The same cases as test_admin_model_provider.py: the page offers what the route would answer.
+  const parts = (before, after, action = 'keep', closed = false) => m.providerChangeParts(before, after, action, closed);
+  const changed = (key, value) => ({ ...spec, route: { ...route, [key]: value } });
+  const withdrawn = { enabled: false, route: null, incomplete_charging: NO_CHARGING };
+  const charging = { ...NO_CHARGING, length: true };
+  // what payers pay and the platform spends
+  for (const key of ['sale_price_id', 'cost_price_id', 'cost_basis_ref']) assert.deepEqual(parts(spec, changed(key, 'fixture-other')), ['price_terms'], key);
+  assert.deepEqual(parts(spec, { ...spec, incomplete_charging: charging }), ['price_terms']);
+  assert.deepEqual(parts(spec, { ...changed('sale_price_id', 'fixture-other'), enabled: false }), ['custody', 'price_terms'], 'not while disabled either');
+  // the key and the rest of the version
+  for (const key of ['requested_model', 'confirmed_route', 'confirmation_ref', 'account_confirmation_ref']) assert.deepEqual(parts(spec, changed(key, 'fixture-other')), ['custody'], key);
+  for (const [key, value] of [['input_token_ceiling', 1], ['output_token_ceiling', 1], ['valid_until', 1798761608], ['reasoning_efforts', ['none']]]) {
+    assert.deepEqual(parts(spec, changed(key, value)), ['custody'], key);
+  }
+  assert.deepEqual(parts(spec, { ...spec, enabled: false }), ['custody']);
+  for (const action of ['replace', 'revoke']) assert.deepEqual(parts(spec, spec, action), ['custody'], action);
+  // both, and creating or restoring a route, which names its prices
+  assert.deepEqual(parts(spec, changed('sale_price_id', 'fixture-other'), 'replace'), ['custody', 'price_terms']);
+  assert.deepEqual(parts(null, spec), ['custody', 'price_terms']);
+  assert.deepEqual(parts(withdrawn, spec), ['custody', 'price_terms'], 'a withdrawal is no way around the prices');
+  // withdrawing sets no price; the charging is a pricing decision with or without a route
+  assert.deepEqual(parts(spec, withdrawn), ['custody']);
+  assert.deepEqual(parts(null, withdrawn), ['custody']);
+  assert.deepEqual(parts(withdrawn, { ...withdrawn, incomplete_charging: charging }), ['price_terms']);
+  assert.deepEqual(parts(spec, { ...withdrawn, incomplete_charging: charging }), ['custody', 'price_terms']);
+  // publishing reopens a closed route, which is custody whatever else changes; publishing nothing is custody's too
+  assert.deepEqual(parts(spec, changed('sale_price_id', 'fixture-other'), 'keep', true), ['custody', 'price_terms']);
+  assert.deepEqual(parts(spec, spec, 'keep', true), ['custody']);
+  assert.deepEqual(parts(spec, spec), ['custody']);
+  // a version published before the fields existed reads with the server's defaults
+  const older = { enabled: true, route: Object.fromEntries(Object.entries(route).filter(([key]) => key !== 'reasoning_efforts')) };
+  assert.deepEqual(parts(older, spec), ['custody'], 'no price term differs');
+  assert.deepEqual(parts(older, { ...spec, incomplete_charging: charging }), ['price_terms']);
+});
+
+test('authz-6: each form field belongs to the permission that changes it', () => {
+  const price = ['sale_price_id', 'cost_price_id', 'cost_basis_ref', ...m.chargingKinds.map(kind => `charge_${kind}`)];
+  for (const key of Object.keys(m.emptyProviderForm())) {
+    assert.equal(m.providerFieldPart(key), price.includes(key) ? 'price_terms' : 'custody', key);
+  }
+});
+
+test('authz-6: over a newer version a holder keeps their input in their own fields, and the rest follows the version', () => {
+  const form = { ...m.providerForm(spec), output_token_ceiling: '16', sale_price_id: 'fixture-my-sale' };
+  const latest = m.providerForm({ ...spec, route: { ...route, sale_price_id: 'fixture-new-sale', output_token_ceiling: 8 }, incomplete_charging: { ...NO_CHARGING, length: true } });
+  const both = m.rebaseProviderForm(form, latest, { custody: true, price_terms: true });
+  assert.deepEqual(both, form, 'a holder of both keeps all of it, as the page always did');
+  const custodian = m.rebaseProviderForm(form, latest, { custody: true, price_terms: false });
+  assert.equal(custodian.output_token_ceiling, '16');
+  assert.equal(custodian.sale_price_id, 'fixture-new-sale', 'a price field they cannot edit must not hold a change they cannot publish');
+  assert.equal(custodian.charge_length, true);
+  const pricer = m.rebaseProviderForm(form, latest, { custody: false, price_terms: true });
+  assert.equal(pricer.output_token_ceiling, '8');
+  assert.equal(pricer.sale_price_id, 'fixture-my-sale');
+  assert.equal(pricer.charge_length, false);
+});
+
 test('copying history copies only the route/enablement, preserves draft credential choice and never restores historical keys', () => {
   const historical = { ...spec, api_key: 'fixture-never-copy', credential_revision: 91 };
   for (const action of ['keep', 'replace', 'revoke']) {
@@ -314,11 +372,11 @@ const compiled = (await compile('ModelProviderTab.tsx')).replace(/(from\s*|impor
 const { ModelProviderTab } = await import(moduleURL(compiled));
 
 function render(props = {}) {
-  return renderToStaticMarkup(React.createElement(ModelProviderTab, { canRead: true, canManage: false, onDenied() {}, ...props }));
+  return renderToStaticMarkup(React.createElement(ModelProviderTab, { canRead: true, canCustody: false, canPricing: false, onDenied() {}, ...props }));
 }
 test('denied readers mount no loader even with manage=true, and read-only rendering shows no write controls', () => {
   support.fixture.reads = [];
-  const denied = render({ canRead: false, canManage: true });
+  const denied = render({ canRead: false, canCustody: true, canPricing: true });
   assert.deepEqual(support.fixture.reads, []);
   assert.match(denied, /没有查看/);
   support.fixture.current = initial;
@@ -328,6 +386,34 @@ test('denied readers mount no loader even with manage=true, and read-only render
   assert.match(html, /尚未配置模型提供方/);
   assert.match(html, /不能修改或发布/);
   assert.doesNotMatch(html, /<input|<form|复制路线到编辑器/);
+});
+
+test('authz-6: each holder is told what is theirs on this page, and a version is copied whole only by a holder of both', () => {
+  support.fixture.loading = false;
+  support.fixture.current = publishedFixture().state;
+  support.fixture.history = { items: [support.fixture.current], next_before_revision: null };
+  const READ_ONLY = /不能修改或发布/, CUSTODY = /你保管密钥与路线/, PRICING = /你负责定价/, COPY = /复制路线到编辑器/;
+  const page = (canCustody, canPricing) => render({ canCustody, canPricing });
+  assert.match(page(false, false), READ_ONLY);
+  assert.doesNotMatch(page(false, false), CUSTODY);
+  assert.doesNotMatch(page(false, false), PRICING);
+  assert.match(page(true, false), CUSTODY);
+  assert.doesNotMatch(page(true, false), READ_ONLY);
+  assert.doesNotMatch(page(true, false), PRICING);
+  assert.match(page(false, true), PRICING);
+  assert.doesNotMatch(page(false, true), READ_ONLY);
+  assert.doesNotMatch(page(false, true), CUSTODY);
+  for (const pattern of [READ_ONLY, CUSTODY, PRICING]) assert.doesNotMatch(page(true, true), pattern);
+  // A copied version carries prices and route together: for one permission half of it would be refused.
+  assert.match(page(true, true), COPY);
+  for (const [custody, pricing] of [[true, false], [false, true], [false, false]]) assert.doesNotMatch(page(custody, pricing), COPY);
+});
+
+test('authz-6: the editor offers each field by its permission and refuses to send a change the server would refuse', async () => {
+  const component = await source('ModelProviderTab.tsx');
+  assert.match(component, /providerFieldPart\(key\)/, 'each route field asks whose it is');
+  assert.match(component, /providerChangeParts\(base\.spec, validation\.spec/, 'the preview button asks what the change needs');
+  assert.match(component, /missingParts\.length/, 'and stays off while a part of it is not held');
 });
 
 test('current and immutable historical routes show concrete fields and credential status without server key/digest extras', () => {

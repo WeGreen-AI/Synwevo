@@ -53,6 +53,31 @@ export const chargingLabels: Record<ChargingKind, string> = {
 export const noCharging = (): ChargingPolicy => ({ length: false, content_filter: false, provider_interrupted: false, client_cancelled: false });
 export const routeEfforts = (route: ProviderRoute): Effort[] => route.reasoning_efforts ?? [...efforts];
 export const specCharging = (spec: ProviderSpec): ChargingPolicy => spec.incomplete_charging ?? noCharging();
+/** What one publication changes (authz-6, `ProviderSettings.change_parts`): the prices a route names,
+ *  the evidence for its cost and the charging of incomplete calls are the pricing permission's; the
+ *  key and the rest of a version the credential permission's. The server decides; this keeps the
+ *  editor from offering what it would refuse. */
+export type ProviderPart = 'custody' | 'price_terms';
+const pricedRouteKeys = ['sale_price_id', 'cost_price_id', 'cost_basis_ref'] as const;
+const custodyRouteKeys = ['requested_model', 'confirmed_route', 'confirmation_ref', 'account_confirmation_ref',
+  'input_token_ceiling', 'output_token_ceiling', 'valid_until'] as const;
+export const providerFieldPart = (key: string): ProviderPart =>
+  (pricedRouteKeys as readonly string[]).includes(key) || key.startsWith('charge_') ? 'price_terms' : 'custody';
+function sameCustody(a: ProviderSpec | null, b: ProviderSpec): boolean {
+  if (a === null || a.enabled !== b.enabled || (a.route === null) !== (b.route === null)) return false;
+  if (a.route === null || b.route === null) return true;
+  const before = a.route, after = b.route;
+  return custodyRouteKeys.every(key => before[key] === after[key]) && routeEfforts(before).join() === routeEfforts(after).join();
+}
+/** `closed`: the current version is closed, and any publication reopens it, which is custody. */
+export function providerChangeParts(before: ProviderSpec | null, after: ProviderSpec, action: CredentialAction, closed = false): ProviderPart[] {
+  const parts: ProviderPart[] = [];
+  if (action !== 'keep' || closed || !sameCustody(before, after)) parts.push('custody');
+  const old = before ? specCharging(before) : noCharging(), charging = specCharging(after);
+  const priced = after.route !== null && pricedRouteKeys.some(key => before?.route?.[key] !== after.route![key]);
+  if (priced || chargingKinds.some(kind => old[kind] !== charging[kind])) parts.push('price_terms');
+  return parts.length ? parts : ['custody'];
+}
 export const routeLabels: Record<keyof ProviderRoute, string> = {
   requested_model: '请求模型标识', confirmed_route: '已核实的实际路线', confirmation_ref: '模型与路线核实证据',
   cost_basis_ref: '成本依据引用', account_confirmation_ref: '账户核实证据', sale_price_id: '销售价格版本 ID',
@@ -100,6 +125,12 @@ export function providerForm(spec: ProviderSpec | null): ProviderForm {
     form.valid_until = providerDateInput(spec.route.valid_until);
   }
   return form;
+}
+/** The editor over a newer version: input stays where its holder may change it, the rest follows the version. */
+export function rebaseProviderForm(form: ProviderForm, latest: ProviderForm, may: Record<ProviderPart, boolean>): ProviderForm {
+  const next: Record<string, unknown> = { ...form };
+  for (const key of Object.keys(form)) if (!may[providerFieldPart(key)]) next[key] = latest[key as keyof ProviderForm];
+  return next as ProviderForm;
 }
 /** Copy route settings only; neither historical credential metadata nor a draft key is restored. */
 export function copyProviderRoute(form: ProviderForm, spec: ProviderSpec): ProviderForm {

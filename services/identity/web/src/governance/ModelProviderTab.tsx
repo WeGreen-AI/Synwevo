@@ -7,13 +7,15 @@ import { errText } from './labels';
 import { useUnsavedChanges } from '../lib/hooks';
 import { MODEL_PROVIDER_API as API, routeTextKeys, routeLabels, emptyProviderForm, providerForm, copyProviderRoute,
   efforts, effortLabels, chargingKinds, chargingLabels, routeEfforts, specCharging, providerHealth, type ProviderHealth,
+  providerFieldPart, providerChangeParts, rebaseProviderForm,
   validateProviderForm, validProviderState, sameProviderVersion, sameProviderSpec, validProviderHistory,
   readProviderPreview, createProviderAttempt, validProviderPublication, clearProviderCredential, providerFailureMode,
   type ProviderSpec, type ProviderState, type ProviderHistory, type ProviderForm, type ProviderRequest,
   type ProviderPreview, type ProviderPublication, type ProviderAttempt, type ProviderEnvironment } from './model-provider';
 import './model-provider.messages';
 
-export interface ModelProviderTabProps { canRead: boolean; canManage: boolean; onDenied: () => void }
+/** `canCustody`: the credential and the route; `canPricing`: the prices a route uses and its charging (authz-6). */
+export interface ModelProviderTabProps { canRead: boolean; canCustody: boolean; canPricing: boolean; onDenied: () => void }
 const grid: CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: 16 };
 const fieldset: CSSProperties = { border: 0, padding: 0, margin: 0, minWidth: 0 };
 const localError = (message: string) => new ApiError(400, 'model_provider_form', message);
@@ -65,8 +67,11 @@ export function ModelProviderTab(props: ModelProviderTabProps) {
   return <ModelProviderContent {...props} />;
 }
 
-function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
+function ModelProviderContent({ canCustody, canPricing, onDenied }: ModelProviderTabProps) {
   const { t, locale } = useI18n();
+  const canManage = canCustody || canPricing;
+  // A version carries prices and route together: copied whole, or part of it would be refused.
+  const canCopy = canCustody && canPricing;
   const id = useId();
   const current = useAdminData<ProviderState>(API, onDenied);
   const [cursors, setCursors] = useState<(number | null)[]>([null]);
@@ -111,7 +116,7 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
   }, []);
   // Losing the manage grant disables confirmation but must not destroy an unresolved
   // request. Losing the read grant unmounts this content and runs the cleanup above.
-  useEffect(() => { if (!canManage) setCopy(null); }, [canManage]);
+  useEffect(() => { if (!canCopy) setCopy(null); }, [canCopy]);
   useEffect(() => { if (error && !dialogOpen) errorSummary.current?.focus(); }, [error, dialogOpen]);
   const canWrite = canManage && !!state && (environment === 'test' || environment === 'live') && !current.loading && !current.err;
   const changedBase = !!base && !!state && !sameProviderVersion(base, state);
@@ -119,6 +124,11 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
   const frozen = !!busy || dialogOpen || uncertain || !!copy;
   const dirty = !sameForm(form, saved) || !!keyInput.current?.value;
   const validation = validateProviderForm(form, keyInput.current?.value || '');
+  const unchanged = !!base && validation.spec !== null && sameProviderSpec(validation.spec, base.spec) && form.credential_action === 'keep';
+  const missingParts = base && validation.spec && !unchanged
+    ? providerChangeParts(base.spec, validation.spec, form.credential_action, !!health?.closure).filter(part => !(part === 'custody' ? canCustody : canPricing)) : [];
+  // A route names its prices: creating one, or putting a withdrawn one back, sets them as well.
+  const routeNeedsBoth = !!base && !base.spec?.route && !(canCustody && canPricing);
   const expired = !!plan && now >= plan.expires_at * 1000;
   const historyValid = validProviderHistory(history.data, cursor, environment);
   const attempt = attemptRef.current;
@@ -150,11 +160,13 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
   }
   function adoptLatest() {
     if (!state || !canWrite || frozen || flight.current || (base?.environment === state.environment && state.revision < base.revision)) return;
-    setBase(state); setSaved(providerForm(state.spec)); setConflict(false); setPlan(null); clearRequests(); setError(null);
+    const latest = providerForm(state.spec);
+    setBase(state); setSaved(latest); setForm(previous => rebaseProviderForm(previous, latest, { custody: canCustody, price_terms: canPricing }));
+    setConflict(false); setPlan(null); clearRequests(); setError(null);
     heading.current?.focus();
   }
   function applyCopy(item: ProviderState) {
-    if (!canWrite || flight.current || uncertainRef.current || !item.spec || item.environment !== environment) return;
+    if (!canWrite || !canCopy || flight.current || uncertainRef.current || !item.spec || item.environment !== environment) return;
     setForm(previous => copyProviderRoute(previous, item.spec!)); setPlan(null); clearRequests(); setTried(false); setError(null); setResult(null); setCopy(null);
     requestAnimationFrame(() => heading.current?.focus());
   }
@@ -227,6 +239,7 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
       <span>{t(routeLabels[key])}</span>
       <input id={`${id}-${key}`} className="input" type={key === 'valid_until' ? 'datetime-local' : 'text'}
         step={key === 'valid_until' ? 1 : undefined} inputMode={numeric ? 'numeric' : undefined} required value={form[key]}
+        disabled={!(providerFieldPart(key) === 'custody' ? canCustody : canPricing)}
         onChange={event => edit(key, event.target.value)} aria-invalid={!!problem}
         aria-describedby={`${id}-route-help${problem ? ` ${id}-${key}-error` : ''}`} style={{ minWidth: 0, width: '100%' }} />
       {problem && <span className="small" id={`${id}-${key}-error`}>{t(problem)}</span>}
@@ -241,6 +254,8 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
       <p className="small muted">{t('配置状态不代表已连接或已通过模型验证。本页不会发起模型探测、模型调用或支付。')}</p>
       <p className="small muted">{t('密钥轮换或撤销不会重置固定成本账户 platform-deepseek，也不会清除历史费用或待确认用量。')}</p>
       {!canManage && <p className="notice">{t('你可以查看提供方配置和历史，不能修改或发布。')}</p>}
+      {canCustody && !canPricing && <p className="notice">{t('你保管密钥与路线：可以更换或撤销凭据、调整路线及其证据。路线采用的销售价、成本价及其成本依据和未完成调用的计费属于定价权限，这里只读。')}</p>}
+      {canPricing && !canCustody && <p className="notice">{t('你负责定价：可以让路线采用已发布的销售价与成本价、更新成本依据，并决定未完成调用是否收费。凭据与其他路线字段属于密钥保管权限，这里只读。')}</p>}
       {state?.environment === null && <p className="notice warn">{t('计费环境尚未配置，提供方编辑与发布已禁用。')}</p>}
       {current.err && <p className="notice err" role="alert">{t(current.err)}</p>}
       {!current.loading && !current.err && !state && <p className="notice err" role="alert">{t('无法确认服务器的提供方配置，请刷新后重试。')}</p>}
@@ -268,7 +283,7 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
           <button type="button" className="btn" disabled={!canWrite || frozen || (state?.environment === base.environment && state.revision < base.revision)} onClick={adoptLatest}>{t('保留输入，采用当前版本继续')}</button></div>
       </div>}
       <form className="col gap16" onSubmit={preview} noValidate>
-        <fieldset className="col gap12" style={fieldset} disabled={!canWrite || frozen}>
+        <fieldset className="col gap12" style={fieldset} disabled={!canWrite || frozen || !canCustody}>
           <legend>{t('凭据操作')}</legend>
           <label className="field" htmlFor={`${id}-credential_action`}><span>{t('选择凭据操作')}</span>
             <select id={`${id}-credential_action`} className="input" value={form.credential_action} onChange={event => edit('credential_action', event.target.value as ProviderForm['credential_action'])}>
@@ -286,17 +301,18 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
         </fieldset>
         <fieldset className="col gap12" style={fieldset} disabled={!canWrite || frozen}>
           <legend>{t('路线配置')}</legend>
-          <label className="row gap8"><input id={`${id}-enabled`} type="checkbox" checked={form.enabled} onChange={event => edit('enabled', event.target.checked)} />
+          <label className="row gap8"><input id={`${id}-enabled`} type="checkbox" checked={form.enabled} disabled={!canCustody} onChange={event => edit('enabled', event.target.checked)} />
             <span>{t('启用路线')}</span></label>
           <label className="field" htmlFor={`${id}-route_mode`}><span>{t('路线')}</span>
-            <select id={`${id}-route_mode`} className="input" value={form.route_mode} onChange={event => edit('route_mode', event.target.value as ProviderForm['route_mode'])}
+            <select id={`${id}-route_mode`} className="input" value={form.route_mode} disabled={!canCustody} onChange={event => edit('route_mode', event.target.value as ProviderForm['route_mode'])}
               aria-invalid={tried && !!validation.errors.route_mode} aria-describedby={tried && validation.errors.route_mode ? `${id}-route_mode-error` : undefined}>
-              <option value="none">{t('不配置路线')}</option><option value="route">{t('填写已核实的路线')}</option></select>
+              <option value="none">{t('不配置路线')}</option><option value="route" disabled={routeNeedsBoth}>{t('填写已核实的路线')}</option></select>
             {tried && validation.errors.route_mode && <span className="small" id={`${id}-route_mode-error`}>{t(validation.errors.route_mode)}</span>}
           </label>
+          {form.route_mode === 'none' && !(canCustody && canPricing) && <p className="notice" role="note">{t('路线要写明采用的价格：首次配置路线或恢复已撤下的路线，需要同时持有密钥保管与定价权限。')}</p>}
           <p className="small muted" id={`${id}-route-help`}>{t('填写真实模型、路线、证据及已发布价格的版本 ID；本页不提供默认批准项。有效期按 UTC 输入，精确到秒。')}</p>
           {form.route_mode === 'route' && <div style={grid}>{routeTextKeys.map(field)}{field('input_token_ceiling')}{field('output_token_ceiling')}{field('valid_until')}</div>}
-          {form.route_mode === 'route' && <fieldset className="col gap8" style={fieldset} aria-describedby={`${id}-efforts-help${tried && validation.errors.reasoning_efforts ? ` ${id}-efforts-error` : ''}`}>
+          {form.route_mode === 'route' && <fieldset className="col gap8" style={fieldset} disabled={!canCustody} aria-describedby={`${id}-efforts-help${tried && validation.errors.reasoning_efforts ? ` ${id}-efforts-error` : ''}`}>
             <legend>{t('允许的推理投入')}</legend>
             <p className="small muted" id={`${id}-efforts-help`}>{t('每次调用使用这里允许的、最接近用户设置的级别（同样接近时取较低者）；只允许“不思考”时，所有请求都关闭思考模式。')}</p>
             <div className="row wrap gap12">{efforts.map(effort => <label key={effort} className="row gap8">
@@ -306,7 +322,7 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
           </fieldset>}
           <p className="small muted">{t('启用仍须满足凭据、核实有效期、价格、成本策略及业务授权条件；停用不撤销已发送的调用或既有费用。')}</p>
         </fieldset>
-        <fieldset className="col gap8" style={fieldset} disabled={!canWrite || frozen} aria-describedby={`${id}-charging-help`}>
+        <fieldset className="col gap8" style={fieldset} disabled={!canWrite || frozen || !canPricing} aria-describedby={`${id}-charging-help`}>
           <legend>{t('未完成调用的计费')}</legend>
           <p className="small muted" id={`${id}-charging-help`}>{t('勾选的情形按提供方返回的最终用量向付款人收费，不超过该次调用的预留；未勾选时由平台承担成本。无法核实用量或输出无效的调用一律不收费。变更会形成新版本：之后开始的回答按新版本计费，正在进行的回答在下一次模型调用前停止，用户无需重新确认。')}</p>
           {chargingKinds.map(kind => <label key={kind} className="row gap8">
@@ -314,8 +330,10 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
             <span>{t(chargingLabels[kind])}</span></label>)}
         </fieldset>
         {tried && !validation.spec && <p className="notice err" role="alert">{t('请修正已标出的提供方字段，再预览变更。')}</p>}
-        <div><button type="submit" className="btn primary" disabled={!canWrite || frozen || changedBase || conflict ||
-          (validation.spec !== null && sameProviderSpec(validation.spec, base.spec) && form.credential_action === 'keep')}>{t('预览提供方变更')}</button></div>
+        {missingParts.includes('price_terms') && <p className="notice warn" role="status">{t('这次变更包含路线采用的价格、成本依据或未完成调用的计费，需要定价权限。请改回这些字段，或请持有该权限的管理员发布。')}</p>}
+        {missingParts.includes('custody') && <p className="notice warn" role="status">{t(health?.closure ? '路线已自动停止，发布任何新版本都会重新开放它，这需要密钥保管权限。请由持有该权限的管理员发布。'
+          : '这次变更包含凭据或其他路线字段，需要密钥保管权限。请改回这些字段，或请持有该权限的管理员发布。')}</p>}
+        <div><button type="submit" className="btn primary" disabled={!canWrite || frozen || changedBase || conflict || unchanged || missingParts.length > 0}>{t('预览提供方变更')}</button></div>
         {dirty && <p className="small muted">{t('输入尚未发布，当前生效版本保持不变。')}</p>}
       </form>
     </section>}
@@ -328,7 +346,7 @@ function ModelProviderContent({ canManage, onDenied }: ModelProviderTabProps) {
         {history.data!.items.map(item => <details key={`${item.environment}:${item.revision}`} className="notice">
           <summary>{t('查看提供方版本 {revision} · {time}', { revision: item.revision, time: item.created_at === null ? '—' : time(item.created_at) })}</summary>
           <div className="col gap12" style={{ paddingTop: 12 }}>{details(item)}
-            {canManage && <div><button type="button" className="btn" disabled={!canWrite || frozen || !item.spec || item.environment !== environment}
+            {canCopy && <div><button type="button" className="btn" disabled={!canWrite || frozen || !item.spec || item.environment !== environment}
               onClick={() => { if (dirty) setCopy(item); else applyCopy(item); }}>{t('复制路线到编辑器')}</button></div>}
           </div>
         </details>)}

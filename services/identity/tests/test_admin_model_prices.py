@@ -21,6 +21,7 @@ from synwevo_core.billing.catalogue import PriceCatalogue
 from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER, Sessions
 from synwevo_core.store import Store
 from synwevo_identity import admin_model_prices
+from synwevo_identity.admin_operations import OPERATIONS, Operation
 
 from .platform_fixture import end_platform_grants, holding_exactly, make_platform_admin
 from .test_admin_operations import PW, post, world
@@ -194,6 +195,48 @@ def test_permission_fresh_auth_csrf_and_revoked_replay(world, monkeypatch):
     assert publish(w, draft, body, client=client).status_code == 200
     end_platform_grants(w["store"], actor)
     assert publish(w, draft, body, client=client).status_code == 404
+
+
+def test_each_catalogue_entry_decides_its_own_routes(world, monkeypatch):
+    """Drafting asks for `admin.model_price.draft`'s permission and the preview and the publication
+    for `admin.model_price.publish`'s. Both name the same id today; a catalogue entry that decides
+    nothing would let the table say one thing and the routes another (authz-6 review)."""
+    w = world
+    draft, publishing = "admin.model_price.draft", "admin.model_price.publish"
+    viewer = w["login"](holding_exactly(monkeypatch, w["store"], w["ident"].create_user("price-entries@example.test", PW, status="active"),
+                                        {"platform.config.view"}))
+    w["reauth"](viewer)
+    for action in (draft, publishing):  # as shipped, with the view only: every route refused by name
+        assert OPERATIONS[action].permission == "platform.models.pricing"
+    item = create(w)
+
+    def creating():
+        return post(viewer, BASE + "/drafts", {"spec": SPEC, "idempotency_key": uuid.uuid4().hex})
+
+    def previewing():
+        return post(viewer, BASE + f"/drafts/{item['id']}/preview", {"expected_revision": item["revision"]})
+
+    def publishing_():
+        return post(viewer, BASE + f"/drafts/{item['id']}/publish", command({"draft": item, "preview_token": "not-confirmed"}))
+
+    for call in (creating, lambda: update(w, item, client=viewer), previewing, publishing_):
+        refused = call()
+        assert refused.status_code == 403 and refused.json()["detail"]["permission"] == "platform.models.pricing", refused.text
+    # the draft entry moves creating and updating, and nothing else
+    monkeypatch.setitem(OPERATIONS, draft, Operation("platform.config.view", "medium"))
+    assert creating().status_code == 200
+    assert update(w, item, client=viewer).status_code == 200
+    for call in (previewing, publishing_):
+        refused = call()
+        assert refused.status_code == 403 and refused.json()["detail"]["permission"] == "platform.models.pricing", refused.text
+    # the publish entry moves the preview and the publication, and nothing else
+    monkeypatch.setitem(OPERATIONS, draft, Operation("platform.models.pricing", "medium"))
+    monkeypatch.setitem(OPERATIONS, publishing, Operation("platform.config.view", "high"))
+    assert previewing().status_code == 200
+    assert publishing_().json()["error"] == "admin_preview_invalid", "past the permission, at the token"
+    for call in (creating, lambda: update(w, item, client=viewer)):
+        refused = call()
+        assert refused.status_code == 403 and refused.json()["detail"]["permission"] == "platform.models.pricing", refused.text
 
 
 def test_audit_failure_rolls_back_price_publication_and_allows_safe_retry(world, monkeypatch):

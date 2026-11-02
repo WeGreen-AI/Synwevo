@@ -289,6 +289,10 @@ class RiskControls:
             notify_user(self.store, actor, "billing.risk.paid_paused", params={},
                         dedupe_key="risk:suspension:" + row["id"], object_id=row["id"])
 
+    def suspension(self, suspension_id: str) -> dict | None:
+        return self.store.one("SELECT * FROM model_risk_suspensions WHERE id=? AND environment=?",
+                              (identifier(suspension_id), self.environment))
+
     def lift(self, suspension_id: str, *, actor_id: str, reason: str) -> dict:
         """Administrator action; the caller authorizes, audits and owns the transaction."""
         reason = _reason(reason)

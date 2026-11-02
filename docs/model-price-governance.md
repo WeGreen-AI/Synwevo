@@ -4,7 +4,7 @@
 
 ## 管理操作
 
-Accounts 的「模型价格」使用现有平台管理角色。`platform.config.view` 可读和试算；`platform.models.pricing` 可编辑（authz-6：从 `platform.config.manage` 分出，目前只有最高管理员持有；模型密钥另属 `platform.models.credential`）。发布另外复用当前管理操作的近期认证、五分钟签名预览、理由、幂等结果和事务审计。组织/空间角色不授予这些权限。
+Accounts 的「模型价格」使用现有平台管理角色。`platform.config.view` 可读和试算；`platform.models.pricing` 可编辑，也决定路线采用哪个已发布价格（authz-6：从 `platform.config.manage` 分出，目前只有最高管理员持有；模型密钥与路线的其余部分另属 `platform.models.credential`）。发布另外复用当前管理操作的近期认证、五分钟签名预览、理由、幂等结果和事务审计。组织/空间角色不授予这些权限。
 
 部署通过 `SYNWEVO_BILLING_ENVIRONMENT=test|live` 明确选择环境；未设置或无效时返回未配置，禁止写入。环境在进程启动时固定，前端不能切换。设置这个变量**不会开启付费模型调用或充值**。测试和正式交易不可混用；单位代码的精度是全局固定的定义，两个环境不能给同名单位赋予不同精度。
 
@@ -89,6 +89,7 @@ DeepSeek 的人民币价目表分高峰与低谷两档（低谷为高峰的一�
 
 发布加价**不改变任何路线**。路线在「模型提供方」中采用新售价（`sale_price_id`）时，路线版本变化：之后开始的回答
 按新售价计费，正在进行的回答在下一次模型调用前停止，聊天页提示价格已更新，用户无需重新确认；同一路线只能把加价售价配在它自己的成本基础上（`model_price_markup_basis`）。
+采用是定价决定（authz-6）：持有 `platform.models.pricing` 就能在同一页发布采用，不需要密钥的权限，只持密钥的权限则改不了；路线版本的发布审计写明前后的价格，并另记 `admin.model_price.adopt`。
 “按路线”的倍率即按路线所用的成本价/模型发布；不同档位可用不同倍率。
 
 报价（`agent.billing.offer`、`agent.billing.status`）以及兼容保留的单次运行报价和持续同意在 `rates`（高峰/统一）之外返回

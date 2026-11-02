@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from synwevo_core.billing.catalogue import PriceCatalogue
 from synwevo_core.billing.cost_settings import CostSettings
 from synwevo_core.billing.provider_settings import CredentialChange, ProviderSettings
+from synwevo_core.platform_access import ROLES
 from synwevo_core.sessions import COOKIE_NAME, CSRF_COOKIE, CSRF_HEADER, Sessions
 from synwevo_core.store import Store
 from synwevo_identity import admin_model_provider
@@ -180,9 +181,16 @@ def test_preview_and_publication_never_expose_keys_or_ciphertext_or_grant_busine
     success = audits(w, "ok")
     assert len(success) == 1 and success[0]["workspace_id"] is None
     meta = json.loads(success[0]["meta"])
+    recorded = {key: meta.pop(key) for key in ("before", "after", "changed")}  # G24, the unified record
     assert meta == {"billing_environment": "test", "provider": "deepseek", "origin": "http://testserver",
         "operation_id": result["operation_id"], "reason": REASON, "before_revision": 0, "revision": 1,
         "credential_action": "replace", "before_credential_revision": 0, "credential_revision": 1}
+    route = w["spec"]["route"]
+    assert recorded["after"] == {**route, "enabled": True, "incomplete_charging": NO_CHARGING,
+                                 "credential_configured": True, "credential_revision": 1}
+    assert recorded["before"] == {**{key: None for key in route}, "enabled": None, "incomplete_charging": None,
+                                  "credential_configured": False, "credential_revision": 0}
+    assert set(recorded["changed"]) == set(recorded["after"]), "the first version sets every field"
     # The request hash is committed over a credential digest, never over the raw request.
     expected_hash = hashlib.sha256(canonical({"action": ACTION, "target": "platform-deepseek", "provider": "deepseek",
         "origin": "http://testserver", "environment": "test", "revision": 0, "spec": body["spec"],
@@ -416,6 +424,337 @@ def test_the_sealed_credential_reaches_no_reader_and_only_its_permission_changes
         refused = post(pricing, BASE + "/preview", preview_request(w, revision=status.json()["revision"], credential=credential))
         assert refused.status_code == 403 and refused.json()["detail"]["permission"] == "platform.models.credential", refused.text
     assert w["store"].one("SELECT COUNT(*) AS n FROM model_provider_versions")["n"] == versions
+
+
+# ---------------------------------------------------------------- key custody and pricing (authz-6, D20)
+# One publication route serves two permissions, and asks for the one of what the request changes:
+# the sale and cost prices a route uses, their cost evidence and the charging of incomplete calls
+# are what payers pay and the platform spends, so they are `platform.models.pricing`'s; the key and
+# the rest of the version are `platform.models.credential`'s.
+MODEL_CREDENTIAL, MODEL_PRICING = "platform.models.credential", "platform.models.pricing"
+CUSTODIAN = frozenset({"platform.config.view", MODEL_CREDENTIAL})
+PRICER = frozenset({"platform.config.view", MODEL_PRICING})
+KEEP = {"action": "keep", "api_key": None}
+CHARGED = {**NO_CHARGING, "length": True, "client_cancelled": True}
+PRICE_CHANGES = ("sale_price", "cost_price", "both_prices", "cost_evidence", "charging")
+CUSTODY_CHANGES = ("disable", "withdraw", "requested_model", "route_evidence", "account_evidence", "ceiling", "validity", "efforts")
+
+
+def holder(w, monkeypatch, permissions, name, *, carrier="support"):
+    """FIXTURE (`holding_exactly`): no built-in role holds one model id without the whole catalogue.
+    Re-authenticated, so what a route answers below is about the permission and not the freshness."""
+    user = holding_exactly(monkeypatch, w["store"], w["ident"].create_user(f"{name}@example.test", PW, status="active"),
+                           permissions, carrier=carrier)
+    client = w["login"](user)
+    w["reauth"](client)
+    return user, client
+
+
+def with_route(spec, **changes):
+    return {**spec, "route": {**spec["route"], **changes}}
+
+
+def priced(spec, other, change):
+    return {"sale_price": with_route(spec, sale_price_id=other["sale"]),
+            "cost_price": with_route(spec, cost_price_id=other["cost"]),
+            "both_prices": with_route(spec, sale_price_id=other["sale"], cost_price_id=other["cost"]),
+            "cost_evidence": with_route(spec, cost_basis_ref="fixture-other-cost-evidence"),
+            "charging": {**spec, "incomplete_charging": CHARGED}}[change]
+
+
+def custody(spec, change):
+    return {"disable": {**spec, "enabled": False},
+            "withdraw": {**spec, "enabled": False, "route": None},
+            "requested_model": with_route(spec, requested_model="fixture-other-request"),
+            "route_evidence": with_route(spec, confirmation_ref="fixture-other-confirmation"),
+            "account_evidence": with_route(spec, account_confirmation_ref="fixture-other-account"),
+            "ceiling": with_route(spec, output_token_ceiling=16),
+            "validity": with_route(spec, valid_until=spec["route"]["valid_until"] + 60),
+            "efforts": with_route(spec, reasoning_efforts=["none"])}[change]
+
+
+def current(w):
+    return ProviderSettings(w["store"], environment="test").read()
+
+
+def charged_route(w):
+    """The route as the model gateway charges from it (the Agent's quote reads the same object)."""
+    return ProviderSettings(w["store"], environment="test").resolve().route
+
+
+def publishes(w, client, *, spec, credential=KEEP):
+    plan = post(client, BASE + "/preview", preview_request(w, revision=current(w)["revision"], spec=spec, credential=credential))
+    assert plan.status_code == 200, plan.text
+    done = publish(w, command(plan.json(), credential), client=client)
+    assert done.status_code == 200, done.text
+    return done.json()
+
+
+def refused_by_name(w, client, permission, *, spec, credential=KEEP):
+    """Refused at the preview and at the publication (before any token is read); nothing changes."""
+    before = current(w)
+    request = preview_request(w, revision=before["revision"], spec=spec, credential=credential)
+    command_ = {**request, "preview_token": "not-confirmed", "idempotency_key": uuid.uuid4().hex, "reason": REASON}
+    for response in (post(client, BASE + "/preview", request), publish(w, command_, client=client)):
+        assert response.status_code == 403 and response.json()["error"] == "platform_permission_denied", response.text
+        assert response.json()["detail"]["permission"] == permission, response.text
+    assert current(w) == before
+
+
+@pytest.mark.parametrize("change", [*PRICE_CHANGES, "while_disabled", "unpublished_price"])
+def test_a_key_custodian_does_not_decide_what_payers_are_charged(provider_world, monkeypatch, change):
+    """authz-6 review: the published price reaches payers through the provider version, so holding
+    the key must not be enough to repoint the route at another price or to charge incomplete calls."""
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    route = charged_route(w)
+    other = seed_prices(w)
+    user, custodian = holder(w, monkeypatch, CUSTODIAN, "custodian")
+    spec = ({**with_route(w["spec"], sale_price_id=other["sale"]), "enabled": False} if change == "while_disabled"
+            else with_route(w["spec"], sale_price_id="missing-fixture-sale") if change == "unpublished_price"
+            else priced(w["spec"], other, change))
+    # Authority first: an id that does not exist is the same refusal, not a statement about the id.
+    refused_by_name(w, custodian, MODEL_PRICING, spec=spec)
+    assert charged_route(w) == route
+    denied = w["store"].all("SELECT object_id FROM audit_events WHERE action='admin.access.denied' AND actor_id=?", (user["id"],))
+    assert [row["object_id"] for row in denied] == [MODEL_PRICING], "audited once per missing id"
+
+
+@pytest.mark.parametrize("change", CUSTODY_CHANGES)
+def test_a_key_custodian_keeps_the_route(provider_world, monkeypatch, change):
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    _, custodian = holder(w, monkeypatch, CUSTODIAN, "custodian")
+    state = publishes(w, custodian, spec=custody(w["spec"], change))["state"]
+    assert state["revision"] == 2 and state["spec"]["incomplete_charging"] == NO_CHARGING
+    if state["spec"]["route"]:
+        assert state["spec"]["route"]["sale_price_id"] == w["spec"]["route"]["sale_price_id"]
+        assert state["spec"]["route"]["cost_price_id"] == w["spec"]["route"]["cost_price_id"]
+
+
+def test_a_key_custodian_sets_replaces_and_revokes_the_key_with_the_prices_as_they_are(provider_world, monkeypatch):
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    route = charged_route(w)
+    _, custodian = holder(w, monkeypatch, CUSTODIAN, "custodian")
+    rotated = {"action": "replace", "api_key": KEY + "-rotated"}
+    assert publishes(w, custodian, spec=w["spec"], credential=rotated)["state"]["credential_revision"] == 2
+    assert {k: v for k, v in charged_route(w).items() if k != "version"} == {k: v for k, v in route.items() if k != "version"}
+    state = publishes(w, custodian, spec={**w["spec"], "enabled": False}, credential={"action": "revoke", "api_key": None})["state"]
+    assert state["credential_revision"] == 3 and state["credential_configured"] is False
+
+
+@pytest.mark.parametrize("change", PRICE_CHANGES)
+def test_a_pricing_holder_puts_published_prices_into_effect_and_leaves_the_key_alone(provider_world, monkeypatch, change):
+    """authz-6 review: a price the pricing holder published reached no route and adopting it was
+    refused, while the markup page told them to adopt it. It is their decision, on the same route."""
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    sealed = w["store"].one("SELECT secret_enc FROM model_provider_credentials")["secret_enc"]
+    other = seed_prices(w)
+    user, pricer = holder(w, monkeypatch, PRICER, "pricer")
+    spec = priced(w["spec"], other, change)
+    state = publishes(w, pricer, spec=spec)["state"]
+    assert state["revision"] == 2 and state["actor_id"] == user["id"] and state["spec"] == spec
+    assert state["credential_revision"] == 1 and state["credential_configured"] is True
+    assert w["store"].one("SELECT secret_enc FROM model_provider_credentials")["secret_enc"] == sealed
+    route = charged_route(w)
+    assert route["version"] == "deepseek:test:2", "quotes and consents bind the version: the change reaches them"
+    assert route["sale_price_id"] == spec["route"]["sale_price_id"] and route["cost_price_id"] == spec["route"]["cost_price_id"]
+    assert route["charge_incomplete"] == (["length", "client_cancelled"] if change == "charging" else [])
+
+
+@pytest.mark.parametrize("change", CUSTODY_CHANGES)
+def test_a_pricing_holder_does_not_touch_the_route(provider_world, monkeypatch, change):
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    _, pricer = holder(w, monkeypatch, PRICER, "pricer")
+    refused_by_name(w, pricer, MODEL_CREDENTIAL, spec=custody(w["spec"], change))
+
+
+@pytest.mark.parametrize("credential", [REPLACEMENT, {"action": "revoke", "api_key": None}], ids=["replace", "revoke"])
+def test_a_change_of_both_kinds_needs_both_permissions(provider_world, monkeypatch, credential):
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    other = seed_prices(w)
+    _, custodian = holder(w, monkeypatch, CUSTODIAN, "custodian", carrier="support")
+    _, pricer = holder(w, monkeypatch, PRICER, "pricer", carrier="auditor")
+    _, both = holder(w, monkeypatch, CUSTODIAN | PRICER, "both", carrier="finance")
+    mixed = with_route(w["spec"], sale_price_id=other["sale"], output_token_ceiling=16)
+    refused_by_name(w, custodian, MODEL_PRICING, spec=mixed)
+    refused_by_name(w, pricer, MODEL_CREDENTIAL, spec=mixed)
+    # the key travels with a price: the pricing holder's own change does not carry a key
+    adoption = with_route(w["spec"], sale_price_id=other["sale"])
+    refused_by_name(w, pricer, MODEL_CREDENTIAL, spec=adoption, credential=credential)
+    refused_by_name(w, custodian, MODEL_PRICING, spec=adoption, credential=credential)
+    assert publishes(w, both, spec=mixed)["state"]["revision"] == 2
+
+
+def test_the_first_route_and_a_restored_one_need_both_permissions(provider_world, monkeypatch):
+    """A route names its prices, so creating one sets them. Withdrawing a route sets nothing, and
+    is no way around the rule: putting one back is a new adoption, even of the same prices."""
+    w = provider_world
+    _, custodian = holder(w, monkeypatch, CUSTODIAN, "custodian", carrier="support")
+    _, pricer = holder(w, monkeypatch, PRICER, "pricer", carrier="auditor")
+    _, both = holder(w, monkeypatch, CUSTODIAN | PRICER, "both", carrier="finance")
+    refused_by_name(w, custodian, MODEL_PRICING, spec=w["spec"], credential=REPLACEMENT)
+    refused_by_name(w, pricer, MODEL_CREDENTIAL, spec=w["spec"], credential=REPLACEMENT)
+    assert current(w)["revision"] == 0
+    refused_by_name(w, pricer, MODEL_CREDENTIAL, spec=DISABLED, credential=REPLACEMENT)
+    assert publishes(w, custodian, spec=DISABLED, credential=REPLACEMENT)["state"]["revision"] == 1
+    assert publishes(w, both, spec=w["spec"])["state"]["revision"] == 2
+    assert publishes(w, custodian, spec=DISABLED)["state"]["revision"] == 3
+    other = seed_prices(w)
+    for spec in (w["spec"], with_route(w["spec"], sale_price_id=other["sale"])):
+        refused_by_name(w, custodian, MODEL_PRICING, spec=spec)
+        refused_by_name(w, pricer, MODEL_CREDENTIAL, spec=spec)
+    assert publishes(w, both, spec=w["spec"])["state"]["revision"] == 4
+    # the charging of incomplete calls stays the pricing holder's while no route exists
+    assert publishes(w, custodian, spec=DISABLED)["state"]["revision"] == 5
+    refused_by_name(w, custodian, MODEL_PRICING, spec={**DISABLED, "incomplete_charging": CHARGED})
+    assert publishes(w, pricer, spec={**DISABLED, "incomplete_charging": CHARGED})["state"]["revision"] == 6
+    # and a withdrawal with the charging as it is stays the custodian's
+    assert publishes(w, both, spec=w["spec"])["state"]["spec"]["incomplete_charging"] == NO_CHARGING
+    assert publishes(w, custodian, spec=DISABLED)["state"]["revision"] == 8
+
+
+def test_reopening_a_closed_route_is_the_custodians_whatever_else_the_publication_changes(provider_world, monkeypatch):
+    """Any publication reopens a route an upstream 402 or a missing model id closed. The alert goes
+    to the holders of the credential permission, who can see to the cause; a price does not reopen it."""
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    settings = ProviderSettings(w["store"], environment="test")
+    settings.record_health(state="model_missing", requested_model="fixture-request", reason_code="model_not_listed")
+    assert settings.closure() is not None
+    other = seed_prices(w)
+    _, custodian = holder(w, monkeypatch, CUSTODIAN, "custodian", carrier="support")
+    _, pricer = holder(w, monkeypatch, PRICER, "pricer", carrier="auditor")
+    refused_by_name(w, pricer, MODEL_CREDENTIAL, spec=with_route(w["spec"], sale_price_id=other["sale"]))
+    refused_by_name(w, pricer, MODEL_CREDENTIAL, spec=w["spec"])
+    assert settings.closure() is not None
+    assert publishes(w, custodian, spec=w["spec"])["state"]["revision"] == 2
+    assert settings.closure() is None
+
+
+def test_a_publication_records_what_it_changed_and_an_adoption_is_on_the_price_record(provider_world, monkeypatch):
+    """authz-6 review: the row named no price or charging change, and nothing appeared under
+    admin.model_price.*: the version a payer is charged by was recoverable from the history only."""
+    w = provider_world
+    adoptions = lambda: w["store"].all("SELECT * FROM audit_events WHERE action='admin.model_price.adopt' ORDER BY seq")  # noqa: E731
+    sale, cost = w["spec"]["route"]["sale_price_id"], w["spec"]["route"]["cost_price_id"]
+    assert publish(w, command(preview(w))).status_code == 200
+    meta = json.loads(audits(w, "ok")[-1]["meta"])
+    assert meta["before"]["sale_price_id"] is None and meta["after"]["sale_price_id"] == sale
+    assert meta["after"]["cost_price_id"] == cost and meta["after"]["credential_configured"] is True
+    assert {"sale_price_id", "cost_price_id", "enabled", "credential_revision"} <= set(meta["changed"])
+    first = adoptions()
+    assert len(first) == 1 and first[0]["actor_id"] == w["root"]["id"] and first[0]["object_kind"] == "model_price"
+    assert first[0]["object_id"] == sale
+    # custody names its own change and adds nothing to the price record
+    user, custodian = holder(w, monkeypatch, CUSTODIAN, "custodian", carrier="support")
+    publishes(w, custodian, spec=with_route(w["spec"], output_token_ceiling=16))
+    meta = json.loads(audits(w, "ok")[-1]["meta"])
+    assert meta["changed"] == ["output_token_ceiling"] and (meta["before"]["output_token_ceiling"], meta["after"]["output_token_ceiling"]) == (32, 16)
+    publishes(w, custodian, spec=with_route(w["spec"], output_token_ceiling=16), credential={"action": "replace", "api_key": KEY + "-rotated"})
+    meta = json.loads(audits(w, "ok")[-1]["meta"])
+    assert meta["changed"] == ["credential_revision"] and KEY not in audits(w, "ok")[-1]["meta"]
+    assert len(adoptions()) == 1
+    # a price and a charging change name both, in the publication's row and on the price record
+    other = seed_prices(w)
+    user, pricer = holder(w, monkeypatch, PRICER, "pricer", carrier="auditor")
+    spec = {**with_route(w["spec"], output_token_ceiling=16, sale_price_id=other["sale"]), "incomplete_charging": CHARGED}
+    operation = publishes(w, pricer, spec=spec)["operation_id"]
+    row = audits(w, "ok")[-1]
+    meta = json.loads(row["meta"])
+    assert row["actor_id"] == user["id"] and meta["changed"] == ["incomplete_charging", "sale_price_id"]
+    assert meta["before"]["sale_price_id"] == sale and meta["after"]["sale_price_id"] == other["sale"]
+    assert meta["before"]["incomplete_charging"] == NO_CHARGING and meta["after"]["incomplete_charging"] == CHARGED
+    adopted = adoptions()[-1]
+    assert adopted["actor_id"] == user["id"] and adopted["object_id"] == other["sale"] and adopted["result"] == "ok"
+    meta = json.loads(adopted["meta"])
+    assert meta["operation_id"] == operation and meta["reason"] == REASON and meta["revision"] == 4 and meta["billing_environment"] == "test"
+    assert meta["changed"] == ["incomplete_charging", "sale_price_id"]
+    assert (meta["before"]["sale_price_id"], meta["after"]["sale_price_id"]) == (sale, other["sale"])
+    assert meta["after"]["cost_price_id"] == cost
+    assert_no_public_secret(w)
+
+
+def test_an_adoption_record_that_cannot_be_written_rolls_the_publication_back(provider_world, monkeypatch):
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    other = seed_prices(w)
+    plan = preview(w, revision=1, spec=with_route(w["spec"], sale_price_id=other["sale"]), credential=KEEP)
+    original = Store.execute
+
+    def fail(store, sql, params=()):
+        if sql.startswith("INSERT INTO audit_events") and "admin.model_price.adopt" in params:
+            raise OSError("fixture audit failure")
+        return original(store, sql, params)
+
+    monkeypatch.setattr(Store, "execute", fail)
+    r = publish(w, command(plan, KEEP))
+    assert r.status_code == 503 and r.json()["error"] == "model_config_unavailable", r.text
+    assert current(w)["revision"] == 1 and len(operations(w)) == 1 and len(audits(w, "ok")) == 1
+
+
+@pytest.mark.parametrize("when", ["before_the_writer_lock", "under_the_writer_lock"])
+def test_losing_the_pricing_permission_after_the_preview_refuses_the_publication(provider_world, monkeypatch, when):
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    other = seed_prices(w)
+    _, both = holder(w, monkeypatch, CUSTODIAN | PRICER, "both")
+    plan = post(both, BASE + "/preview", preview_request(w, revision=1, spec=with_route(w["spec"], sale_price_id=other["sale"]), credential=KEEP))
+    assert plan.status_code == 200, plan.text
+    if when == "before_the_writer_lock":
+        monkeypatch.setitem(ROLES, "support", CUSTODIAN)
+    else:
+        original, calls = ProviderSettings.change_parts, []
+
+        def drop(settings, *args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:  # the first is the admission, the second reads under the lock
+                monkeypatch.setitem(ROLES, "support", CUSTODIAN)
+            return original(settings, *args, **kwargs)
+
+        monkeypatch.setattr(ProviderSettings, "change_parts", drop)
+    r = publish(w, command(plan.json(), KEEP), client=both)
+    assert r.status_code == 403 and r.json()["detail"]["permission"] == MODEL_PRICING, r.text
+    assert current(w)["revision"] == 1 and len(operations(w)) == 1
+
+
+def test_a_preview_of_a_custody_change_does_not_carry_a_price_to_the_publication(provider_world, monkeypatch):
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    other = seed_prices(w)
+    _, custodian = holder(w, monkeypatch, CUSTODIAN, "custodian")
+    plan = post(custodian, BASE + "/preview", preview_request(w, revision=1, spec=with_route(w["spec"], output_token_ceiling=16), credential=KEEP))
+    assert plan.status_code == 200, plan.text
+    body = {**command(plan.json(), KEEP), "spec": with_route(w["spec"], output_token_ceiling=16, sale_price_id=other["sale"])}
+    r = publish(w, body, client=custodian)
+    assert r.status_code == 403 and r.json()["detail"]["permission"] == MODEL_PRICING, r.text
+    assert current(w)["revision"] == 1
+
+
+def test_a_stale_page_is_told_the_version_changed_and_a_replay_answers_the_original(provider_world, monkeypatch):
+    """Against a version that has moved on the request changes nothing yet, so the answer is about
+    the version, not a permission; the same key returns the durable result, whatever came after."""
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    other = seed_prices(w)
+    _, custodian = holder(w, monkeypatch, CUSTODIAN, "custodian", carrier="support")
+    _, pricer = holder(w, monkeypatch, PRICER, "pricer", carrier="auditor")
+    plan = post(pricer, BASE + "/preview", preview_request(w, revision=1, spec=with_route(w["spec"], sale_price_id=other["sale"]), credential=KEEP))
+    body = command(plan.json(), KEEP)
+    first = publish(w, body, client=pricer)
+    assert first.status_code == 200, first.text
+    # the custodian's page still shows version 1, with the old sale price
+    stale = post(custodian, BASE + "/preview", preview_request(w, revision=1, spec=with_route(w["spec"], output_token_ceiling=16), credential=KEEP))
+    assert stale.status_code == 409 and stale.json()["error"] == "model_revision_conflict", stale.text
+    # the pricing holder's retry of the same request is that request, even after the next version
+    publishes(w, custodian, spec=with_route(body["spec"], output_token_ceiling=16))
+    replay = publish(w, body, client=pricer)
+    assert replay.status_code == 200 and replay.json() == first.json()
+    assert current(w)["revision"] == 3
 
 
 @pytest.mark.parametrize("withdrawal", ["permission", "session", "freshness", "account", "step_up"])

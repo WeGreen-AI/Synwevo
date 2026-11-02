@@ -363,7 +363,8 @@ def _risk_body(path):
     # Keys are per administrator; one key per route keeps each a distinct operation.
     body = {"reason": REASON, "idempotency_key": "matrix" + re.sub(r"[^A-Za-z0-9]", "_", path)[-100:]}
     if path.endswith("/risk/allowlist"):
-        body.update(payer_kind="user", email="nobody@example.test")
+        # By id: naming a person by address also needs platform.users.view (test_admin_model_risk).
+        body.update(payer_kind="organization", organization_id="org_fixture_missing")
     elif path.endswith("/topups"):
         body.update(amount_units="1", topped_up_at=0)
     elif path.endswith("/reconciliations/run"):
@@ -741,6 +742,9 @@ def test_model_governance_is_split_from_platform_configuration_in_the_catalogue_
                    "admin.model_price.markup.publish", "admin.model_cost.publish"):
         assert OPERATIONS[action].permission == MODEL_PRICING, action
     assert OPERATIONS["admin.model_provider.publish"].permission == MODEL_CREDENTIAL
+    # one route, two permissions: a publication asks for the one of what it changes (test_admin_model_provider)
+    assert OPERATIONS["admin.model_provider.publish"].permission_for("custody") == MODEL_CREDENTIAL
+    assert OPERATIONS["admin.model_provider.publish"].permission_for("price_terms") == MODEL_PRICING
     assert OPERATIONS["admin.settings.publish"].permission == "platform.config.manage"
     # alerts go to whoever can act: republish the route, or operate the risk controls
     assert provider_settings.ALERT_PERMISSION == MODEL_CREDENTIAL and risk.ALERT_PERMISSION == MODEL_PRICING
@@ -753,7 +757,8 @@ def test_a_holder_of_only_one_model_permission_can_neither_read_nor_change_the_o
     """Holding exactly one id (FIXTURE: `_holding`): every write of the other surface is refused
     by name, every read is refused because managing is not reading, and the own writes are
     reached. Each refusal is audited once per missing id, so a page that keeps asking cannot flood
-    the log. Nothing of the other surface changed."""
+    the log. Nothing of the other surface changed. (A provider publication asks for the id of what
+    it changes: the matrix's is a change of custody; test_admin_model_provider has the price terms.)"""
     user = _holding(world, monkeypatch, {own})
     c = world["login"](user)
     me = c.get("/api/auth/me").json()

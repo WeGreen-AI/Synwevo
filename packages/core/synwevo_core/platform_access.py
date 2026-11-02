@@ -73,15 +73,20 @@ for each (the brief asks that each be written here):
 * `platform.models.credential` and `platform.models.pricing` are split out of
   `platform.config.manage` (backlog authz-6; the brief's §4.6 asks that the custody of the model
   key and the pricing be separate powers). The credential permission governs the platform model
-  provider: its route, charging policy and the sealed credential — set, replace, revoke — and
-  never reads a key back (synwevo_identity.admin_model_provider; a published revision's health
-  alerts go to its holders, who can republish). The pricing permission governs what the platform
-  charges and spends: retail prices, the peak/off-peak schedule and markups, the cost policy
-  (cost windows, risk brake, traffic limits) and the paid-model risk controls (suspensions,
-  breaker, allowlist, upstream top-ups, reconciliation; admin_model_prices, admin_model_costs,
-  admin_model_risk — their alerts go to its holders). Reads of the four surfaces stay
-  `platform.config.view`, and neither new permission implies it: every GET is metadata (whether a
-  credential is configured and its revision, published figures, amounts and codes). A key is
+  provider: the sealed credential — set, replace, revoke, never read back — and the route as a
+  technical fact (model, evidence, ceilings, validity, whether it is on, reopening it after a
+  closure; a published revision's health alerts go to its holders, who can republish). The pricing
+  permission governs what the platform charges and spends: retail prices, the peak/off-peak
+  schedule and markups, which published sale and cost price a route uses with the evidence for that
+  cost, whether incomplete calls are charged, the cost policy (cost windows, risk brake, traffic
+  limits) and the paid-model risk controls (suspensions, breaker, allowlist, upstream top-ups,
+  reconciliation; admin_model_prices, admin_model_costs, admin_model_risk — their alerts go to its
+  holders). A route names its prices, so one provider version carries both and one publication
+  route serves both permissions: it asks for the permission of what the request changes
+  (synwevo_identity.admin_model_provider, `ProviderSettings.change_parts`), and a price adopted
+  without a change of custody needs no key's permission, nor the reverse. Reads of the four surfaces
+  stay `platform.config.view`, and neither new permission implies it: every GET is metadata (whether
+  a credential is configured and its revision, published figures, amounts and codes). A key is
   readable through no route at all. `platform.config.manage` keeps the platform settings
   (registration, the administrator second-factor policy, throttles, the MCP policy and stops,
   platform-scope application changes, agent-safety rules) and governs no model surface any more.
@@ -169,8 +174,8 @@ PERMISSIONS: dict[str, str] = {
     "platform.orgs.manage": "run any organization's lifecycle and hand ownership of an ownerless one to an existing member, from the admin console, without membership",
     "platform.config.view": "read the registration policy, sign-in provider status, non-secret dynamic platform settings and the model governance surfaces' metadata (never a key)",
     "platform.config.manage": "change platform settings: the registration policy, the administrator second-factor policy, throttles, the MCP policy and stops, platform-scope application changes and agent-safety rules; no model governance (platform.models.*)",
-    "platform.models.credential": "govern the platform model provider: its route, charging policy and the sealed credential (set, replace, revoke); never reads a key back",
-    "platform.models.pricing": "draft and publish retail model prices, the peak/off-peak schedule and markups; publish the cost policy (cost windows, risk brake, traffic limits) and operate the paid-model risk controls (suspensions, breaker, allowlist, upstream top-ups, reconciliation)",
+    "platform.models.credential": "keep the platform model provider's sealed credential (set, replace, revoke; never reads a key back) and its route (model, evidence, ceilings, validity, on or off, reopening); decides no price",
+    "platform.models.pricing": "draft and publish retail model prices, the peak/off-peak schedule and markups; decide which published prices a route uses and whether incomplete calls are charged; publish the cost policy (cost windows, risk brake, traffic limits) and operate the paid-model risk controls (suspensions, breaker, allowlist, upstream top-ups, reconciliation)",
     "platform.mail.view": "read the mail outbox metadata",
     "platform.mail.manage": "retry a failed reset or verification mail",
     "platform.apps.view": "read business application run and flow run metadata (operation, state, timing, error code; never inputs, outputs or content) and the application catalogue's state and counts",
@@ -917,7 +922,7 @@ def admin_session_shortfall(store: Store, amr: str) -> str | None:
     return None
 
 
-def require_platform(request, permission: str | None, *, store: Store, audit=None,
+def require_platform(request, permission: str | tuple[str, ...] | None, *, store: Store, audit=None,
                      dangerous: bool = False, step_up: bool = True) -> dict:
     """The one check every `/api/admin` route and the API console use. Returns the caller's user
     row (with `platform_permissions`), or raises, in this order:
@@ -931,7 +936,8 @@ def require_platform(request, permission: str | None, *, store: Store, audit=Non
 
     `permission=None` asks only for "any platform permission" (the caller describing themselves);
     `step_up=False` skips 4 for the same reason — a locked administrator must be able to learn
-    what is missing.
+    what is missing. A tuple admits a holder of any of its permissions, and a refusal names the
+    first: for a route that serves several, whose caller then asks for the one the request needs.
     """
     from .sessions import Sessions, admin_capable
     # Admission may predate a queued write. Re-read without touching the idle clock; callers
@@ -948,10 +954,11 @@ def require_platform(request, permission: str | None, *, store: Store, audit=Non
     if not perms:
         # Same shape as a missing page: an ordinary account learns nothing about what exists.
         raise ServiceError(404, "not_found", "页面不存在")
-    if permission is not None and permission not in perms:
-        audit_denied(store, audit, request, user["id"], permission)
+    wanted = (permission,) if isinstance(permission, str) else permission
+    if wanted is not None and perms.isdisjoint(wanted):
+        audit_denied(store, audit, request, user["id"], wanted[0])
         raise ServiceError(403, "platform_permission_denied", "你的平台角色不包含这项操作所需的权限",
-                           {"permission": permission})
+                           {"permission": wanted[0]})
     shortfall = admin_session_shortfall(store, s.get("amr") or "") if step_up else None
     if shortfall == "one_factor":
         # The role is real; this session proved one factor (a mailed code, an external provider).

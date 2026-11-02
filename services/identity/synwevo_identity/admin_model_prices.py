@@ -269,6 +269,9 @@ def _only(body, required, optional=()):
         raise ServiceError(400, "price_invalid", "价格字段无效，请检查单位、费率和生效时间")
 
 
+DRAFT_ACTION = "admin.model_price.draft"
+
+
 class PriceOperations(SignedPreview):
     action = "admin.model_price.publish"
 
@@ -278,9 +281,10 @@ class PriceOperations(SignedPreview):
     def _catalogue(self):
         return PriceCatalogue(self.store, environment=self.environment)
 
-    def _actor(self, request, *, view=False, execute=False):
-        # authz-6: drafting and publishing are platform.models.pricing's (OPERATIONS, both entries)
-        return require_platform(request, MODEL_VIEW_PERMISSION if view else OPERATIONS[self.action].permission,
+    def _actor(self, request, *, view=False, execute=False, action=None):
+        # authz-6: each route asks for its own entry of OPERATIONS: creating and updating a draft
+        # for DRAFT_ACTION, previewing and publishing it for `action`. Both name platform.models.pricing.
+        return require_platform(request, MODEL_VIEW_PERMISSION if view else OPERATIONS[action or self.action].permission,
                                 store=self.store, audit=self.audit, dangerous=execute)
 
     def _audit(self, request, actor, action, *, target, result="ok", meta):
@@ -294,11 +298,11 @@ class PriceOperations(SignedPreview):
             meta={"code": exc.code if isinstance(exc, ServiceError) else "admin_operation_failed"})
 
     def create(self, request, body):
-        actor, action = self._actor(request), "admin.model_price.draft"
+        actor, action = self._actor(request, action=DRAFT_ACTION), DRAFT_ACTION
         try:
             _only(body, ("spec", "idempotency_key"))
             with self.store.tx():
-                actor = self._actor(request)
+                actor = self._actor(request, action=DRAFT_ACTION)
                 item, changed = self._catalogue().create(spec=body["spec"], actor_id=actor["id"], idempotency_key=body["idempotency_key"])
                 if changed:
                     self._audit(request, actor, action, target=item["id"], meta={"revision": item["revision"], "after": item["spec"]})
@@ -308,11 +312,11 @@ class PriceOperations(SignedPreview):
             raise
 
     def update(self, request, draft_id, body):
-        actor, action = self._actor(request), "admin.model_price.draft"
+        actor, action = self._actor(request, action=DRAFT_ACTION), DRAFT_ACTION
         try:
             _only(body, ("spec", "expected_revision"))
             with self.store.tx():
-                actor = self._actor(request)
+                actor = self._actor(request, action=DRAFT_ACTION)
                 catalog = self._catalogue()
                 before = catalog.get(draft_id)
                 item, changed = catalog.update(draft_id, **body, actor_id=actor["id"])
