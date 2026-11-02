@@ -191,6 +191,33 @@ def test_adding_a_person_by_address_needs_the_account_list_right(world, monkeypa
     assert refused.status_code == 403 and refused.json()["detail"]["permission"] == "platform.models.pricing", refused.text
 
 
+def test_a_one_factor_session_is_told_the_missing_permission_before_the_second_factor(world, monkeypatch):
+    """The order every other route keeps: 404, 403 by name, step-up, re-authentication."""
+    from synwevo_core.sessions import COOKIE_NAME, Sessions
+
+    def one_factor(client):  # FIXTURE, the temporary database only: this session proved one factor.
+        session = Sessions(w["store"]).load(client.cookies.get(COOKIE_NAME), touch=False)
+        w["store"].execute("UPDATE sessions SET amr='email' WHERE id=?", (session["id"],))
+
+    w = world
+    by_address = dict(payer_kind="user", email=w["target"]["email"])
+    _, pricing_only = delegate(w, monkeypatch, PRICING_READER, "pricing-one-factor", carrier="support")
+    _, accounts_only = delegate(w, monkeypatch, {"platform.config.view", "platform.users.view"}, "accounts-one-factor", carrier="auditor")
+    _, both = delegate(w, monkeypatch, PRICING_READER | {"platform.users.view"}, "both-one-factor", carrier="finance")
+    for client in (pricing_only, accounts_only, both):
+        one_factor(client)
+    refused = post(pricing_only, BASE + "/allowlist", change(**by_address))
+    assert refused.status_code == 403 and refused.json()["detail"]["permission"] == "platform.users.view", refused.text
+    refused = post(accounts_only, BASE + "/allowlist", change(**by_address))
+    assert refused.status_code == 403 and refused.json()["detail"]["permission"] == "platform.models.pricing", refused.text
+    # holding what the change needs, the second factor comes next
+    refused = post(both, BASE + "/allowlist", change(**by_address))
+    assert refused.status_code == 403 and refused.json()["error"] == "step_up_required", refused.text
+    refused = post(pricing_only, BASE + "/breaker/open", change())
+    assert refused.status_code == 403 and refused.json()["error"] == "step_up_required", refused.text
+    assert not w["store"].all("SELECT * FROM model_risk_allowlist")
+
+
 def test_a_delegated_holder_does_not_release_their_own_paid_calls(world, monkeypatch):
     """The brake and the staged rollout hold every payer to someone else's judgment. A delegated
     holder neither lifts a suspension of their own account or an organization they belong to, nor

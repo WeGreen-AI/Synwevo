@@ -28,7 +28,7 @@ log = logging.getLogger("synwevo.billing")
 #: Health observations of a published revision; the closing ones stop paid dispatch on it.
 HEALTH_STATES = ("model_listed", "model_missing", "models_check_failed", "upstream_balance")
 CLOSING = ("model_missing", "upstream_balance")
-ALERT_PERMISSION = "platform.models.credential"  # Those who can reopen the route by publishing (authz-6).
+ALERT_PERMISSION = "platform.models.credential"  # Those who can reopen a closed route by publishing (authz-6).
 ADMIN_TARGET = {"origin": "accounts", "path": "/admin?tab=model-provider"}
 #: DeepSeek reasoning_effort values; "none" is thinking off (docs/deepseek-provider.md).
 REASONING_EFFORTS = ("none", "low", "high", "max")
@@ -104,28 +104,48 @@ class ProviderSpec(BaseModel):
         return self
 
 
-#: What one publication can change (authz-6, docs/agent-work/DECISIONS.md D20). PRICE_TERMS are what
-#: payers pay and the platform spends by: the published prices a route names, the evidence for its
-#: cost and the incomplete endings it charges for. CUSTODY is the key and the rest of a version. They
-#: share a version because a route names its prices and a published price reaches nobody until one
-#: does, so a publication asks for the permission of what it changes, not of its address.
+#: What one publication can change (authz-6, docs/agent-work/DECISIONS.md D20). They share a version
+#: because a route names its prices and a published price reaches nobody until one does, so a
+#: publication asks for the permission of what it changes, not of its address.
+#:
+#: Fail closed: CUSTODY is this short list and nothing else, and PRICE_TERMS everything a version holds
+#: besides, now and in future, whether or not anyone thought about the field. The list has what moves
+#: no money: the key (`CredentialChange`, not a field), whether the route is on, the evidence for it and
+#: how long that evidence stands. Whoever adds a field gets the pricing permission's by default and has
+#: to argue it onto the list. The opposite default filed these under the key, and each moves what payers
+#: pay: the ceilings (`gateway.upper_bound` is one call's hold and twelve of them the most an answer
+#: costs, and they are what the cost policy admits and `max_tokens` sends), the thinking levels (the
+#: tokens one request spends, silently: no price key moves), the model id (the upstream model under the
+#: same prices, and what route suspensions and the velocity window are keyed on, `risk.py`). The
+#: withdrawal of a route and the reopening of a closed one are also custody (`change_parts`).
 CUSTODY, PRICE_TERMS = "custody", "price_terms"
-_PRICED_ROUTE_FIELDS = ("sale_price_id", "cost_price_id", "cost_basis_ref")
+_CUSTODY_ROUTE_FIELDS = frozenset({"confirmation_ref", "account_confirmation_ref", "valid_until"})
+#: "route" is read field by field (the line above), "enabled" is the version's own switch.
+_NOT_VERSION_TERMS = frozenset({"enabled", "route"})
+
+
+def _route_terms(spec: dict | None) -> dict:
+    route = (spec or {}).get("route") or {}
+    return {key: value for key, value in route.items() if key not in _CUSTODY_ROUTE_FIELDS}
+
+
+def _version_terms(spec: dict | None) -> dict:
+    # A version from before the field existed reads as the default it has always meant.
+    return {"incomplete_charging": ChargingPolicy().model_dump(),
+            **{key: value for key, value in (spec or {}).items() if key not in _NOT_VERSION_TERMS}}
 
 
 def price_terms(spec: dict | None) -> dict:
-    """A published spec's price terms; a version without a route names no price."""
-    route = (spec or {}).get("route") or {}
-    return {**{field: route.get(field) for field in _PRICED_ROUTE_FIELDS},
-            "incomplete_charging": (spec or {}).get("incomplete_charging") or ChargingPolicy().model_dump()}
+    """Everything of a published spec that custody does not keep: every route field off the short
+    list, and whatever the version holds besides. A version without a route has only the latter."""
+    return {**_route_terms(spec), **_version_terms(spec)}
 
 
 def _custody_terms(spec: dict | None) -> dict | None:
     if spec is None:
         return None
     route = spec["route"]
-    return {"enabled": spec["enabled"],
-            "route": route and {key: value for key, value in route.items() if key not in _PRICED_ROUTE_FIELDS}}
+    return {"enabled": spec["enabled"], "route": route and {key: route[key] for key in sorted(_CUSTODY_ROUTE_FIELDS)}}
 
 
 class CredentialChange(BaseModel):
@@ -201,11 +221,16 @@ class ProviderSettings:
     def closure(self, revision: int | None = None) -> dict | None:
         """Why paid dispatch on this revision is closed, or None while it is open.
 
-        An upstream 402 (the operator's provider balance is empty) or a model id missing from
-        GET /models closes the revision until an administrator publishes again (the same
-        settings may be republished for that). Closure is sticky: a later listing of the id
-        never reopens it silently, because a provider can reuse an id for a different model.
-        A failed check never closes anything. Safe inside an open Store.tx() (same connection).
+        A model id missing from GET /models closes the revision until an administrator publishes
+        again (the same settings may be republished for that). Closure is sticky: a later listing
+        of the id never reopens it silently, because a provider can reuse an id for a different
+        model. A failed check never closes anything. Safe inside an open Store.tx() (same connection).
+
+        An upstream 402 (the operator's provider balance is empty) writes a closure here only where
+        the risk module is not installed (`gateway._open_platform_breaker`, the `upstream_balance`
+        state). With it, which is every deployment of this repository, a 402 opens the platform
+        breaker instead: no closure, no provider alert, and publishing does not reopen it. Its alert
+        goes to the holders of the pricing permission, and they close the breaker (`risk.py`).
         """
         if revision is None:
             row = self.store.one("SELECT MAX(revision) AS r FROM model_provider_versions WHERE environment=?",
@@ -241,8 +266,9 @@ class ProviderSettings:
         """Append one observation of the current revision; returns its closure afterwards.
 
         Opening/closing transitions are audited as system events and closing alerts every
-        current administrator who can reopen the route (inbox and mail by their preferences).
-        An observation of an older revision is ignored: it describes a route no longer served.
+        current administrator who can reopen the route by publishing, the holders of
+        ALERT_PERMISSION (inbox and mail by their preferences). An observation of an older
+        revision is ignored: it describes a route no longer served.
         """
         if state not in HEALTH_STATES:
             raise BillingError("invalid_health_state")
@@ -354,13 +380,18 @@ class ProviderSettings:
         """Which parts of the version this publication changes, against the version it names; which
         permission each needs is the caller's to ask (admin_model_provider).
 
-        * Custody: a key set, replaced or revoked; any field that is not a price term; and reopening.
-          Every publication reopens a route an upstream 402 or a missing model id closed, which is
-          for those who are alerted and can see to the cause (ALERT_PERMISSION), so it is custody
-          whatever else it changes. The same settings published again are that and nothing else.
-        * Price terms: a route naming a price or a cost basis other than the current ones (so a
-          version's first route, and one put back after a withdrawal, even with the same prices),
-          and the charging of incomplete calls. Withdrawing a route names no price and sets none.
+        * Custody, a closed list: a key set, replaced or revoked; whether the route is on; its two
+          confirmation references and its validity; withdrawing it; and reopening. Every publication
+          reopens a route a closure stopped (`closure`), which is for those who are alerted and can
+          see to the cause (ALERT_PERMISSION), so it is custody whatever else it changes. The same
+          settings published again are that and nothing else.
+        * Price terms, everything else (`price_terms`): any other field of a route, a field added
+          later included, so a version's first route and one put back after a withdrawal, even with
+          the same prices; the charging of incomplete calls. Withdrawing a route sets none of them.
+
+        So what a closed route needs depends on the repair. Publishing it as it was is custody's;
+        fixing a model_missing closure by naming another model also changes a price term and needs
+        someone holding both permissions, like a first route.
 
         Empty against a version that has moved on: `preview` refuses it (`model_revision_conflict`)
         and a replay of a finished request returns its result; neither changes anything."""
@@ -368,13 +399,12 @@ class ProviderSettings:
         before = self.read()
         if before["revision"] != expected_revision:
             return ()
-        old, new = price_terms(before["spec"]), price_terms(spec)
         parts = []
         if (action != "keep" or _custody_terms(before["spec"]) != _custody_terms(spec)
                 or self.closure(before["revision"]) is not None):
             parts.append(CUSTODY)
-        if (spec["route"] is not None and any(old[field] != new[field] for field in _PRICED_ROUTE_FIELDS)
-                or old["incomplete_charging"] != new["incomplete_charging"]):
+        if (spec["route"] is not None and _route_terms(before["spec"]) != _route_terms(spec)
+                or _version_terms(before["spec"]) != _version_terms(spec)):
             parts.append(PRICE_TERMS)
         return tuple(parts) or (CUSTODY,)
 

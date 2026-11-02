@@ -715,8 +715,9 @@ def _assert_denied(r, permission, who, template):
 
 
 def test_model_governance_is_split_from_platform_configuration_in_the_catalogue_and_the_routes(world):
-    """authz-6 (brief §4.6 "模型密钥保管与定价分离"): the sealed provider credential and its route
-    are `platform.models.credential`; retail prices, the schedule, markups, the cost policy and the
+    """authz-6 (brief §4.6 "模型密钥保管与定价分离"): the sealed provider credential and the closed list
+    of custody on its route are `platform.models.credential`; every other field of the route (ibid.,
+    test_admin_model_provider), retail prices, the schedule, markups, the cost policy and the
     paid-model risk controls are `platform.models.pricing`. `platform.config.manage` keeps platform
     settings and nothing of model governance. Each id is the super administrator's by construction
     and no delegated role's; no pre-existing delegated role received either."""

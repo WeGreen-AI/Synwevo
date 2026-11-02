@@ -110,10 +110,10 @@ class RiskOperations:
     # ------------------------------------------------------------------ helpers
     def _actor(self, request, *, manage=False, dangerous=False, also=()):
         # authz-6: the risk controls are platform.models.pricing's, not platform configuration's.
-        # `also`: what this change needs besides. Refused by name, before any re-authentication is asked.
+        # `also`: what this change needs besides. Refused by name, before any step-up or re-authentication is asked.
         permission = MODEL_PRICING_PERMISSION if manage else MODEL_VIEW_PERMISSION
         for needed in ((permission, *also) if also else ()):
-            require_platform(request, needed, store=self.store, audit=self.audit)
+            require_platform(request, needed, store=self.store, audit=self.audit, step_up=False)
         return require_platform(request, permission, store=self.store, audit=self.audit, dangerous=dangerous)
 
     def _require_environment(self):

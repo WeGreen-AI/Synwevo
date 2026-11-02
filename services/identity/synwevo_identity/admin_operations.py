@@ -49,8 +49,9 @@ class Operation:
 #: account of a bulk revocation (admin_bulk.py) need this permission.
 REVOKE_SESSIONS_PERMISSION = "platform.users.support"
 #: authz-6 (platform_access.py): model governance is split from platform configuration. The
-#: provider's route and sealed credential (admin_model_provider) are the credential permission's;
-#: the price terms of that route (`ProviderSettings.change_parts`), prices, the schedule, markups
+#: provider's sealed credential and the closed list of custody on its route (admin_model_provider,
+#: `provider_settings.CUSTODY`) are the credential permission's; every other field of that route,
+#: as a price term (`ProviderSettings.change_parts`), prices, the schedule, markups
 #: (admin_model_prices), the cost policy (admin_model_costs) and the risk controls
 #: (admin_model_risk) the pricing permission's. Reads stay `platform.config.view`.
 MODEL_CREDENTIAL_PERMISSION = "platform.models.credential"

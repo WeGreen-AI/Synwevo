@@ -6,8 +6,10 @@ This surface never resolves a credential or invokes a provider.
 
 One route, two permissions (authz-6): a publication needs the permission of what it changes against
 the version it names (`ProviderSettings.change_parts`), so keeping the key decides no price and
-setting the price handles no key. A change of price terms is also on the price record
-(`admin.model_price.adopt`): that is the moment payers are charged differently.
+setting the price handles no key. Custody is a closed list and every other field of a version a price
+term, so a field nobody thought about is not the key's by accident (`provider_settings`). A change of
+price terms is also on the price record (`admin.model_price.adopt`): that is the moment payers are
+charged differently.
 """
 from __future__ import annotations
 
@@ -169,23 +171,34 @@ class ProviderOperations(SignedPreview):
     def _settings(self):
         return ProviderSettings(self.store, environment=self.environment)
 
+    def _admitted(self, request, *, by_name=False, dangerous=False):
+        """Holding either permission of the operation. `by_name`: nothing but that, the step-up and
+        the re-authentication wait until every permission has answered (`_actor`)."""
+        return require_platform(request, tuple(permission for _, permission in OPERATIONS[self.action].per_operation),
+                                store=self.store, audit=self.audit, dangerous=dangerous, step_up=not by_name)
+
     def _actor(self, request, *, view=False, execute=False, parts=()):
         """`view` reads. A change is admitted on either permission of the operation and then needs
         the one of each part it changes (authz-6, OPERATIONS; `_parts`): every refusal by name
-        first and the re-authentication last, the order `require_platform` keeps for one."""
+        first, then the step-up, the re-authentication last, the order `require_platform` keeps for one."""
         if view:
             return require_platform(request, MODEL_VIEW_PERMISSION, store=self.store, audit=self.audit)
         operation = OPERATIONS[self.action]
         for part in parts:
-            require_platform(request, operation.permission_for(part), store=self.store, audit=self.audit)
-        return require_platform(request, tuple(permission for _, permission in operation.per_operation),
-                                store=self.store, audit=self.audit, dangerous=execute)
+            require_platform(request, operation.permission_for(part), store=self.store, audit=self.audit, step_up=False)
+        return self._admitted(request, dangerous=execute)
 
     def _parts(self, body):
-        """What this request changes. No billing environment, no version: the plan refuses it next."""
+        """What this request changes. No billing environment, no version, a version this release
+        cannot read: nothing to judge it by, and the plan refuses it next, with its failure record."""
         if not self.environment:
             return ()
-        return self._settings().change_parts(body.spec, body.credential, expected_revision=body.expected_revision)
+        try:
+            return self._settings().change_parts(body.spec, body.credential, expected_revision=body.expected_revision)
+        except ServiceError as exc:
+            if exc.code == "model_config_unavailable":
+                return ()
+            raise
 
     def _audit(self, request, actor, *, action=None, object_kind="model_provider", object_id=ACCOUNT_REF, result="ok", meta):
         self.audit(request, action or self.action, actor_id=actor["id"], object_kind=object_kind,
@@ -220,7 +233,7 @@ class ProviderOperations(SignedPreview):
             return result
 
     def preview(self, request, body: ProviderPreviewRequest):
-        self._actor(request)  # Holding neither permission is refused before anything is read.
+        self._admitted(request, by_name=True)  # Holding neither permission is refused before anything is read.
         actor = self._actor(request, parts=self._parts(body))  # Outside the lock: the refusal's record commits.
         try:
             with self.store.tx():
@@ -247,7 +260,7 @@ class ProviderOperations(SignedPreview):
             raise
 
     def publish(self, request, body: ProviderPublishRequest):
-        self._actor(request)  # Holding neither permission is refused before anything is read.
+        self._admitted(request, by_name=True)  # Holding neither permission is refused before anything is read.
         actor = self._actor(request, execute=True, parts=self._parts(body))
         try:
             reason = body.reason.strip()
@@ -302,7 +315,7 @@ class ProviderOperations(SignedPreview):
                 if PRICE_TERMS in parts:
                     terms = change(price_terms(plan["before"]["spec"]), price_terms(saved["spec"]))
                     self._audit(request, actor, action="admin.model_price.adopt", object_kind="model_price",
-                                object_id=terms["after"]["sale_price_id"] or ACCOUNT_REF,
+                                object_id=terms["after"].get("sale_price_id") or ACCOUNT_REF,
                                 meta={"operation_id": operation_id, "reason": reason, "revision": saved["revision"], **terms})
                 transaction.execute("INSERT INTO admin_operations(id,actor_id,action,target_id,idempotency_key,request_hash,result_json,created_at) "
                     "VALUES (?,?,?,?,?,?,?,?)", (operation_id, actor["id"], self.action, ACCOUNT_REF,

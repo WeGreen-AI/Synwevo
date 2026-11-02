@@ -227,6 +227,8 @@ class RiskControls:
             raise BillingError("risk_breaker_open")
         risk = getattr(policy, "risk", None)
         payer = self.payer_of(t, call)
+        # Suspensions and the velocity window are keyed on the model id: a price term, not the key's
+        # to change, or a holder refused the lift could leave the suspension behind (provider_settings).
         route = identifier(attempt["requested_model"])
         if allowlist_required(self.environment, risk) and not self._allowlisted(t, payer["kind"], payer["id"]):
             raise BillingError("risk_not_allowlisted")
