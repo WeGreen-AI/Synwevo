@@ -630,7 +630,7 @@ flash 524,289，v4-pro 2,064,385（约 2.06 元）。
 
 ### 11.4 告警与处理
 
-告警经站内通知与邮件发给持有 `platform.models.pricing` 的平台管理员（authz-6 之前是 `platform.config.manage`；付款人只收到自己的暂停通知），详情都在「付费风险控制」页，
+告警经站内通知与邮件发给持有 `platform.models.pricing` 的平台管理员（authz-6 之前是 `platform.config.manage`；「支付回调处理失败」仍发给持有 `platform.config.manage` 的管理员；付款人只收到自己的暂停通知），详情都在「付费风险控制」页，
 只有金额、状态与代码，没有对话内容。
 
 | 告警 | 先做什么 |
