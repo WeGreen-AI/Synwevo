@@ -316,7 +316,7 @@
 | authz-6 | 模型密钥保管与定价共用 `platform.config.manage`；要求 4.6 需分权（如 `platform.models.credential` / `platform.models.pricing`）。目前只有 super_admin 持有，暂无暴露 | P3 | 未开始 |
 | money-3 / authz-3 | 组织给成员的按空间额度未强制执行（本轮只删除了相关措辞）；需所有者决定：把运行归属到空间，或取消按空间额度 | 待所有者决定 | 阻塞 |
 | CR-012 遗留 | 卡住的 `usage_pending` / `dispatch_unknown` 尝试没有管理视图；报价没有保留期限（行不可删除） | P3 | 未开始 |
-| 金额显示精度 | 部分界面显示未取整的单位金额（如 ¥5.11182） | P3 | 未开始 |
+| 金额显示精度 | 部分界面显示未取整的单位金额（如 ¥5.11182）。根因不是浮点：生产钱包单位是 CNY/scale=6，前端按账本全精度显示 | P3 | 已完成并上线（7bbe18c1，PR #34，2026-11-01 15:10Z）：共享格式化器 `packages/ui/src/money.ts` 按语境取整到分（已结算四舍五入、上限与冻结向上、余额与剩余向下、不足一分说“不到 ¥0.01”），需比较或相加处全精度，规则见 `docs/personal-wallet.md`。余额恰等于一次冻结时读作 ¥0.52 对 ¥0.53，是保守方向的取舍，所有者可否决 |
 | 上游 429 自动重试；工具等待与 3600 秒运行时限（D-11） | 见 D17 设计 §6 | P4 | 未开始 |
 | sdk-cli-signals | Python SDK CLI `--cancel-on-interrupt`：被 SIGTERM 结束时不发取消（TS CLI 会）；作为脚本里的后台作业继承被忽略的 SIGINT 时不响应 Ctrl-C；取消请求本身慢或服务端不可达时，第一次 Ctrl-C 后阻塞在 cancel_job 且无输出（第二次 Ctrl-C 约 1 秒退出）。测试侧同一现象已由 8615036d 修正（本机镜像以 `&` 后台启动时 SIGINT 被忽略，CI 不受影响） | P4 | 未开始 |
 | dependabot-pip | Dependabot 的 pip 版本更新作业每周失败，从未开出过 Python 依赖 PR（2026-10-29 运行 40794860449："Could not open constraint file infra/server/requirements.lock"）：Dependabot 只抓取 `-r`/`-c` 引用中以 `.txt`/`.in` 结尾的文件，`requirements-dev.txt` 与 `infra/server/requirements.txt` 用 `-c` 约束的锁文件从不在它的检出里。可选：改名锁文件（同步改 requirements 文件、`infra/Dockerfile`、源码提供清单、守卫、三个测试与依赖文档），或撤下 pip 生态只保留安全告警 | P4 | 待所有者决定 |
