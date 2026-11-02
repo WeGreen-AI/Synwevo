@@ -290,3 +290,36 @@ Docs另提供严格extract_context契约，现有成员导入/Extract截取语�
 - 决定（所有者）：main 为默认与公开的开源分支，只接收 dev→main 同步 PR（合并提交）；dev 承载全部开发并且是唯一的生产部署来源（`production` 环境只允许 dev，管理员不可绕过）；dev 与 main 的规则集禁止删除与强推、必须 PR、只允许合并提交、无任何绕过；dev 必须 `verify`，main 必须 `verify` 与 `sync-source`；外部贡献 PR 进 dev。许可证：平台 AGPL-3.0-or-later，`apps/docs/sdk/*` Apache-2.0，名称、Logo 与图标不随许可证授权（TRADEMARKS.md）。内部记录保留公开但脱敏；不改写历史（审计确认 946 个提交中从未提交过真实凭据）。今后已跟踪文件不写“生产仍有可利用的漏洞 X”，安全修复私下准备、就绪即经 PR 进 dev 部署后再披露。
 - 实施：PR #2（流水线与流程，8a3b679d 首次从 dev 部署）、#3（脱敏）、许可证 PR、#4 起的同步 PR；开源准备审计与计划见会话记录 2026-10-25（四个扫描器覆盖全部引用的 9,081 个对象）。
 
+## D20 模型密钥保管与定价从平台配置分权（authz-6，2026-11-02）
+
+- 背景：模型提供方的密封凭据与路线、零售价格与排期、成本策略、付费风险控制都挂在 `platform.config.manage` 上（只有最高管理员持有）；
+  所有者简报 §4.6 要求「模型密钥保管与定价分离」；BACKLOG authz-6（P3）。实现在分支 `claude/authz-6`。
+- 决定：
+  1. 两项新权限：`platform.models.credential`（提供方的路线、计费方式与密封凭据：设置、更换、撤销；从不读回密钥）与
+     `platform.models.pricing`（零售价格、分时排期、加价、成本策略、付费风险控制）。成本策略与风险控制并入定价一侧：要求只给出两项，
+     它们是平台「收多少、花多少」的商业运营，不是密钥保管；总闸重开、解除暂停仍是危险操作（严格重认证）。`platform.config.manage` 保留
+     注册策略、管理员第二因素策略、限流解除、MCP 策略与停用、应用目录平台范围变更（D12）与 Agent 安全规则，不再治理任何模型面。
+     四个面的读取仍是 `platform.config.view`，两项新权限都不蕴含它（管理不等于查看）；读到的只有元数据（是否已配置凭据及其修订号、已发布的数字、
+     金额与代码），任何路由都读不到密钥。
+  2. 角色不变：两项按定义属于最高管理员，不属于任何委派角色（MASTER_PROMPT §12.1）。两项之外，没有任何角色的可达路由发生变化。
+  3. 迁移：没有，也不需要。授予表只存角色，权限是推导的：不改写任何授予行，不动 schema，不写审计。本版本启动时最高管理员的授予立即带上两项；
+     回滚时两项并回 `platform.config.manage`，上一版本照常打开这个库（角色 CHECK 的文字没有变）。测试把六种角色各一名持有者的库连续打开两次：
+     schema、授予行、回滚镜像、管理审计逐字不变，每位持有者的有效权限等于冻结的上一版本目录（最高管理员多两项），上一版本的 `widen_roles` 无事可做；
+     另有一项按整张矩阵逐角色比对分权前后的可达路由，完全相等。
+  4. 告警随「谁能处理」改收件人：路线关闭（模型缺失、上游余额）→ `platform.models.credential` 持有者；风险控制、成本汇总、待确认敞口
+     → `platform.models.pricing` 持有者。今天两者都只有最高管理员，所以实际收件人不变。
+  5. 界面：四个模型标签页仍按 `platform.config.view` 显示；模型提供方的编辑按 `platform.models.credential`，价格/成本/风险的写操作按
+     `platform.models.pricing`（`governance/access.ts` 的 `MODEL_CREDENTIAL` / `MODEL_PRICING`）；两项权限的标签三语。
+- 未决（所有者）：
+  1. 是否委派，即新增只持一项的内置角色。要求只写了权限分离与「财务」角色，侦察报告也把委派列为第二阶段的所有者决定，所以本次不加；因此在产品里
+     这项分权今天只体现在目录、路由、审计与界面上，要到有人被任命才有两个不同的持有者。代价已实测（2026-11-01 中断的一次尝试加过两个角色，补丁未合入）：
+     角色 CHECK 要表重建加宽；上一版本的 `widen_roles` 不认识新子句，**拒绝打开**加宽过的库（`unexpected schema for platform_role_grants: cannot widen`），
+     因此发布后不能只换回旧镜像（生产回滚本来就是恢复发布前的备份，见 infra/production/README.md，但这要写进发布说明）；这样的角色还必须带
+     `platform.config.view`，否则每个 GET 都是 403，于是它能读另一面的元数据（不含密钥）；只有最高管理员能授予。
+  2. 支付渠道 webhook 失败告警的收件人保持不变（`platform.config.manage`，即最高管理员，`risk.WEBHOOK_ALERT_PERMISSION`）；改发给持有
+     `platform.billing.manage` 的财务角色可能更合理，但这改变财务角色收到的通知。
+- 偏离侦察报告：侦察建议三项（另设 `platform.models.cost`）；要求是两项，按侦察给出的备选把成本与风险并入定价。其余按侦察的第一阶段（只加权限）。
+- 验证：`services/identity/tests/test_platform_access.py`（矩阵、只持一项者读不到也改不了另一面、`platform.config.manage` 单独不再治理模型、最高管理员仍可达、
+  未登录与无权限者照旧、逐角色可达路由比对、分权前的库、授予审计、告警收件人；只持一项的持有者是标明的夹具 `platform_fixture.holding_exactly`）、
+  四个模型管理模块的测试（`test_admin_model_provider.py` 里密钥不出现在持有定价权限者能读到的任何回答中）、
+  `services/identity/web/tests/admin-access.test.mjs`、`admin-layout.test.mjs`（标签页的读/写门控、三语）。

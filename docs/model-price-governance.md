@@ -4,7 +4,7 @@
 
 ## 管理操作
 
-Accounts 的「模型价格」使用现有平台管理角色。`platform.config.view` 可读和试算；`platform.config.manage` 可编辑。发布另外复用当前管理操作的近期认证、五分钟签名预览、理由、幂等结果和事务审计。组织/空间角色不授予这些权限。
+Accounts 的「模型价格」使用现有平台管理角色。`platform.config.view` 可读和试算；`platform.models.pricing` 可编辑（authz-6：从 `platform.config.manage` 分出，目前只有最高管理员持有；模型密钥另属 `platform.models.credential`）。发布另外复用当前管理操作的近期认证、五分钟签名预览、理由、幂等结果和事务审计。组织/空间角色不授予这些权限。
 
 部署通过 `SYNWEVO_BILLING_ENVIRONMENT=test|live` 明确选择环境；未设置或无效时返回未配置，禁止写入。环境在进程启动时固定，前端不能切换。设置这个变量**不会开启付费模型调用或充值**。测试和正式交易不可混用；单位代码的精度是全局固定的定义，两个环境不能给同名单位赋予不同精度。
 

@@ -375,9 +375,21 @@ Webhook 是本服务**主动向外发起**的请求，因此它的风险方向�
 权限 ID：`platform.overview.view`、`platform.users.view|manage|support`、`platform.workspaces.view|manage|claim`、
 `platform.orgs.view|manage`、`platform.config.view|manage`、`platform.mail.view|manage`、`platform.apps.view`、
 `platform.audit.view`、`platform.roles.view|assign|assign_super`、`api_platform.manage`、
-`platform.billing.view|manage`（org-payments：资金只属于最高管理员与财务角色，见 docs/platform/wallet-payments.md §4）。与草案（admin-coverage.md §3.1）相比新增
+`platform.billing.view|manage`（org-payments：资金只属于最高管理员与财务角色，见 docs/platform/wallet-payments.md §4）、
+`platform.models.credential|pricing`（authz-6，决定 D20：模型密钥保管与定价从 `platform.config.manage` 分出，见下）。与草案（admin-coverage.md §3.1）相比新增
 `platform.orgs.manage`（组织生命周期路由是写操作，不能挂在只读权限上）和 `platform.workspaces.claim`
 （指派历史数据是业务内容的交付，只属于最高管理员；`.manage` 只剩冻结与解冻），理由写在模块文档里。
+
+**模型治理与平台配置分权（authz-6，决定 D20）。**`platform.config.manage` 不再治理任何模型面：
+模型提供方的路线、计费方式与密封凭据（`POST /api/admin/billing/model-provider/preview|publish`）要
+`platform.models.credential`；零售价格、分时排期、加价（`/api/admin/billing/prices/**` 的写操作）、成本策略
+（`/api/admin/billing/cost-policy/preview|publish`）与付费风险控制（`/api/admin/billing/risk/**` 的七个写操作）要
+`platform.models.pricing`。四个面的全部读取仍是 `platform.config.view`，两项新权限都不蕴含它；读到的只有元数据（是否已配置凭据及其修订号、
+已发布的数字、金额与代码），任何路由都读不到密钥。`platform.config.manage` 保留注册策略、管理员第二因素策略、限流解除、MCP 策略与停用、
+应用目录的平台范围变更（D12）与 Agent 安全规则。两项按定义属于最高管理员，不属于任何委派角色（MASTER_PROMPT §12.1）；是否新增委派角色待所有者决定。
+授予表只存角色，所以没有任何迁移：本版本启动时最高管理员的授予立即带上两项，回滚到上一版本时两项并回 `platform.config.manage`。告警随之改收件人：
+路线关闭（模型缺失、上游余额）发给能重新发布的 `platform.models.credential` 持有者，风险控制告警发给 `platform.models.pricing` 持有者；
+支付渠道 webhook 失败告警的收件人不变（`platform.config.manage`，即最高管理员；是否改为财务角色待所有者决定）。
 
 `platform.apps.view` 读「应用运行」「流程运行」两页（`synwevo_identity/admin_runs.py`，五个只读路由），由已能读邮件投递的
 三个角色与最高管理员持有，`api_platform_admin` 不持有。这两页只显示运行的元数据——哪个操作、状态、时间、错误代码、入口、
@@ -434,8 +446,10 @@ Webhook 是本服务**主动向外发起**的请求，因此它的风险方向�
 页面（`acweb/governance/access.ts`）只提供调用者权限够得着的操作：不可用的写操作显示为禁用并写明原因，
 概览里的「指派历史数据」只对能指派且能搜索账户的人显示；服务器仍逐个请求裁决。
 
-验证：`services/identity/tests/test_platform_access.py`（五个内置角色 × 全部 `/api/admin` 路由与 API 控制台的
+验证：`services/identity/tests/test_platform_access.py`（六个内置角色 × 全部 `/api/admin` 路由与 API 控制台的
 允许/拒绝矩阵、404 伪装（含校验错误、405 与不存在的路径）、拒绝审计与限流、前置条件、自我授予/撤销、
+模型治理分权（只持一项模型权限者读不到也改不了另一面、`platform.config.manage` 单独不再治理模型、最高管理员仍可达、分权前的库启动后
+每位持有者权限不变且没有角色多出可达项、授予审计、告警收件人）、
 历史数据只由最高管理员指派给无平台权限的账户、低权限不能对高权限下手、恢复只对已停用账户、
 最后可用最高管理员的撤销/停用/删除与并发互撤、只有 Passkey 的最高管理员不计入、旧域名 Passkey 不算身份确认、
 审计的前后集合与系统结束授予、安全日志重放的删除、v26→v27 迁移、回滚镜像、授予收紧会话、撤权下一请求生效、到期忽略）、

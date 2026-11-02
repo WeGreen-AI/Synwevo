@@ -141,8 +141,9 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 
 ## 9. 告警
 
-经既有站内通知与邮件（读者偏好），不引入外部服务。管理员告警发给当前有效授权中含 `platform.config.manage` 的平台管理员
-（最多 50 人）；投递失败不撤销保护性状态变化。参数只含代码、金额与固定词语，不含对话内容、载荷或密钥。
+经既有站内通知与邮件（读者偏好），不引入外部服务。管理员告警发给当前有效授权中含 `platform.models.pricing` 的平台管理员
+（能操作风险控制的人，目前即最高管理员，最多 50 人；authz-6 之前是 `platform.config.manage`）；投递失败不撤销保护性
+状态变化。参数只含代码、金额与固定词语，不含对话内容、载荷或密钥。
 
 | kind | 接收者 | 触发 | 去重 |
 |---|---|---|---|
@@ -153,7 +154,7 @@ Agent 对话里这些代码带 `billing_` 前缀（网关把 BillingError 包成
 | `billing.risk.reconciliation` | 管理员 | 每日对账 `drift` / `incomplete` / `error` | 每条结果一次 |
 | `billing.risk.ledger_audit` | 管理员 | 账本审计发现差异 | 每条结果一次 |
 | `billing.risk.pending_exposure` | 管理员 | 用量待确认的预留成本 > `pending_alert` | 每个 UTC 日一次 |
-| `billing.risk.payment_webhook_failed` | 管理员 | 支付渠道调用 `alert_payment_webhook_failure(store, environment=, provider=, code=)` | 每渠道每代码每 UTC 日一次 |
+| `billing.risk.payment_webhook_failed` | 持有 `platform.config.manage` 的管理员（即最高管理员；authz-6 保持原收件人，是否改为财务角色待所有者决定，D20） | 支付渠道调用 `alert_payment_webhook_failure(store, environment=, provider=, code=)` | 每渠道每代码每 UTC 日一次 |
 | `billing.cost.rollup_inconsistent` | 管理员 | 成本汇总与事实不一致，某提供方账户被锁定（§13） | 每个提供方账户每 UTC 日一次 |
 | `billing.payer_spend.rollup_inconsistent` | 管理员 | 个人支出汇总与已结算调用不一致，某钱包被锁定（§13「钱包」），只给出钱包 id | 每个钱包每 UTC 日一次 |
 | `billing.cost.rollup_issues` | 管理员 | 不属于某一个账户或钱包的全库问题（§13：静止时有 delta 行、哨兵行丢失、读不出名字的范围、verify 打开时重放了提供方账户的汇总或钱包日行），自己的措辞，开头写明是哪次核对发现的（每日或每小时定时核对、命令行），列出问题名 | 每种问题组合每 UTC 日一次（同一天里不同的问题组合各告警一次） |
@@ -167,11 +168,11 @@ Account `/admin?tab=model-risk`（导航“配置与治理 → 付费风险控�
 
 | 操作 | 接口（`/api/admin/billing/risk`） | 需要 |
 |---|---|---|
-| 关闭全部付费调用 | `POST /breaker/open` | `platform.config.manage`、理由 |
+| 关闭全部付费调用 | `POST /breaker/open` | `platform.models.pricing`（authz-6；之前是 `platform.config.manage`）、理由 |
 | 重新开启 | `POST /breaker/close` | 同上 + 管理重认证 |
 | 解除暂停 | `POST /suspensions/{id}/lift` | 同上 + 管理重认证 |
 | 加入放行名单 | `POST /allowlist` | 同上 + 管理重认证 |
-| 移出放行名单 | `POST /allowlist/{id}/remove` | `platform.config.manage`、理由 |
+| 移出放行名单 | `POST /allowlist/{id}/remove` | `platform.models.pricing`、理由 |
 | 登记上游充值 | `POST /topups` | 同上 |
 | 重算某日 / 立即审计账本 | `POST /reconciliations/run` | 同上 |
 

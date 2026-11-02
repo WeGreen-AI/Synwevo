@@ -304,8 +304,9 @@ paid route. Isolated admission tests are not evidence of live provider capacity 
 Account administration exposes `/admin?tab=model-costs` and the typed
 `/api/admin/billing/cost-policy` endpoints: GET current state, GET `/history` with
 `before_revision` and bounded `limit`, POST `/preview`, and POST `/publish`.
-`platform.config.view` permits reads; `platform.config.manage` permits preparation and
-publication, with fresh `admin` authentication and an 8–500 character reason for publication.
+`platform.config.view` permits reads; `platform.models.pricing` (authz-6: split out of
+`platform.config.manage`, held by the super administrator) permits preparation and publication,
+with fresh `admin` authentication and an 8–500 character reason for publication.
 Workspace ownership alone grants neither permission. The host captures
 `SYNWEVO_BILLING_ENVIRONMENT=test|live` at startup. Missing configuration returns an explicit
 unconfigured read state and refuses writes. Reads never create a policy or a price.
@@ -342,7 +343,9 @@ visual/keyboard acceptance is tracked separately in the evidence log and is not 
 Account administration now mounts `/admin?tab=model-provider` and four typed routes under
 `/api/admin/billing/model-provider`: GET current state, GET `/history`, POST `/preview`,
 and POST `/publish`. Reading requires `platform.config.view`; changing configuration requires
-`platform.config.manage`, a bound preview and fresh admin authentication at publication.
+`platform.models.credential` (authz-6: the custody of the route and the sealed credential, split
+out of `platform.config.manage`; held by the super administrator), a bound preview and fresh admin
+authentication at publication.
 A platform role never supplies workspace access, payment consent or wallet funds.
 
 The host explicitly selects `SYNWEVO_AGENT_PROVIDER=deepseek` and
