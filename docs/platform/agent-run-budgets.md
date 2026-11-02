@@ -355,8 +355,10 @@ validity, withdrawing it and reopening it after a closure. Everything else needs
 requested model, the confirmed route, the input and output token ceilings, the reasoning efforts, and
 any field added later) and the charging of incomplete calls. The ceilings are one call's hold and,
 twelve times over, the most an answer costs, which is what this document says the person pays. A
-first route, or one restored after a withdrawal, names its prices and needs both, and so does fixing a
-missing model by naming another id, which reopens the route and changes a price term. Every
+first route, or one restored after a withdrawal, names its prices and needs one person holding both.
+Fixing a missing model by naming another id reopens the route and changes a price term, so one
+publication needs both; separate holders publish three times (custody turns the route off, pricing
+names the id while it is off, custody turns it on). Every
 publication also needs a bound preview and fresh admin authentication, and a change of price terms
 also writes `admin.model_price.adopt`.
 A platform role never supplies workspace access, payment consent or wallet funds.

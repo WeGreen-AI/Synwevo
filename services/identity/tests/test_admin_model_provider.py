@@ -660,8 +660,8 @@ def test_reopening_a_closed_route_is_the_custodians_whatever_else_the_publicatio
 
 def test_fixing_a_missing_model_by_changing_its_id_needs_both_permissions(provider_world, monkeypatch):
     """What the closed list costs (D20): the new id reopens the route, which is custody, and changes a
-    price term. Neither holder alone can do it, like a first route. The custodian can still reopen on the
-    same id, which the next check closes again if the id is still not listed."""
+    price term, so one publication doing it needs both. The custodian can still reopen on the same id, which
+    the next check closes again if the id is still not listed; separate holders take three publications (below)."""
     w = provider_world
     assert publish(w, command(preview(w))).status_code == 200
     settings = ProviderSettings(w["store"], environment="test")
@@ -677,6 +677,92 @@ def test_fixing_a_missing_model_by_changing_its_id_needs_both_permissions(provid
     assert settings.closure() is None
     adopted = w["store"].all("SELECT meta FROM audit_events WHERE action='admin.model_price.adopt' ORDER BY seq")[-1]
     assert json.loads(adopted["meta"])["changed"] == ["requested_model"]
+
+
+def test_separate_holders_fix_a_missing_model_in_three_publications(provider_world, monkeypatch):
+    """The same repair for two people (D20; a first route has no such path): turning the route off leaves a
+    new version with no closure on it, on which pricing may name the id, and custody turns it on. Each publication
+    is under its holder's own permission, and the price term still writes its adopt row."""
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    settings = ProviderSettings(w["store"], environment="test")
+    settings.record_health(state="model_missing", requested_model="fixture-request", reason_code="model_not_listed")
+    pricer_user, pricer = holder(w, monkeypatch, PRICER, "pricer", carrier="auditor")
+    _, custodian = holder(w, monkeypatch, CUSTODIAN, "custodian", carrier="support")
+    off = {**w["spec"], "enabled": False}
+    assert publishes(w, custodian, spec=off)["state"]["revision"] == 2
+    assert settings.closure() is None
+    assert publishes(w, pricer, spec=with_route(off, requested_model="fixture-replacement-model"))["state"]["revision"] == 3
+    adopted = w["store"].all("SELECT actor_id, meta FROM audit_events WHERE action='admin.model_price.adopt' ORDER BY seq")[-1]
+    assert adopted["actor_id"] == pricer_user["id"] and json.loads(adopted["meta"])["changed"] == ["requested_model"]
+    on = with_route(w["spec"], requested_model="fixture-replacement-model")
+    assert publishes(w, custodian, spec=on)["state"]["revision"] == 4
+    assert charged_route(w)["requested_model"] == "fixture-replacement-model"
+    assert settings.closure() is None
+
+
+def test_the_switch_is_custody_even_when_a_price_term_travels_with_it(provider_world, monkeypatch):
+    """A pricing holder's publication cannot carry the route's switch along, in either direction."""
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    other = seed_prices(w)
+    _, custodian = holder(w, monkeypatch, CUSTODIAN, "custodian", carrier="support")
+    _, pricer = holder(w, monkeypatch, PRICER, "pricer", carrier="auditor")
+    off_and_priced = {**with_route(w["spec"], sale_price_id=other["sale"]), "enabled": False}
+    refused_by_name(w, pricer, MODEL_CREDENTIAL, spec=off_and_priced)
+    refused_by_name(w, custodian, MODEL_PRICING, spec=off_and_priced)
+    assert publishes(w, custodian, spec={**w["spec"], "enabled": False})["state"]["revision"] == 2
+    on_and_priced = with_route(w["spec"], sale_price_id=other["sale"])
+    refused_by_name(w, pricer, MODEL_CREDENTIAL, spec=on_and_priced)
+    refused_by_name(w, custodian, MODEL_PRICING, spec=on_and_priced)
+
+
+#: The check outside the lock saw a price change; the one holding the lock sees the closure too.
+JUDGED_TWICE = [((PRICE_TERMS,), False), ((CUSTODY, PRICE_TERMS), True)]
+
+
+def closes_after_the_first_check(monkeypatch):
+    """FIXTURE: a model check closing the route after the check outside the lock. Answers each check as
+    what it saw and whether it held the writer transaction (the route's own store, on its own thread)."""
+    real, checks = ProviderSettings.change_parts, []
+
+    def change_parts(self, *args, **kwargs):
+        parts = real(self, *args, **kwargs)
+        with self.store.conn() as connection:
+            checks.append((parts, connection.in_transaction))
+        if len(checks) == 1:
+            self.record_health(state="model_missing", requested_model="fixture-request", reason_code="model_not_listed")
+        return parts
+    monkeypatch.setattr(ProviderSettings, "change_parts", change_parts)
+    return checks
+
+
+def test_a_preview_is_judged_again_inside_the_lock(provider_world, monkeypatch):
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    other = seed_prices(w)
+    _, pricer = holder(w, monkeypatch, PRICER, "pricer", carrier="auditor")
+    checks = closes_after_the_first_check(monkeypatch)
+    answer = post(pricer, BASE + "/preview", preview_request(w, revision=1, spec=with_route(w["spec"], sale_price_id=other["sale"]), credential=KEEP))
+    assert checks == JUDGED_TWICE
+    assert answer.status_code == 403 and answer.json()["detail"]["permission"] == MODEL_CREDENTIAL, answer.text
+
+
+def test_a_publication_is_judged_again_inside_the_lock(provider_world, monkeypatch):
+    """The preview was the pricing holder's to ask for. The closure arriving before the publication reaches the
+    lock makes it a reopening, which is custody's: nothing is published and the route stays closed."""
+    w = provider_world
+    assert publish(w, command(preview(w))).status_code == 200
+    other = seed_prices(w)
+    _, pricer = holder(w, monkeypatch, PRICER, "pricer", carrier="auditor")
+    plan = post(pricer, BASE + "/preview", preview_request(w, revision=1, spec=with_route(w["spec"], sale_price_id=other["sale"]), credential=KEEP))
+    assert plan.status_code == 200, plan.text
+    checks = closes_after_the_first_check(monkeypatch)
+    answer = publish(w, command(plan.json(), KEEP), client=pricer)
+    assert checks == JUDGED_TWICE
+    assert answer.status_code == 403 and answer.json()["detail"]["permission"] == MODEL_CREDENTIAL, answer.text
+    assert current(w)["revision"] == 1
+    assert ProviderSettings(w["store"], environment="test").closure() is not None
 
 
 # ---- the classification itself: closed on the custody side, open on the other (fail closed)

@@ -390,8 +390,11 @@ class ProviderSettings:
           the same prices; the charging of incomplete calls. Withdrawing a route sets none of them.
 
         So what a closed route needs depends on the repair. Publishing it as it was is custody's;
-        fixing a model_missing closure by naming another model also changes a price term and needs
-        someone holding both permissions, like a first route.
+        fixing a model_missing closure by naming another model also changes a price term, so one
+        publication doing it needs both permissions. Separate holders publish three times, each under
+        their own permission: custody turns the route off (the new version has no closure), pricing
+        names the model while it is off, custody turns it on. A first route, or one put back after a
+        withdrawal, has no such path and needs one person holding both.
 
         Empty against a version that has moved on: `preview` refuses it (`model_revision_conflict`)
         and a replay of a finished request returns its result; neither changes anything."""

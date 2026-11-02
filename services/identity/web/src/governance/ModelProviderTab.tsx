@@ -55,7 +55,7 @@ function ProviderHealthNotice({ health, time, holdsOne }: { health: ProviderHeal
       <p><b>{t(health.closure.state === 'upstream_balance' ? '付费调用已自动停止：上游报告平台账户余额不足（HTTP 402）。'
         : '付费调用已自动停止：模型列表中已没有 {model}。', { model: health.closure.requested_model })}</b></p>
       <p className="small">{t('停止于 {time}。用户看到“服务暂时不可用，未扣费”。处理后，重新发布提供方配置（可原样发布）即可恢复。', { time: time(health.closure.since) })}</p>
-      {holdsOne && health.closure.state === 'model_missing' && <p className="small">{t('换一个模型标识会重新开放路线并改变价格条款，需要同时持有密钥保管与定价权限的管理员发布。')}</p>}
+      {holdsOne && health.closure.state === 'model_missing' && <p className="small">{t('换一个模型标识会重新开放路线并改变价格条款，一次发布需要同时持有密钥保管与定价权限。分开持有时分三次发布：保管权限停用路线，定价权限在停用时改标识，保管权限再启用。')}</p>}
     </div>}
     <p className="small muted">{check ? t({ model_listed: '最近一次模型标识核对：已列出 · {time}', model_missing: '最近一次模型标识核对：未列出 · {time}',
       models_check_failed: '最近一次模型标识核对：未能完成（不会停止路线） · {time}' }[check.state], { time: time(check.at) })
@@ -125,7 +125,7 @@ function ModelProviderContent({ canCustody, canPricing, onDenied, onPartRefused 
   // cannot publish or put back. Input in the fields still theirs stays; an unresolved request is untouched.
   useEffect(() => {
     if (uncertainRef.current || flight.current) return;
-    setForm(previous => rebaseProviderForm(previous, saved, { custody: canCustody, price_terms: canPricing }));
+    setForm(previous => rebaseProviderForm(previous, saved, saved, { custody: canCustody, price_terms: canPricing }));
   }, [canCustody, canPricing]);
   useEffect(() => { if (error && !dialogOpen) errorSummary.current?.focus(); }, [error, dialogOpen]);
   const canWrite = canManage && !!state && (environment === 'test' || environment === 'live') && !current.loading && !current.err;
@@ -173,7 +173,7 @@ function ModelProviderContent({ canCustody, canPricing, onDenied, onPartRefused 
   function adoptLatest() {
     if (!state || !canWrite || frozen || flight.current || (base?.environment === state.environment && state.revision < base.revision)) return;
     const latest = providerForm(state.spec);
-    setBase(state); setSaved(latest); setForm(previous => rebaseProviderForm(previous, latest, { custody: canCustody, price_terms: canPricing }));
+    setBase(state); setSaved(latest); setForm(previous => rebaseProviderForm(previous, saved, latest, { custody: canCustody, price_terms: canPricing }));
     setConflict(false); setPlan(null); clearRequests(); setError(null);
     heading.current?.focus();
   }

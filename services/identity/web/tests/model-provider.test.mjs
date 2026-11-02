@@ -215,21 +215,47 @@ test('authz-6: the page and the server keep the same closed list of custody', as
   for (const key of Object.keys(route)) assert.equal(m.providerFieldPart(key) === 'custody', listed.includes(key), key);
 });
 
-test('authz-6: over a newer version a holder keeps their input in their own fields, and the rest follows the version', () => {
-  const form = { ...m.providerForm(spec), confirmation_ref: 'fixture-my-evidence', sale_price_id: 'fixture-my-sale', output_token_ceiling: '16' };
+test('authz-6: over a newer version a holder keeps what they changed in their own fields, and the rest follows the version', () => {
+  const base = m.providerForm(spec);
+  const form = { ...base, confirmation_ref: 'fixture-my-evidence', sale_price_id: 'fixture-my-sale', output_token_ceiling: '16' };
   const latest = m.providerForm({ ...spec, route: { ...route, sale_price_id: 'fixture-new-sale', confirmation_ref: 'fixture-new-evidence', output_token_ceiling: 8 }, incomplete_charging: { ...NO_CHARGING, length: true } });
-  const both = m.rebaseProviderForm(form, latest, { custody: true, price_terms: true });
-  assert.deepEqual(both, form, 'a holder of both keeps all of it, as the page always did');
-  const custodian = m.rebaseProviderForm(form, latest, { custody: true, price_terms: false });
+  const both = m.rebaseProviderForm(form, base, latest, { custody: true, price_terms: true });
+  assert.deepEqual(both, { ...latest, confirmation_ref: 'fixture-my-evidence', sale_price_id: 'fixture-my-sale', output_token_ceiling: '16' }, 'a holder of both keeps what they changed');
+  assert.equal(both.charge_length, true, 'and what they left alone follows the version');
+  const custodian = m.rebaseProviderForm(form, base, latest, { custody: true, price_terms: false });
   assert.equal(custodian.confirmation_ref, 'fixture-my-evidence');
   assert.equal(custodian.sale_price_id, 'fixture-new-sale', 'a price field they cannot edit must not hold a change they cannot publish');
   assert.equal(custodian.output_token_ceiling, '8', 'nor a ceiling');
   assert.equal(custodian.charge_length, true);
-  const pricer = m.rebaseProviderForm(form, latest, { custody: false, price_terms: true });
+  const pricer = m.rebaseProviderForm(form, base, latest, { custody: false, price_terms: true });
   assert.equal(pricer.confirmation_ref, 'fixture-new-evidence');
   assert.equal(pricer.sale_price_id, 'fixture-my-sale');
   assert.equal(pricer.output_token_ceiling, '16');
-  assert.equal(pricer.charge_length, false);
+  assert.equal(pricer.charge_length, true, 'a charging change they did not make is not undone by their publication');
+});
+
+test('authz-6: a key rotation over a newer version publishes the switch and the route as they now stand', () => {
+  const may = { custody: true, price_terms: true };
+  const base = m.providerForm(spec);
+  const rotating = { ...base, credential_action: 'replace' };
+  const off = m.rebaseProviderForm(rotating, base, m.providerForm({ ...spec, enabled: false }), may);
+  assert.equal(off.enabled, false, 'a colleague turned it off: the rotation does not turn it back on');
+  assert.equal(off.credential_action, 'replace', 'the rotation stays');
+  const withdrawn = m.rebaseProviderForm(rotating, base, m.providerForm({ ...spec, enabled: false, route: null }), may);
+  assert.equal(withdrawn.route_mode, 'none', 'a colleague withdrew it: the rotation does not put it back');
+  assert.equal(withdrawn.sale_price_id, '');
+  assert.equal(withdrawn.credential_action, 'replace');
+  const untouched = m.rebaseProviderForm(base, base, base, may);
+  assert.deepEqual(untouched, base, 'nothing changed on either side');
+  const turnedOff = m.rebaseProviderForm({ ...base, enabled: false }, base, m.providerForm({ ...spec, route: { ...route, sale_price_id: 'fixture-new-sale' } }), may);
+  assert.equal(turnedOff.enabled, false, 'the switch the holder did change stays changed');
+  assert.equal(turnedOff.sale_price_id, 'fixture-new-sale');
+});
+
+test('authz-6: each call of the merge names the version the holder was editing', async () => {
+  const component = await source('ModelProviderTab.tsx');
+  assert.match(component, /setSaved\(latest\); setForm\(previous => rebaseProviderForm\(previous, saved, latest, \{ custody: canCustody, price_terms: canPricing \}\)\);/,
+    'adopting a newer version compares the input with the version it was typed over');
 });
 
 test('authz-6: a refusal of one part keeps the page, and a grant that ended does not', () => {
@@ -481,14 +507,14 @@ test('authz-6: a refusal of one part stays on the page with the input and catche
   assert.match(fail, /refused === 'part'\) \{ refresh\(\); onPartRefused\?\.\(\); \}/, 'the health and the grants are read again');
   assert.match(fail, /refused === 'grant'\) onDenied\(\);/);
   assert.doesNotMatch(fail, /platform_permission_denied/, 'the code alone does not say which it is');
-  assert.match(component, /rebaseProviderForm\(previous, saved, \{ custody: canCustody, price_terms: canPricing \}\)\);\n  \}, \[canCustody, canPricing\]\)/,
+  assert.match(component, /rebaseProviderForm\(previous, saved, saved, \{ custody: canCustody, price_terms: canPricing \}\)\);\n  \}, \[canCustody, canPricing\]\)/,
     'a field the holder can no longer change does not keep a change they could neither publish nor put back');
   const admin = await readFile(new URL('../src/Admin.tsx', import.meta.url), 'utf8');
   assert.match(admin, /onPartRefused=\{\(\) => void refresh\(\)\}/, 'the tabs and fields follow the server\'s answer');
 });
 
-test('authz-6: on a missing model a holder of one permission is told that another id takes both', () => {
-  const NOTE = /换一个模型标识会重新开放路线并改变价格条款/;
+test('authz-6: on a missing model a holder of one permission is told what another id takes, in one publication or in three', () => {
+  const NOTE = /换一个模型标识会重新开放路线并改变价格条款，一次发布需要同时持有密钥保管与定价权限。分开持有时分三次发布/;
   const published = publishedFixture().state;
   support.fixture.loading = false;
   support.fixture.history = { items: [], next_before_revision: null };

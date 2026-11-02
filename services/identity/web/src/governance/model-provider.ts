@@ -153,10 +153,12 @@ export function providerForm(spec: ProviderSpec | null): ProviderForm {
   }
   return form;
 }
-/** The editor over a newer version: input stays where its holder may change it, the rest follows the version. */
-export function rebaseProviderForm(form: ProviderForm, latest: ProviderForm, may: Record<ProviderPart, boolean>): ProviderForm {
-  const next: Record<string, unknown> = { ...form };
-  for (const key of Object.keys(form)) if (!may[providerFieldPart(key)]) next[key] = latest[key as keyof ProviderForm];
+/** The editor over a newer version. A field keeps its input only where the holder changed it from the
+ *  version they were editing and may still change it; every other field follows the newer version, so
+ *  changing one thing never publishes a stale copy of the rest (a key rotation turning a route back on). */
+export function rebaseProviderForm(form: ProviderForm, base: ProviderForm, latest: ProviderForm, may: Record<ProviderPart, boolean>): ProviderForm {
+  const next: Record<string, unknown> = { ...latest };
+  for (const key of Object.keys(form) as (keyof ProviderForm)[]) if (may[providerFieldPart(key)] && form[key] !== base[key]) next[key] = form[key];
   return next as ProviderForm;
 }
 /** Copy route settings only; neither historical credential metadata nor a draft key is restored. */
